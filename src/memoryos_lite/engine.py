@@ -486,16 +486,10 @@ class MemoryOSService:
                 "pinned_core_tokens": sum(
                     self.tokenizer.count(text) for text in package.pinned_core
                 ),
-                "active_task_pages": [
-                    page.model_dump() for page in package.active_task_pages
-                ],
-                "retrieved_pages": [
-                    page.model_dump() for page in package.retrieved_pages
-                ],
+                "active_task_pages": [page.model_dump() for page in package.active_task_pages],
+                "retrieved_pages": [page.model_dump() for page in package.retrieved_pages],
                 "dropped_recent_messages": package.dropped_recent_messages,
-                "dropped_pages": [
-                    page.model_dump() for page in package.dropped_pages
-                ],
+                "dropped_pages": [page.model_dump() for page in package.dropped_pages],
             },
         )
         return package

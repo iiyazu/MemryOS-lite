@@ -93,9 +93,7 @@ class MemoryStore:
         self.pages_dir.mkdir(parents=True, exist_ok=True)
         self.traces_dir.mkdir(parents=True, exist_ok=True)
         connect_args = (
-            {"check_same_thread": False}
-            if self.settings.sqlite_url.startswith("sqlite")
-            else {}
+            {"check_same_thread": False} if self.settings.sqlite_url.startswith("sqlite") else {}
         )
         self.engine = create_engine(self.settings.sqlite_url, connect_args=connect_args)
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False)

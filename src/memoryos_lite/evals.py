@@ -135,8 +135,7 @@ def builtin_cases() -> list[EvalCase]:
                     MessageCreate(
                         role=Role.USER,
                         content=(
-                            f"第 {index} 次更新：不做 Runbook Oncall Agent，"
-                            "改做 MemoryOS Lite。"
+                            f"第 {index} 次更新：不做 Runbook Oncall Agent，改做 MemoryOS Lite。"
                         ),
                     ),
                     MessageCreate(role=Role.USER, content=_noise(index)),
@@ -228,8 +227,7 @@ def builtin_cases() -> list[EvalCase]:
                     MessageCreate(
                         role=Role.USER,
                         content=(
-                            f"第 {index} 次最终决定：不做旧方向和临时方向，"
-                            "改做 MemoryOS Lite。"
+                            f"第 {index} 次最终决定：不做旧方向和临时方向，改做 MemoryOS Lite。"
                         ),
                     ),
                     MessageCreate(role=Role.USER, content=_noise(index)),
@@ -483,9 +481,7 @@ def _run_baseline(
             page_count=len(service.store.list_pages(session.id)),
             loaded_pages=len(pages),
             dropped_pages=len(context.dropped_pages),
-            dropped_page_details=[
-                item.model_dump() for item in context.dropped_pages
-            ],
+            dropped_page_details=[item.model_dump() for item in context.dropped_pages],
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -642,9 +638,7 @@ def _score(
     expected_hits = sum(1 for fact in case.expected_facts if fact in output.answer)
     forbidden_hits = sum(1 for fact in case.forbidden_facts if fact in output.answer)
     expected_fact_support = _expected_fact_support(case, output)
-    missing_expected_facts = [
-        fact for fact in case.expected_facts if fact not in output.answer
-    ]
+    missing_expected_facts = [fact for fact in case.expected_facts if fact not in output.answer]
     unsupported_answered_facts = _unsupported_answered_facts(
         case,
         output,
@@ -724,12 +718,9 @@ def _expected_fact_support(
     output: BaselineOutput,
 ) -> dict[str, list[str]]:
     return {
-        fact: [
-            source_id for source_id, text in sorted(output.sources.items()) if fact in text
-        ]
+        fact: [source_id for source_id, text in sorted(output.sources.items()) if fact in text]
         for fact in case.expected_facts
-        if fact in output.answer
-        and any(fact in text for text in output.sources.values())
+        if fact in output.answer and any(fact in text for text in output.sources.values())
     }
 
 
@@ -790,9 +781,7 @@ def _missing_required_sources(
             continue
         fact_support = set(expected_fact_support.get(fact, []))
         missing.extend(
-            f"{fact}:{source_id}"
-            for source_id in required_sources
-            if source_id not in fact_support
+            f"{fact}:{source_id}" for source_id in required_sources if source_id not in fact_support
         )
     if not case.required_fact_sources and case.required_sources:
         all_supporting_sources = {
