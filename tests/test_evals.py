@@ -116,8 +116,7 @@ def test_lexical_scorer_flags_negated_forbidden_entity():
     )
     output = BaselineOutput(
         answer=(
-            "稳定方案是 MemoryOS Lite，不是 Runbook Oncall Agent，"
-            "也不做 Runbook Oncall Agent。"
+            "稳定方案是 MemoryOS Lite，不是 Runbook Oncall Agent，也不做 Runbook Oncall Agent。"
         ),
         context_tokens=10,
         sources={"msg_001": "第 1 版稳定方案：MemoryOS Lite。"},
@@ -357,13 +356,9 @@ def test_eval_report_includes_source_ids(tmp_path):
     assert any(row["source_snippets"] for row in report)
     assert any(row["supporting_source_snippets"] for row in report)
     assert any(row["expected_fact_support"] for row in report)
-    dropped_audit_row = next(
-        row for row in report if row["case_id"] == "dropped_page_audit_001"
-    )
+    dropped_audit_row = next(row for row in report if row["case_id"] == "dropped_page_audit_001")
     assert dropped_audit_row["dropped_page_details"]
-    assert dropped_audit_row["dropped_page_details"][0]["reason"].startswith(
-        "lexical_overlap="
-    )
+    assert dropped_audit_row["dropped_page_details"][0]["reason"].startswith("lexical_overlap=")
 
 
 def test_eval_cli_rows_include_dropped_cases(tmp_path):
@@ -489,13 +484,9 @@ def test_hard_cases_preserve_baseline_differentiation(tmp_path):
     ]
     naive = [result for result in hard_results if result.baseline == "naive_summary"]
     memoryos = [result for result in hard_results if result.baseline == "memoryos_lite"]
-    marker_sliding = [
-        result for result in marker_results if result.baseline == "sliding_window"
-    ]
+    marker_sliding = [result for result in marker_results if result.baseline == "sliding_window"]
     marker_vector = [result for result in marker_results if result.baseline == "vector_rag"]
-    marker_memoryos = [
-        result for result in marker_results if result.baseline == "memoryos_lite"
-    ]
+    marker_memoryos = [result for result in marker_results if result.baseline == "memoryos_lite"]
 
     assert naive
     assert memoryos
@@ -560,13 +551,11 @@ def test_builtin_cases_include_multi_fact_source_cases():
 
 def test_marker_ablation_cases_do_not_use_evidence_boost_markers():
     marker_words = ("最终", "不做", "主线", "改为", "更新")
-    cases = [
-        case for case in builtin_cases() if case.case_id.startswith("marker_ablation_recall")
-    ]
+    cases = [case for case in builtin_cases() if case.case_id.startswith("marker_ablation_recall")]
 
     assert cases
     for case in cases:
-        case_text = case.question + "\n" + "\n".join(
-            message.content for message in case.conversation
+        case_text = (
+            case.question + "\n" + "\n".join(message.content for message in case.conversation)
         )
         assert not any(marker in case_text for marker in marker_words)

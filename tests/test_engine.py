@@ -87,9 +87,7 @@ def test_context_builder_deduplicates_pinned_core_pages_by_id(service):
     assert same_text_page.id in loaded_ids
     assert context.estimated_tokens == task_tokens + (page_tokens * 2)
     context_built = service.store.list_traces(session.id)[-1]
-    assert context_built.payload["retrieved_pages"] == [
-        context.retrieved_pages[0].model_dump()
-    ]
+    assert context_built.payload["retrieved_pages"] == [context.retrieved_pages[0].model_dump()]
     retrieved = context_built.payload["retrieved_pages"][0]
     assert retrieved["page_id"] == same_text_page.id
     assert retrieved["reason"].startswith("lexical_overlap=")
@@ -146,9 +144,7 @@ def test_context_built_trace_includes_active_task_page_details(service):
 
     assert len(context.active_task_pages) == 1
     context_built = service.store.list_traces(session.id)[-1]
-    assert context_built.payload["active_task_pages"] == [
-        context.active_task_pages[0].model_dump()
-    ]
+    assert context_built.payload["active_task_pages"] == [context.active_task_pages[0].model_dump()]
     assert context_built.payload["task_tokens"] == context.task_tokens
     assert context_built.payload["task_truncated"] is False
     assert context_built.payload["dropped_recent_messages"] == []
