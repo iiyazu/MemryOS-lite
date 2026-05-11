@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 # ---- builder: install dependencies only, leverage layer cache ----
 FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
 
@@ -10,12 +8,10 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock .python-version ./
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src/ src/
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev
 
 # ---- final: slim runtime with curl for healthcheck ----
 FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS final
