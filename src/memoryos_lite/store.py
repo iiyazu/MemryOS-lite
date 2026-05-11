@@ -4,7 +4,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, String, Text, create_engine, select
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import DateTime, Index, Integer, String, Text, create_engine, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -15,6 +16,7 @@ from sqlalchemy.orm import (
 from sqlalchemy.orm import (
     Session as DbSession,
 )
+from sqlalchemy.types import TypeDecorator
 
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.schemas import (
@@ -25,6 +27,40 @@ from memoryos_lite.schemas import (
     Session,
     TraceEvent,
 )
+
+EMBEDDING_DIM = 1536
+
+
+class EmbeddingType(TypeDecorator):
+    """Store ``list[float]`` as pgvector on Postgres, JSON text elsewhere.
+
+    Reads always return ``list[float] | None`` regardless of dialect so the
+    retrieval layer can stay dialect-agnostic.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):  # type: ignore[override]
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(Vector(EMBEDDING_DIM))
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value, dialect):  # type: ignore[override]
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return list(value)
+        return json.dumps(list(value))
+
+    def process_result_value(self, value, dialect):  # type: ignore[override]
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return list(value) if not isinstance(value, list) else value
+        if isinstance(value, str):
+            return json.loads(value)
+        return list(value)
 
 
 class Base(DeclarativeBase):
@@ -50,6 +86,8 @@ class MessageRecord(Base):
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    __table_args__ = (Index("ix_messages_session_created", "session_id", "created_at"),)
+
 
 class PageRecord(Base):
     __tablename__ = "memory_pages"
@@ -59,11 +97,18 @@ class PageRecord(Base):
     page_type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_message_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=80)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType, nullable=True)
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_memory_pages_session_type", "session_id", "page_type"),
+        Index("ix_memory_pages_created", "created_at"),
+    )
 
 
 class PatchRecord(Base):
@@ -85,6 +130,10 @@ class TraceRecord(Base):
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
 
+    __table_args__ = (
+        Index("ix_trace_events_session_type_created", "session_id", "event_type", "created_at"),
+    )
+
 
 class MemoryStore:
     def __init__(self, settings: Settings | None = None) -> None:
@@ -92,10 +141,13 @@ class MemoryStore:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.pages_dir.mkdir(parents=True, exist_ok=True)
         self.traces_dir.mkdir(parents=True, exist_ok=True)
-        connect_args = (
-            {"check_same_thread": False} if self.settings.sqlite_url.startswith("sqlite") else {}
+        dsn = self.settings.sqlite_url
+        connect_args = {"check_same_thread": False} if dsn.startswith("sqlite") else {}
+        self.engine = create_engine(
+            dsn,
+            connect_args=connect_args,
+            pool_pre_ping=not dsn.startswith("sqlite"),
         )
-        self.engine = create_engine(self.settings.sqlite_url, connect_args=connect_args)
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False)
 
     @property
@@ -107,6 +159,9 @@ class MemoryStore:
         return self.settings.data_dir / "traces"
 
     def init_db(self) -> None:
+        if self.engine.dialect.name == "postgresql":
+            with self.engine.begin() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         try:
             Base.metadata.create_all(self.engine)
         except OperationalError as exc:
@@ -184,7 +239,8 @@ class MemoryStore:
         page_dir = self.pages_dir / page.session_id
         page_dir.mkdir(parents=True, exist_ok=True)
         page_path = page_dir / f"{page.id}.json"
-        page_path.write_text(page.model_dump_json(indent=2), encoding="utf-8")
+        content_json = page.model_dump_json(indent=2)
+        page_path.write_text(content_json, encoding="utf-8")
         with self.db() as db:
             db.add(
                 PageRecord(
@@ -193,6 +249,7 @@ class MemoryStore:
                     page_type=page.page_type.value,
                     title=page.title,
                     path=str(page_path),
+                    content_json=content_json,
                     source_message_ids_json=json.dumps(page.source_message_ids),
                     confidence=int(page.confidence * 100),
                     version=page.version,
@@ -202,11 +259,19 @@ class MemoryStore:
             )
         return page
 
+    def set_page_embedding(self, page_id: str, embedding: list[float]) -> None:
+        with self.db() as db:
+            record = db.get(PageRecord, page_id)
+            if record is not None:
+                record.embedding = embedding
+
     def load_page(self, page_id: str) -> MemoryPage | None:
         with self.db() as db:
             record = db.get(PageRecord, page_id)
             if record is None:
                 return None
+            if record.content_json:
+                return MemoryPage.model_validate_json(record.content_json)
             path = Path(record.path)
         if not path.exists():
             return None
