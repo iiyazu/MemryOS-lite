@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -6,6 +5,15 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from memoryos_lite.config import Settings, get_settings
+from memoryos_lite.retrieval import (
+    EmbeddingClient,
+    EmbeddingSearcher,
+    HybridSearcher,
+    LexicalSearcher,
+    Searcher,
+    SearchHit,
+)
+from memoryos_lite.retrieval.providers import OpenAIEmbeddingClient
 from memoryos_lite.schemas import (
     ContextPackage,
     ContextPage,
@@ -23,12 +31,12 @@ from memoryos_lite.schemas import (
 from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
 
-
-@dataclass(frozen=True)
-class SearchHit:
-    page: MemoryPage
-    score: float
-    reason: str
+__all__ = [
+    "ContextRotGuard",
+    "MemoryOSService",
+    "PagingAgent",
+    "SearchHit",
+]
 
 
 class ContextRotGuard:
@@ -210,52 +218,11 @@ class PatchVerifier:
         return patch
 
 
-class MemorySearcher:
-    def __init__(self, tokenizer: TokenEstimator) -> None:
-        self.tokenizer = tokenizer
-
-    def search(self, pages: list[MemoryPage], query: str, top_k: int = 5) -> list[SearchHit]:
-        query_terms = self._terms(query)
-        hits: list[SearchHit] = []
-        for page in pages:
-            haystack = self._page_text(page)
-            page_terms = self._terms(haystack)
-            overlap = len(query_terms & page_terms)
-            source_bonus = 0.25 if any(term in page.title.lower() for term in query_terms) else 0
-            score = overlap + source_bonus
-            if score > 0:
-                hits.append(SearchHit(page=page, score=score, reason=f"lexical_overlap={overlap}"))
-        hits.sort(
-            key=lambda hit: (hit.score, hit.page.confidence, hit.page.created_at),
-            reverse=True,
-        )
-        return hits[:top_k]
-
-    def _terms(self, text: str) -> set[str]:
-        normalized = text.replace("/", " ").lower()
-        terms = {term.strip() for term in normalized.split() if term.strip()}
-        cjk_chars = [char for char in normalized if "\u4e00" <= char <= "\u9fff"]
-        terms.update(cjk_chars)
-        terms.update("".join(pair) for pair in zip(cjk_chars, cjk_chars[1:], strict=False))
-        return terms
-
-    def _page_text(self, page: MemoryPage) -> str:
-        return " ".join(
-            [
-                page.title,
-                page.summary,
-                *page.facts,
-                *page.decisions,
-                *page.open_questions,
-            ]
-        )
-
-
 class ContextBuilder:
     def __init__(
         self,
         tokenizer: TokenEstimator,
-        searcher: MemorySearcher,
+        searcher: Searcher,
         settings: Settings,
     ) -> None:
         self.tokenizer = tokenizer
@@ -350,7 +317,12 @@ class ContextBuilder:
 
 
 class MemoryOSService:
-    def __init__(self, store: MemoryStore | None = None, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        store: MemoryStore | None = None,
+        settings: Settings | None = None,
+        embedding_client: EmbeddingClient | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
         self.store = store or create_store(self.settings)
         self.tokenizer = TokenEstimator()
@@ -370,8 +342,23 @@ class MemoryOSService:
         )
         self.page_verifier = PageVerifier()
         self.patch_verifier = PatchVerifier()
-        self.searcher = MemorySearcher(self.tokenizer)
+        self.embedding_client = embedding_client or self._default_embedding_client()
+        lexical = LexicalSearcher()
+        embedding = (
+            EmbeddingSearcher(self.store, self.embedding_client)
+            if self.embedding_client is not None
+            else None
+        )
+        self.searcher: Searcher = HybridSearcher(lexical=lexical, embedding=embedding)
         self.context_builder = ContextBuilder(self.tokenizer, self.searcher, self.settings)
+
+    def _default_embedding_client(self) -> EmbeddingClient | None:
+        if not self.settings.openai_api_key:
+            return None
+        try:
+            return OpenAIEmbeddingClient(self.settings)
+        except Exception:
+            return None
 
     def create_session(self, title: str) -> Any:
         session = self.store.create_session(title)
@@ -443,6 +430,7 @@ class MemoryOSService:
             return None
         page = MemoryPage(session_id=session_id, **draft.model_dump())
         self.store.save_page(page)
+        self._index_page_embedding(page)
         self.trace(
             session_id,
             "page_committed",
@@ -454,6 +442,36 @@ class MemoryOSService:
             },
         )
         return page
+
+    def _index_page_embedding(self, page: MemoryPage) -> None:
+        if self.embedding_client is None:
+            return
+        text = " ".join(
+            filter(
+                None,
+                [
+                    page.title,
+                    page.summary,
+                    *page.facts,
+                    *page.decisions,
+                    *page.open_questions,
+                ],
+            )
+        )
+        if not text.strip():
+            return
+        try:
+            vector = self.embedding_client.embed(text)
+        except Exception as exc:
+            self.trace(
+                page.session_id,
+                "embedding_failed",
+                {"page_id": page.id, "error": str(exc)},
+            )
+            return
+        if not vector:
+            return
+        self.store.set_page_embedding(page.id, vector)
 
     def build_context(
         self,

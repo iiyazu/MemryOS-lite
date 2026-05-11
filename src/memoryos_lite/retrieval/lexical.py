@@ -43,17 +43,27 @@ class LexicalSearcher:
     def search(self, pages: list[MemoryPage], query: str, top_k: int = 5) -> list[SearchHit]:
         if not pages:
             return []
-        corpus = [tokenize(_page_text(page)) for page in pages]
-        if not any(corpus):
+        tokenized = [tokenize(_page_text(page)) for page in pages]
+        if not any(tokenized):
             return []
-        bm25 = BM25Okapi(corpus)
         query_tokens = tokenize(query)
         if not query_tokens:
             return []
+
+        # Only rank pages whose vocabulary actually intersects the query.
+        # BM25Okapi returns negative scores on tiny corpora where a term
+        # appears in >50% of documents (IDF flips sign), so we can't gate on
+        # ``score > 0`` — an intersecting-vocab check is the correct filter.
+        query_set = set(query_tokens)
+        matching_indices = [i for i, doc in enumerate(tokenized) if query_set.intersection(doc)]
+        if not matching_indices:
+            return []
+
+        bm25 = BM25Okapi(tokenized)
         scores = bm25.get_scores(query_tokens)
 
         ranked = sorted(
-            ((score, page) for score, page in zip(scores, pages, strict=False) if score > 0),
+            ((scores[i], pages[i]) for i in matching_indices),
             key=lambda pair: (pair[0], pair[1].confidence, pair[1].created_at),
             reverse=True,
         )

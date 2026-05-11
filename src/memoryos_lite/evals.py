@@ -5,7 +5,8 @@ from dataclasses import asdict, dataclass, field
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService, MemorySearcher
+from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
@@ -552,12 +553,11 @@ def _fit_sliding_window(
 
 
 def _bm25_retrieve(messages: list[Message], query: str) -> list[Message]:
-    searcher = MemorySearcher(TokenEstimator())
-    tokenized = [list(searcher._terms(message.content)) for message in messages]
+    tokenized = [tokenize(message.content) for message in messages]
     if not tokenized:
         return []
     bm25 = BM25Okapi(tokenized)
-    scores = bm25.get_scores(list(searcher._terms(query)))
+    scores = bm25.get_scores(tokenize(query))
     ranked = sorted(zip(messages, scores, strict=False), key=lambda item: item[1], reverse=True)
     return [message for message, score in ranked if score > 0]
 
@@ -588,11 +588,10 @@ def _baseline_from_evidence(
 
 
 def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[EvidenceItem]:
-    searcher = MemorySearcher(TokenEstimator())
-    query_terms = searcher._terms(question)
+    query_terms = set(tokenize(question))
     scored: list[tuple[int, EvidenceItem]] = []
     for item in evidence:
-        score = len(query_terms & searcher._terms(item.text))
+        score = len(query_terms & set(tokenize(item.text)))
         if any(marker in question for marker in ("最终", "不做", "主线")) and any(
             marker in item.text for marker in ("最终", "不做", "改为", "更新")
         ):
