@@ -1,0 +1,50 @@
+[
+  {
+    "baseline": "sliding_window",
+    "cases": 81,
+    "accuracy": 0.2099,
+    "source_accuracy": 0.2099,
+    "avg_context_tokens": 35.4,
+    "accuracy_per_1k_tokens": 5.932,
+    "avg_page_count": 0.0,
+    "avg_loaded_pages": 0.0,
+    "avg_dropped_pages": 0.0,
+    "avg_latency_ms": 0.0
+  },
+  {
+    "baseline": "naive_summary",
+    "cases": 81,
+    "accuracy": 0.6049,
+    "source_accuracy": 0.6049,
+    "avg_context_tokens": 52.8,
+    "accuracy_per_1k_tokens": 11.449,
+    "avg_page_count": 0.0,
+    "avg_loaded_pages": 0.0,
+    "avg_dropped_pages": 0.0,
+    "avg_latency_ms": 0.0
+  },
+  {
+    "baseline": "vector_rag",
+    "cases": 81,
+    "accuracy": 1.0,
+    "source_accuracy": 1.0,
+    "avg_context_tokens": 50.2,
+    "accuracy_per_1k_tokens": 19.912,
+    "avg_page_count": 0.0,
+    "avg_loaded_pages": 0.0,
+    "avg_dropped_pages": 0.0,
+    "avg_latency_ms": 0.0
+  },
+  {
+    "baseline": "memoryos_lite",
+    "cases": 81,
+    "accuracy": 1.0,
+    "source_accuracy": 1.0,
+    "avg_context_tokens": 63.7,
+    "accuracy_per_1k_tokens": 15.698,
+    "avg_page_count": 1.0,
+    "avg_loaded_pages": 0.988,
+    "avg_dropped_pages": 0.012,
+    "avg_latency_ms": 99.3
+  }
+]
