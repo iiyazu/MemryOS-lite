@@ -358,7 +358,7 @@ def test_eval_report_includes_source_ids(tmp_path):
     assert any(row["expected_fact_support"] for row in report)
     dropped_audit_row = next(row for row in report if row["case_id"] == "dropped_page_audit_001")
     assert dropped_audit_row["dropped_page_details"]
-    assert dropped_audit_row["dropped_page_details"][0]["reason"].startswith("lexical_overlap=")
+    assert dropped_audit_row["dropped_page_details"][0]["reason"].startswith("rrf ")
 
 
 def test_eval_cli_rows_include_dropped_cases(tmp_path):

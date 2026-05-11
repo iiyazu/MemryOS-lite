@@ -1,5 +1,6 @@
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService, PagingAgent
+from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 from memoryos_lite.schemas import (
     MemoryPage,
     MemoryPageDraft,
@@ -90,7 +91,7 @@ def test_context_builder_deduplicates_pinned_core_pages_by_id(service):
     assert context_built.payload["retrieved_pages"] == [context.retrieved_pages[0].model_dump()]
     retrieved = context_built.payload["retrieved_pages"][0]
     assert retrieved["page_id"] == same_text_page.id
-    assert retrieved["reason"].startswith("lexical_overlap=")
+    assert retrieved["reason"].startswith("rrf ")
     assert retrieved["estimated_tokens"] == page_tokens
 
 
@@ -277,3 +278,37 @@ def test_service_traces_llm_init_fallback(tmp_path):
     committed = [trace for trace in traces if trace.event_type == "page_committed"][-1]
     assert committed.payload["paging_mode"] == "heuristic_fallback"
     assert "OPENAI_API_KEY" in committed.payload["paging_error"]
+
+
+def test_page_save_persists_embedding_and_hybrid_fuses_sources(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        rot_safe_budget=12,
+        recent_message_limit=2,
+    )
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(
+        store=store,
+        settings=settings,
+        embedding_client=DeterministicEmbeddingClient(),
+    )
+    session = service.create_session("test")
+    for content in [
+        "用户目标是在 20 天内完成 Agent infra 项目。",
+        "最终决定不做 Runbook Oncall Agent，改做 MemoryOS Lite。",
+        "技术栈选择 LangGraph 和 FastAPI。",
+        "需要 benchmark 对比 Sliding Window 和 Vector RAG。",
+    ]:
+        service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+    page = service.page(session.id)
+
+    assert page is not None
+    embeddings = service.store.get_page_embeddings([page.id])
+    assert page.id in embeddings
+    assert len(embeddings[page.id]) == DeterministicEmbeddingClient.DIM
+
+    hits = service.search("用户最终决定做什么项目？", top_k=3, session_id=session.id)
+    assert hits
+    assert hits[0].source == "hybrid"
+    assert "lexical=" in hits[0].reason and "embedding=" in hits[0].reason
