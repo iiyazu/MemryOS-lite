@@ -265,6 +265,14 @@ class MemoryStore:
             if record is not None:
                 record.embedding = embedding
 
+    def get_page_embeddings(self, page_ids: list[str]) -> dict[str, list[float]]:
+        if not page_ids:
+            return {}
+        with self.db() as db:
+            stmt = select(PageRecord.id, PageRecord.embedding).where(PageRecord.id.in_(page_ids))
+            rows = list(db.execute(stmt))
+        return {page_id: embedding for page_id, embedding in rows if embedding is not None}
+
     def load_page(self, page_id: str) -> MemoryPage | None:
         with self.db() as db:
             record = db.get(PageRecord, page_id)
