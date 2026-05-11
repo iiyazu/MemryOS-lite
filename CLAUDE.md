@@ -8,17 +8,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **M0**: Baseline frozen — 81 eval cases, 4 baselines (see `docs/baseline/results.md`)
 - **M1**: Docker + docker-compose + Makefile + GitHub Actions CI + pre-commit
 - **M2-A**: Postgres + pgvector + Alembic baseline migration (`0001_m2_baseline`)
+- **M2-B**: Hybrid retrieval — `src/memoryos_lite/retrieval/` package (BM25 lexical + embedding cosine + RRF fusion) wired into `MemoryOSService`; embeddings computed on `page()` save; legacy `MemorySearcher` removed
 
 ### In Progress
-- **M2-B**: Hybrid retrieval — `src/memoryos_lite/retrieval/` package written (Searcher protocol, BM25 lexical, embedding cosine, RRF fusion, fake+OpenAI providers); **NOT yet wired into engine.py, NOT yet committed**
+- _(none — next milestone M2-C)_
 
 ### Next Steps (in order)
-1. M2-B: Wire HybridSearcher into MemoryOSService + ContextBuilder; compute embeddings on page save; add `store.get_page_embeddings()` method
-2. M2-C: Dynamic budget (DynamicBudget class) + Prometheus business metrics (`observability.py`)
-3. M3: Conflict detection layer (memory_patches.conflict_layer)
-4. M4: LLM eval mode (GPT-as-judge for semantic accuracy)
-5. M5: Performance / P95 latency optimization
-6. M6: README rewrite + GitHub push + portfolio presentation
+1. M2-C: Dynamic budget (DynamicBudget class) + Prometheus business metrics (`observability.py`)
+2. M3: Conflict detection layer (memory_patches.conflict_layer)
+3. M4: LLM eval mode (GPT-as-judge for semantic accuracy)
+4. M5: Performance / P95 latency optimization
+5. M6: README rewrite + GitHub push + portfolio presentation
 
 ### Key Documents
 - `memoryos-lite-design.md` — Full design rationale and 10-day milestone plan
@@ -29,7 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Core workflow
-uv run pytest -q                           # 运行所有测试 (39 cases, ~60s)
+uv run pytest -q                           # 运行所有测试 (40 cases, ~60s)
 uv run ruff check . && uv run ruff format --check .  # Lint + format check
 uv run mypy src                            # 类型检查
 
@@ -61,12 +61,12 @@ uv run alembic upgrade head                # 应用数据库迁移
 - **config.py** — Pydantic Settings，支持 DATABASE_URL / POSTGRES_* / SQLite 三级 DSN 解析
 - **schemas.py** — 核心数据模型：Message、Session、MemoryPage、ContextPackage、MemoryPatch
 - **store.py** — 混合持久化：Postgres+pgvector（生产）或 SQLite（开发）；`EmbeddingType` TypeDecorator 跨 dialect 透明处理 `vector(1536)` / JSON text；`content_json` 列为 DB-authoritative 内容源
-- **engine.py** — 核心逻辑：ContextRotGuard、PagingAgent、MemorySearcher（旧版 lexical，待替换为 HybridSearcher）、ContextBuilder、MemoryOSService
-- **retrieval/** — (WIP, 未提交) 检索子包：
+- **engine.py** — 核心逻辑：ContextRotGuard、PagingAgent、ContextBuilder、MemoryOSService；检索通过 `retrieval.HybridSearcher` 注入；`page()` 保存后自动写 embedding（当 `EmbeddingClient` 可用时）
+- **retrieval/** — 检索子包：
   - `base.py` — SearchHit, Searcher protocol, EmbeddingClient protocol, RRF fusion
-  - `lexical.py` — BM25 via rank-bm25
+  - `lexical.py` — BM25 via rank-bm25 (with query-vocab intersection gate to handle BM25Okapi's negative-IDF pathology on tiny corpora)
   - `embedding.py` — cosine similarity over stored embeddings
-  - `hybrid.py` — (待写) RRF fusion of lexical + embedding
+  - `hybrid.py` — RRF fusion of lexical + embedding, with graceful single-source fallback
   - `providers/fake.py` — 确定性 hash-based embedder (测试用)
   - `providers/openai.py` — OpenAI text-embedding-3-small wrapper
 - **graphs.py** — LangGraph 状态机：ingest → 条件分页 → build_context
@@ -128,5 +128,5 @@ Ruff 规则：E, F, I, UP, B。行宽 100。目标 Python 3.11。mypy 忽略 pgv
 
 - Commit messages: `type(scope): description` — e.g. `feat(M2-A): Postgres + pgvector + Alembic baseline`
 - Branch: 当前在 `master`，计划 M6 推 GitHub 时切 `main`
-- Tests: 所有 39 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
+- Tests: 所有 40 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
 - CI: 每次 push 自动跑 ruff + format-check + mypy + pytest
