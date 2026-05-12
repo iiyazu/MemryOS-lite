@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Index, Integer, String, Text, create_engine, select, text
+from sqlalchemy import DateTime, Index, Integer, String, Text, create_engine, func, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -23,9 +23,11 @@ from memoryos_lite.schemas import (
     MemoryPage,
     MemoryPatch,
     Message,
+    PageType,
     Role,
     Session,
     TraceEvent,
+    utc_now,
 )
 
 EMBEDDING_DIM = 1536
@@ -210,13 +212,22 @@ class MemoryStore:
 
     def list_messages(self, session_id: str, limit: int | None = None) -> list[Message]:
         with self.db() as db:
-            stmt = (
-                select(MessageRecord)
-                .where(MessageRecord.session_id == session_id)
-                .order_by(MessageRecord.created_at.asc())
-            )
-            records = list(db.scalars(stmt))
-        messages = [
+            if limit is not None:
+                stmt = (
+                    select(MessageRecord)
+                    .where(MessageRecord.session_id == session_id)
+                    .order_by(MessageRecord.created_at.desc())
+                    .limit(limit)
+                )
+                records = list(reversed(list(db.scalars(stmt))))
+            else:
+                stmt = (
+                    select(MessageRecord)
+                    .where(MessageRecord.session_id == session_id)
+                    .order_by(MessageRecord.created_at.asc())
+                )
+                records = list(db.scalars(stmt))
+        return [
             Message(
                 id=row.id,
                 session_id=row.session_id,
@@ -228,12 +239,15 @@ class MemoryStore:
             )
             for row in records
         ]
-        if limit is not None:
-            return messages[-limit:]
-        return messages
 
     def session_token_count(self, session_id: str) -> int:
-        return sum(message.token_count for message in self.list_messages(session_id))
+        with self.db() as db:
+            total = db.scalar(
+                select(func.coalesce(func.sum(MessageRecord.token_count), 0)).where(
+                    MessageRecord.session_id == session_id
+                )
+            )
+        return int(total or 0)
 
     def save_page(self, page: MemoryPage) -> MemoryPage:
         page_dir = self.pages_dir / page.session_id
@@ -265,6 +279,30 @@ class MemoryStore:
             if record is not None:
                 record.embedding = embedding
 
+    def mark_page_superseded(self, page_id: str, by_page_id: str) -> MemoryPage | None:
+        """Mark ``page_id`` as superseded by ``by_page_id`` and persist.
+
+        Updates the on-disk JSON (source of truth for the field) and the
+        ``content_json`` + ``updated_at`` columns so that later loads see
+        the new state. Returns the updated page, or ``None`` if it does
+        not exist.
+        """
+        page = self.load_page(page_id)
+        if page is None:
+            return None
+        page.superseded_by = by_page_id
+        page.updated_at = utc_now()
+        content_json = page.model_dump_json(indent=2)
+        with self.db() as db:
+            record = db.get(PageRecord, page_id)
+            if record is None:
+                return None
+            record.content_json = content_json
+            record.updated_at = page.updated_at
+            page_path = Path(record.path)
+        page_path.write_text(content_json, encoding="utf-8")
+        return page
+
     def get_page_embeddings(self, page_ids: list[str]) -> dict[str, list[float]]:
         if not page_ids:
             return {}
@@ -285,11 +323,35 @@ class MemoryStore:
             return None
         return MemoryPage.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def list_pages(self, session_id: str | None = None) -> list[MemoryPage]:
+    def list_pages(
+        self, session_id: str | None = None, limit: int | None = None
+    ) -> list[MemoryPage]:
         with self.db() as db:
-            stmt = select(PageRecord).order_by(PageRecord.created_at.asc())
-            if session_id is not None:
-                stmt = stmt.where(PageRecord.session_id == session_id)
+            if limit is not None:
+                stmt = select(PageRecord).order_by(PageRecord.created_at.desc()).limit(limit)
+                if session_id is not None:
+                    stmt = stmt.where(PageRecord.session_id == session_id)
+                records = list(reversed(list(db.scalars(stmt))))
+            else:
+                stmt = select(PageRecord).order_by(PageRecord.created_at.asc())
+                if session_id is not None:
+                    stmt = stmt.where(PageRecord.session_id == session_id)
+                records = list(db.scalars(stmt))
+        pages: list[MemoryPage] = []
+        for record in records:
+            page = self.load_page(record.id)
+            if page is not None:
+                pages.append(page)
+        return pages
+
+    def list_global_core_pages(self) -> list[MemoryPage]:
+        """Return core_profile pages across all sessions."""
+        with self.db() as db:
+            stmt = (
+                select(PageRecord)
+                .where(PageRecord.page_type == PageType.CORE_PROFILE.value)
+                .order_by(PageRecord.created_at.asc())
+            )
             records = list(db.scalars(stmt))
         pages: list[MemoryPage] = []
         for record in records:

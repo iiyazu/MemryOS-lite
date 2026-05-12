@@ -72,6 +72,13 @@ class MemoryPage(MemoryPageDraft):
     version: int = 1
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    superseded_by: str | None = None
+    """ID of a newer page that has replaced this one via conflict detection.
+
+    When set, retrieval and context-building skip this page by default.
+    The field is advisory — raw ``list_pages`` still returns it so callers
+    can audit the history of a session's memory.
+    """
 
 
 class MemoryPatch(BaseModel):
@@ -120,12 +127,24 @@ class BuildContextRequest(BaseModel):
     task: str
     budget: int | None = None
     retrieval_query: str | None = None
+    include_global_core: bool = False
 
 
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
     session_id: str | None = None
+    limit: int | None = None
+
+    @model_validator(mode="after")
+    def validate_limit(self) -> "SearchRequest":
+        # When both ``session_id`` and ``limit`` are omitted, the service layer
+        # applies a default soft cap (see ``MemoryOSService.search``). That
+        # default is the documented ``memory_search(query, top_k)`` contract,
+        # so we do NOT require one of session_id / limit at the API layer.
+        if self.limit is not None and self.limit <= 0:
+            raise ValueError("SearchRequest.limit must be positive")
+        return self
 
 
 class CreateSessionRequest(BaseModel):
@@ -146,6 +165,8 @@ class EvalCase(BaseModel):
     forbidden_facts: list[str] = Field(default_factory=list)
     required_sources: list[str] = Field(default_factory=list)
     required_fact_sources: dict[str, list[str]] = Field(default_factory=dict)
+    query_in_new_session: bool = False
+    include_global_core: bool = False
 
     @model_validator(mode="after")
     def require_fact_sources_for_multi_fact_cases(self) -> "EvalCase":
