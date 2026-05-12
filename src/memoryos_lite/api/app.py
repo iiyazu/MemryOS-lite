@@ -72,6 +72,7 @@ def build_context(
             task=request.task,
             budget=request.budget,
             retrieval_query=request.retrieval_query,
+            include_global_core=request.include_global_core,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -79,7 +80,12 @@ def build_context(
 
 @app.post("/memory/search")
 def search(request: SearchRequest, service: ServiceDep):
-    hits = service.search(query=request.query, top_k=request.top_k, session_id=request.session_id)
+    hits = service.search(
+        query=request.query,
+        top_k=request.top_k,
+        session_id=request.session_id,
+        limit=request.limit,
+    )
     return [
         {
             "page": hit.page,

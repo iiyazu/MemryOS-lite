@@ -8,7 +8,7 @@ from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.llm_judge import JudgeVerdict, LLMJudge
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
+from memoryos_lite.schemas import EvalCase, Message, MessageCreate, PageType, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 
@@ -361,6 +361,7 @@ def run_eval(
     run_id: str,
     baselines: list[str],
     isolated: bool = True,
+    case_set: str = "builtin",
 ) -> list[EvalResult]:
     eval_root = settings.memoryos_eval_data_dir or settings.data_dir / "eval_runs"
     run_dir = eval_root / run_id
@@ -377,7 +378,10 @@ def run_eval(
         store.reset()
     service = MemoryOSService(store=store, settings=run_settings)
     results: list[EvalResult] = []
-    for case in builtin_cases():
+
+    cases = _select_cases(case_set)
+
+    for case in cases:
         messages = _materialize_messages(case)
         for baseline in _expand_baselines(baselines):
             start = time.perf_counter()
@@ -404,6 +408,7 @@ def run_eval_llm(
     run_id: str,
     baselines: list[str],
     isolated: bool = True,
+    case_set: str = "builtin",
 ) -> list[JudgeVerdict]:
     """Run eval with LLM-as-judge scoring (requires OpenAI API key)."""
     judge = LLMJudge(settings)
@@ -422,7 +427,7 @@ def run_eval_llm(
         store.reset()
     service = MemoryOSService(store=store, settings=run_settings)
     verdicts: list[JudgeVerdict] = []
-    for case in builtin_cases():
+    for case in _select_cases(case_set):
         messages = _materialize_messages(case)
         for baseline in _expand_baselines(baselines):
             output = _run_baseline(baseline, case, messages, service, run_settings)
@@ -440,6 +445,24 @@ def run_eval_llm(
     return verdicts
 
 
+def _select_cases(case_set: str) -> list[EvalCase]:
+    """Dispatch case_set name to the concrete case list."""
+    if case_set == "advanced":
+        from memoryos_lite.evals_advanced import advanced_cases
+
+        return advanced_cases()
+    if case_set == "hard":
+        from memoryos_lite.evals_hard import hard_cases
+
+        return hard_cases()
+    if case_set == "all":
+        from memoryos_lite.evals_advanced import advanced_cases
+        from memoryos_lite.evals_hard import hard_cases
+
+        return builtin_cases() + advanced_cases() + hard_cases()
+    return builtin_cases()
+
+
 def _run_baseline(
     baseline: str,
     case: EvalCase,
@@ -450,6 +473,8 @@ def _run_baseline(
     tokenizer = TokenEstimator()
     budget = 90
     task_tokens = tokenizer.count(case.question)
+    if case.query_in_new_session and baseline != "memoryos_lite":
+        return _baseline_from_evidence(case.question, [], task_tokens)
     if baseline == "sliding_window":
         selected = _fit_sliding_window(messages, case.question, budget, tokenizer)
         return _baseline_from_evidence(
@@ -492,21 +517,56 @@ def _run_baseline(
             _context_tokens(case.question, [message.content for message in selected], tokenizer),
         )
     if baseline == "memoryos_lite":
-        session = service.create_session(case.case_id)
+        if case.query_in_new_session:
+            service.store.reset()
+        source_session = service.create_session(case.case_id)
+        context_session = (
+            service.create_session(f"{case.case_id}_query")
+            if case.query_in_new_session
+            else source_session
+        )
         original_budget = service.settings.rot_safe_budget
         original_recent = service.settings.recent_message_limit
         service.settings.rot_safe_budget = 1
-        service.settings.recent_message_limit = 2
+        service.settings.recent_message_limit = 1 if case.query_in_new_session else 2
         try:
             for message in messages:
-                service.store.add_message(message.model_copy(update={"session_id": session.id}))
-            service.page(session.id)
-            context = service.build_context(session.id, case.question, budget=budget)
+                service.store.add_message(
+                    message.model_copy(update={"session_id": source_session.id})
+                )
+            service.page(source_session.id)
+            context = service.build_context(
+                context_session.id,
+                case.question,
+                budget=budget,
+                include_global_core=case.include_global_core,
+            )
         finally:
             service.settings.rot_safe_budget = original_budget
             service.settings.recent_message_limit = original_recent
         pages = [service.store.load_page(item.page_id) for item in context.retrieved_pages]
         pages.extend(service.store.load_page(item.page_id) for item in context.active_task_pages)
+        if context.pinned_core:
+            pages_by_id = {page.id: page for page in service.store.list_pages(source_session.id)}
+            if case.include_global_core:
+                pages_by_id.update(
+                    {page.id: page for page in service.store.list_global_core_pages()}
+                )
+            loaded_page_ids = {page.id for page in pages if page is not None}
+            for summary in context.pinned_core:
+                pinned_page = next(
+                    (
+                        page
+                        for page in pages_by_id.values()
+                        if page.page_type == PageType.CORE_PROFILE
+                        and page.summary == summary
+                        and page.id not in loaded_page_ids
+                    ),
+                    None,
+                )
+                if pinned_page is not None:
+                    pages.append(pinned_page)
+                    loaded_page_ids.add(pinned_page.id)
         evidence = _message_evidence(context.recent_messages)
         messages_by_id = {message.id: message for message in messages}
         for page in pages:
@@ -521,7 +581,7 @@ def _run_baseline(
             case.question,
             evidence,
             context.estimated_tokens,
-            page_count=len(service.store.list_pages(session.id)),
+            page_count=len(service.store.list_pages(source_session.id)),
             loaded_pages=len(pages),
             dropped_pages=len(context.dropped_pages),
             dropped_page_details=[item.model_dump() for item in context.dropped_pages],

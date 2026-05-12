@@ -81,6 +81,9 @@ def eval_run(
     run_id: str | None = None,
     baseline: Annotated[list[str] | None, Option("--baseline", "-b")] = None,
     isolated: bool = True,
+    case_set: Annotated[
+        str, Option("--case-set", "-c", help="builtin | advanced | hard | all")
+    ] = "builtin",
 ) -> None:
     """Run the built-in demo benchmark."""
     settings = get_settings()
@@ -90,6 +93,7 @@ def eval_run(
         run_id=eval_run_id,
         baselines=baseline or ["all"],
         isolated=isolated,
+        case_set=case_set,
     )
     table = Table(*EVAL_TABLE_COLUMNS)
     for row in _eval_table_rows(results):

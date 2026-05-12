@@ -55,9 +55,10 @@ class LLMJudge:
         if not settings.openai_api_key:
             raise ValueError("openai_api_key required for LLM judge")
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model=settings.memoryos_model,
             api_key=SecretStr(settings.openai_api_key),
             temperature=0.0,
+            **({"base_url": settings.openai_base_url} if settings.openai_base_url else {}),
         )
 
     def judge(self, case: EvalCase, answer: str) -> JudgeVerdict:
