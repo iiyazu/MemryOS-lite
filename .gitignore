@@ -14,3 +14,4 @@ htmlcov/
 .env.local
 .idea/
 .vscode/
+.claude/
