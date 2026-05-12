@@ -7,6 +7,7 @@ from pydantic import SecretStr
 
 from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
+from memoryos_lite.conflict import ConflictDetector
 from memoryos_lite.observability import (
     CONTEXT_BUDGET_USED_RATIO,
     CONTEXT_BUILD_SECONDS,
@@ -364,6 +365,7 @@ class MemoryOSService:
         self.searcher: Searcher = HybridSearcher(lexical=lexical, embedding=embedding)
         self.context_builder = ContextBuilder(self.tokenizer, self.searcher, self.settings)
         self.dynamic_budget = DynamicBudget(self.settings, self.tokenizer)
+        self.conflict_detector = ConflictDetector(lexical)
 
     def _default_embedding_client(self) -> EmbeddingClient | None:
         if not self.settings.openai_api_key:
@@ -560,12 +562,28 @@ class MemoryOSService:
         self._require_session(session_id)
         page = self.store.load_page(patch.target_page_id) if patch.target_page_id else None
         messages = self.store.list_messages(session_id)
+        pages = self.store.list_pages(session_id)
+        conflicts = self.conflict_detector.detect(patch, pages)
         verified = self.patch_verifier.verify(patch, page, messages)
+        if conflicts:
+            conflict_msgs = [
+                f"[{c.severity}] {c.reason}: '{c.conflicting_text}'" for c in conflicts
+            ]
+            verified.errors.extend(conflict_msgs)
+            if any(c.severity == "error" for c in conflicts):
+                verified.verified = False
         self.store.save_patch(verified)
         self.trace(
             session_id,
             "patch_verified" if verified.verified else "patch_rejected",
-            {"patch_id": verified.id, "errors": verified.errors},
+            {
+                "patch_id": verified.id,
+                "errors": verified.errors,
+                "conflicts": [
+                    {"page_id": c.page_id, "reason": c.reason, "severity": c.severity}
+                    for c in conflicts
+                ],
+            },
         )
         return verified
 
