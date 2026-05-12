@@ -11,14 +11,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **M2-B**: Hybrid retrieval — `src/memoryos_lite/retrieval/` package (BM25 lexical + embedding cosine + RRF fusion) wired into `MemoryOSService`; embeddings computed on `page()` save; legacy `MemorySearcher` removed
 - **M2-C**: DynamicBudget (adaptive context budget) + Prometheus observability (`/metrics` endpoint, 8 business metrics)
 - **M3**: Conflict detection layer — `ConflictDetector` uses BM25 + negation heuristics to flag patches that contradict existing facts/decisions
+- **M4**: LLM eval mode — `LLMJudge` (GPT-as-judge) for semantic accuracy evaluation; `run_eval_llm()` in evals.py
 
 ### In Progress
-- _(none — next milestone M4)_
+- _(none — next milestone M5)_
 
 ### Next Steps (in order)
-1. M4: LLM eval mode (GPT-as-judge for semantic accuracy)
-2. M5: Performance / P95 latency optimization
-3. M6: README rewrite + GitHub push + portfolio presentation
+1. M5: Performance / P95 latency optimization
+2. M6: README rewrite + GitHub push + portfolio presentation
 
 ### Key Documents
 - `memoryos-lite-design.md` — Full design rationale and 10-day milestone plan
@@ -29,7 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Core workflow
-uv run pytest -q                           # 运行所有测试 (54 cases, ~60s)
+uv run pytest -q                           # 运行所有测试 (58 cases, ~60s)
 uv run ruff check . && uv run ruff format --check .  # Lint + format check
 uv run mypy src                            # 类型检查
 
@@ -71,6 +71,7 @@ uv run alembic upgrade head                # 应用数据库迁移
   - `providers/openai.py` — OpenAI text-embedding-3-small wrapper
 - **budget.py** — DynamicBudget：根据 session 状态（页面数、消息量、任务复杂度）自适应计算 context budget，范围 [rot_safe_budget, hard_limit]
 - **conflict.py** — ConflictDetector：BM25 检索相关页面 + 否定模式匹配，检测 patch 与已有 facts/decisions 的语义冲突
+- **llm_judge.py** — LLMJudge：GPT-as-judge 语义评估，判断 answer 是否满足 expected_facts 且不含 forbidden_facts
 - **observability.py** — Prometheus 业务指标（8 个 Counter/Histogram），通过 `/metrics` ASGI 端点暴露
 - **graphs.py** — LangGraph 状态机：ingest → 条件分页 → build_context
 - **tokenizer.py** — tiktoken 封装，带正则回退
@@ -131,5 +132,5 @@ Ruff 规则：E, F, I, UP, B。行宽 100。目标 Python 3.11。mypy 忽略 pgv
 
 - Commit messages: `type(scope): description` — e.g. `feat(M2-A): Postgres + pgvector + Alembic baseline`
 - Branch: 当前在 `master`，计划 M6 推 GitHub 时切 `main`
-- Tests: 所有 54 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
+- Tests: 所有 58 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
 - CI: 每次 push 自动跑 ruff + format-check + mypy + pytest
