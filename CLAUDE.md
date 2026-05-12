@@ -30,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Core workflow
-uv run pytest -q                           # 运行所有测试 (63 cases, ~60s)
+uv run pytest -q                           # 运行所有测试 (70 cases, ~60s)
 uv run ruff check . && uv run ruff format --check .  # Lint + format check
 uv run mypy src                            # 类型检查
 
@@ -133,5 +133,5 @@ Ruff 规则：E, F, I, UP, B。行宽 100。目标 Python 3.11。mypy 忽略 pgv
 
 - Commit messages: `type(scope): description` — e.g. `feat(M2-A): Postgres + pgvector + Alembic baseline`
 - Branch: 当前在 `master`，计划 M6 推 GitHub 时切 `main`
-- Tests: 所有 63 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
+- Tests: 所有 70 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
 - CI: 每次 push 自动跑 ruff + format-check + mypy + pytest

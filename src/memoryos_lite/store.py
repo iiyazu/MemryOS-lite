@@ -240,7 +240,6 @@ class MemoryStore:
         page_dir.mkdir(parents=True, exist_ok=True)
         page_path = page_dir / f"{page.id}.json"
         content_json = page.model_dump_json(indent=2)
-        page_path.write_text(content_json, encoding="utf-8")
         with self.db() as db:
             db.add(
                 PageRecord(
@@ -257,6 +256,7 @@ class MemoryStore:
                     updated_at=page.updated_at,
                 )
             )
+        page_path.write_text(content_json, encoding="utf-8")
         return page
 
     def set_page_embedding(self, page_id: str, embedding: list[float]) -> None:
