@@ -9,16 +9,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **M1**: Docker + docker-compose + Makefile + GitHub Actions CI + pre-commit
 - **M2-A**: Postgres + pgvector + Alembic baseline migration (`0001_m2_baseline`)
 - **M2-B**: Hybrid retrieval — `src/memoryos_lite/retrieval/` package (BM25 lexical + embedding cosine + RRF fusion) wired into `MemoryOSService`; embeddings computed on `page()` save; legacy `MemorySearcher` removed
+- **M2-C**: DynamicBudget (adaptive context budget) + Prometheus observability (`/metrics` endpoint, 8 business metrics)
 
 ### In Progress
-- _(none — next milestone M2-C)_
+- _(none — next milestone M3)_
 
 ### Next Steps (in order)
-1. M2-C: Dynamic budget (DynamicBudget class) + Prometheus business metrics (`observability.py`)
-2. M3: Conflict detection layer (memory_patches.conflict_layer)
-3. M4: LLM eval mode (GPT-as-judge for semantic accuracy)
-4. M5: Performance / P95 latency optimization
-5. M6: README rewrite + GitHub push + portfolio presentation
+1. M3: Conflict detection layer (memory_patches.conflict_layer)
+2. M4: LLM eval mode (GPT-as-judge for semantic accuracy)
+3. M5: Performance / P95 latency optimization
+4. M6: README rewrite + GitHub push + portfolio presentation
 
 ### Key Documents
 - `memoryos-lite-design.md` — Full design rationale and 10-day milestone plan
@@ -29,7 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Core workflow
-uv run pytest -q                           # 运行所有测试 (40 cases, ~60s)
+uv run pytest -q                           # 运行所有测试 (48 cases, ~60s)
 uv run ruff check . && uv run ruff format --check .  # Lint + format check
 uv run mypy src                            # 类型检查
 
@@ -69,9 +69,11 @@ uv run alembic upgrade head                # 应用数据库迁移
   - `hybrid.py` — RRF fusion of lexical + embedding, with graceful single-source fallback
   - `providers/fake.py` — 确定性 hash-based embedder (测试用)
   - `providers/openai.py` — OpenAI text-embedding-3-small wrapper
+- **budget.py** — DynamicBudget：根据 session 状态（页面数、消息量、任务复杂度）自适应计算 context budget，范围 [rot_safe_budget, hard_limit]
+- **observability.py** — Prometheus 业务指标（8 个 Counter/Histogram），通过 `/metrics` ASGI 端点暴露
 - **graphs.py** — LangGraph 状态机：ingest → 条件分页 → build_context
 - **tokenizer.py** — tiktoken 封装，带正则回退
-- **api/app.py** — FastAPI REST 端点
+- **api/app.py** — FastAPI REST 端点 + `/metrics` Prometheus endpoint
 - **cli.py** — Typer CLI（`memoryos` 命令）
 - **evals.py** — 内置基准测试框架（81 个确定性用例，多种 baseline）
 
@@ -128,5 +130,5 @@ Ruff 规则：E, F, I, UP, B。行宽 100。目标 Python 3.11。mypy 忽略 pgv
 
 - Commit messages: `type(scope): description` — e.g. `feat(M2-A): Postgres + pgvector + Alembic baseline`
 - Branch: 当前在 `master`，计划 M6 推 GitHub 时切 `main`
-- Tests: 所有 40 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
+- Tests: 所有 48 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
 - CI: 每次 push 自动跑 ruff + format-check + mypy + pytest

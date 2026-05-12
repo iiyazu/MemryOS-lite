@@ -1,10 +1,22 @@
+import time
 from typing import Any, Protocol
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
+from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
+from memoryos_lite.observability import (
+    CONTEXT_BUDGET_USED_RATIO,
+    CONTEXT_BUILD_SECONDS,
+    CONTEXT_TOKENS,
+    EMBEDDING_SECONDS,
+    INGEST_TOTAL,
+    PAGE_ERRORS_TOTAL,
+    PAGE_TOTAL,
+    RETRIEVAL_HITS,
+)
 from memoryos_lite.retrieval import (
     EmbeddingClient,
     EmbeddingSearcher,
@@ -351,6 +363,7 @@ class MemoryOSService:
         )
         self.searcher: Searcher = HybridSearcher(lexical=lexical, embedding=embedding)
         self.context_builder = ContextBuilder(self.tokenizer, self.searcher, self.settings)
+        self.dynamic_budget = DynamicBudget(self.settings, self.tokenizer)
 
     def _default_embedding_client(self) -> EmbeddingClient | None:
         if not self.settings.openai_api_key:
@@ -367,6 +380,7 @@ class MemoryOSService:
 
     def ingest(self, session_id: str, request: MessageCreate) -> IngestResponse:
         self._require_session(session_id)
+        INGEST_TOTAL.inc()
         message = Message(
             session_id=session_id,
             role=request.role,
@@ -422,6 +436,7 @@ class MemoryOSService:
             return None
         errors = self.page_verifier.verify(draft, messages)
         if errors:
+            PAGE_ERRORS_TOTAL.labels(stage="verify").inc()
             self.trace(
                 session_id,
                 "paging_rejected",
@@ -431,6 +446,7 @@ class MemoryOSService:
         page = MemoryPage(session_id=session_id, **draft.model_dump())
         self.store.save_page(page)
         self._index_page_embedding(page)
+        PAGE_TOTAL.labels(mode=paging_mode).inc()
         self.trace(
             session_id,
             "page_committed",
@@ -460,15 +476,18 @@ class MemoryOSService:
         )
         if not text.strip():
             return
+        t0 = time.perf_counter()
         try:
             vector = self.embedding_client.embed(text)
         except Exception as exc:
+            PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
             self.trace(
                 page.session_id,
                 "embedding_failed",
                 {"page_id": page.id, "error": str(exc)},
             )
             return
+        EMBEDDING_SECONDS.observe(time.perf_counter() - t0)
         if not vector:
             return
         self.store.set_page_embedding(page.id, vector)
@@ -477,26 +496,36 @@ class MemoryOSService:
         self,
         session_id: str,
         task: str,
-        budget: int,
+        budget: int | None = None,
         retrieval_query: str | None = None,
     ) -> ContextPackage:
         self._require_session(session_id)
+        t0 = time.perf_counter()
         messages = self.store.list_messages(session_id)
         pages = self.store.list_pages(session_id)
+        effective_budget = (
+            budget if budget is not None else self.dynamic_budget.compute(messages, pages, task)
+        )
         package = self.context_builder.build(
             session_id=session_id,
             task=task,
             messages=messages,
             pages=pages,
-            budget=budget,
+            budget=effective_budget,
             retrieval_query=retrieval_query,
         )
+        elapsed = time.perf_counter() - t0
+        CONTEXT_BUILD_SECONDS.observe(elapsed)
+        CONTEXT_TOKENS.observe(package.estimated_tokens)
+        if effective_budget > 0:
+            CONTEXT_BUDGET_USED_RATIO.observe(package.estimated_tokens / effective_budget)
         self.trace(
             session_id,
             "context_built",
             {
                 "task": task,
-                "budget": budget,
+                "budget": effective_budget,
+                "budget_source": "explicit" if budget is not None else "dynamic",
                 "estimated_tokens": package.estimated_tokens,
                 "task_tokens": package.task_tokens,
                 "task_truncated": package.task_truncated,
@@ -515,6 +544,7 @@ class MemoryOSService:
     def search(self, query: str, top_k: int = 5, session_id: str | None = None) -> list[SearchHit]:
         pages = self.store.list_pages(session_id)
         hits = self.searcher.search(pages, query, top_k=top_k)
+        RETRIEVAL_HITS.observe(len(hits))
         if session_id is not None:
             self.trace(
                 session_id,

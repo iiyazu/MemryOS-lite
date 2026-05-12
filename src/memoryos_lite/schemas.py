@@ -118,7 +118,7 @@ class TraceEvent(BaseModel):
 
 class BuildContextRequest(BaseModel):
     task: str
-    budget: int = 1_200
+    budget: int | None = None
     retrieval_query: str | None = None
 
 
