@@ -12,13 +12,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **M2-C**: DynamicBudget (adaptive context budget) + Prometheus observability (`/metrics` endpoint, 8 business metrics)
 - **M3**: Conflict detection layer — `ConflictDetector` uses BM25 + negation heuristics to flag patches that contradict existing facts/decisions
 - **M4**: LLM eval mode — `LLMJudge` (GPT-as-judge) for semantic accuracy evaluation; `run_eval_llm()` in evals.py
+- **M5**: Performance / P95 latency — LRU-cached token counting (`_count_tokens` maxsize=1024), BM25 corpus caching (fingerprint = page ID + version, avoids index rebuild on repeated searches)
+- **M6**: README rewrite for portfolio presentation
 
 ### In Progress
-- _(none — next milestone M5)_
+- _(none)_
 
 ### Next Steps (in order)
-1. M5: Performance / P95 latency optimization
-2. M6: README rewrite + GitHub push + portfolio presentation
+- GitHub push when ready
 
 ### Key Documents
 - `memoryos-lite-design.md` — Full design rationale and 10-day milestone plan
@@ -29,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Core workflow
-uv run pytest -q                           # 运行所有测试 (58 cases, ~60s)
+uv run pytest -q                           # 运行所有测试 (63 cases, ~60s)
 uv run ruff check . && uv run ruff format --check .  # Lint + format check
 uv run mypy src                            # 类型检查
 
@@ -132,5 +133,5 @@ Ruff 规则：E, F, I, UP, B。行宽 100。目标 Python 3.11。mypy 忽略 pgv
 
 - Commit messages: `type(scope): description` — e.g. `feat(M2-A): Postgres + pgvector + Alembic baseline`
 - Branch: 当前在 `master`，计划 M6 推 GitHub 时切 `main`
-- Tests: 所有 58 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
+- Tests: 所有 63 个测试必须在 SQLite 上通过；Postgres 验证通过 docker-compose
 - CI: 每次 push 自动跑 ruff + format-check + mypy + pytest
