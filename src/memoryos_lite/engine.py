@@ -7,7 +7,7 @@ from pydantic import SecretStr
 
 from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
-from memoryos_lite.conflict import ConflictDetector
+from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
 from memoryos_lite.observability import (
     CONTEXT_BUDGET_USED_RATIO,
     CONTEXT_BUILD_SECONDS,
@@ -23,6 +23,8 @@ from memoryos_lite.retrieval import (
     EmbeddingSearcher,
     HybridSearcher,
     LexicalSearcher,
+    LLMReranker,
+    QueryRewriter,
     Searcher,
     SearchHit,
 )
@@ -98,6 +100,23 @@ class OpenAIPageDraftClient:
         return result
 
 
+# Markers the heuristic pager uses to identify messages that supersede prior
+# state ("I've moved to …", "changed to …"). Kept at module scope so the
+# intra-draft conflict sweep can prioritise these items when rebuilding
+# ``page.summary`` after pruning.
+_UPDATE_MARKERS: tuple[str, ...] = (
+    "更新",
+    "改为",
+    "搬到",
+    "不再",
+    "已经搬",
+    "不住",
+    "替换",
+    "纠正",
+    "其实",
+)
+
+
 class PagingAgent:
     def __init__(
         self,
@@ -108,6 +127,11 @@ class PagingAgent:
         self.settings = settings
         self.llm_client = llm_client
         self.llm_init_error = llm_init_error
+        # Used as a signal for "this fact looks structured" when ranking
+        # which facts make it into ``page.summary``.
+        from memoryos_lite.conflict import SlotExtractor
+
+        self._slot_extractor = SlotExtractor()
 
     def create_draft(
         self,
@@ -141,12 +165,17 @@ class PagingAgent:
         decisions: list[str] = []
         open_questions: list[str] = []
         tool_notes: list[str] = []
+        updates: list[str] = []  # override/correction signals
+        update_markers = _UPDATE_MARKERS
         for message in page_messages:
             compact = self._compact(message.content)
             if not compact:
                 continue
             if message.role == Role.TOOL:
                 tool_notes.append(compact)
+            elif any(marker in compact for marker in update_markers):
+                updates.append(compact)
+                facts.append(compact)
             elif any(marker in compact for marker in ("决定", "选择", "不做", "不要", "最终")):
                 decisions.append(compact)
             elif "?" in compact or "？" in compact or "如何" in compact:
@@ -154,13 +183,54 @@ class PagingAgent:
             else:
                 facts.append(compact)
         title = self._title(page_messages)
-        summary_parts = facts[:3] + decisions[:3] + tool_notes[:2]
-        summary = "；".join(summary_parts) if summary_parts else "历史会话片段摘要"
+        # Summary prioritises: (a) overrides/updates (latest state wins),
+        # (b) earliest facts (for continuity), (c) decisions, (d) tool notes.
+        # This ensures "我已经搬到上海" beats "我住在北京" in summary visibility.
+        summary_parts: list[str] = []
+        seen: set[str] = set()
+
+        def _add(text: str) -> None:
+            if text and text not in seen:
+                summary_parts.append(text)
+                seen.add(text)
+
+        for item in updates[-2:]:
+            _add(item)
+        # Rank facts by informativeness before the truncation slice.
+        # A fact is "structured" — and earns priority placement — when
+        # its text yields a ``subject+verb+value`` slot parse (e.g.
+        # "我搬到上海", "我喜欢用 Vim"). Chit-chat like "已记录" and
+        # unbounded-noise facts without a structured verb fall through
+        # to the low-priority bucket. Ordering within each bucket is
+        # preserved to keep the "earliest facts win" continuity
+        # invariant.
+        #
+        # **Why slot-only (not colon-heuristic)**: labelled noise such
+        # as "第 1 段无关长噪声：…" or "旧方向：Runbook…" also contains
+        # a ``：`` but is precisely what the summary should NOT
+        # surface. The slot extractor's verb allow-list is narrow
+        # enough to keep those out while still catching moved-residence
+        # / tool-choice updates.
+        def _is_informative(text: str) -> bool:
+            return bool(self._slot_extractor.extract(text))
+
+        informative_facts = [f for f in facts if _is_informative(f)]
+        other_facts = [f for f in facts if f not in informative_facts]
+        ranked_facts = [*informative_facts, *other_facts]
+        for item in ranked_facts[:3]:
+            _add(item)
+        for item in decisions[:3]:
+            _add(item)
+        for item in tool_notes[:2]:
+            _add(item)
+        summary = "；".join(summary_parts[:6]) if summary_parts else "历史会话片段摘要"
         page_type = (
             PageType.TOOL_OBSERVATION if tool_notes and not facts else PageType.SOURCE_SUMMARY
         )
         if decisions:
             page_type = PageType.DECISION
+        elif self._looks_like_profile(facts):
+            page_type = PageType.CORE_PROFILE
         return MemoryPageDraft(
             page_type=page_type,
             title=title,
@@ -178,6 +248,30 @@ class PagingAgent:
         if len(cleaned) > 180:
             return cleaned[:177] + "..."
         return cleaned
+
+    @staticmethod
+    def _looks_like_profile(facts: list[str]) -> bool:
+        text = " ".join(facts)
+        profile_markers = (
+            "自我介绍",
+            "我是一名",
+            "我的职业",
+            "职业背景",
+            "技术栈",
+            "我喜欢",
+            "我偏好",
+            "我习惯",
+            "我住在",
+            "我现在住",
+            "I am ",
+            "I'm ",
+            "my role",
+            "my background",
+            "I prefer",
+            "I like",
+            "I live",
+        )
+        return any(marker in text for marker in profile_markers)
 
     def _title(self, messages: list[Message]) -> str:
         for message in messages:
@@ -362,7 +456,30 @@ class MemoryOSService:
             if self.embedding_client is not None
             else None
         )
-        self.searcher: Searcher = HybridSearcher(lexical=lexical, embedding=embedding)
+        query_rewriter = (
+            QueryRewriter(
+                model=self.settings.memoryos_model,
+                api_key=self.settings.openai_api_key,
+                base_url=self.settings.openai_base_url,
+            )
+            if self.settings.openai_api_key
+            else None
+        )
+        reranker = (
+            LLMReranker(
+                model=self.settings.memoryos_model,
+                api_key=self.settings.openai_api_key,
+                base_url=self.settings.openai_base_url,
+            )
+            if self.settings.openai_api_key
+            else None
+        )
+        self.searcher: Searcher = HybridSearcher(
+            lexical=lexical,
+            embedding=embedding,
+            query_rewriter=query_rewriter,
+            reranker=reranker,
+        )
         self.context_builder = ContextBuilder(self.tokenizer, self.searcher, self.settings)
         self.dynamic_budget = DynamicBudget(self.settings, self.tokenizer)
         self.conflict_detector = ConflictDetector(lexical)
@@ -391,9 +508,8 @@ class MemoryOSService:
             token_count=self.tokenizer.count(request.content),
         )
         self.store.add_message(message)
-        messages = self.store.list_messages(session_id)
-        token_count = sum(item.token_count for item in messages)
-        should_page = self.rot_guard.should_page(messages)
+        token_count = self.store.session_token_count(session_id)
+        should_page = token_count >= self.settings.rot_safe_budget
         self.trace(
             session_id,
             "message_ingested",
@@ -410,8 +526,7 @@ class MemoryOSService:
         )
 
     def maybe_page(self, session_id: str) -> MemoryPage | None:
-        messages = self.store.list_messages(session_id)
-        if not self.rot_guard.should_page(messages):
+        if self.store.session_token_count(session_id) < self.settings.rot_safe_budget:
             self.trace(session_id, "paging_skipped", {"reason": "below_rot_safe_budget"})
             return None
         return self.page(session_id)
@@ -445,9 +560,17 @@ class MemoryOSService:
                 {"errors": errors, "paging_mode": paging_mode, "paging_error": paging_error},
             )
             return None
+        dropped = self._drop_intra_draft_conflicts(draft)
+        if dropped:
+            self.trace(
+                session_id,
+                "intra_draft_conflicts_dropped",
+                {"dropped": dropped, "paging_mode": paging_mode},
+            )
         page = MemoryPage(session_id=session_id, **draft.model_dump())
         self.store.save_page(page)
         self._index_page_embedding(page)
+        self._supersede_conflicting_pages(session_id, page)
         PAGE_TOTAL.labels(mode=paging_mode).inc()
         self.trace(
             session_id,
@@ -460,6 +583,167 @@ class MemoryOSService:
             },
         )
         return page
+
+    def _drop_intra_draft_conflicts(self, draft: MemoryPageDraft) -> list[str]:
+        """Drop older slot-conflicting entries inside a single draft.
+
+        When a conversation revises a fact ("数据库选 PostgreSQL" → later
+        "数据库改用 MySQL") mid-window, both statements land in the same
+        page draft and cancel each other out at retrieval time. We use the
+        ConflictDetector's slot logic to find contradicting pairs inside
+        the draft itself and drop whichever appears FIRST (the heuristic
+        pager appends in message order, so index 0 is oldest).
+
+        Returns the list of dropped statements for tracing.
+        """
+        slot_extractor = self.conflict_detector.slot_extractor
+        dropped: list[str] = []
+        # Track the OLD values that were replaced by a later statement. After
+        # pruning direct contradictions we sweep surviving items once more to
+        # drop any that still reference an obsolete value — e.g. "部署 Redis
+        # cluster" after "缓存层切换到 Memcached" replaces the cache choice.
+        superseded_values: set[str] = set()
+
+        def _record_superseded(current: str, later_items: list[str]) -> None:
+            """Stash OLD values so second-pass sweep can drop stragglers."""
+            current_slots = slot_extractor.extract(current)
+            if current_slots:
+                for slot in current_slots:
+                    if slot.value:
+                        superseded_values.add(slot.value)
+                return
+            for later in later_items:
+                later_slots = slot_extractor.extract(later)
+                if not later_slots:
+                    continue
+                for core in (slot.subject for slot in later_slots):
+                    val = _extract_implicit_value(current, core)
+                    if val:
+                        superseded_values.add(val)
+
+        def _shadowed_by_later(current: str, later_items: list[str]) -> bool:
+            """Does any later statement contradict ``current``?
+
+            Checks both the verb-based slot path (both sides have a slot) and
+            the implicit-value path (current is a verb-less ``subject value``
+            statement like "预算 5 万美元" that is later overwritten).
+            """
+            current_slots = slot_extractor.extract(current)
+            for later in later_items:
+                later_slots = slot_extractor.extract(later)
+                if not later_slots:
+                    continue
+                # Verb-based: current has its own slot and they contradict.
+                if current_slots and any(
+                    self.conflict_detector._slot_conflict([ls], cs)
+                    for cs in current_slots
+                    for ls in later_slots
+                ):
+                    return True
+                # Implicit: current has no verb slot, but later's subject
+                # locates a quantity inside current that differs.
+                if (
+                    not current_slots
+                    and self.conflict_detector._implicit_value_conflict(later_slots, current)
+                    is not None
+                ):
+                    return True
+            return False
+
+        def _prune(items: list[str]) -> list[str]:
+            surviving: list[str] = []
+            for i, current in enumerate(items):
+                if _shadowed_by_later(current, items[i + 1 :]):
+                    dropped.append(current)
+                    _record_superseded(current, items[i + 1 :])
+                else:
+                    surviving.append(current)
+            # Second pass: drop leftovers that still reference a replaced
+            # value. Only triggers when a real supersession happened above,
+            # and requires a non-trivial value (≥3 chars) to avoid matching
+            # short common tokens.
+            if not superseded_values:
+                return surviving
+            filtered: list[str] = []
+            for item in surviving:
+                stale = next(
+                    (v for v in superseded_values if len(v) >= 3 and v in item),
+                    None,
+                )
+                if stale is not None:
+                    dropped.append(item)
+                else:
+                    filtered.append(item)
+            return filtered
+
+        draft.facts = _prune(draft.facts)
+        draft.decisions = _prune(draft.decisions)
+        if dropped:
+            # Rebuild summary to mirror the heuristic pager's priority:
+            # update-flagged facts first (latest state wins), then decisions,
+            # then other facts. Without this prioritisation the old ``[:3]``
+            # slice could omit the update itself when it landed after
+            # filler messages, leaving the summary empty of the very fact
+            # the user wanted remembered (ticket #3).
+            separator = "；"
+            updates_in_facts = [
+                f for f in draft.facts if any(m in f for m in _UPDATE_MARKERS)
+            ]
+            other_facts = [f for f in draft.facts if f not in updates_in_facts]
+            parts: list[str] = []
+            for item in (
+                *updates_in_facts[-2:],
+                *draft.decisions[:3],
+                *other_facts[:3],
+            ):
+                if item and item not in parts:
+                    parts.append(item)
+            draft.summary = separator.join(parts[:6]) if parts else "历史会话片段摘要"
+        return dropped
+
+    def _supersede_conflicting_pages(self, session_id: str, new_page: MemoryPage) -> None:
+        """Mark older pages superseded when ``new_page`` conflicts with them.
+
+        Runs at the end of ``page()`` and is best-effort — detector errors
+        never block paging. Each superseded page is persisted with
+        ``superseded_by = new_page.id`` so that retrieval and context
+        building can skip it, and a ``page_superseded`` trace event is
+        emitted for observability.
+        """
+        existing = [
+            p
+            for p in self.store.list_pages(session_id)
+            if p.id != new_page.id and p.superseded_by is None
+        ]
+        if not existing:
+            return
+        try:
+            conflicts = self.conflict_detector.detect_page_conflicts(new_page, existing)
+        except Exception as exc:  # pragma: no cover — defensive
+            self.trace(
+                session_id,
+                "conflict_detection_failed",
+                {"new_page_id": new_page.id, "error": str(exc)},
+            )
+            return
+        superseded_ids: set[str] = set()
+        for conflict in conflicts:
+            if conflict.page_id in superseded_ids:
+                continue
+            updated = self.store.mark_page_superseded(conflict.page_id, new_page.id)
+            if updated is None:
+                continue
+            superseded_ids.add(conflict.page_id)
+            self.trace(
+                session_id,
+                "page_superseded",
+                {
+                    "old_page_id": conflict.page_id,
+                    "new_page_id": new_page.id,
+                    "conflicting_text": conflict.conflicting_text,
+                    "reason": conflict.reason,
+                },
+            )
 
     def _index_page_embedding(self, page: MemoryPage) -> None:
         if self.embedding_client is None:
@@ -500,11 +784,18 @@ class MemoryOSService:
         task: str,
         budget: int | None = None,
         retrieval_query: str | None = None,
+        include_global_core: bool = False,
     ) -> ContextPackage:
         self._require_session(session_id)
         t0 = time.perf_counter()
         messages = self.store.list_messages(session_id)
-        pages = self.store.list_pages(session_id)
+        pages = [p for p in self.store.list_pages(session_id) if p.superseded_by is None]
+        if include_global_core:
+            global_cores = [
+                p for p in self.store.list_global_core_pages() if p.superseded_by is None
+            ]
+            existing_ids = {p.id for p in pages}
+            pages.extend(p for p in global_cores if p.id not in existing_ids)
         effective_budget = (
             budget if budget is not None else self.dynamic_budget.compute(messages, pages, task)
         )
@@ -543,8 +834,19 @@ class MemoryOSService:
         )
         return package
 
-    def search(self, query: str, top_k: int = 5, session_id: str | None = None) -> list[SearchHit]:
-        pages = self.store.list_pages(session_id)
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        session_id: str | None = None,
+        limit: int | None = None,
+        include_superseded: bool = False,
+    ) -> list[SearchHit]:
+        if session_id is None and limit is None:
+            limit = 500
+        pages = self.store.list_pages(session_id, limit=limit)
+        if not include_superseded:
+            pages = [p for p in pages if p.superseded_by is None]
         hits = self.searcher.search(pages, query, top_k=top_k)
         RETRIEVAL_HITS.observe(len(hits))
         if session_id is not None:
