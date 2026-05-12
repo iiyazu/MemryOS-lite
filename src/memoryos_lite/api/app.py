@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
+from prometheus_client import make_asgi_app
 
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
@@ -23,6 +24,7 @@ def get_service() -> MemoryOSService:
 
 ServiceDep = Annotated[MemoryOSService, Depends(get_service)]
 app = FastAPI(title="MemoryOS Lite", version="0.1.0")
+app.mount("/metrics", make_asgi_app())
 
 
 @app.get("/health")

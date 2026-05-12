@@ -32,7 +32,7 @@ def build_memory_graph(service: MemoryOSService):
             "context": service.build_context(
                 state["session_id"],
                 task=state.get("task", ""),
-                budget=state.get("budget", service.settings.rot_safe_budget),
+                budget=state.get("budget"),
             ),
         }
 
