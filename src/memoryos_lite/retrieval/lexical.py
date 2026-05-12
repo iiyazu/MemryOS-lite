@@ -1,13 +1,6 @@
-"""BM25 lexical searcher.
+"""BM25 lexical searcher with corpus caching (M5).
 
-Upgrades the legacy term-overlap scoring to true BM25 via ``rank-bm25``.
-Tokenization keeps the original bilingual shape: Latin words + CJK
-unigrams + CJK bigrams, so Chinese queries that previously worked
-continue to.
-
-The index is rebuilt on every ``search`` call. For the M2 corpus size
-(≤ a few hundred pages per session) this is cheap. The design note in
-``docs/store-interface.md`` marks caching as an M5 concern.
+Index is rebuilt only when the page set changes (detected via page ID + version fingerprint).
 """
 
 from __future__ import annotations
@@ -40,26 +33,40 @@ def _page_text(page: MemoryPage) -> str:
 
 
 class LexicalSearcher:
+    def __init__(self) -> None:
+        self._cache_key: tuple[tuple[str, int], ...] | None = None
+        self._cached_tokenized: list[list[str]] = []
+        self._cached_bm25: BM25Okapi | None = None
+
+    def _corpus_key(self, pages: list[MemoryPage]) -> tuple[tuple[str, int], ...]:
+        return tuple((p.id, p.version) for p in pages)
+
+    def _get_index(self, pages: list[MemoryPage]) -> tuple[list[list[str]], BM25Okapi | None]:
+        key = self._corpus_key(pages)
+        if key == self._cache_key and self._cached_bm25 is not None:
+            return self._cached_tokenized, self._cached_bm25
+        tokenized = [tokenize(_page_text(page)) for page in pages]
+        bm25 = BM25Okapi(tokenized) if any(tokenized) else None
+        self._cache_key = key
+        self._cached_tokenized = tokenized
+        self._cached_bm25 = bm25
+        return tokenized, bm25
+
     def search(self, pages: list[MemoryPage], query: str, top_k: int = 5) -> list[SearchHit]:
         if not pages:
             return []
-        tokenized = [tokenize(_page_text(page)) for page in pages]
-        if not any(tokenized):
+        tokenized, bm25 = self._get_index(pages)
+        if bm25 is None:
             return []
         query_tokens = tokenize(query)
         if not query_tokens:
             return []
 
-        # Only rank pages whose vocabulary actually intersects the query.
-        # BM25Okapi returns negative scores on tiny corpora where a term
-        # appears in >50% of documents (IDF flips sign), so we can't gate on
-        # ``score > 0`` — an intersecting-vocab check is the correct filter.
         query_set = set(query_tokens)
         matching_indices = [i for i, doc in enumerate(tokenized) if query_set.intersection(doc)]
         if not matching_indices:
             return []
 
-        bm25 = BM25Okapi(tokenized)
         scores = bm25.get_scores(query_tokens)
 
         ranked = sorted(

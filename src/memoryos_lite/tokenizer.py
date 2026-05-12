@@ -1,7 +1,16 @@
 import re
+from functools import lru_cache
 from typing import Any
 
 import tiktoken
+
+
+@lru_cache(maxsize=1024)
+def _count_tokens(text: str, use_tiktoken: bool) -> int:
+    if use_tiktoken:
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    return max(1, len(re.findall(r"\w+|[^\w\s]", text)))
 
 
 class TokenEstimator:
@@ -15,6 +24,4 @@ class TokenEstimator:
     def count(self, text: str) -> int:
         if not text:
             return 0
-        if self._encoding is not None:
-            return len(self._encoding.encode(text))
-        return max(1, len(re.findall(r"\w+|[^\w\s]", text)))
+        return _count_tokens(text, self._encoding is not None)
