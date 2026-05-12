@@ -6,6 +6,7 @@ from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.llm_judge import JudgeVerdict, LLMJudge
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
 from memoryos_lite.store import create_store
@@ -396,6 +397,47 @@ def run_eval(
 
 def run_demo_eval(settings: Settings) -> list[EvalResult]:
     return run_eval(settings, run_id="demo_report", baselines=["all"], isolated=True)
+
+
+def run_eval_llm(
+    settings: Settings,
+    run_id: str,
+    baselines: list[str],
+    isolated: bool = True,
+) -> list[JudgeVerdict]:
+    """Run eval with LLM-as-judge scoring (requires OpenAI API key)."""
+    judge = LLMJudge(settings)
+    eval_root = settings.memoryos_eval_data_dir or settings.data_dir / "eval_runs"
+    run_dir = eval_root / run_id
+    run_settings = settings.model_copy(
+        update={
+            "data_dir": run_dir,
+            "database_url": None,
+            "memoryos_paging_mode": "heuristic",
+            "openai_api_key": None,
+        }
+    )
+    store = create_store(run_settings)
+    if isolated:
+        store.reset()
+    service = MemoryOSService(store=store, settings=run_settings)
+    verdicts: list[JudgeVerdict] = []
+    for case in builtin_cases():
+        messages = _materialize_messages(case)
+        for baseline in _expand_baselines(baselines):
+            output = _run_baseline(baseline, case, messages, service, run_settings)
+            verdict = judge.judge(case, output.answer)
+            verdict.case_id = f"{baseline}/{case.case_id}"
+            verdicts.append(verdict)
+
+    report_dir = settings.data_dir / "evals"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / f"{run_id}_llm_judge.json"
+    report_path.write_text(
+        json.dumps([asdict(v) for v in verdicts], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return verdicts
 
 
 def _run_baseline(
