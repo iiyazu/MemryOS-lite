@@ -11,7 +11,7 @@ Demonstrates:
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -26,12 +26,12 @@ from memoryos_lite.schemas import ContextPackage, MessageCreate, Role
 from memoryos_lite.tools import create_memory_tools
 
 
-class AgentState(dict):
+class AgentState(TypedDict, total=False):
     """State for the agentic memory manager."""
 
     messages: Annotated[list[BaseMessage], add_messages]
     session_id: str
-    intent: str  # "ingest" | "recall" | "update"
+    intent: str
     should_page: bool
     context: ContextPackage | None
     conflict_detected: bool
@@ -126,9 +126,10 @@ def build_agent_graph(
         response = llm_with_tools.invoke([system] + messages)
         return {**state, "messages": [response]}
 
+    tool_node = ToolNode(tools)
+
     def tool_executor_node(state: dict) -> dict:
         """Execute tool calls from the agent."""
-        tool_node = ToolNode(tools)
         return tool_node.invoke(state)
 
     def build_context_node(state: dict) -> dict:
@@ -166,14 +167,12 @@ def build_agent_graph(
             return "tool_executor"
         return "build_context"
 
-    def route_after_conflict(state: dict) -> str:
-        if state.get("conflict_detected"):
-            return "interrupt"
-        return END
+    def route_after_build_context(state: dict) -> str:
+        return "conflict_check" if state.get("intent") == "update" else END
 
     # --- Build graph ---
 
-    graph = StateGraph(dict)
+    graph = StateGraph(AgentState)
 
     # Add nodes
     graph.add_node("router", router_node)
@@ -204,13 +203,13 @@ def build_agent_graph(
         route_after_tool_agent,
         {"tool_executor": "tool_executor", "build_context": "build_context"},
     )
-    graph.add_edge("tool_executor", "conflict_check")
+    graph.add_edge("tool_executor", "tool_agent")
     graph.add_conditional_edges(
-        "conflict_check",
-        route_after_conflict,
-        {"interrupt": END, END: END},
+        "build_context",
+        route_after_build_context,
+        {"conflict_check": "conflict_check", END: END},
     )
-    graph.add_edge("build_context", END)
+    graph.add_edge("conflict_check", END)
 
     # Compile with checkpointer for state persistence
     checkpointer = MemorySaver()

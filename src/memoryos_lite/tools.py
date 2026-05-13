@@ -28,8 +28,7 @@ def create_memory_tools(service: MemoryOSService, session_id: str):
         Returns:
             Formatted search results with page titles and summaries.
         """
-        pages = service.store.list_pages(session_id)
-        hits = service.searcher.search(pages, query, top_k=top_k)
+        hits = service.search(query, top_k=top_k, session_id=session_id)
         if not hits:
             return "No relevant memory pages found."
         lines = []
@@ -111,6 +110,8 @@ def create_memory_tools(service: MemoryOSService, session_id: str):
         }
         if operation not in op_map:
             return f"Invalid operation: {operation}. Use replace, append, or delete."
+        if operation in ("replace", "delete") and not old_text:
+            return f"old_text is required for {operation} operation."
 
         patch = MemoryPatch(
             target_page_id=page_id,
@@ -120,11 +121,14 @@ def create_memory_tools(service: MemoryOSService, session_id: str):
             reason=f"Agent patch: {operation} '{old_text}' -> '{new_text}'",
         )
         verified = service.commit_patch(session_id, patch)
-        if verified.verified:
-            return f"Patch verified for {page_id}: {operation} '{old_text}' -> '{new_text}'"
-        return f"Patch rejected for {page_id}: " + "; ".join(
-            verified.errors or ["verification failed"]
-        )
+        if not verified.verified:
+            return f"Patch rejected for {page_id}: " + "; ".join(
+                verified.errors or ["verification failed"]
+            )
+        applied = service.apply_patch(session_id, verified)
+        if not applied:
+            return f"Patch failed for {page_id}: could not apply to target page."
+        return f"Patch applied to {page_id}: {operation} '{old_text}' -> '{new_text}'"
 
     @tool
     def list_pages() -> str:

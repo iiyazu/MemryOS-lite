@@ -125,14 +125,14 @@ class TraceEvent(BaseModel):
 
 class BuildContextRequest(BaseModel):
     task: str
-    budget: int | None = None
+    budget: int | None = Field(default=None, gt=0)
     retrieval_query: str | None = None
     include_global_core: bool = False
 
 
 class SearchRequest(BaseModel):
     query: str
-    top_k: int = 5
+    top_k: int = Field(default=5, gt=0)
     session_id: str | None = None
     limit: int | None = None
 

@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     openai_base_url: str | None = None
     memoryos_model: str = "gpt-4o-mini"
     memoryos_embedding_model: str = "text-embedding-3-small"
+    memoryos_rewrite_enabled: bool = False
+    memoryos_rerank_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 

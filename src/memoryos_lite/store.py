@@ -51,6 +51,10 @@ class EmbeddingType(TypeDecorator):
     def process_bind_param(self, value, dialect):  # type: ignore[override]
         if value is None:
             return None
+        if len(value) != EMBEDDING_DIM:
+            raise ValueError(
+                f"embedding dimension mismatch: got {len(value)}, expected {EMBEDDING_DIM}"
+            )
         if dialect.name == "postgresql":
             return list(value)
         return json.dumps(list(value))
@@ -292,16 +296,22 @@ class MemoryStore:
             return None
         page.superseded_by = by_page_id
         page.updated_at = utc_now()
+        self.update_page(page)
+        return page
+
+    def update_page(self, page: MemoryPage) -> None:
+        """Persist an already-loaded page back to DB and disk."""
         content_json = page.model_dump_json(indent=2)
         with self.db() as db:
-            record = db.get(PageRecord, page_id)
+            record = db.get(PageRecord, page.id)
             if record is None:
-                return None
+                return
             record.content_json = content_json
             record.updated_at = page.updated_at
+            record.version = page.version
+            record.confidence = int(page.confidence * 100)
             page_path = Path(record.path)
         page_path.write_text(content_json, encoding="utf-8")
-        return page
 
     def get_page_embeddings(self, page_ids: list[str]) -> dict[str, list[float]]:
         if not page_ids:

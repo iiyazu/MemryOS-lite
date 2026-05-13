@@ -42,6 +42,7 @@ from memoryos_lite.schemas import (
     PatchOperation,
     Role,
     TraceEvent,
+    utc_now,
 )
 from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
@@ -196,6 +197,7 @@ class PagingAgent:
 
         for item in updates[-2:]:
             _add(item)
+
         # Rank facts by informativeness before the truncation slice.
         # A fact is "structured" — and earns priority placement — when
         # its text yields a ``subject+verb+value`` slot parse (e.g.
@@ -314,10 +316,19 @@ class PatchVerifier:
         if missing_sources:
             errors.append(f"unknown source refs: {', '.join(missing_sources)}")
         if patch.operation in {PatchOperation.REPLACE, PatchOperation.DELETE}:
+            if not patch.old_text:
+                errors.append("old_text is required for replace/delete")
+            elif page is None:
+                errors.append("target page is required")
+            else:
+                searchable = "\n".join(
+                    [page.summary] + page.facts + page.decisions + page.open_questions
+                )
+                if patch.old_text not in searchable:
+                    errors.append("old_text does not exist in modifiable page fields")
+        elif patch.operation == PatchOperation.ADD:
             if page is None:
                 errors.append("target page is required")
-            elif patch.old_text and patch.old_text not in page.model_dump_json():
-                errors.append("old_text does not exist in target page")
         if patch.new_text and any(marker in patch.new_text for marker in self.protected_markers):
             errors.append("new_text attempts to modify protected memory block")
         patch.errors = errors
@@ -462,7 +473,7 @@ class MemoryOSService:
                 api_key=self.settings.openai_api_key,
                 base_url=self.settings.openai_base_url,
             )
-            if self.settings.openai_api_key
+            if self.settings.memoryos_rewrite_enabled and self.settings.openai_api_key
             else None
         )
         reranker = (
@@ -471,7 +482,7 @@ class MemoryOSService:
                 api_key=self.settings.openai_api_key,
                 base_url=self.settings.openai_base_url,
             )
-            if self.settings.openai_api_key
+            if self.settings.memoryos_rerank_enabled and self.settings.openai_api_key
             else None
         )
         self.searcher: Searcher = HybridSearcher(
@@ -686,9 +697,7 @@ class MemoryOSService:
             # filler messages, leaving the summary empty of the very fact
             # the user wanted remembered (ticket #3).
             separator = "；"
-            updates_in_facts = [
-                f for f in draft.facts if any(m in f for m in _UPDATE_MARKERS)
-            ]
+            updates_in_facts = [f for f in draft.facts if any(m in f for m in _UPDATE_MARKERS)]
             other_facts = [f for f in draft.facts if f not in updates_in_facts]
             parts: list[str] = []
             for item in (
@@ -765,6 +774,10 @@ class MemoryOSService:
         t0 = time.perf_counter()
         try:
             vector = self.embedding_client.embed(text)
+            if not vector:
+                return
+            EMBEDDING_SECONDS.observe(time.perf_counter() - t0)
+            self.store.set_page_embedding(page.id, vector)
         except Exception as exc:
             PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
             self.trace(
@@ -772,11 +785,6 @@ class MemoryOSService:
                 "embedding_failed",
                 {"page_id": page.id, "error": str(exc)},
             )
-            return
-        EMBEDDING_SECONDS.observe(time.perf_counter() - t0)
-        if not vector:
-            return
-        self.store.set_page_embedding(page.id, vector)
 
     def build_context(
         self,
@@ -797,7 +805,9 @@ class MemoryOSService:
             existing_ids = {p.id for p in pages}
             pages.extend(p for p in global_cores if p.id not in existing_ids)
         effective_budget = (
-            budget if budget is not None else self.dynamic_budget.compute(messages, pages, task)
+            min(budget, self.settings.hard_limit)
+            if budget is not None
+            else self.dynamic_budget.compute(messages, pages, task)
         )
         package = self.context_builder.build(
             session_id=session_id,
@@ -863,6 +873,16 @@ class MemoryOSService:
     def commit_patch(self, session_id: str, patch: MemoryPatch) -> MemoryPatch:
         self._require_session(session_id)
         page = self.store.load_page(patch.target_page_id) if patch.target_page_id else None
+        if page is not None and page.session_id != session_id:
+            patch.errors = ["target page belongs to a different session"]
+            patch.verified = False
+            self.store.save_patch(patch)
+            self.trace(
+                session_id,
+                "patch_rejected",
+                {"patch_id": patch.id, "errors": patch.errors, "conflicts": []},
+            )
+            return patch
         messages = self.store.list_messages(session_id)
         pages = self.store.list_pages(session_id)
         conflicts = self.conflict_detector.detect(patch, pages)
@@ -888,6 +908,52 @@ class MemoryOSService:
             },
         )
         return verified
+
+    def apply_patch(self, session_id: str, patch: MemoryPatch) -> bool:
+        """Apply a verified patch to the target page's content. Returns True on success."""
+        if not patch.target_page_id:
+            return False
+        page = self.store.load_page(patch.target_page_id)
+        if page is None:
+            return False
+        if page.session_id != session_id:
+            return False
+        old = patch.old_text or ""
+        new = patch.new_text or ""
+        if patch.operation in (PatchOperation.REPLACE, PatchOperation.DELETE) and not old:
+            return False
+        if patch.operation == PatchOperation.REPLACE:
+            page.summary = page.summary.replace(old, new)
+            page.facts = [f.replace(old, new) for f in page.facts]
+            page.decisions = [d.replace(old, new) for d in page.decisions]
+            page.open_questions = [q.replace(old, new) for q in page.open_questions]
+        elif patch.operation == PatchOperation.ADD:
+            if new:
+                page.facts.append(new)
+        elif patch.operation == PatchOperation.DELETE:
+            page.facts = [f for f in page.facts if old not in f]
+            page.decisions = [d for d in page.decisions if old not in d]
+            page.open_questions = [q for q in page.open_questions if old not in q]
+            page.summary = page.summary.replace(old, "")
+        page.version += 1
+        page.updated_at = utc_now()
+        self.store.update_page(page)
+        self._reindex_page_embedding(session_id, page)
+        return True
+
+    def _reindex_page_embedding(self, session_id: str, page: MemoryPage) -> None:
+        """Recompute embedding for a page after mutation."""
+        if self.embedding_client is None:
+            return
+        text = " ".join(
+            [page.title, page.summary] + page.facts + page.decisions + page.open_questions
+        )
+        try:
+            embedding = self.embedding_client.embed(text)
+            self.store.set_page_embedding(page.id, embedding)
+        except Exception as exc:
+            PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
+            self.trace(session_id, "embedding_failed", {"page_id": page.id, "error": str(exc)})
 
     def trace(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
         self.store.add_trace(

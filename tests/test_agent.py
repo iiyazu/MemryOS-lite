@@ -1,5 +1,9 @@
 """Tests for memory tools and agent graph."""
 
+from unittest.mock import Mock, patch
+
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.store import MemoryStore
@@ -85,8 +89,12 @@ class TestMemoryTools:
             }
         )
 
-        assert "Patch verified" in result
+        assert "Patch applied" in result
         assert service.store.list_traces(session.id)[-1].event_type == "patch_verified"
+        # Verify patch was actually applied to page content
+        updated = service.store.load_page(page.id)
+        assert "fact one" in updated.facts
+        assert "fact1" not in updated.facts
 
     def test_read_nonexistent_page(self, tmp_path):
         service, session = self._setup(tmp_path)
@@ -113,3 +121,52 @@ class TestAgentGraph:
         assert "paging" in graph.nodes
         assert "tool_agent" in graph.nodes
         assert "build_context" in graph.nodes
+
+    def test_tool_loop_preserves_messages(self, tmp_path):
+        from memoryos_lite.agent_graph import build_agent_graph
+
+        settings = Settings(data_dir=tmp_path / ".memoryos", openai_api_key="sk-test-dummy")
+        store = MemoryStore(settings=settings)
+        store.init_db()
+        service = MemoryOSService(settings=settings, store=store)
+        session = service.create_session("test_agent_loop")
+
+        tool_call = {
+            "name": "search_memory",
+            "args": {"query": "MemoryOS", "top_k": 1},
+            "id": "call_search_memory",
+            "type": "tool_call",
+        }
+        router_llm = Mock()
+        router_llm.invoke.return_value = AIMessage(content="recall")
+        tool_llm = Mock()
+        tool_llm.invoke.side_effect = [
+            AIMessage(content="", tool_calls=[tool_call]),
+            AIMessage(content="No relevant memory pages found."),
+        ]
+        router_llm.bind_tools.return_value = tool_llm
+
+        with patch("memoryos_lite.agent_graph.ChatOpenAI", return_value=router_llm):
+            graph = build_agent_graph(service, session.id, settings=settings)
+            state = graph.invoke(
+                {
+                    "messages": [HumanMessage(content="Search memory for MemoryOS")],
+                    "session_id": session.id,
+                    "intent": "",
+                    "should_page": False,
+                    "context": None,
+                    "conflict_detected": False,
+                    "human_approved": False,
+                    "result": "",
+                },
+                config={"configurable": {"thread_id": "test-tool-loop"}},
+            )
+
+        messages = state["messages"]
+        assert len(messages) == 4
+        assert isinstance(messages[0], HumanMessage)
+        assert isinstance(messages[1], AIMessage)
+        assert messages[1].tool_calls
+        assert isinstance(messages[2], ToolMessage)
+        assert isinstance(messages[3], AIMessage)
+        assert not messages[3].tool_calls
