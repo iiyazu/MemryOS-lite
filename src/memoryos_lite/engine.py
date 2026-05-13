@@ -117,6 +117,15 @@ _UPDATE_MARKERS: tuple[str, ...] = (
     "其实",
 )
 
+_GENERIC_ACK_PREFIXES: tuple[str, ...] = (
+    "已记录",
+    "已经记录",
+    "记录了",
+    "收到",
+    "好的",
+    "明白",
+)
+
 
 class PagingAgent:
     def __init__(
@@ -172,6 +181,8 @@ class PagingAgent:
             compact = self._compact(message.content)
             if not compact:
                 continue
+            if message.role == Role.ASSISTANT and self._is_generic_ack(compact):
+                continue
             if message.role == Role.TOOL:
                 tool_notes.append(compact)
             elif any(marker in compact for marker in update_markers):
@@ -216,9 +227,14 @@ class PagingAgent:
         def _is_informative(text: str) -> bool:
             return bool(self._slot_extractor.extract(text))
 
+        def _summary_eligible_fact(text: str) -> bool:
+            return _is_informative(text) or len(text) <= 120
+
         informative_facts = [f for f in facts if _is_informative(f)]
         other_facts = [f for f in facts if f not in informative_facts]
-        ranked_facts = [*informative_facts, *other_facts]
+        ranked_facts = [
+            fact for fact in [*informative_facts, *other_facts] if _summary_eligible_fact(fact)
+        ]
         for item in ranked_facts[:3]:
             _add(item)
         for item in decisions[:3]:
@@ -250,6 +266,11 @@ class PagingAgent:
         if len(cleaned) > 180:
             return cleaned[:177] + "..."
         return cleaned
+
+    @staticmethod
+    def _is_generic_ack(text: str) -> bool:
+        compact = text.strip()
+        return any(compact.startswith(prefix) for prefix in _GENERIC_ACK_PREFIXES)
 
     @staticmethod
     def _looks_like_profile(facts: list[str]) -> bool:
@@ -700,7 +721,7 @@ class MemoryOSService:
             # the user wanted remembered (ticket #3).
             separator = "；"
             updates_in_facts = [f for f in draft.facts if any(m in f for m in _UPDATE_MARKERS)]
-            other_facts = [f for f in draft.facts if f not in updates_in_facts]
+            other_facts = [f for f in draft.facts if f not in updates_in_facts and len(f) <= 120]
             parts: list[str] = []
             for item in (
                 *updates_in_facts[-2:],

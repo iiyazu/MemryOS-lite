@@ -8,6 +8,8 @@ from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import (
     BaselineOutput,
+    EvidenceItem,
+    _baseline_from_evidence,
     _materialize_messages,
     _run_baseline,
     _score,
@@ -305,6 +307,102 @@ def test_naive_summary_does_not_duplicate_selected_recent_message(tmp_path):
 
     assert output.answer.count("核心评估指标：source_accuracy。") == 1
     assert output.sources == {"naive_recent_dedup_msg_003": "核心评估指标：source_accuracy。"}
+
+
+def test_eval_projects_final_answer_without_stale_prefix():
+    output = _baseline_from_evidence(
+        "周会最终在哪个会议室开？",
+        [
+            EvidenceItem(
+                text="B203 维护，会议室最终换 C505。",
+                source_texts={"msg_005": "B203 维护，会议室最终换 C505。"},
+            )
+        ],
+        context_tokens=10,
+    )
+
+    assert output.answer == "会议室最终换 C505"
+    assert "B203" not in output.answer
+
+
+def test_memoryos_eval_uses_fact_level_evidence_for_distractors(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    case = EvalCase(
+        case_id="fact_level_distractor",
+        conversation=[
+            MessageCreate(role=Role.USER, content="家住在深圳南山区。"),
+            MessageCreate(role=Role.ASSISTANT, content="已记录住址。"),
+            MessageCreate(role=Role.USER, content="公司在深圳福田区。"),
+            MessageCreate(role=Role.ASSISTANT, content="已记录办公地。"),
+            MessageCreate(role=Role.USER, content="通勤大约 40 分钟。"),
+            MessageCreate(role=Role.USER, content="周末常去海边。"),
+        ],
+        question="我家住在深圳哪个区？",
+        expected_facts=["南山"],
+        forbidden_facts=["福田"],
+        required_sources=["fact_level_distractor_msg_001"],
+    )
+    messages = _materialize_messages(case)
+    store = create_store(settings)
+    service = MemoryOSService(store=store, settings=settings)
+
+    output = _run_baseline("memoryos_lite", case, messages, service, settings)
+    result = _score(case, "memoryos_lite", output, latency_ms=0)
+
+    assert output.answer == "家住在深圳南山区。"
+    assert "福田" not in output.answer
+    assert result.answer_accuracy == 1.0
+    assert result.source_accuracy == 1.0
+
+
+def test_memoryos_eval_prefers_paged_evidence_over_recent_restatement(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    case = EvalCase(
+        case_id="paged_over_recent",
+        conversation=[
+            MessageCreate(role=Role.USER, content="我喜欢喝黑咖啡。"),
+            MessageCreate(role=Role.ASSISTANT, content="已记录偏好。"),
+            MessageCreate(role=Role.USER, content="早上开会前准备一杯。"),
+            MessageCreate(role=Role.USER, content="一直以来都喝黑咖啡，不加糖。"),
+            MessageCreate(role=Role.ASSISTANT, content="已记录。"),
+            MessageCreate(role=Role.USER, content="买了新的咖啡豆。"),
+            MessageCreate(role=Role.USER, content="我的咖啡习惯固定是黑咖啡无糖。"),
+        ],
+        question="我的咖啡偏好是什么？",
+        expected_facts=["黑咖啡"],
+        forbidden_facts=["拿铁"],
+        required_sources=["paged_over_recent_msg_001"],
+    )
+    messages = _materialize_messages(case)
+    store = create_store(settings)
+    service = MemoryOSService(store=store, settings=settings)
+
+    output = _run_baseline("memoryos_lite", case, messages, service, settings)
+    result = _score(case, "memoryos_lite", output, latency_ms=0)
+
+    assert output.answer == "我喜欢喝黑咖啡。"
+    assert result.source_accuracy == 1.0
+
+
+def test_eval_prefers_recent_update_over_stale_page_evidence():
+    output = _baseline_from_evidence(
+        "当前数据库是什么？",
+        [
+            EvidenceItem(
+                text="数据库选 PostgreSQL。",
+                source_texts={"old_page_msg": "数据库选 PostgreSQL。"},
+                origin="page",
+            ),
+            EvidenceItem(
+                text="数据库改用 MySQL。",
+                source_texts={"recent_msg": "数据库改用 MySQL。"},
+            ),
+        ],
+        context_tokens=10,
+    )
+
+    assert output.answer == "MySQL"
+    assert output.sources == {"recent_msg": "数据库改用 MySQL。"}
 
 
 def test_forbidden_answer_receives_no_credited_source_support():

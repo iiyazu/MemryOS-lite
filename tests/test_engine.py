@@ -34,6 +34,63 @@ def test_ingest_triggers_paging_and_commits_page(service):
     assert page is not None
     assert page.source_message_ids
     assert "Agent infra" in page.model_dump_json()
+    assert "已记录目标" not in page.model_dump_json()
+
+
+def test_heuristic_pager_filters_generic_assistant_ack(service):
+    session = service.create_session("test")
+    service.settings.recent_message_limit = 1
+    for role, content in [
+        (Role.USER, "项目当前数据库选 PostgreSQL。"),
+        (Role.ASSISTANT, "已记录数据库选型。"),
+        (Role.USER, "继续看 ORM 文档。"),
+        (Role.USER, "最新无关。"),
+    ]:
+        service.ingest(session.id, MessageCreate(role=role, content=content))
+
+    page = service.page(session.id)
+
+    assert page is not None
+    assert "项目当前数据库选 PostgreSQL" in page.summary
+    assert all("已记录" not in fact for fact in page.facts)
+    assert "已记录" not in page.summary
+
+
+def test_heuristic_pager_summary_keeps_three_ranked_facts(service):
+    session = service.create_session("test")
+    service.settings.recent_message_limit = 1
+    for content in [
+        "数据库选 PostgreSQL。",
+        "缓存层选 Redis。",
+        "队列选 Kafka。",
+        "最新无关。",
+    ]:
+        service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+
+    page = service.page(session.id)
+
+    assert page is not None
+    assert "数据库选 PostgreSQL" in page.summary
+    assert "缓存层选 Redis" in page.summary
+    assert "队列选 Kafka" in page.summary
+
+
+def test_heuristic_pager_summary_skips_long_unstructured_noise(service):
+    session = service.create_session("test")
+    service.settings.recent_message_limit = 1
+    for content in [
+        "排期记录：下周整理文档。",
+        "第 1 版稳定方案：MemoryOS Lite。",
+        "第 1 段无关长噪声：" + "课程安排、排版偏好、天气记录、临时想法。" * 8,
+        "最新无关。",
+    ]:
+        service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+
+    page = service.page(session.id)
+
+    assert page is not None
+    assert "MemoryOS Lite" in page.summary
+    assert "无关长噪声" not in page.summary
 
 
 def test_context_builder_retrieves_relevant_page(service):

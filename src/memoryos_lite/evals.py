@@ -8,7 +8,7 @@ from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.llm_judge import JudgeVerdict, LLMJudge
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.schemas import EvalCase, Message, MessageCreate, PageType, Role
+from memoryos_lite.schemas import EvalCase, MemoryPage, Message, MessageCreate, PageType, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 
@@ -85,6 +85,7 @@ class BaselineOutput:
 class EvidenceItem:
     text: str
     source_texts: dict[str, str]
+    origin: str = "message"
 
 
 def builtin_cases() -> list[EvalCase]:
@@ -567,19 +568,16 @@ def _run_baseline(
                 if pinned_page is not None:
                     pages.append(pinned_page)
                     loaded_page_ids.add(pinned_page.id)
-        evidence = _message_evidence(context.recent_messages)
+        recent_evidence = _message_evidence(context.recent_messages)
+        memory_evidence: list[EvidenceItem] = []
         messages_by_id = {message.id: message for message in messages}
         for page in pages:
             if page is not None:
-                evidence.append(
-                    EvidenceItem(
-                        text=page.summary,
-                        source_texts=_page_fact_sources(page.source_message_ids, messages_by_id),
-                    )
-                )
+                memory_evidence.extend(_page_evidence(page, messages_by_id))
+        memory_evidence.extend(recent_evidence)
         return _baseline_from_evidence(
             case.question,
-            evidence,
+            memory_evidence,
             context.estimated_tokens,
             page_count=len(service.store.list_pages(source_session.id)),
             loaded_pages=len(pages),
@@ -677,7 +675,7 @@ def _baseline_from_evidence(
     sources: dict[str, str] = {}
     for item in selected:
         sources.update(item.source_texts)
-    answer = "；".join(item.text for item in selected) if selected else "未找到相关记忆"
+    answer = _project_answer(question, selected) if selected else "未找到相关记忆"
     return BaselineOutput(
         answer=answer,
         context_tokens=context_tokens,
@@ -691,17 +689,113 @@ def _baseline_from_evidence(
 
 def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[EvidenceItem]:
     query_terms = set(tokenize(question))
+    temporal_recent_update = any(
+        item.origin == "message"
+        and _is_temporal_question(question)
+        and _has_update_signal(item.text)
+        for item in evidence
+    )
     scored: list[tuple[int, EvidenceItem]] = []
     for item in evidence:
         score = len(query_terms & set(tokenize(item.text)))
-        if any(marker in question for marker in ("最终", "不做", "主线")) and any(
-            marker in item.text for marker in ("最终", "不做", "改为", "更新")
-        ):
+        if _is_temporal_question(question) and _has_update_signal(item.text):
             score += 20
+        if item.origin == "page" and not temporal_recent_update:
+            score += 8
         scored.append((score, item))
     scored.sort(key=lambda item: item[0], reverse=True)
-    limit = 1 if any(marker in question for marker in ("最终", "不做")) else 3
+    limit = _evidence_limit(question)
     return [item for score, item in scored if score > 0][:limit]
+
+
+def _evidence_limit(question: str) -> int:
+    if any(marker in question for marker in ("分别", "哪些", "哪几个")):
+        return 3
+    if "和" in question and "什么" in question:
+        return 3
+    return 1
+
+
+def _is_temporal_question(question: str) -> bool:
+    temporal_markers = ("当前", "现在", "目前", "最新", "最终", "不做", "主线")
+    return any(marker in question for marker in temporal_markers)
+
+
+def _has_update_signal(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "最终确定",
+            "最终调整",
+            "最终换",
+            "最终",
+            "当前",
+            "改用",
+            "改为",
+            "改成",
+            "调整为",
+            "调整到",
+            "切换到",
+            "切换成",
+            "更新",
+            "不做",
+            "换",
+        )
+    )
+
+
+def _project_answer(question: str, selected: list[EvidenceItem]) -> str:
+    projected = [_project_evidence_text(question, item.text) for item in selected]
+    projected = [text for text in projected if text]
+    return "；".join(projected) if projected else "未找到相关记忆"
+
+
+def _project_evidence_text(question: str, text: str) -> str:
+    compact = " ".join(text.strip().split())
+    if _is_generic_ack(compact):
+        return ""
+
+    clauses = [clause.strip() for clause in compact.replace("；", "。").split("。")]
+    clauses = [clause for clause in clauses if clause and not _is_generic_ack(clause)]
+    if not clauses:
+        return ""
+
+    if any(marker in question for marker in ("最终", "当前")):
+        priority_markers = (
+            "最终确定",
+            "最终调整为",
+            "最终换",
+            "最终",
+            "改用",
+            "调整为",
+            "调整到",
+            "切换到",
+            "切换成",
+            "换",
+            "选",
+            "采用",
+        )
+        for marker in priority_markers:
+            for clause in reversed(clauses):
+                if marker in clause:
+                    return _drop_prefix_before_marker(clause, marker)
+
+    return compact
+
+
+def _drop_prefix_before_marker(text: str, marker: str) -> str:
+    if marker not in text:
+        return text
+    prefix, suffix = text.split(marker, 1)
+    if marker.startswith(("最终", "当前")):
+        start = max(prefix.rfind("，"), prefix.rfind(","), prefix.rfind("；"), prefix.rfind(";"))
+        subject = prefix[start + 1 :] if start >= 0 else prefix
+        return f"{subject}{marker}{suffix}".strip(" ，,：:")
+    return suffix.strip(" ，,：:") or text
+
+
+def _is_generic_ack(text: str) -> bool:
+    return text.startswith(("已记录", "已经记录", "记录了", "收到", "好的", "明白"))
 
 
 def _context_tokens(task: str, texts: list[str], tokenizer: TokenEstimator) -> int:
@@ -716,7 +810,19 @@ def _message_evidence(messages: list[Message]) -> list[EvidenceItem]:
     return [
         EvidenceItem(text=message.content, source_texts={message.id: message.content})
         for message in messages
+        if not (message.role == Role.ASSISTANT and _is_generic_ack(message.content))
     ]
+
+
+def _page_evidence(page: MemoryPage, messages_by_id: dict[str, Message]) -> list[EvidenceItem]:
+    source_texts = _page_fact_sources(page.source_message_ids, messages_by_id)
+    evidence: list[EvidenceItem] = []
+    for text in (*page.decisions, *page.facts, *page.open_questions):
+        if text and not _is_generic_ack(text):
+            evidence.append(EvidenceItem(text=text, source_texts=source_texts, origin="page"))
+    if not evidence and page.summary:
+        evidence.append(EvidenceItem(text=page.summary, source_texts=source_texts, origin="page"))
+    return evidence
 
 
 def _page_fact_sources(
