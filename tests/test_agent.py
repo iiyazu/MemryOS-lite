@@ -93,6 +93,7 @@ class TestMemoryTools:
         assert service.store.list_traces(session.id)[-1].event_type == "patch_verified"
         # Verify patch was actually applied to page content
         updated = service.store.load_page(page.id)
+        assert updated is not None
         assert "fact one" in updated.facts
         assert "fact1" not in updated.facts
 
@@ -170,3 +171,5 @@ class TestAgentGraph:
         assert isinstance(messages[2], ToolMessage)
         assert isinstance(messages[3], AIMessage)
         assert not messages[3].tool_calls
+        assert state["context"] is not None
+        assert state["context"].task == "Search memory for MemoryOS"

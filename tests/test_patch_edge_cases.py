@@ -89,6 +89,21 @@ class TestPatchEdgeCases:
         assert verified.verified is False
         assert any("target page is required" in error for error in verified.errors)
 
+    def test_add_rejects_empty_new_text(self, tmp_path):
+        service, session = self._setup(tmp_path)
+        page = self._save_page(service, session.id, summary="append target")
+        patch = MemoryPatch(
+            operation=PatchOperation.ADD,
+            target_page_id=page.id,
+            new_text="",
+            reason="empty add",
+        )
+
+        verified = service.commit_patch(session.id, patch)
+
+        assert verified.verified is False
+        assert any("new_text is required" in error for error in verified.errors)
+
     def test_commit_patch_rejects_cross_session_page(self, tmp_path):
         service, session_a = self._setup(tmp_path)
         session_b = service.create_session("other_session")
@@ -163,3 +178,27 @@ class TestPatchEdgeCases:
         )
 
         assert service.apply_patch(session.id, patch) is False
+
+    def test_apply_patch_returns_false_for_unverified_patch(self, tmp_path):
+        service, session = self._setup(tmp_path)
+        page = self._save_page(
+            service,
+            session.id,
+            summary="original summary",
+            facts=["original fact"],
+        )
+        patch = MemoryPatch(
+            operation=PatchOperation.REPLACE,
+            target_page_id=page.id,
+            old_text="original fact",
+            new_text="mutated fact",
+            reason="bypass verifier",
+            verified=False,
+        )
+
+        applied = service.apply_patch(session.id, patch)
+        updated = service.store.load_page(page.id)
+
+        assert applied is False
+        assert updated is not None
+        assert updated.facts == ["original fact"]

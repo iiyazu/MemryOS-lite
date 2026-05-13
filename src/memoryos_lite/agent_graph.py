@@ -136,7 +136,11 @@ def build_agent_graph(
         """Build context package for the session."""
         session = state.get("session_id", session_id)
         messages = state.get("messages", [])
-        task = messages[-1].content if messages else ""
+        human_messages = [message for message in messages if isinstance(message, HumanMessage)]
+        if human_messages:
+            task = human_messages[-1].content
+        else:
+            task = messages[-1].content if messages else ""
         context = service.build_context(session, task=task)
         result = f"Context built: {context.estimated_tokens} tokens"
         return {**state, "context": context, "result": result}

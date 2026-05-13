@@ -329,6 +329,8 @@ class PatchVerifier:
         elif patch.operation == PatchOperation.ADD:
             if page is None:
                 errors.append("target page is required")
+            if not patch.new_text:
+                errors.append("new_text is required for add")
         if patch.new_text and any(marker in patch.new_text for marker in self.protected_markers):
             errors.append("new_text attempts to modify protected memory block")
         patch.errors = errors
@@ -911,6 +913,8 @@ class MemoryOSService:
 
     def apply_patch(self, session_id: str, patch: MemoryPatch) -> bool:
         """Apply a verified patch to the target page's content. Returns True on success."""
+        if not patch.verified:
+            return False
         if not patch.target_page_id:
             return False
         page = self.store.load_page(patch.target_page_id)
@@ -922,14 +926,15 @@ class MemoryOSService:
         new = patch.new_text or ""
         if patch.operation in (PatchOperation.REPLACE, PatchOperation.DELETE) and not old:
             return False
+        if patch.operation == PatchOperation.ADD and not new:
+            return False
         if patch.operation == PatchOperation.REPLACE:
             page.summary = page.summary.replace(old, new)
             page.facts = [f.replace(old, new) for f in page.facts]
             page.decisions = [d.replace(old, new) for d in page.decisions]
             page.open_questions = [q.replace(old, new) for q in page.open_questions]
         elif patch.operation == PatchOperation.ADD:
-            if new:
-                page.facts.append(new)
+            page.facts.append(new)
         elif patch.operation == PatchOperation.DELETE:
             page.facts = [f for f in page.facts if old not in f]
             page.decisions = [d for d in page.decisions if old not in d]
