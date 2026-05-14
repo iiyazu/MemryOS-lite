@@ -101,6 +101,16 @@ class ContextPage(BaseModel):
     estimated_tokens: int
 
 
+class ContextEvidence(BaseModel):
+    message_id: str
+    text: str
+    role: Role
+    reason: str
+    estimated_tokens: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    page_id: str | None = None
+
+
 class ContextPackage(BaseModel):
     session_id: str
     task: str
@@ -108,6 +118,7 @@ class ContextPackage(BaseModel):
     task_truncated: bool = False
     pinned_core: list[str] = Field(default_factory=list)
     active_task_pages: list[ContextPage] = Field(default_factory=list)
+    retrieved_evidence: list[ContextEvidence] = Field(default_factory=list)
     recent_messages: list[Message] = Field(default_factory=list)
     dropped_recent_messages: list[str] = Field(default_factory=list)
     retrieved_pages: list[ContextPage] = Field(default_factory=list)

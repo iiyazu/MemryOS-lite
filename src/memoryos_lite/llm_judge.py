@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -52,13 +53,17 @@ class LLMJudge:
     """GPT-as-judge for semantic evaluation of memory recall answers."""
 
     def __init__(self, settings: Settings) -> None:
-        if not settings.openai_api_key:
-            raise ValueError("openai_api_key required for LLM judge")
+        api_key = settings.chat_api_key
+        if not api_key:
+            raise ValueError(f"{settings.chat_api_key_name} required for LLM judge")
+        kwargs: dict[str, Any] = {}
+        if settings.chat_base_url:
+            kwargs["base_url"] = settings.chat_base_url
         self.llm = ChatOpenAI(
-            model=settings.memoryos_model,
-            api_key=SecretStr(settings.openai_api_key),
+            model=settings.chat_model,
+            api_key=SecretStr(api_key),
             temperature=0.0,
-            **({"base_url": settings.openai_base_url} if settings.openai_base_url else {}),
+            **kwargs,
         )
 
     def judge(self, case: EvalCase, answer: str) -> JudgeVerdict:

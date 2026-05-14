@@ -1,0 +1,162 @@
+{
+  "run_id": "m1_public_50",
+  "description": "M1 public benchmark diagnostic summary, no LLM answer, no LLM judge, compare-baselines enabled.",
+  "data": {
+    "longmemeval_oracle_json": {
+      "path": "/tmp/memoryos-public-benchmarks/longmemeval_oracle.json",
+      "sha256": "821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c"
+    },
+    "locomo10_json": {
+      "path": "/tmp/memoryos-public-benchmarks/locomo10.json",
+      "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
+    }
+  },
+  "reports": {
+    "longmemeval": {
+      "path": ".memoryos/evals/m1_longmemeval_50_longmemeval.json",
+      "sha256": "7e910f3a002465b7dcfe508ddc9df74c4478ccddca25443c7f6f720252f54e67"
+    },
+    "locomo": {
+      "path": ".memoryos/evals/m1_locomo_50_locomo.json",
+      "sha256": "74420e40647e7720899fbc8395edeaad5e5e8416693483f26a62842063d94c30"
+    }
+  },
+  "results": [
+    {
+      "benchmark": "longmemeval",
+      "baseline": "sliding_window",
+      "cases": 50,
+      "pass_rate": 0.0,
+      "source_hit": 0.0,
+      "session_hit": 0.0,
+      "source_hit_at_k": null,
+      "session_hit_at_k": null,
+      "page_source_overlap_at_k": null,
+      "page_session_overlap_at_k": null,
+      "avg_context_tokens": 18,
+      "avg_page_count": 0.0,
+      "avg_loaded_pages": 0.0,
+      "avg_dropped_pages": 0.0,
+      "dropped_relevant_page_count": 0
+    },
+    {
+      "benchmark": "longmemeval",
+      "baseline": "naive_summary",
+      "cases": 50,
+      "pass_rate": 0.02,
+      "source_hit": 0.02,
+      "session_hit": 0.5,
+      "source_hit_at_k": null,
+      "session_hit_at_k": null,
+      "page_source_overlap_at_k": null,
+      "page_session_overlap_at_k": null,
+      "avg_context_tokens": 48,
+      "avg_page_count": 0.0,
+      "avg_loaded_pages": 0.0,
+      "avg_dropped_pages": 0.0,
+      "dropped_relevant_page_count": 0
+    },
+    {
+      "benchmark": "longmemeval",
+      "baseline": "vector_rag",
+      "cases": 50,
+      "pass_rate": 0.02,
+      "source_hit": 0.26,
+      "session_hit": 0.96,
+      "source_hit_at_k": 0.78,
+      "session_hit_at_k": 1.0,
+      "page_source_overlap_at_k": null,
+      "page_session_overlap_at_k": null,
+      "avg_context_tokens": 79,
+      "avg_page_count": 0.0,
+      "avg_loaded_pages": 0.0,
+      "avg_dropped_pages": 0.0,
+      "dropped_relevant_page_count": 0
+    },
+    {
+      "benchmark": "longmemeval",
+      "baseline": "memoryos_lite",
+      "cases": 50,
+      "pass_rate": 0.1,
+      "source_hit": 0.96,
+      "session_hit": 0.98,
+      "source_hit_at_k": null,
+      "session_hit_at_k": null,
+      "page_source_overlap_at_k": 1.0,
+      "page_session_overlap_at_k": 1.0,
+      "avg_context_tokens": 50,
+      "avg_page_count": 1.0,
+      "avg_loaded_pages": 1.0,
+      "avg_dropped_pages": 0.0,
+      "dropped_relevant_page_count": 2
+    },
+    {
+      "benchmark": "locomo",
+      "baseline": "sliding_window",
+      "cases": 50,
+      "pass_rate": 0.02,
+      "source_hit": 0.0,
+      "session_hit": 0.0,
+      "source_hit_at_k": null,
+      "session_hit_at_k": null,
+      "page_source_overlap_at_k": null,
+      "page_session_overlap_at_k": null,
+      "avg_context_tokens": 80,
+      "avg_page_count": 0.0,
+      "avg_loaded_pages": 0.0,
+      "avg_dropped_pages": 0.0,
+      "dropped_relevant_page_count": 0
+    },
+    {
+      "benchmark": "locomo",
+      "baseline": "naive_summary",
+      "cases": 50,
+      "pass_rate": 0.02,
+      "source_hit": 0.0,
+      "session_hit": 0.0,
+      "source_hit_at_k": null,
+      "session_hit_at_k": null,
+      "page_source_overlap_at_k": null,
+      "page_session_overlap_at_k": null,
+      "avg_context_tokens": 80,
+      "avg_page_count": 0.0,
+      "avg_loaded_pages": 0.0,
+      "avg_dropped_pages": 0.0,
+      "dropped_relevant_page_count": 0
+    },
+    {
+      "benchmark": "locomo",
+      "baseline": "vector_rag",
+      "cases": 50,
+      "pass_rate": 0.04,
+      "source_hit": 0.08,
+      "session_hit": 0.3,
+      "source_hit_at_k": 0.25,
+      "session_hit_at_k": 0.62,
+      "page_source_overlap_at_k": null,
+      "page_session_overlap_at_k": null,
+      "avg_context_tokens": 77,
+      "avg_page_count": 0.0,
+      "avg_loaded_pages": 0.0,
+      "avg_dropped_pages": 0.0,
+      "dropped_relevant_page_count": 0
+    },
+    {
+      "benchmark": "locomo",
+      "baseline": "memoryos_lite",
+      "cases": 50,
+      "pass_rate": 0.02,
+      "source_hit": 0.0,
+      "session_hit": 0.0,
+      "source_hit_at_k": null,
+      "session_hit_at_k": null,
+      "page_source_overlap_at_k": 0.98,
+      "page_session_overlap_at_k": 1.0,
+      "avg_context_tokens": 80,
+      "avg_page_count": 1.0,
+      "avg_loaded_pages": 0.0,
+      "avg_dropped_pages": 1.0,
+      "dropped_relevant_page_count": 47
+    }
+  ]
+}

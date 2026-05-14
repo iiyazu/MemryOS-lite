@@ -1,6 +1,7 @@
 """Tests for LLM judge — parsing logic only (no API calls)."""
 
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -72,6 +73,18 @@ def test_parse_invalid_json_returns_error():
 
 
 def test_init_requires_api_key():
-    settings = Settings(openai_api_key=None)
-    with pytest.raises(ValueError, match="openai_api_key required"):
+    settings = Settings(memoryos_llm_provider="openai", openai_api_key=None)
+    with pytest.raises(ValueError, match="OPENAI_API_KEY required"):
         LLMJudge(settings)
+
+
+def test_init_uses_deepseek_settings():
+    settings = Settings(memoryos_llm_provider="deepseek", deepseek_api_key="sk-deepseek-test")
+
+    with patch("memoryos_lite.llm_judge.ChatOpenAI") as chat_cls:
+        LLMJudge(settings)
+
+    kwargs = chat_cls.call_args.kwargs
+    assert kwargs["model"] == "deepseek-v4-flash"
+    assert kwargs["base_url"] == "https://api.deepseek.com"
+    assert kwargs["api_key"].get_secret_value() == "sk-deepseek-test"

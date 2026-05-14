@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from memoryos_lite.cli import _eval_table_rows
+from memoryos_lite.cli import _eval_table_rows, _llm_judge_table_rows
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import (
@@ -11,11 +11,13 @@ from memoryos_lite.evals import (
     EvidenceItem,
     _baseline_from_evidence,
     _materialize_messages,
+    _project_evidence_text,
     _run_baseline,
     _score,
     builtin_cases,
     run_eval,
 )
+from memoryos_lite.llm_judge import JudgeVerdict
 from memoryos_lite.schemas import EvalCase, MessageCreate, Role
 from memoryos_lite.store import create_store
 
@@ -405,6 +407,16 @@ def test_eval_prefers_recent_update_over_stale_page_evidence():
     assert output.sources == {"recent_msg": "数据库改用 MySQL。"}
 
 
+@pytest.mark.parametrize("noise", ["换行保持不变", "交换格式说明", "兑换券无关"])
+def test_answer_projection_does_not_treat_huan_as_broad_update_marker(noise: str):
+    projected = _project_evidence_text(
+        "当前数据库是什么？",
+        f"格式说明：{noise}。数据库选 PostgreSQL。",
+    )
+
+    assert projected == "PostgreSQL"
+
+
 def test_forbidden_answer_receives_no_credited_source_support():
     case = EvalCase(
         case_id="forbidden_credit_guard",
@@ -470,6 +482,27 @@ def test_eval_cli_rows_include_dropped_cases(tmp_path):
     assert int(memoryos_row["dropped_cases"]) >= 1
 
 
+def test_llm_judge_cli_rows_group_by_baseline():
+    rows = _llm_judge_table_rows(
+        [
+            JudgeVerdict("memoryos_lite/case_001", "pass", [], [], [], ""),
+            JudgeVerdict("memoryos_lite/case_002", "fail", [], [], [], ""),
+            JudgeVerdict("vector_rag/case_001", "error", [], [], [], ""),
+        ]
+    )
+
+    memoryos_row = next(row for row in rows if row["baseline"] == "memoryos_lite")
+    vector_row = next(row for row in rows if row["baseline"] == "vector_rag")
+    assert memoryos_row == {
+        "baseline": "memoryos_lite",
+        "cases": "2",
+        "pass_rate": "0.50",
+        "failed": "1",
+        "errors": "0",
+    }
+    assert vector_row["errors"] == "1"
+
+
 def test_eval_report_serializes_dropped_page_details():
     output = BaselineOutput(
         answer="未找到相关记忆",
@@ -511,7 +544,9 @@ def test_supporting_source_snippets_show_only_credit_sources(tmp_path):
         if item["baseline"] == "memoryos_lite" and item["case_id"] == "hard_long_recall_001"
     )
 
-    assert set(row["source_snippets"]) > {"hard_long_recall_001_msg_004"}
+    # source_snippets audits every surfaced source; supporting_source_snippets
+    # below is the strict credited-source assertion.
+    assert set(row["source_snippets"]) >= {"hard_long_recall_001_msg_004"}
     assert row["supporting_source_snippets"] == {
         "MemoryOS Lite": {
             "hard_long_recall_001_msg_004": "第 1 次最终决定：简历第二项目做 MemoryOS Lite。"

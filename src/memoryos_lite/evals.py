@@ -1,5 +1,6 @@
 import json
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
@@ -11,6 +12,7 @@ from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.schemas import EvalCase, MemoryPage, Message, MessageCreate, PageType, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
+from memoryos_lite.utils import is_generic_ack
 
 CASE_COUNT = 8
 
@@ -79,6 +81,19 @@ class BaselineOutput:
     loaded_pages: int = 0
     dropped_pages: int = 0
     dropped_page_details: list[dict[str, object]] = field(default_factory=list)
+    page_type_counts: dict[str, int] = field(default_factory=dict)
+    page_source_counts: list[int] = field(default_factory=list)
+    page_summary_token_counts: list[int] = field(default_factory=list)
+    retrieved_page_ids: list[str] = field(default_factory=list)
+    dropped_page_reasons: dict[str, str] = field(default_factory=dict)
+    dropped_page_source_ids: dict[str, list[str]] = field(default_factory=dict)
+    retrieval_candidate_top_k: int | None = None
+    retrieval_candidate_unit: str | None = None
+    retrieval_candidate_source_ids: list[str] = field(default_factory=list)
+    retrieval_candidate_page_ids: list[str] = field(default_factory=list)
+    page_candidate_top_k: int | None = None
+    page_candidate_source_ids: list[str] = field(default_factory=list)
+    page_candidate_page_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -333,8 +348,8 @@ def builtin_cases() -> list[EvalCase]:
                 MessageCreate(
                     role=Role.USER,
                     content=(
-                        "稳定方案预算审计噪声：保留检索关键词，但不包含需要回答的"
-                        "项目名；这页存在的目的只是测试 dropped_page_details。" * 6
+                        "稳定方案采用预算审计占位记录，保留检索关键词，但不包含"
+                        "需要回答的项目名；这页存在的目的只是测试 dropped_page_details。" * 8
                     ),
                 ),
                 MessageCreate(role=Role.ASSISTANT, content="已记录预算审计背景。"),
@@ -372,6 +387,7 @@ def run_eval(
             "database_url": None,
             "memoryos_paging_mode": "heuristic",
             "openai_api_key": None,
+            "deepseek_api_key": None,
         }
     )
     store = create_store(run_settings)
@@ -421,6 +437,7 @@ def run_eval_llm(
             "database_url": None,
             "memoryos_paging_mode": "heuristic",
             "openai_api_key": None,
+            "deepseek_api_key": None,
         }
     )
     store = create_store(run_settings)
@@ -511,11 +528,15 @@ def _run_baseline(
         )
     if baseline == "vector_rag":
         ranked = _bm25_retrieve(messages, case.question)
+        retrieval_candidates = ranked[:5]
         selected = _fit_ranked_messages(ranked, case.question, budget, tokenizer)
         return _baseline_from_evidence(
             case.question,
             _message_evidence(selected),
             _context_tokens(case.question, [message.content for message in selected], tokenizer),
+            retrieval_candidate_top_k=5,
+            retrieval_candidate_unit="message",
+            retrieval_candidate_source_ids=[message.id for message in retrieval_candidates],
         )
     if baseline == "memoryos_lite":
         if case.query_in_new_session:
@@ -536,6 +557,21 @@ def _run_baseline(
                     message.model_copy(update={"session_id": source_session.id})
                 )
             service.page(source_session.id)
+            candidate_pages = [
+                page
+                for page in service.store.list_pages(source_session.id)
+                if page.superseded_by is None
+            ]
+            candidate_top_k = 5
+            candidate_hits = service.searcher.search(
+                candidate_pages,
+                query=case.question,
+                top_k=candidate_top_k,
+            )
+            page_candidate_source_ids = _dedupe_source_ids(
+                source_id for hit in candidate_hits for source_id in hit.page.source_message_ids
+            )
+            page_candidate_page_ids = [hit.page.id for hit in candidate_hits]
             context = service.build_context(
                 context_session.id,
                 case.question,
@@ -547,6 +583,9 @@ def _run_baseline(
             service.settings.recent_message_limit = original_recent
         pages = [service.store.load_page(item.page_id) for item in context.retrieved_pages]
         pages.extend(service.store.load_page(item.page_id) for item in context.active_task_pages)
+        retrieved_page_ids = [
+            item.page_id for item in [*context.retrieved_pages, *context.active_task_pages]
+        ]
         if context.pinned_core:
             pages_by_id = {page.id: page for page in service.store.list_pages(source_session.id)}
             if case.include_global_core:
@@ -568,21 +607,64 @@ def _run_baseline(
                 if pinned_page is not None:
                     pages.append(pinned_page)
                     loaded_page_ids.add(pinned_page.id)
+                    retrieved_page_ids.append(pinned_page.id)
         recent_evidence = _message_evidence(context.recent_messages)
         memory_evidence: list[EvidenceItem] = []
         messages_by_id = {message.id: message for message in messages}
+        for context_evidence in context.retrieved_evidence:
+            memory_evidence.append(
+                EvidenceItem(
+                    text=context_evidence.text,
+                    source_texts={context_evidence.message_id: context_evidence.text},
+                    origin="retrieved_message" if context_evidence.page_id else "message",
+                )
+            )
         for page in pages:
             if page is not None:
                 memory_evidence.extend(_page_evidence(page, messages_by_id))
         memory_evidence.extend(recent_evidence)
+        all_pages = service.store.list_pages(source_session.id)
+        page_type_counts: dict[str, int] = {}
+        pages_by_id = {page.id: page for page in all_pages}
+        for page in all_pages:
+            page_type_counts[page.page_type.value] = (
+                page_type_counts.get(page.page_type.value, 0) + 1
+            )
+        dropped_page_reasons = {item.page_id: item.reason for item in context.dropped_pages}
+        dropped_page_source_ids = {
+            item.page_id: pages_by_id[item.page_id].source_message_ids
+            for item in context.dropped_pages
+            if item.page_id in pages_by_id
+        }
+        context_evidence_source_ids = [
+            evidence.message_id for evidence in context.retrieved_evidence[:candidate_top_k]
+        ]
+        context_evidence_page_ids = _dedupe_source_ids(
+            evidence.page_id
+            for evidence in context.retrieved_evidence[:candidate_top_k]
+            if evidence.page_id is not None
+        )
         return _baseline_from_evidence(
             case.question,
             memory_evidence,
             context.estimated_tokens,
-            page_count=len(service.store.list_pages(source_session.id)),
+            page_count=len(all_pages),
             loaded_pages=len(pages),
             dropped_pages=len(context.dropped_pages),
             dropped_page_details=[item.model_dump() for item in context.dropped_pages],
+            page_type_counts=page_type_counts,
+            page_source_counts=[len(page.source_message_ids) for page in all_pages],
+            page_summary_token_counts=[service.tokenizer.count(page.summary) for page in all_pages],
+            retrieved_page_ids=retrieved_page_ids,
+            dropped_page_reasons=dropped_page_reasons,
+            dropped_page_source_ids=dropped_page_source_ids,
+            retrieval_candidate_top_k=candidate_top_k,
+            retrieval_candidate_unit="message",
+            retrieval_candidate_source_ids=context_evidence_source_ids,
+            retrieval_candidate_page_ids=context_evidence_page_ids,
+            page_candidate_top_k=candidate_top_k,
+            page_candidate_source_ids=page_candidate_source_ids,
+            page_candidate_page_ids=page_candidate_page_ids,
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -670,6 +752,19 @@ def _baseline_from_evidence(
     loaded_pages: int = 0,
     dropped_pages: int = 0,
     dropped_page_details: list[dict[str, object]] | None = None,
+    page_type_counts: dict[str, int] | None = None,
+    page_source_counts: list[int] | None = None,
+    page_summary_token_counts: list[int] | None = None,
+    retrieved_page_ids: list[str] | None = None,
+    dropped_page_reasons: dict[str, str] | None = None,
+    dropped_page_source_ids: dict[str, list[str]] | None = None,
+    retrieval_candidate_top_k: int | None = None,
+    retrieval_candidate_unit: str | None = None,
+    retrieval_candidate_source_ids: list[str] | None = None,
+    retrieval_candidate_page_ids: list[str] | None = None,
+    page_candidate_top_k: int | None = None,
+    page_candidate_source_ids: list[str] | None = None,
+    page_candidate_page_ids: list[str] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}
@@ -684,13 +779,37 @@ def _baseline_from_evidence(
         loaded_pages=loaded_pages,
         dropped_pages=dropped_pages,
         dropped_page_details=dropped_page_details or [],
+        page_type_counts=page_type_counts or {},
+        page_source_counts=page_source_counts or [],
+        page_summary_token_counts=page_summary_token_counts or [],
+        retrieved_page_ids=retrieved_page_ids or [],
+        dropped_page_reasons=dropped_page_reasons or {},
+        dropped_page_source_ids=dropped_page_source_ids or {},
+        retrieval_candidate_top_k=retrieval_candidate_top_k,
+        retrieval_candidate_unit=retrieval_candidate_unit,
+        retrieval_candidate_source_ids=retrieval_candidate_source_ids or [],
+        retrieval_candidate_page_ids=retrieval_candidate_page_ids or [],
+        page_candidate_top_k=page_candidate_top_k,
+        page_candidate_source_ids=page_candidate_source_ids or [],
+        page_candidate_page_ids=page_candidate_page_ids or [],
     )
+
+
+def _dedupe_source_ids(source_ids: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for source_id in source_ids:
+        if not isinstance(source_id, str) or source_id in seen:
+            continue
+        deduped.append(source_id)
+        seen.add(source_id)
+    return deduped
 
 
 def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[EvidenceItem]:
     query_terms = set(tokenize(question))
     temporal_recent_update = any(
-        item.origin == "message"
+        item.origin in {"message", "retrieved_message"}
         and _is_temporal_question(question)
         and _has_update_signal(item.text)
         for item in evidence
@@ -698,10 +817,16 @@ def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[Eviden
     scored: list[tuple[int, EvidenceItem]] = []
     for item in evidence:
         score = len(query_terms & set(tokenize(item.text)))
+        if item.origin == "retrieved_message":
+            score += 8
         if _is_temporal_question(question) and _has_update_signal(item.text):
             score += 20
         if item.origin == "page" and not temporal_recent_update:
             score += 8
+        if any(
+            marker in item.text for marker in ("不包含", "不提供", "无关", "噪声", "占位", "背景")
+        ):
+            score -= 20
         scored.append((score, item))
     scored.sort(key=lambda item: item[0], reverse=True)
     limit = _evidence_limit(question)
@@ -752,11 +877,11 @@ def _project_answer(question: str, selected: list[EvidenceItem]) -> str:
 
 def _project_evidence_text(question: str, text: str) -> str:
     compact = " ".join(text.strip().split())
-    if _is_generic_ack(compact):
+    if is_generic_ack(compact):
         return ""
 
     clauses = [clause.strip() for clause in compact.replace("；", "。").split("。")]
-    clauses = [clause for clause in clauses if clause and not _is_generic_ack(clause)]
+    clauses = [clause for clause in clauses if clause and not is_generic_ack(clause)]
     if not clauses:
         return ""
 
@@ -771,7 +896,8 @@ def _project_evidence_text(question: str, text: str) -> str:
             "调整到",
             "切换到",
             "切换成",
-            "换",
+            "换成",
+            "换用",
             "选",
             "采用",
         )
@@ -794,10 +920,6 @@ def _drop_prefix_before_marker(text: str, marker: str) -> str:
     return suffix.strip(" ，,：:") or text
 
 
-def _is_generic_ack(text: str) -> bool:
-    return text.startswith(("已记录", "已经记录", "记录了", "收到", "好的", "明白"))
-
-
 def _context_tokens(task: str, texts: list[str], tokenizer: TokenEstimator) -> int:
     return tokenizer.count(task) + sum(tokenizer.count(text) for text in texts)
 
@@ -810,7 +932,7 @@ def _message_evidence(messages: list[Message]) -> list[EvidenceItem]:
     return [
         EvidenceItem(text=message.content, source_texts={message.id: message.content})
         for message in messages
-        if not (message.role == Role.ASSISTANT and _is_generic_ack(message.content))
+        if not (message.role == Role.ASSISTANT and is_generic_ack(message.content))
     ]
 
 
@@ -818,7 +940,7 @@ def _page_evidence(page: MemoryPage, messages_by_id: dict[str, Message]) -> list
     source_texts = _page_fact_sources(page.source_message_ids, messages_by_id)
     evidence: list[EvidenceItem] = []
     for text in (*page.decisions, *page.facts, *page.open_questions):
-        if text and not _is_generic_ack(text):
+        if text and not is_generic_ack(text):
             evidence.append(EvidenceItem(text=text, source_texts=source_texts, origin="page"))
     if not evidence and page.summary:
         evidence.append(EvidenceItem(text=page.summary, source_texts=source_texts, origin="page"))

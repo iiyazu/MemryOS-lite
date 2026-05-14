@@ -11,7 +11,7 @@ Demonstrates:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, TypedDict, cast
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -39,6 +39,16 @@ class AgentState(TypedDict, total=False):
     result: str
 
 
+def _state_with(state: AgentState, **updates: Any) -> AgentState:
+    return cast(AgentState, {**state, **updates})
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    return str(content)
+
+
 def build_agent_graph(
     service: MemoryOSService,
     session_id: str,
@@ -57,15 +67,15 @@ def build_agent_graph(
                                               └→ no conflict: END
     """
     settings = settings or service.settings
-    api_key = settings.openai_api_key or ""
-    base_url = settings.openai_base_url
+    api_key = settings.chat_api_key or ""
+    base_url = settings.chat_base_url
 
     kwargs: dict[str, Any] = {}
     if base_url:
         kwargs["base_url"] = base_url
 
     llm = ChatOpenAI(
-        model=settings.memoryos_model,
+        model=settings.chat_model,
         api_key=api_key,  # type: ignore[arg-type]
         temperature=0,
         **kwargs,
@@ -76,13 +86,13 @@ def build_agent_graph(
 
     # --- Node definitions ---
 
-    def router_node(state: dict) -> dict:
+    def router_node(state: AgentState) -> AgentState:
         """Classify user intent: ingest, recall, or update."""
         messages = state.get("messages", [])
         if not messages:
-            return {**state, "intent": "recall"}
+            return _state_with(state, intent="recall")
 
-        last_msg = messages[-1].content if messages else ""
+        last_msg = _content_text(messages[-1].content) if messages else ""
         system = SystemMessage(
             content=(
                 "Classify the user's intent into exactly one category:\n"
@@ -93,27 +103,27 @@ def build_agent_graph(
             )
         )
         response = llm.invoke([system, HumanMessage(content=last_msg)])
-        intent = response.content.strip().lower()
+        intent = _content_text(response.content).strip().lower()
         if intent not in ("ingest", "recall", "update"):
             intent = "recall"
-        return {**state, "intent": intent}
+        return _state_with(state, intent=intent)
 
-    def ingest_node(state: dict) -> dict:
+    def ingest_node(state: AgentState) -> AgentState:
         """Ingest the user's message into memory."""
         messages = state.get("messages", [])
-        last_msg = messages[-1].content if messages else ""
+        last_msg = _content_text(messages[-1].content) if messages else ""
         session = state.get("session_id", session_id)
         response = service.ingest(session, MessageCreate(role=Role.USER, content=last_msg))
-        return {**state, "should_page": response.should_page, "result": "Message ingested."}
+        return _state_with(state, should_page=response.should_page, result="Message ingested.")
 
-    def paging_node(state: dict) -> dict:
+    def paging_node(state: AgentState) -> AgentState:
         """Run paging to compress messages into memory pages."""
         session = state.get("session_id", session_id)
         page = service.page(session)
         result = f"Paged: {page.title}" if page else "No page created."
-        return {**state, "result": result}
+        return _state_with(state, result=result)
 
-    def tool_agent_node(state: dict) -> dict:
+    def tool_agent_node(state: AgentState) -> AgentState:
         """Agent node that can call memory tools."""
         messages = state.get("messages", [])
         system = SystemMessage(
@@ -123,36 +133,36 @@ def build_agent_graph(
                 "Be concise and precise in your tool usage."
             )
         )
-        response = llm_with_tools.invoke([system] + messages)
-        return {**state, "messages": [response]}
+        response = llm_with_tools.invoke([system, *messages])
+        return _state_with(state, messages=[response])
 
     tool_node = ToolNode(tools)
 
-    def tool_executor_node(state: dict) -> dict:
+    def tool_executor_node(state: AgentState) -> AgentState:
         """Execute tool calls from the agent."""
-        return tool_node.invoke(state)
+        return cast(AgentState, tool_node.invoke(state))
 
-    def build_context_node(state: dict) -> dict:
+    def build_context_node(state: AgentState) -> AgentState:
         """Build context package for the session."""
         session = state.get("session_id", session_id)
         messages = state.get("messages", [])
         human_messages = [message for message in messages if isinstance(message, HumanMessage)]
         if human_messages:
-            task = human_messages[-1].content
+            task = _content_text(human_messages[-1].content)
         else:
-            task = messages[-1].content if messages else ""
+            task = _content_text(messages[-1].content) if messages else ""
         context = service.build_context(session, task=task)
         result = f"Context built: {context.estimated_tokens} tokens"
-        return {**state, "context": context, "result": result}
+        return _state_with(state, context=context, result=result)
 
-    def conflict_check_node(state: dict) -> dict:
+    def conflict_check_node(state: AgentState) -> AgentState:
         """Check if the update introduces conflicts."""
         # Simple heuristic: check if patch was applied to existing page
-        return {**state, "conflict_detected": False, "human_approved": True}
+        return _state_with(state, conflict_detected=False, human_approved=True)
 
     # --- Routing functions ---
 
-    def route_by_intent(state: dict) -> str:
+    def route_by_intent(state: AgentState) -> str:
         intent = state.get("intent", "recall")
         if intent == "ingest":
             return "ingest"
@@ -161,17 +171,17 @@ def build_agent_graph(
         else:
             return "tool_agent"
 
-    def route_after_ingest(state: dict) -> str:
+    def route_after_ingest(state: AgentState) -> str:
         return "paging" if state.get("should_page") else "build_context"
 
-    def route_after_tool_agent(state: dict) -> str:
+    def route_after_tool_agent(state: AgentState) -> str:
         """Check if agent wants to call tools or is done."""
         messages = state.get("messages", [])
         if messages and hasattr(messages[-1], "tool_calls") and messages[-1].tool_calls:
             return "tool_executor"
         return "build_context"
 
-    def route_after_build_context(state: dict) -> str:
+    def route_after_build_context(state: AgentState) -> str:
         return "conflict_check" if state.get("intent") == "update" else END
 
     # --- Build graph ---

@@ -1,0 +1,651 @@
+[
+  {
+    "case_id": "conv-26_qa_001",
+    "question_type": "2",
+    "question": "When did Caroline go to the LGBTQ support group?",
+    "expected_answer": "7 May 2023",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_001:conv-26:D1:3"
+    ],
+    "source_ids": [
+      "conv-26_qa_001:conv-26:D19:15"
+    ],
+    "missing_source_ids": [
+      "conv-26_qa_001:conv-26:D1:3"
+    ],
+    "expected_session_ids": [
+      "D1"
+    ],
+    "source_session_ids": [
+      "D19"
+    ],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_59c72f6f5f80"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_59c72f6f5f80": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_59c72f6f5f80"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_002",
+    "question_type": "2",
+    "question": "When did Melanie paint a sunrise?",
+    "expected_answer": "2022",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_002:conv-26:D1:12"
+    ],
+    "source_ids": [],
+    "missing_source_ids": [
+      "conv-26_qa_002:conv-26:D1:12"
+    ],
+    "expected_session_ids": [
+      "D1"
+    ],
+    "source_session_ids": [],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_e460fd7c6e27"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_e460fd7c6e27": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_e460fd7c6e27"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_003",
+    "question_type": "3",
+    "question": "What fields would Caroline be likely to pursue in her educaton?",
+    "expected_answer": "Psychology, counseling certification",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_003:conv-26:D1:9",
+      "conv-26_qa_003:conv-26:D1:11"
+    ],
+    "source_ids": [
+      "conv-26_qa_003:conv-26:D19:15"
+    ],
+    "missing_source_ids": [
+      "conv-26_qa_003:conv-26:D1:11",
+      "conv-26_qa_003:conv-26:D1:9"
+    ],
+    "expected_session_ids": [
+      "D1"
+    ],
+    "source_session_ids": [
+      "D19"
+    ],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_33c7c77fcebc"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_33c7c77fcebc": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_33c7c77fcebc"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_004",
+    "question_type": "1",
+    "question": "What did Caroline research?",
+    "expected_answer": "Adoption agencies",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_004:conv-26:D2:8"
+    ],
+    "source_ids": [],
+    "missing_source_ids": [
+      "conv-26_qa_004:conv-26:D2:8"
+    ],
+    "expected_session_ids": [
+      "D2"
+    ],
+    "source_session_ids": [],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_8fcc72edc253"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_8fcc72edc253": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_8fcc72edc253"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_005",
+    "question_type": "1",
+    "question": "What is Caroline's identity?",
+    "expected_answer": "Transgender woman",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_005:conv-26:D1:5"
+    ],
+    "source_ids": [
+      "conv-26_qa_005:conv-26:D19:14"
+    ],
+    "missing_source_ids": [
+      "conv-26_qa_005:conv-26:D1:5"
+    ],
+    "expected_session_ids": [
+      "D1"
+    ],
+    "source_session_ids": [
+      "D19"
+    ],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_b42f7f6f213f"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_b42f7f6f213f": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_b42f7f6f213f"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_006",
+    "question_type": "2",
+    "question": "When did Melanie run a charity race?",
+    "expected_answer": "The sunday before 25 May 2023",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_006:conv-26:D2:1"
+    ],
+    "source_ids": [],
+    "missing_source_ids": [
+      "conv-26_qa_006:conv-26:D2:1"
+    ],
+    "expected_session_ids": [
+      "D2"
+    ],
+    "source_session_ids": [],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_8acd3b1db5c7"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_8acd3b1db5c7": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_8acd3b1db5c7"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_007",
+    "question_type": "2",
+    "question": "When is Melanie planning on going camping?",
+    "expected_answer": "June 2023",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_007:conv-26:D2:7"
+    ],
+    "source_ids": [
+      "conv-26_qa_007:conv-26:D19:14"
+    ],
+    "missing_source_ids": [
+      "conv-26_qa_007:conv-26:D2:7"
+    ],
+    "expected_session_ids": [
+      "D2"
+    ],
+    "source_session_ids": [
+      "D19"
+    ],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_da9c39f398cc"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_da9c39f398cc": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_da9c39f398cc"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_008",
+    "question_type": "1",
+    "question": "What is Caroline's relationship status?",
+    "expected_answer": "Single",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_008:conv-26:D3:13",
+      "conv-26_qa_008:conv-26:D2:14"
+    ],
+    "source_ids": [
+      "conv-26_qa_008:conv-26:D19:14"
+    ],
+    "missing_source_ids": [
+      "conv-26_qa_008:conv-26:D2:14",
+      "conv-26_qa_008:conv-26:D3:13"
+    ],
+    "expected_session_ids": [
+      "D2",
+      "D3"
+    ],
+    "source_session_ids": [
+      "D19"
+    ],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_723826fbdce6"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_723826fbdce6": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_723826fbdce6"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_009",
+    "question_type": "2",
+    "question": "When did Caroline give a speech at a school?",
+    "expected_answer": "The week before 9 June 2023",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_009:conv-26:D3:1"
+    ],
+    "source_ids": [],
+    "missing_source_ids": [
+      "conv-26_qa_009:conv-26:D3:1"
+    ],
+    "expected_session_ids": [
+      "D3"
+    ],
+    "source_session_ids": [],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_0eaca69aa856"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_0eaca69aa856": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_0eaca69aa856"
+    ],
+    "dropped_relevant_page_count": 1
+  },
+  {
+    "case_id": "conv-26_qa_010",
+    "question_type": "2",
+    "question": "When did Caroline meet up with her friends, family, and mentors?",
+    "expected_answer": "The week before 9 June 2023",
+    "verdict": "fail",
+    "source_hit": false,
+    "session_hit": false,
+    "source_hit_at_k": null,
+    "session_hit_at_k": null,
+    "page_source_overlap_at_k": true,
+    "page_session_overlap_at_k": true,
+    "expected_source_ids": [
+      "conv-26_qa_010:conv-26:D3:11"
+    ],
+    "source_ids": [
+      "conv-26_qa_010:conv-26:D19:15"
+    ],
+    "missing_source_ids": [
+      "conv-26_qa_010:conv-26:D3:11"
+    ],
+    "expected_session_ids": [
+      "D3"
+    ],
+    "source_session_ids": [
+      "D19"
+    ],
+    "retrieval_candidate_unit": "page",
+    "retrieval_candidate_top_k": 5,
+    "retrieval_candidate_page_ids": [
+      "page_27601fb895c3"
+    ],
+    "retrieval_candidate_source_ids_count": 417,
+    "retrieval_candidate_session_ids": [
+      "D1",
+      "D10",
+      "D11",
+      "D12",
+      "D13",
+      "D14",
+      "D15",
+      "D16",
+      "D17",
+      "D18",
+      "D19",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7",
+      "D8",
+      "D9"
+    ],
+    "page_type_counts": {
+      "core_profile_page": 1
+    },
+    "retrieved_page_ids": [],
+    "dropped_page_reasons": {
+      "page_27601fb895c3": "core_profile_exceeds_budget"
+    },
+    "dropped_relevant_page_ids": [
+      "page_27601fb895c3"
+    ],
+    "dropped_relevant_page_count": 1
+  }
+]

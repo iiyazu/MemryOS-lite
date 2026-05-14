@@ -4,6 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
+Current portfolio positioning: **eval-driven, source-attributed Agent/RAG
+memory prototype**. Do not describe it as production-ready MemoryOS.
+
+Current public-benchmark line:
+- **Public M1**: deterministic LongMemEval/LoCoMo harness and diagnostics.
+- **Public M2**: raw-message evidence retrieval via
+  `ContextPackage.retrieved_evidence`.
+- **Public M3**: conservative session/window-aware paging. M3 is a mixed
+  result: it reduces LoCoMo relevant dropped pages but does not solve LoCoMo;
+  final source/session hit still depends on weak evidence/page ranking and
+  answer projection.
+
+As of M3, raw-message evidence is loaded before non-core page summaries in
+`ContextBuilder`; do not call it only a page-overflow fallback. Evidence text is
+compacted into bounded source-attributed snippets so long source messages can
+fit small eval budgets. The remaining limitation is ranking/projection quality
+and LoCoMo core-page budget pressure, not just whether raw evidence exists.
+
 ### Completed
 - **M0**: Baseline frozen — 81 eval cases, 4 baselines (see `docs/baseline/results.md`)
 - **M1**: Docker + docker-compose + Makefile + GitHub Actions CI + pre-commit
