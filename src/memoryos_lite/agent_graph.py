@@ -98,6 +98,7 @@ def build_agent_graph(
     service: MemoryOSService,
     session_id: str,
     settings: Settings | None = None,
+    llm: Any | None = None,
 ):
     """Build the full agentic memory manager graph.
 
@@ -119,12 +120,13 @@ def build_agent_graph(
     if base_url:
         kwargs["base_url"] = base_url
 
-    llm = ChatOpenAI(
-        model=settings.chat_model,
-        api_key=api_key,  # type: ignore[arg-type]
-        temperature=0,
-        **kwargs,
-    )
+    if llm is None:
+        llm = ChatOpenAI(
+            model=settings.chat_model,
+            api_key=api_key,  # type: ignore[arg-type]
+            temperature=0,
+            **kwargs,
+        )
 
     tools = create_memory_tools(service, session_id)
     llm_with_tools = llm.bind_tools(tools)

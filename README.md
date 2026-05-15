@@ -58,6 +58,7 @@ Task Request → DynamicBudget → ContextBuilder ← HybridSearcher
 uv venv --python 3.11 && source .venv/bin/activate
 uv sync
 uv run memoryos demo run
+uv run memoryos demo agent  # deterministic LangGraph demo; no real LLM call
 ```
 
 ### API Server

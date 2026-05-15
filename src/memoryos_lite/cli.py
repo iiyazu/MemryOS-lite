@@ -1,16 +1,19 @@
+import re
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from tempfile import TemporaryDirectory
+from typing import Annotated, Any
 
 import uvicorn
+from langchain_core.messages import AIMessage, HumanMessage
 from rich.console import Console
 from rich.table import Table
 from typer import Option, Typer
 
-from memoryos_lite.config import get_settings
+from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import EvalResult, run_eval, run_eval_llm
-from memoryos_lite.graphs import build_memory_graph
 from memoryos_lite.llm_judge import JudgeVerdict
 from memoryos_lite.public_benchmarks import PublicBenchmarkResult, run_public_benchmark
 from memoryos_lite.schemas import MessageCreate, Role
@@ -68,6 +71,14 @@ def api(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None
 @demo_app.command("run")
 def demo_run() -> None:
     """Run an end-to-end ingest -> page -> context demo."""
+    warnings.filterwarnings(
+        "ignore",
+        message="The default value of `allowed_objects` will change*",
+        category=Warning,
+        module=r"langgraph\..*",
+    )
+    from memoryos_lite.graphs import build_memory_graph
+
     service = MemoryOSService()
     service.settings.rot_safe_budget = 1
     service.settings.recent_message_limit = 2
@@ -100,6 +111,154 @@ def demo_run() -> None:
     console.print(f"[bold]Estimated tokens:[/bold] {context.estimated_tokens}")
     for page in context.retrieved_pages + context.active_task_pages:
         console.print(f"[green]Loaded page[/green] {page.page_id}: {page.title}")
+
+
+class _ScriptedAgentDemoLLM:
+    """Deterministic local LLM stand-in for the CLI demo."""
+
+    def __init__(self, patch_page_id: str) -> None:
+        self.patch_page_id = patch_page_id
+        self._patch_called = False
+
+    def bind_tools(self, tools: list[Any]) -> "_ScriptedAgentDemoLLM":
+        return self
+
+    def invoke(self, messages: list[Any]) -> AIMessage:
+        system_text = _message_text(messages[0]) if messages else ""
+        user_text = _message_text(messages[-1]) if messages else ""
+        if "Classify the user's intent" in system_text:
+            intent = "update" if "patch" in user_text.lower() else "recall"
+            return AIMessage(content=intent)
+        if "memory management agent" in system_text:
+            if "patch" in user_text.lower() and not self._patch_called:
+                self._patch_called = True
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "patch_page",
+                            "args": {
+                                "page_id": self.patch_page_id,
+                                "operation": "replace",
+                                "old_text": "production-ready MemoryOS platform",
+                                "new_text": "eval-driven MemoryOS Lite prototype",
+                            },
+                            "id": "call_demo_patch",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            return AIMessage(content="Tool work finished.")
+        if "experimental memory QA node" in system_text:
+            message_id = _first_message_id(user_text)
+            citation = f" [{message_id}]" if message_id else ""
+            return AIMessage(
+                content=(
+                    "The user decided to build MemoryOS Lite as an "
+                    f"eval-driven Agent/RAG memory prototype{citation}."
+                )
+            )
+        return AIMessage(content="recall")
+
+
+def _message_text(message: Any) -> str:
+    content = getattr(message, "content", message)
+    return str(content)
+
+
+def _first_message_id(text: str) -> str | None:
+    match = re.search(r"message_id=([^\s]+)", text)
+    return match.group(1) if match else None
+
+
+@demo_app.command("agent")
+def demo_agent(
+    data_dir: Annotated[
+        Path | None,
+        Option(
+            "--data-dir",
+            help="Optional directory for demo storage; defaults to an isolated temp dir.",
+        ),
+    ] = None,
+) -> None:
+    """Run a deterministic LangGraph agent demo without calling a real LLM."""
+    if data_dir is None:
+        with TemporaryDirectory(prefix="memoryos-agent-demo-") as tmp_dir:
+            _run_agent_demo(Path(tmp_dir))
+        return
+    _run_agent_demo(data_dir)
+
+
+def _run_agent_demo(data_dir: Path) -> None:
+    warnings.filterwarnings(
+        "ignore",
+        message="The default value of `allowed_objects` will change*",
+        category=Warning,
+        module=r"langgraph\..*",
+    )
+    from memoryos_lite.agent_graph import build_agent_graph
+
+    settings = Settings(data_dir=data_dir, openai_api_key=None, recent_message_limit=1)
+    service = MemoryOSService(settings=settings)
+    session = service.create_session("MemoryOS Lite agent demo")
+    seed_messages = [
+        "User first considered a Runbook Oncall Agent for the portfolio.",
+        (
+            "Final decision: build MemoryOS Lite as an eval-driven Agent/RAG "
+            "memory prototype with source attribution."
+        ),
+        "The demo should show citations, conflict review, and bounded tool loops.",
+    ]
+    for content in seed_messages:
+        service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+    page = service.page(session.id)
+    if page is None:
+        raise RuntimeError("Agent demo setup failed to create a memory page.")
+
+    llm = _ScriptedAgentDemoLLM(page.id)
+    graph = build_agent_graph(service, session.id, settings=settings, llm=llm)
+    config = {"configurable": {"thread_id": "agent-demo"}}
+
+    recall_state = graph.invoke(
+        {
+            "messages": [HumanMessage(content="What project did the user decide to build?")],
+            "session_id": session.id,
+            "intent": "",
+            "should_page": False,
+            "context": None,
+            "conflict_detected": False,
+            "patch_errors": [],
+            "human_approved": False,
+            "result": "",
+            "tool_turns": 0,
+        },
+        config=config,
+    )
+    patch_state = graph.invoke(
+        {
+            "messages": [HumanMessage(content="Patch the page with the corrected positioning.")],
+            "session_id": session.id,
+            "intent": "",
+            "should_page": False,
+            "context": None,
+            "conflict_detected": False,
+            "patch_errors": [],
+            "human_approved": False,
+            "result": "",
+            "tool_turns": 0,
+        },
+        config={"configurable": {"thread_id": "agent-demo-patch"}},
+    )
+
+    console.print("[bold]Agent demo:[/bold] deterministic LangGraph run; no real LLM call")
+    console.print(f"[bold]Session:[/bold] {session.id}")
+    console.print(f"[bold]Paged memory:[/bold] {page.id} ({len(page.source_message_ids)} sources)")
+    console.print("\n[bold]Recall answer[/bold]")
+    console.print(recall_state["result"], markup=False)
+    console.print("\n[bold]Patch conflict review[/bold]")
+    errors = patch_state.get("patch_errors") or ["No patch errors recorded."]
+    for error in errors:
+        console.print(f"- {error}", markup=False)
 
 
 @eval_app.command("run")
