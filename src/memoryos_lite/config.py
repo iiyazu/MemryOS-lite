@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     memoryos_evidence_reserve_tokens: int = 64
     memoryos_evidence_reserve_min_pages: int = 8
     memoryos_paging_mode: str = "heuristic"
+    memoryos_paging_context_pages: int = 10
     memoryos_llm_provider: str = "auto"
     openai_api_key: str | None = None
     openai_base_url: str | None = None

@@ -39,10 +39,16 @@ def test_page_increments_counter(service):
     ]:
         service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
     before_heuristic = _counter_value(PAGE_TOTAL, {"mode": "heuristic"})
+    before_agentic = _counter_value(PAGE_TOTAL, {"mode": "agentic"})
+    before_fallback = _counter_value(PAGE_TOTAL, {"mode": "heuristic_fallback"})
     page = service.page(session.id)
     assert page is not None
     after_heuristic = _counter_value(PAGE_TOTAL, {"mode": "heuristic"})
-    assert after_heuristic == before_heuristic + 1
+    after_agentic = _counter_value(PAGE_TOTAL, {"mode": "agentic"})
+    after_fallback = _counter_value(PAGE_TOTAL, {"mode": "heuristic_fallback"})
+    before_total = before_heuristic + before_agentic + before_fallback
+    after_total = after_heuristic + after_agentic + after_fallback
+    assert after_total == before_total + 1
 
 
 def test_build_context_observes_metrics(service):

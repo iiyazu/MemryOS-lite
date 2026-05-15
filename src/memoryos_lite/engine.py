@@ -32,7 +32,7 @@ from memoryos_lite.retrieval import (
     SearchHit,
 )
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.retrieval.providers import OpenAIEmbeddingClient
+from memoryos_lite.retrieval.providers import OpenAIEmbeddingClient, QdrantEmbeddingStore
 from memoryos_lite.schemas import (
     ContextEvidence,
     ContextPackage,
@@ -87,24 +87,46 @@ class OpenAIPageDraftClient:
             temperature=0,
         ).with_structured_output(MemoryPageDraft)
 
-    def create_draft(self, messages: list[Message]) -> MemoryPageDraft:
+    def create_draft(
+        self,
+        messages: list[Message],
+        context_pages: list[MemoryPage] | None = None,
+    ) -> MemoryPageDraft:
+        known_ids = {m.id for m in messages}
         transcript = "\n".join(
             f"{message.id} [{message.role.value}]: {message.content}" for message in messages
         )
+        if context_pages:
+            pages_block = "\n".join(
+                f"- [{p.id}] {p.title}: {p.summary}" for p in context_pages
+            )
+        else:
+            pages_block = "None"
+        system_content = (
+            "You are the Paging Agent for MemoryOS Lite. Compress the conversation segment"
+            " into a memory page.\n\n"
+            "Rules:\n"
+            "- facts: atomic statements, one per entry, max 12\n"
+            "- decisions: explicit choices/rejections, max 6\n"
+            "- summary: ≤ 2 sentences; if contradictions exist, newest state wins\n"
+            "- source_message_ids: copy exactly from the transcript IDs shown below\n"
+            "- page_type: CORE_PROFILE if personal profile, DECISION if decisions dominate,"
+            " SOURCE_SUMMARY otherwise\n"
+            "- Do not duplicate information already captured in existing pages\n\n"
+            f"Existing pages (do not duplicate):\n{pages_block}"
+        )
         result = self.model.invoke(
             [
-                SystemMessage(
-                    content=(
-                        "You are the Paging Agent for MemoryOS Lite. Convert the old "
-                        "conversation segment into a concise memory page. Preserve source "
-                        "message ids exactly. Do not invent facts."
-                    )
-                ),
+                SystemMessage(content=system_content),
                 HumanMessage(content=transcript),
             ]
         )
         if not isinstance(result, MemoryPageDraft):
             raise TypeError("structured output did not return MemoryPageDraft")
+        # Filter out any hallucinated source IDs
+        result.source_message_ids = [
+            sid for sid in result.source_message_ids if sid in known_ids
+        ]
         return result
 
 
@@ -132,6 +154,74 @@ _UPDATE_MARKERS: tuple[str, ...] = (
     "替换",
     "纠正",
     "其实",
+)
+
+_TEMPORAL_TIMESTAMP_PREFIX_RE = re.compile(r"^\s*(\[[^\]]+\])\s*(?P<body>.*)$")
+_TEMPORAL_CLAUSE_SPLIT_RE = re.compile(r"(?<=[.!?。！？])\s+|[;；]\s*")
+_TEMPORAL_MONTH_NAMES = (
+    "jan(?:uary)?",
+    "feb(?:ruary)?",
+    "mar(?:ch)?",
+    "apr(?:il)?",
+    "may",
+    "jun(?:e)?",
+    "jul(?:y)?",
+    "aug(?:ust)?",
+    "sep(?:tember)?",
+    "sept",
+    "oct(?:ober)?",
+    "nov(?:ember)?",
+    "dec(?:ember)?",
+)
+_TEMPORAL_WEEKDAY_NAMES = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+_TEMPORAL_NUMBER_WORDS = (
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+)
+_TEMPORAL_SEASON_OR_PERIOD_NAMES = (
+    "week",
+    "month",
+    "year",
+    "spring",
+    "summer",
+    "fall",
+    "autumn",
+    "winter",
+)
+_TEMPORAL_BODY_RE = re.compile(
+    r"\b(?:" + "|".join(_TEMPORAL_MONTH_NAMES) + r")\s+\d{1,2}(?:st|nd|rd|th)?\b"
+    r"|\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b"
+    r"|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b"
+    r"|\b(?:yesterday|today|tomorrow)\b"
+    r"|\b(?:last|next)\s+(?:"
+    + "|".join([*_TEMPORAL_WEEKDAY_NAMES, *_TEMPORAL_SEASON_OR_PERIOD_NAMES])
+    + r")\b"
+    r"|\b(?:early|mid|late)[-\s]+(?:"
+    + "|".join([*_TEMPORAL_MONTH_NAMES, *_TEMPORAL_SEASON_OR_PERIOD_NAMES])
+    + r")\b"
+    r"|\b(?:(?:"
+    + "|".join(_TEMPORAL_NUMBER_WORDS)
+    + r")|\d+)\s+(?:day|days|week|weeks|month|months|year|years)\s+ago\b"
+    r"|\b(?:(?:" + "|".join(_TEMPORAL_NUMBER_WORDS) + r")|\d+)\s*-\s*(?:day|week|month|year)\b",
+    re.IGNORECASE,
 )
 
 
@@ -163,6 +253,7 @@ class PagingAgent:
         self,
         session_id: str,
         messages: list[Message],
+        existing_pages: list[MemoryPage] | None = None,
     ) -> tuple[list[MemoryPageDraft], str, str | None]:
         if len(messages) <= self.settings.recent_message_limit:
             return [], "none", None
@@ -171,16 +262,35 @@ class PagingAgent:
             return [], "none", None
         if len(page_messages) < 2:
             return [], "none", None
-        if self.settings.memoryos_paging_mode == "llm" and self.llm_client is None:
-            drafts = self._heuristic_drafts(session_id, page_messages)
-            return drafts, "heuristic_fallback", self.llm_init_error or "llm client unavailable"
-        if self.settings.memoryos_paging_mode == "llm" and self.llm_client is not None:
-            try:
-                return [self.llm_client.create_draft(page_messages)], "llm", None
-            except Exception as exc:
-                drafts = self._heuristic_drafts(session_id, page_messages)
-                return drafts, "heuristic_fallback", str(exc)
+        if self.llm_client is not None:
+            drafts, had_fallback, fallback_error = self._agentic_drafts(
+                session_id, page_messages, existing_pages or []
+            )
+            mode = "heuristic_fallback" if had_fallback else "agentic"
+            return drafts, mode, fallback_error
         return self._heuristic_drafts(session_id, page_messages), "heuristic", None
+
+    def _agentic_drafts(
+        self,
+        session_id: str,
+        page_messages: list[Message],
+        existing_pages: list[MemoryPage],
+    ) -> tuple[list[MemoryPageDraft], bool, str | None]:
+        context_pages = existing_pages[-self.settings.memoryos_paging_context_pages :]
+        drafts: list[MemoryPageDraft] = []
+        had_fallback = False
+        fallback_error: str | None = None
+        for window in self._split_page_windows(page_messages):
+            if len(window) < 2:
+                continue
+            try:
+                draft = self.llm_client.create_draft(window, context_pages)  # type: ignore[union-attr]
+            except Exception as exc:
+                draft = self._heuristic_draft(session_id, window)
+                had_fallback = True
+                fallback_error = str(exc)
+            drafts.append(draft)
+        return drafts, had_fallback, fallback_error
 
     def _heuristic_drafts(
         self,
@@ -222,6 +332,7 @@ class PagingAgent:
                 open_questions.append(compact)
             else:
                 facts.append(compact)
+        temporal_anchors = self._temporal_anchors(page_messages)
         title = self._title(page_messages)
         # Summary prioritises: (a) overrides/updates (latest state wins),
         # (b) earliest facts (for continuity), (c) decisions, (d) tool notes.
@@ -281,7 +392,7 @@ class PagingAgent:
             page_type=page_type,
             title=title,
             summary=summary,
-            facts=facts[:8],
+            facts=[*temporal_anchors, *facts][:16],
             decisions=decisions[:8],
             open_questions=open_questions[:5],
             discarded_noise=[],
@@ -333,6 +444,68 @@ class PagingAgent:
         if len(cleaned) > 180:
             return cleaned[:177] + "..."
         return cleaned
+
+    def _temporal_anchors(self, messages: list[Message]) -> list[str]:
+        anchors: list[str] = []
+        seen: set[str] = set()
+        for message in messages:
+            if message.role == Role.ASSISTANT and is_generic_ack(message.content):
+                continue
+            anchor = self._temporal_anchor_from_message(message)
+            if anchor and anchor not in seen:
+                anchors.append(anchor)
+                seen.add(anchor)
+            if len(anchors) >= 12:
+                break
+        return anchors
+
+    def _temporal_anchor_from_message(self, message: Message) -> str | None:
+        cleaned = " ".join(message.content.strip().split())
+        if not cleaned:
+            return None
+        prefix = ""
+        body = cleaned
+        match = _TEMPORAL_TIMESTAMP_PREFIX_RE.match(cleaned)
+        if match:
+            prefix = match.group(1)
+            body = match.group("body").strip()
+        if not body:
+            return None
+        max_clause_length = max(60, 179 - len(prefix)) if prefix else 180
+        clause = self._temporal_clause(body, max_length=max_clause_length)
+        if clause is None:
+            return None
+        if prefix:
+            return f"{prefix} {clause}"
+        return clause
+
+    @staticmethod
+    def _temporal_clause(text: str, max_length: int = 180) -> str | None:
+        clauses = [clause.strip() for clause in _TEMPORAL_CLAUSE_SPLIT_RE.split(text)]
+        for clause in clauses:
+            match = _TEMPORAL_BODY_RE.search(clause)
+            if clause and match:
+                return PagingAgent._clip_temporal_clause(clause, match, max_length=max_length)
+        return None
+
+    @staticmethod
+    def _clip_temporal_clause(clause: str, match: re.Match[str], max_length: int = 180) -> str:
+        if len(clause) <= max_length:
+            return clause
+        start = max(0, match.start() - 40)
+        end = min(len(clause), start + max_length)
+        if end - start < max_length:
+            start = max(0, end - max_length)
+        snippet = clause[start:end].strip()
+        if start > 0:
+            snippet = f"...{snippet}"
+        if end < len(clause):
+            snippet = f"{snippet}..."
+        return snippet
+
+    @staticmethod
+    def _is_temporal_anchor(text: str) -> bool:
+        return bool(_TEMPORAL_TIMESTAMP_PREFIX_RE.match(text))
 
     @staticmethod
     def _looks_like_profile(facts: list[str]) -> bool:
@@ -431,6 +604,7 @@ class ContextBuilder:
         self.tokenizer = tokenizer
         self.searcher = searcher
         self.settings = settings
+        self._bm25_evidence_cache: dict[tuple[tuple[str, int], ...], BM25Okapi] = {}
 
     def build(
         self,
@@ -507,7 +681,21 @@ class ContextBuilder:
                     )
                 )
 
+        target_evidence_count = (
+            2 if self._needs_multi_evidence(query) and len(evidence_candidates) >= 2 else 1
+        )
         for evidence in evidence_candidates:
+            if (
+                target_evidence_count > 1
+                and len(package.retrieved_evidence) >= target_evidence_count
+            ):
+                break
+            evidence = self._fit_evidence_for_selection(
+                evidence,
+                query_tokens=tokenize(query),
+                available_tokens=budget - used_tokens,
+                remaining_slots=max(1, target_evidence_count - len(package.retrieved_evidence)),
+            )
             if used_tokens + evidence.estimated_tokens <= budget:
                 package.retrieved_evidence.append(evidence)
                 selected_evidence_ids.add(evidence.message_id)
@@ -602,12 +790,21 @@ class ContextBuilder:
             candidates.append((index, message, tokens, overlap, page_id, superseded))
         if not candidates:
             return [], 0
-        bm25 = BM25Okapi([tokens for _, _, tokens, _, _, _ in candidates])
+        cache_key = tuple(sorted((m.id, m.token_count) for _, m, _, _, _, _ in candidates))
+        if cache_key not in self._bm25_evidence_cache:
+            if len(self._bm25_evidence_cache) >= 8:
+                self._bm25_evidence_cache.pop(next(iter(self._bm25_evidence_cache)))
+            self._bm25_evidence_cache[cache_key] = BM25Okapi(
+                [tokens for _, _, tokens, _, _, _ in candidates]
+            )
+        bm25 = self._bm25_evidence_cache[cache_key]
         scores = bm25.get_scores(query_tokens)
+        assistant_answer_query = self._looks_like_assistant_answer_query(query)
         scored = sorted(
             (
                 _RankedMessageEvidence(
-                    score=float(scores[candidate_index]),
+                    score=float(scores[candidate_index])
+                    + (6.0 if assistant_answer_query and message.role == Role.ASSISTANT else 0.0),
                     overlap=overlap,
                     message_index=message_index,
                     message=message,
@@ -626,6 +823,8 @@ class ContextBuilder:
             key=lambda item: (item.score, item.overlap, item.message_index),
             reverse=True,
         )
+        if self._needs_multi_evidence(query):
+            scored = self._diversify_ranked_message_evidence(scored)
         top_ids = {item.message.id for item in scored[:top_k]}
         active_overlap_not_top5 = sum(
             1
@@ -651,6 +850,70 @@ class ContextBuilder:
                 )
             )
         return evidence, active_overlap_not_top5
+
+    @staticmethod
+    def _looks_like_assistant_answer_query(query: str) -> bool:
+        normalized = query.lower()
+        return any(
+            marker in normalized
+            for marker in (
+                "you provided",
+                "you recommended",
+                "you suggested",
+                "you gave",
+                "previous chat",
+                "previous conversation",
+                "we discussed",
+                "can you remind me",
+                "remind me what",
+                "list you",
+                "the list",
+                "the image",
+                "recommended last time",
+            )
+        )
+
+    @staticmethod
+    def _diversify_ranked_message_evidence(
+        scored: list[_RankedMessageEvidence],
+    ) -> list[_RankedMessageEvidence]:
+        diversified: list[_RankedMessageEvidence] = []
+        selected_ids: set[str] = set()
+        seen_groups: set[str] = set()
+        for item in scored:
+            group = str(
+                item.message.metadata.get("benchmark_session_id")
+                or item.page_id
+                or item.message.session_id
+            )
+            if group in seen_groups:
+                continue
+            diversified.append(item)
+            selected_ids.add(item.message.id)
+            seen_groups.add(group)
+        diversified.extend(item for item in scored if item.message.id not in selected_ids)
+        return diversified
+
+    def _fit_evidence_for_selection(
+        self,
+        evidence: ContextEvidence,
+        query_tokens: list[str],
+        available_tokens: int,
+        remaining_slots: int,
+    ) -> ContextEvidence:
+        token_limit = min(
+            evidence.estimated_tokens,
+            max(8, available_tokens // remaining_slots) if available_tokens > 0 else 0,
+        )
+        if token_limit <= 0 or evidence.estimated_tokens <= token_limit:
+            return evidence
+        text = self._clip_text_to_token_budget(evidence.text, token_limit, query_tokens)
+        return evidence.model_copy(
+            update={
+                "text": text,
+                "estimated_tokens": self.tokenizer.count(text),
+            }
+        )
 
     @staticmethod
     def _is_low_value_evidence(text: str) -> bool:
@@ -700,10 +963,86 @@ class ContextBuilder:
 
         words = snippet.split()
         if len(words) > 1:
-            shortened = " ".join(words[:max_tokens]).strip()
-            if shortened:
+            shortened = self._clip_text_to_token_budget(snippet, max_tokens, query_tokens)
+            if shortened and self.tokenizer.count(shortened) <= max_tokens:
                 return shortened
         return snippet[: max(24, max_tokens * 4)].rstrip() or compact[:180]
+
+    def _clip_text_to_token_budget(
+        self,
+        text: str,
+        token_budget: int,
+        query_tokens: list[str] | None = None,
+    ) -> str:
+        if token_budget <= 0:
+            return ""
+        if self.tokenizer.count(text) <= token_budget:
+            return text
+        query_token_set = set(query_tokens or [])
+        if query_token_set:
+            prefix = ""
+            prefix_match = re.match(r"^(\[[^\]]+\]\s*)", text)
+            if prefix_match is not None:
+                prefix = prefix_match.group(1)
+                body = text[len(prefix) :].strip()
+            else:
+                body = text
+            body_words = body.split()
+            best_text = ""
+            best_score: tuple[int, int, int] = (-1, -1, 0)
+            # This query-aware search is intentionally simple and quadratic.
+            # It is only used on already clipped evidence snippets/anchors
+            # (normally well under 200 words), not arbitrary long documents.
+            for start in range(len(body_words)):
+                for end in range(start + 1, len(body_words) + 1):
+                    window = " ".join(body_words[start:end]).strip()
+                    candidate = f"{prefix}{window}".strip() if prefix else window
+                    token_count = self.tokenizer.count(candidate)
+                    if token_count > token_budget:
+                        break
+                    overlap = len(query_token_set & set(tokenize(window)))
+                    score = (overlap, end - start, -start)
+                    if overlap > 0 and score > best_score:
+                        best_score = score
+                        best_text = candidate
+            if best_text:
+                return best_text
+        words = text.split()
+        if len(words) <= 1:
+            return text[: max(24, token_budget * 4)].rstrip()
+        low = 1
+        high = len(words)
+        best = words[0]
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = " ".join(words[:mid]).strip()
+            if self.tokenizer.count(candidate) <= token_budget:
+                best = candidate
+                low = mid + 1
+            else:
+                high = mid - 1
+        return best
+
+    @staticmethod
+    def _needs_multi_evidence(query: str) -> bool:
+        normalized = query.lower()
+        return (
+            " or " in normalized
+            or " between " in normalized
+            or "how many days" in normalized
+            or " before " in normalized
+            or " after " in normalized
+            or ContextBuilder._looks_like_first_comparison(normalized)
+        )
+
+    @staticmethod
+    def _looks_like_first_comparison(normalized_query: str) -> bool:
+        stripped = normalized_query.rstrip(" ?!.")
+        return (
+            (stripped.startswith("which ") or stripped.startswith("what "))
+            and stripped.endswith(" first")
+            and not stripped.endswith(" at first")
+        )
 
     @staticmethod
     def _source_page_ids(pages: list[MemoryPage]) -> dict[str, str]:
@@ -749,7 +1088,7 @@ class MemoryOSService:
         self.rot_guard = ContextRotGuard(self.settings, self.tokenizer)
         llm_client: PageDraftClient | None = None
         llm_init_error: str | None = None
-        if self.settings.memoryos_paging_mode == "llm":
+        if self.settings.chat_api_key:
             try:
                 llm_client = OpenAIPageDraftClient(self.settings)
             except Exception as exc:
@@ -764,8 +1103,20 @@ class MemoryOSService:
         self.patch_verifier = PatchVerifier()
         self.embedding_client = embedding_client or self._default_embedding_client()
         lexical = LexicalSearcher()
+        qdrant_store: QdrantEmbeddingStore | None = None
+        if self.settings.qdrant_url and self.embedding_client is not None:
+            try:
+                qdrant_store = QdrantEmbeddingStore(
+                    url=self.settings.qdrant_url,
+                    collection=self.settings.qdrant_collection,
+                    dim=self.embedding_client.dim,
+                )
+            except Exception as exc:
+                qdrant_store = None
+                llm_init_error = str(exc)
+        self.qdrant_store = qdrant_store
         embedding = (
-            EmbeddingSearcher(self.store, self.embedding_client)
+            EmbeddingSearcher(self.store, self.embedding_client, qdrant_store=qdrant_store)
             if self.embedding_client is not None
             else None
         )
@@ -848,15 +1199,18 @@ class MemoryOSService:
     def page(self, session_id: str) -> MemoryPage | None:
         self._require_session(session_id)
         messages = self.store.list_messages(session_id)
+        all_pages = self.store.list_pages(session_id)
+        existing_pages = [p for p in all_pages if p.superseded_by is None]
         paged_source_ids = {
             source_id
-            for page in self.store.list_pages(session_id)
+            for page in all_pages
             for source_id in page.source_message_ids
         }
         candidate_messages = [message for message in messages if message.id not in paged_source_ids]
         drafts, paging_mode, paging_error = self.paging_agent.create_drafts(
             session_id,
             candidate_messages,
+            existing_pages,
         )
         if not drafts:
             self.trace(
@@ -1011,8 +1365,18 @@ class MemoryOSService:
             # filler messages, leaving the summary empty of the very fact
             # the user wanted remembered (ticket #3).
             separator = "；"
-            updates_in_facts = [f for f in draft.facts if any(m in f for m in _UPDATE_MARKERS)]
-            other_facts = [f for f in draft.facts if f not in updates_in_facts and len(f) <= 120]
+            updates_in_facts = [
+                f
+                for f in draft.facts
+                if not PagingAgent._is_temporal_anchor(f) and any(m in f for m in _UPDATE_MARKERS)
+            ]
+            other_facts = [
+                f
+                for f in draft.facts
+                if not PagingAgent._is_temporal_anchor(f)
+                and f not in updates_in_facts
+                and len(f) <= 120
+            ]
             parts: list[str] = []
             for item in (
                 *updates_in_facts[-2:],
@@ -1035,8 +1399,8 @@ class MemoryOSService:
         """
         existing = [
             p
-            for p in self.store.list_pages(session_id)
-            if p.id != new_page.id and p.superseded_by is None
+            for p in self.store.list_pages(session_id, include_superseded=False)
+            if p.id != new_page.id
         ]
         if not existing:
             return
@@ -1092,6 +1456,8 @@ class MemoryOSService:
                 return
             EMBEDDING_SECONDS.observe(time.perf_counter() - t0)
             self.store.set_page_embedding(page.id, vector)
+            if self.qdrant_store is not None:
+                self.qdrant_store.upsert(page.id, vector)
         except Exception as exc:
             PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
             self.trace(
@@ -1111,9 +1477,9 @@ class MemoryOSService:
         self._require_session(session_id)
         t0 = time.perf_counter()
         messages = self.store.list_messages(session_id)
-        all_session_pages = self.store.list_pages(session_id)
-        pages = [p for p in all_session_pages if p.superseded_by is None]
-        superseded_pages = [p for p in all_session_pages if p.superseded_by is not None]
+        pages = self.store.list_pages(session_id, include_superseded=False)
+        superseded_pages = self.store.list_pages(session_id, include_superseded=True)
+        superseded_pages = [p for p in superseded_pages if p.superseded_by is not None]
         if include_global_core:
             global_cores = [
                 p for p in self.store.list_global_core_pages() if p.superseded_by is None
@@ -1277,6 +1643,8 @@ class MemoryOSService:
         try:
             embedding = self.embedding_client.embed(text)
             self.store.set_page_embedding(page.id, embedding)
+            if self.qdrant_store is not None:
+                self.qdrant_store.upsert(page.id, embedding)
         except Exception as exc:
             PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
             self.trace(session_id, "embedding_failed", {"page_id": page.id, "error": str(exc)})

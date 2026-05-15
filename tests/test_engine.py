@@ -58,6 +58,75 @@ def test_heuristic_pager_filters_generic_assistant_ack(service):
     assert "已记录" not in page.summary
 
 
+def test_heuristic_pager_adds_temporal_anchors_without_summary_prefix(service):
+    session = service.create_session("temporal anchors")
+    service.settings.recent_message_limit = 1
+    filler = " ".join(f"detail{i}" for i in range(35))
+    for role, content in [
+        (
+            Role.USER,
+            "[2023/03/26 (Sun) 22:45] "
+            f"{filler} I got back from Sunday mass at St. Mary's Church on March 19th.",
+        ),
+        (Role.ASSISTANT, "已记录。"),
+        (
+            Role.USER,
+            "[2023/05/28 (Sun) 07:17] "
+            f'{filler} I participated in a webinar on "Data Analysis using Python" '
+            "two months ago.",
+        ),
+        (Role.USER, "Recent held back."),
+    ]:
+        service.ingest(session.id, MessageCreate(role=role, content=content))
+
+    page = service.page(session.id)
+
+    assert page is not None
+    assert page.facts[0].startswith("[2023/03/26 (Sun) 22:45]")
+    assert "Temporal anchor:" not in page.model_dump_json()
+    assert "March 19th" in page.facts[0]
+    assert any("two months ago" in fact for fact in page.facts)
+    assert all("已记录" not in fact for fact in page.facts)
+    assert "March 19th" not in page.summary
+    assert "two months ago" not in page.summary
+
+
+def test_heuristic_pager_profile_check_runs_before_temporal_anchors(service, monkeypatch):
+    session = service.create_session("temporal profile")
+    service.settings.recent_message_limit = 1
+    captured_facts: list[str] = []
+
+    def capture_profile_facts(facts: list[str]) -> bool:
+        captured_facts.extend(facts)
+        return False
+
+    monkeypatch.setattr(service.paging_agent, "_looks_like_profile", capture_profile_facts)
+    filler = " ".join(f"detail{i}" for i in range(35))
+    for role, content in [
+        (
+            Role.USER,
+            f"[2023/03/26 (Sun) 22:45] {filler} I live near the event venue on March 19th.",
+        ),
+        (Role.ASSISTANT, "已记录。"),
+        (Role.USER, "[2023/03/27 (Mon) 09:10] Recent held back."),
+    ]:
+        service.ingest(session.id, MessageCreate(role=role, content=content))
+
+    page = service.page(session.id)
+
+    assert page is not None
+    assert page.facts[0].startswith("[2023/03/26 (Sun) 22:45]")
+    assert "March 19th" in page.facts[0]
+    assert captured_facts
+    assert all("March 19th" not in fact for fact in captured_facts)
+
+
+def test_context_builder_first_multi_evidence_matching_is_narrow(service):
+    assert service.context_builder._needs_multi_evidence("Which event did I attend first?") is True
+    assert service.context_builder._needs_multi_evidence("What is my first name?") is False
+    assert service.context_builder._needs_multi_evidence("What did I think at first?") is False
+
+
 def test_heuristic_pager_summary_keeps_three_ranked_facts(service):
     session = service.create_session("test")
     service.settings.recent_message_limit = 1
@@ -544,7 +613,7 @@ def test_patch_verifier_rejects_missing_old_text(service):
 
 
 class FakeDraftClient:
-    def create_draft(self, messages):
+    def create_draft(self, messages, context_pages=None):
         return MemoryPageDraft(
             title="fake llm page",
             summary="LLM 生成的记忆页",
@@ -554,7 +623,7 @@ class FakeDraftClient:
 
 
 class FailingDraftClient:
-    def create_draft(self, messages):
+    def create_draft(self, messages, context_pages=None):
         raise RuntimeError("llm unavailable")
 
 
@@ -571,12 +640,11 @@ def test_paging_agent_uses_llm_client_when_enabled(service):
 
     assert draft is not None
     assert draft.summary == "LLM 生成的记忆页"
-    assert mode == "llm"
+    assert mode == "agentic"
     assert error is None
 
 
 def test_paging_agent_falls_back_when_llm_fails(service):
-    service.settings.memoryos_paging_mode = "llm"
     agent = PagingAgent(service.settings, llm_client=FailingDraftClient())
     session = service.create_session("test")
     messages = []
@@ -594,7 +662,6 @@ def test_paging_agent_falls_back_when_llm_fails(service):
 def test_service_traces_llm_init_fallback(tmp_path):
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
-        memoryos_paging_mode="llm",
         memoryos_llm_provider="openai",
         openai_api_key=None,
         rot_safe_budget=1,
@@ -611,8 +678,8 @@ def test_service_traces_llm_init_fallback(tmp_path):
 
     assert page is not None
     committed = [trace for trace in traces if trace.event_type == "page_committed"][-1]
-    assert committed.payload["paging_mode"] == "heuristic_fallback"
-    assert "OPENAI_API_KEY" in committed.payload["paging_error"]
+    # No API key → llm_client is None → heuristic path
+    assert committed.payload["paging_mode"] == "heuristic"
 
 
 def test_page_draft_client_uses_deepseek_provider():

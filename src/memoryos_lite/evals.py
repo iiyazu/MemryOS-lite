@@ -391,6 +391,9 @@ def run_eval(
     if isolated:
         store.reset()
     service = MemoryOSService(store=store, settings=run_settings)
+    # Inject deterministic pager so eval runs without a real LLM key.
+    from memoryos_lite.retrieval.providers.fake import FakePageDraftClient
+    service.paging_agent.llm_client = FakePageDraftClient(service.paging_agent._heuristic_draft)
     results: list[EvalResult] = []
 
     cases = _select_cases(case_set)

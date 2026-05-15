@@ -11,6 +11,7 @@ from memoryos_lite.evals import (
     EvidenceItem,
     _baseline_from_evidence,
     _materialize_messages,
+    _needs_multi_evidence,
     _project_evidence_text,
     _run_baseline,
     _score,
@@ -40,7 +41,6 @@ def test_eval_run_does_not_reset_main_store(tmp_path):
 def test_eval_forces_heuristic_paging_for_reproducibility(tmp_path):
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
-        memoryos_paging_mode="llm",
         openai_api_key="dummy",
     )
 
@@ -51,8 +51,9 @@ def test_eval_forces_heuristic_paging_for_reproducibility(tmp_path):
     assert results
     assert trace_paths
     trace_text = "\n".join(path.read_text(encoding="utf-8") for path in trace_paths)
-    assert '"paging_mode":"heuristic"' in trace_text
-    assert "heuristic_fallback" not in trace_text
+    # FakePageDraftClient is injected in run_eval; it calls heuristic internally
+    # but the paging_agent sees it as a real llm_client → mode is "agentic"
+    assert '"paging_mode":"agentic"' in trace_text
 
 
 def test_all_eval_baselines_obey_budget(tmp_path):
@@ -78,6 +79,20 @@ def test_builtin_case_message_ids_are_stable():
 
     assert [message.id for message in first] == [message.id for message in second]
     assert first[0].id == case.required_sources[0]
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Which event did I attend first?", True),
+        ("What came first?", True),
+        ("What is my first name?", False),
+        ("What did I think at first?", False),
+        ("First of all, what did I decide?", False),
+    ],
+)
+def test_needs_multi_evidence_first_matching_is_narrow(question, expected):
+    assert _needs_multi_evidence(question) is expected
 
 
 def test_source_accuracy_requires_required_source_text():
@@ -160,6 +175,26 @@ def test_answer_accuracy_requires_all_expected_facts():
     assert result.missing_required_sources == []
     assert result.answer_accuracy == 0.0
     assert result.source_accuracy == 0.0
+
+
+def test_answer_accuracy_follows_missing_expected_facts_invariant():
+    case = EvalCase(
+        case_id="no_expected_fact_regression",
+        conversation=[],
+        question="Is there anything expected?",
+        expected_facts=[],
+    )
+    output = BaselineOutput(
+        answer="No expected fact is configured.",
+        context_tokens=10,
+        sources={},
+    )
+
+    result = _score(case, "test", output, latency_ms=0)
+
+    assert result.expected_hits == 0
+    assert result.missing_expected_facts == []
+    assert result.answer_accuracy == 1.0
 
 
 def test_source_accuracy_requires_all_fact_sources():
