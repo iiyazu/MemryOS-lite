@@ -266,12 +266,18 @@ class PagingAgent:
             return [], "none", None
         if len(page_messages) < 2:
             return [], "none", None
-        if self.llm_client is not None and self.settings.memoryos_paging_mode == "llm":
+        mode = self.settings.memoryos_paging_mode.strip().lower()
+        if mode not in ("heuristic", "llm"):
+            mode = "heuristic"
+        if self.llm_client is not None and mode == "llm":
             drafts, had_fallback, fallback_error = self._agentic_drafts(
                 session_id, page_messages, existing_pages or []
             )
-            mode = "heuristic_fallback" if had_fallback else "agentic"
-            return drafts, mode, fallback_error
+            paging_mode = "heuristic_fallback" if had_fallback else "agentic"
+            return drafts, paging_mode, fallback_error
+        if mode == "llm" and self.llm_client is None:
+            error = self.llm_init_error or f"{self.settings.chat_api_key_name} not set"
+            return self._heuristic_drafts(session_id, page_messages), "heuristic_fallback", error
         return self._heuristic_drafts(session_id, page_messages), "heuristic", None
 
     def _agentic_drafts(
@@ -290,6 +296,10 @@ class PagingAgent:
                 continue
             try:
                 draft = self.llm_client.create_draft(window, context_pages)  # type: ignore[union-attr]
+                window_ids = {m.id for m in window}
+                draft.source_message_ids = [
+                    sid for sid in draft.source_message_ids if sid in window_ids
+                ]
                 if not draft.source_message_ids:
                     raise ValueError("LLM returned no valid source_message_ids")
             except Exception as exc:
@@ -1095,7 +1105,7 @@ class MemoryOSService:
         self.rot_guard = ContextRotGuard(self.settings, self.tokenizer)
         llm_client: PageDraftClient | None = None
         llm_init_error: str | None = None
-        if self.settings.chat_api_key and self.settings.memoryos_paging_mode == "llm":
+        if self.settings.chat_api_key and self.settings.memoryos_paging_mode.strip().lower() == "llm":
             try:
                 llm_client = OpenAIPageDraftClient(self.settings)
             except Exception as exc:
