@@ -291,6 +291,15 @@ M3b is still not a LoCoMo answer-quality fix:
 - It meets the evidence-level target: LoCoMo `Msg source@5` rises from M3
   `0.00` to `0.21`, and `25/50` cases load at least one superseded-source
   evidence snippet.
+- The `Active overlap not top5` column is a cumulative message count across
+  all evaluated cases, not a case count. The LoCoMo value `10018` means many
+  active messages had positive lexical overlap but were outside the top-5
+  loaded evidence candidates; it should not be read as 10018 failed QA cases.
+- A follow-up manual branch check shows remaining superseded-source failures
+  are still high: `32/47` expected-source cases remain in the
+  `expected source is only in superseded pages and was not loaded` bucket
+  after M3b. This improves over M3's `40/47`, but misses the aspirational
+  `<= 10/47` acceptance line.
 - LongMemEval final source hit stays above the acceptance floor (`0.94` vs the
   required `>= 0.81`), because evidence reserve is gated to multi-page
   contexts and superseded snippets are downweighted in deterministic answer

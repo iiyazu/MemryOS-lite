@@ -251,6 +251,13 @@ pages 仍不参与 page summary retrieval / page-fact attribution，但其
 - LoCoMo `msg_source_hit_at_5 = 0.2083`，超过 `>= 0.15` 下限。
 - LoCoMo `superseded_source_recovered = 27`，`25/50` case 至少恢复一条
   superseded-source evidence。
+- M3b 后 remaining superseded-source failure 实测为 `32/47`：这些 case 的
+  expected source 仍只在 superseded pages 中，且没有进入实际
+  `context.retrieved_evidence[:5]`。相比 M3 的 `40/47` 有改善，但没有达到
+  `<= 10/47` 的理想验收线。
+- `active_overlap_not_top5` 是跨所有 evaluated cases 累加的 message 计数，
+  不是 QA case 数。LoCoMo 的 `10018` 表示大量 active messages 有正向
+  lexical overlap 但不在 top-5 loaded evidence candidates 中。
 - LongMemEval `source_hit = 0.94`，超过 `>= 0.81` 下限。
 - LoCoMo final deterministic `source_hit/session_hit = 0.00/0.00`，说明 M3b
   只改善 actual evidence loading，不解决 answer projection / ranking。
