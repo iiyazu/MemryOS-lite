@@ -10,12 +10,6 @@ DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash"
 class Settings(BaseSettings):
     data_dir: Path = Path(".memoryos")
     memoryos_eval_data_dir: Path | None = None
-    database_url: str | None = None
-    postgres_host: str | None = None
-    postgres_port: int = 5432
-    postgres_db: str | None = None
-    postgres_user: str | None = None
-    postgres_password: str | None = None
     model_max_context: int = 128_000
     rot_safe_budget: int = 2_400
     hard_limit: int = 8_000
@@ -39,6 +33,8 @@ class Settings(BaseSettings):
     memoryos_rewrite_enabled: bool = False
     memoryos_rerank_enabled: bool = False
     agent_max_tool_turns: int = 10
+    qdrant_url: str | None = None
+    qdrant_collection: str = "memoryos_pages"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 
@@ -79,16 +75,6 @@ class Settings(BaseSettings):
 
     @property
     def sqlite_url(self) -> str:
-        """Resolve DSN in priority order: DATABASE_URL → derived Postgres → SQLite."""
-        if self.database_url:
-            return self.database_url
-        if self.postgres_host and self.postgres_db and self.postgres_user:
-            password = self.postgres_password or ""
-            auth = f"{self.postgres_user}:{password}" if password else self.postgres_user
-            return (
-                f"postgresql+psycopg://{auth}@{self.postgres_host}:{self.postgres_port}"
-                f"/{self.postgres_db}"
-            )
         return f"sqlite:///{self.data_dir / 'memoryos.db'}"
 
 

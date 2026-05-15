@@ -4,8 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Index, Integer, String, Text, create_engine, func, select, text
+from sqlalchemy import DateTime, Index, Integer, String, Text, create_engine, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -34,19 +33,10 @@ EMBEDDING_DIM = 1536
 
 
 class EmbeddingType(TypeDecorator):
-    """Store ``list[float]`` as pgvector on Postgres, JSON text elsewhere.
-
-    Reads always return ``list[float] | None`` regardless of dialect so the
-    retrieval layer can stay dialect-agnostic.
-    """
+    """Store ``list[float]`` as JSON text (SQLite-only backend)."""
 
     impl = Text
     cache_ok = True
-
-    def load_dialect_impl(self, dialect):  # type: ignore[override]
-        if dialect.name == "postgresql":
-            return dialect.type_descriptor(Vector(EMBEDDING_DIM))
-        return dialect.type_descriptor(Text())
 
     def process_bind_param(self, value, dialect):  # type: ignore[override]
         if value is None:
@@ -55,15 +45,11 @@ class EmbeddingType(TypeDecorator):
             raise ValueError(
                 f"embedding dimension mismatch: got {len(value)}, expected {EMBEDDING_DIM}"
             )
-        if dialect.name == "postgresql":
-            return list(value)
         return json.dumps(list(value))
 
     def process_result_value(self, value, dialect):  # type: ignore[override]
         if value is None:
             return None
-        if dialect.name == "postgresql":
-            return list(value) if not isinstance(value, list) else value
         if isinstance(value, str):
             return json.loads(value)
         return list(value)
@@ -149,12 +135,7 @@ class MemoryStore:
         self.pages_dir.mkdir(parents=True, exist_ok=True)
         self.traces_dir.mkdir(parents=True, exist_ok=True)
         dsn = self.settings.sqlite_url
-        connect_args = {"check_same_thread": False} if dsn.startswith("sqlite") else {}
-        self.engine = create_engine(
-            dsn,
-            connect_args=connect_args,
-            pool_pre_ping=not dsn.startswith("sqlite"),
-        )
+        self.engine = create_engine(dsn, connect_args={"check_same_thread": False})
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False)
 
     @property
@@ -166,9 +147,6 @@ class MemoryStore:
         return self.settings.data_dir / "traces"
 
     def init_db(self) -> None:
-        if self.engine.dialect.name == "postgresql":
-            with self.engine.begin() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         try:
             Base.metadata.create_all(self.engine)
         except OperationalError as exc:
