@@ -104,17 +104,15 @@ infra/
 
 ```python
 class Settings(BaseSettings):
-    # DSN 三级优先：DATABASE_URL > POSTGRES_* 拼接 > SQLite 回退
-    database_url: str | None = None
-    postgres_host: str | None = None
-    ...
-    rot_safe_budget: int = 2_400      # 分页触发阈值
-    hard_limit: int = 8_000           # 绝对上限
-    recent_message_limit: int = 8     # 保留近期消息数
+    data_dir: Path = Path(".memoryos")   # SQLite DB 和页面文件目录
+    rot_safe_budget: int = 2_400         # 分页触发阈值
+    hard_limit: int = 8_000              # 绝对上限
+    recent_message_limit: int = 8        # 保留近期消息数
     memoryos_paging_mode: str = "heuristic"  # heuristic | llm
+    qdrant_url: str | None = None        # 可选 Qdrant ANN 后端
 ```
 
-**设计要点**：`sqlite_url` 属性实现了三级 DSN 解析，开发时零配置即可用 SQLite，生产切 Postgres 只需设环境变量。
+**设计要点**：`sqlite_url` 属性直接返回 `sqlite:///{data_dir}/memoryos.db`，零配置即可用。
 
 ---
 
@@ -138,14 +136,15 @@ class Settings(BaseSettings):
 
 ### 4.3 store.py — 持久化层
 
-**双 dialect 透明**：同一套 SQLAlchemy ORM 模型同时支持 Postgres（pgvector）和 SQLite（JSON text）。关键是 `EmbeddingType` TypeDecorator：
+**SQLite-only**：`EmbeddingType` TypeDecorator 将 `list[float]` 存为 JSON text，读取时反序列化回 `list[float]`。
 
 ```python
 class EmbeddingType(TypeDecorator):
-    def load_dialect_impl(self, dialect):
-        if dialect.name == "postgresql":
-            return dialect.type_descriptor(Vector(1536))
-        return dialect.type_descriptor(Text())
+    impl = Text
+    def process_bind_param(self, value, dialect):
+        return json.dumps(list(value)) if value else None
+    def process_result_value(self, value, dialect):
+        return json.loads(value) if isinstance(value, str) else None
 ```
 
 **核心方法**：
@@ -229,7 +228,7 @@ class EmbeddingClient(Protocol):
 
 #### EmbeddingSearcher (embedding.py)
 
-从 store 批量取 embedding → 计算 query embedding → 余弦相似度排序。纯 Python 实现（M5 再迁移到 pgvector KNN）。
+从 store 批量取 embedding → 计算 query embedding → 余弦相似度排序。纯 Python 实现。可选：设置 `QDRANT_URL` 启用 Qdrant ANN 检索。
 
 #### HybridSearcher (hybrid.py)
 
@@ -300,7 +299,7 @@ ingest ──[should_page?]──► page ──► build_context ──► END
 | 文件 | 要点 |
 |------|------|
 | `Dockerfile` | 多阶段 uv 构建，non-root，`/health` healthcheck |
-| `docker-compose.yml` | app + pgvector:pg16 + redis:7-alpine，带 healthcheck 依赖 |
+| `docker-compose.yml` | app + redis:7-alpine，带 healthcheck 依赖；可选 Qdrant |
 | `Makefile` | `make test/lint/fmt/up/down/eval/demo/api` 等 14 个 target |
 | `ci.yml` | Python 3.11，ruff + format-check + mypy + pytest |
 | `alembic/` | 单 revision `0001_m2_baseline` 覆盖全 schema |
@@ -313,7 +312,7 @@ ingest ──[should_page?]──► page ──► build_context ──► END
 |--------|--------|-------------|
 | **M0** | 81 eval cases + 4 baselines 冻结 | — |
 | **M1** | Docker + CI + Makefile + pre-commit | — |
-| **M2-A** | Postgres + pgvector + Alembic migration | `0996404` |
+| **M2-A** | SQLite + Alembic migration | — |
 | **M2-B** | retrieval 子包 + HybridSearcher 接入 + embedding-on-save | `7690553`, `3615395`, `5e6c61e` |
 
 ---
@@ -333,7 +332,7 @@ ingest ──[should_page?]──► page ──► build_context ──► END
 
 | 决策 | 理由 |
 |------|------|
-| SQLite 开发 / Postgres 生产 | 零配置本地开发 + 生产级向量检索 |
+| SQLite-only + 可选 Qdrant | 零配置本地开发；Qdrant 启用 ANN 检索 |
 | BM25 + Embedding RRF 融合 | 中文 BM25 覆盖精确匹配，embedding 覆盖语义相似 |
 | Embedding 可选（graceful degradation） | 无 API key 时纯 BM25 仍可用 |
 | Heuristic 分页为默认 | 离线可用、确定性、零成本；LLM 模式为可选增强 |

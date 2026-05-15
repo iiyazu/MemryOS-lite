@@ -29,7 +29,8 @@ the memory path, and show the measured tradeoff.
 - **Experimental LangGraph agent demo** — tool-calling memory agent with
   evidence-grounded citation answers, patch conflict interrupt, bounded tool
   loops, and cross-session read rejection
-- **Evaluation harness** — deterministic recall/source checks plus optional LLM-as-judge scoring
+- **Evaluation harness** — deterministic recall/source checks, deterministic
+  agent-answer diagnostics, plus optional LLM-as-judge scoring
 - **Observability** — Prometheus metrics for paging, retrieval, context build latency, and budget utilization
 
 ## Architecture
@@ -85,9 +86,7 @@ make up
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `DATABASE_URL` | Full DSN (highest priority) | — |
-| `POSTGRES_*` | Postgres connection parts | — |
-| _(none)_ | Auto-fallback to SQLite | `.memoryos/memoryos.db` |
+| `DATA_DIR` | SQLite DB and pages directory | `.memoryos` |
 | `OPENAI_API_KEY` | LLM paging + embeddings | — |
 | `MEMORYOS_LLM_PROVIDER` | `auto` / `openai` / `deepseek` for chat LLM calls | `auto` |
 | `OPENAI_BASE_URL` | OpenAI-compatible chat/embedding base URL | — |
@@ -97,10 +96,20 @@ make up
 | `MEMORYOS_PAGING_MODE` | `heuristic` / `llm` | `heuristic` |
 | `ROT_SAFE_BUDGET` | Paging trigger threshold | 2400 tokens |
 | `HARD_LIMIT` | Absolute context cap | 8000 tokens |
+| `QDRANT_URL` | Optional Qdrant ANN backend; falls back to SQLite cosine if unset | — |
+
+Safe defaults are offline: `uv run memoryos demo agent`, `uv run memoryos eval
+run`, and public evals with `--no-llm-answer --no-llm-judge` do not call
+OpenAI or DeepSeek. Real API calls are opt-in through settings and commands:
+`MEMORYOS_PAGING_MODE=llm`, `--llm-judge`, public `--llm-answer`, query
+rewrite/rerank flags, embedding indexing/search with `OPENAI_API_KEY`, or custom
+agent runs that do not inject a fake/scripted LLM.
 
 DeepSeek is used for chat-compatible LLM features such as LLM paging,
-query rewriting, reranking, agent routing, and LLM-as-judge. Embeddings
-still use `OPENAI_API_KEY` and `MEMORYOS_EMBEDDING_MODEL`.
+query rewriting, reranking, agent routing, and LLM-as-judge. Embeddings still
+use `OPENAI_API_KEY` and `MEMORYOS_EMBEDDING_MODEL`. Optional real LLM mode is
+for interactive experiments and demos; it does not change the deterministic
+benchmark claims in this README.
 
 ## Evaluation
 
@@ -131,6 +140,20 @@ uv run memoryos eval public \
 
 Current public-benchmark diagnosis is tracked in
 [`docs/public-benchmark-diagnosis.md`](docs/public-benchmark-diagnosis.md).
+
+Agent answer diagnostics are separate deterministic checks for the experimental
+LangGraph answer node. They inspect final answer text against retrieved raw
+message evidence and report `answer_has_citation`,
+`answer_uses_retrieved_source`, `refusal_when_no_evidence`, and
+`unsupported_answer_rate`; they are not LoCoMo or LongMemEval answer-quality
+claims. Run them with:
+
+```bash
+uv run memoryos eval agent-answer
+```
+
+See
+[`docs/agent-answer-diagnostics.md`](docs/agent-answer-diagnostics.md).
 
 ## Milestone Progress
 
@@ -174,11 +197,11 @@ make lint                 # all checks
 
 - Python 3.11+ / uv
 - FastAPI + Uvicorn
-- SQLAlchemy + Alembic (Postgres/pgvector or SQLite)
+- SQLAlchemy + Alembic (SQLite)
 - LangChain + LangGraph
 - tiktoken, rank-bm25
 - Prometheus client
-- Docker + docker-compose
+- Docker + docker-compose (app + redis; optional Qdrant)
 
 ## License
 

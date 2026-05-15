@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, create_engine, func, select
+from sqlalchemy import DateTime, Index, Integer, String, Text, create_engine, func, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -152,6 +152,26 @@ class MemoryStore:
         except OperationalError as exc:
             if "already exists" not in str(exc):
                 raise
+        # Stamp alembic_version so `alembic upgrade head` on an existing DB
+        # does not fail with "table already exists".
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS alembic_version"
+                    " (version_num VARCHAR(32) NOT NULL,"
+                    " CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+                )
+            )
+            row = conn.execute(
+                text("SELECT version_num FROM alembic_version LIMIT 1")
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    text(
+                        "INSERT INTO alembic_version (version_num)"
+                        " VALUES ('0002_add_superseded_by')"
+                    )
+                )
 
     @contextmanager
     def db(self) -> Iterator[DbSession]:
