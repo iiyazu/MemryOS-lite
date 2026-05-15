@@ -1105,7 +1105,8 @@ class MemoryOSService:
         self.rot_guard = ContextRotGuard(self.settings, self.tokenizer)
         llm_client: PageDraftClient | None = None
         llm_init_error: str | None = None
-        if self.settings.chat_api_key and self.settings.memoryos_paging_mode.strip().lower() == "llm":
+        paging_mode_normalized = self.settings.memoryos_paging_mode.strip().lower()
+        if self.settings.chat_api_key and paging_mode_normalized == "llm":
             try:
                 llm_client = OpenAIPageDraftClient(self.settings)
             except Exception as exc:

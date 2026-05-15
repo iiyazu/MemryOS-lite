@@ -683,6 +683,63 @@ def test_service_traces_llm_init_fallback(tmp_path):
     assert committed.payload["paging_mode"] == "heuristic"
 
 
+def test_paging_mode_llm_without_key_returns_heuristic_fallback(service):
+    service.settings.memoryos_paging_mode = " LLM "  # whitespace + uppercase
+    agent = PagingAgent(service.settings, llm_client=None)
+    session = service.create_session("test")
+    messages = []
+    for content in ["事实 A", "事实 B", "事实 C", "事实 D"]:
+        response = service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+        messages.append(response.message)
+
+    draft, mode, error = agent.create_draft(session.id, messages)
+
+    assert draft is not None
+    assert mode == "heuristic_fallback"
+    assert error is not None
+
+
+def test_paging_mode_invalid_falls_back_to_heuristic(service):
+    service.settings.memoryos_paging_mode = "invalid_mode"
+    agent = PagingAgent(service.settings, llm_client=None)
+    session = service.create_session("test")
+    messages = []
+    for content in ["事实 A", "事实 B", "事实 C", "事实 D"]:
+        response = service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+        messages.append(response.message)
+
+    draft, mode, error = agent.create_draft(session.id, messages)
+
+    assert draft is not None
+    assert mode == "heuristic"
+    assert error is None
+
+
+def test_agentic_draft_filters_out_of_window_source_ids(service):
+    service.settings.memoryos_paging_mode = "llm"
+
+    class CrossWindowDraftClient:
+        def create_draft(self, messages, context_pages=None):
+            return MemoryPageDraft(
+                title="t",
+                summary="s",
+                source_message_ids=[messages[0].id, "msg_from_other_window"],
+            )
+
+    agent = PagingAgent(service.settings, llm_client=CrossWindowDraftClient())
+    session = service.create_session("test")
+    messages = []
+    for content in ["事实 A", "事实 B", "事实 C", "事实 D"]:
+        response = service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+        messages.append(response.message)
+
+    draft, mode, error = agent.create_draft(session.id, messages)
+
+    assert draft is not None
+    assert mode == "agentic"
+    assert all(sid in {m.id for m in messages} for sid in draft.source_message_ids)
+
+
 def test_page_draft_client_uses_deepseek_provider():
     settings = Settings(memoryos_llm_provider="deepseek", deepseek_api_key="sk-test")
     structured = Mock()
