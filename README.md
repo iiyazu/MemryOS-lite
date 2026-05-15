@@ -10,11 +10,14 @@ and agent-application work, not a production memory platform.
 
 ## Why
 
-Long context is not automatically reliable context. As conversations grow, LLMs
-can lose attention over facts, dates, and source evidence. MemoryOS Lite uses an
-OS-inspired paging metaphor to make that failure mode measurable: every recall
-claim should be tied back to source messages, and every optimization should be
-checked against baselines.
+Long conversations fail in ways that are hard to debug when an answer is not
+tied back to source messages. The motivating failure mode for MemoryOS Lite is
+source attribution drift: a memory system may retrieve a broad page, or even
+produce a plausible answer, while losing the exact message that supports it.
+This prototype turns that into an eval problem by tracking page-level overlap,
+message-level evidence hits, and final deterministic source accuracy separately.
+The goal is an interview-ready backend/RAG story: diagnose the failure, change
+the memory path, and show the measured tradeoff.
 
 ## Key Features
 
@@ -124,16 +127,31 @@ uv run memoryos eval public \
 
 Current public-benchmark diagnosis is tracked in
 [`docs/public-benchmark-diagnosis.md`](docs/public-benchmark-diagnosis.md).
-The important known gap is LoCoMo-style multi-session recall: the current
-page-level RAG can compress hundreds of messages into one oversized page and
-drop it under a strict context budget. The next optimization target is
-raw-message/evidence-chunk retrieval, not production agent orchestration.
+
+## Milestone Progress
+
+| Milestone | LongMemEval memoryos_lite | LoCoMo memoryos_lite | Main diagnosis |
+|-----------|---------------------------|----------------------|----------------|
+| M1 page diagnostics | source/session `0.96/0.98`, page overlap `1.00/1.00` | source/session `0.00/0.00`, page overlap `0.98/1.00` | page overlap was broad, not evidence localization |
+| M2 raw-message evidence | source/session `0.96/0.98`, msg@5 `0.90/1.00` | source/session `0.21/0.36`, msg@5 `0.46/0.74` | raw evidence path recovered source IDs but did not solve answers |
+| M3 session/window paging | source/session `0.86/1.00`, msg@5 `0.48/0.84` | source/session `0.15/0.15`, msg@5 `0.00/0.00` | smaller pages exposed supersession and budget failures |
+| M3b supersession-aware evidence | source/session `0.94/1.00`, msg@5 `0.12/0.50` | source/session `0.00/0.00`, msg@5 `0.2083/0.383` | evidence loading improved, final LoCoMo answer quality did not |
+
+M3b is the current checkpoint. It lets superseded pages contribute raw-message
+evidence candidates, marks those snippets as historical, and reserves evidence
+budget only in multi-page contexts. This improves LoCoMo actual message
+evidence from `0.00` to `0.2083`, while LongMemEval final source hit remains
+above the acceptance floor at `0.94`.
 
 ## Prototype Boundaries
 
 - LangGraph integration is an experimental demo, not production orchestration.
 - Heuristic paging is a deterministic fallback, not full semantic compression.
 - Conflict detection is a first-pass slot/negation guardrail.
+- Public eval metrics are deterministic retrieval/source-attribution diagnostics,
+  not a measurement of generated-answer quality.
+- LoCoMo remains a mixed/negative result: M3b improves actual evidence loading,
+  but final deterministic LoCoMo source/session hit is still `0.00/0.00`.
 - The FastAPI wrapper has no authentication, rate limiting, or production
   ownership model.
 - SQLite embedding search is Python-side cosine scoring, not ANN search.

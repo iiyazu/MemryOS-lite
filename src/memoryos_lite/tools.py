@@ -52,6 +52,8 @@ def create_memory_tools(service: MemoryOSService, session_id: str):
         page = service.store.load_page(page_id)
         if page is None:
             return f"Page {page_id} not found."
+        if page.session_id != session_id:
+            return f"Page {page_id} belongs to a different session and cannot be read."
         facts_str = "\n".join(f"  - {f}" for f in page.facts) if page.facts else "  (none)"
         return (
             f"Title: {page.title}\n"

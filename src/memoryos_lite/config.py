@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     deepseek_model: str = DEEPSEEK_DEFAULT_MODEL
     memoryos_rewrite_enabled: bool = False
     memoryos_rerank_enabled: bool = False
+    agent_max_tool_turns: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 

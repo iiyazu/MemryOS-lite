@@ -35,8 +35,10 @@ class AgentState(TypedDict, total=False):
     should_page: bool
     context: ContextPackage | None
     conflict_detected: bool
+    patch_errors: list[str]
     human_approved: bool
     result: str
+    tool_turns: int
 
 
 def _state_with(state: AgentState, **updates: Any) -> AgentState:
@@ -47,6 +49,29 @@ def _content_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     return str(content)
+
+
+def _format_context_citations(context: ContextPackage) -> str:
+    if not context.retrieved_evidence:
+        return "Citations: none"
+    lines = ["Citations:"]
+    for index, evidence in enumerate(context.retrieved_evidence, start=1):
+        marker = " superseded" if evidence.superseded else ""
+        page_ref = f" page={evidence.page_id}" if evidence.page_id else ""
+        text = " ".join(evidence.text.split())
+        lines.append(f"[{index}] message={evidence.message_id}{page_ref}{marker}: {text}")
+    return "\n".join(lines)
+
+
+def _latest_patch_errors(service: MemoryOSService, session_id: str) -> list[str]:
+    for trace in reversed(service.store.list_traces(session_id)):
+        if trace.event_type not in {"patch_rejected", "patch_verified"}:
+            continue
+        errors = trace.payload.get("errors", [])
+        if isinstance(errors, list):
+            return [str(error) for error in errors]
+        return [str(errors)] if errors else []
+    return []
 
 
 def build_agent_graph(
@@ -140,7 +165,15 @@ def build_agent_graph(
 
     def tool_executor_node(state: AgentState) -> AgentState:
         """Execute tool calls from the agent."""
-        return cast(AgentState, tool_node.invoke(state))
+        next_state = cast(AgentState, tool_node.invoke(state))
+        session = next_state.get("session_id", session_id)
+        patch_errors = _latest_patch_errors(service, session)
+        return _state_with(
+            next_state,
+            tool_turns=state.get("tool_turns", 0) + 1,
+            patch_errors=patch_errors,
+            conflict_detected=bool(patch_errors),
+        )
 
     def build_context_node(state: AgentState) -> AgentState:
         """Build context package for the session."""
@@ -152,12 +185,22 @@ def build_agent_graph(
         else:
             task = _content_text(messages[-1].content) if messages else ""
         context = service.build_context(session, task=task)
-        result = f"Context built: {context.estimated_tokens} tokens"
+        result = (
+            f"Context built: {context.estimated_tokens} tokens\n"
+            f"{_format_context_citations(context)}"
+        )
         return _state_with(state, context=context, result=result)
 
     def conflict_check_node(state: AgentState) -> AgentState:
         """Check if the update introduces conflicts."""
-        # Simple heuristic: check if patch was applied to existing page
+        patch_errors = state.get("patch_errors", [])
+        if patch_errors:
+            return _state_with(
+                state,
+                conflict_detected=True,
+                human_approved=False,
+                result="Patch requires review: " + "; ".join(patch_errors),
+            )
         return _state_with(state, conflict_detected=False, human_approved=True)
 
     # --- Routing functions ---
@@ -177,12 +220,21 @@ def build_agent_graph(
     def route_after_tool_agent(state: AgentState) -> str:
         """Check if agent wants to call tools or is done."""
         messages = state.get("messages", [])
+        if state.get("tool_turns", 0) >= settings.agent_max_tool_turns:
+            return "build_context"
         if messages and hasattr(messages[-1], "tool_calls") and messages[-1].tool_calls:
             return "tool_executor"
         return "build_context"
 
+    def route_after_tool_executor(state: AgentState) -> str:
+        if state.get("tool_turns", 0) >= settings.agent_max_tool_turns:
+            return "build_context"
+        return "tool_agent"
+
     def route_after_build_context(state: AgentState) -> str:
-        return "conflict_check" if state.get("intent") == "update" else END
+        if state.get("intent") == "update" and state.get("conflict_detected"):
+            return "conflict_check"
+        return END
 
     # --- Build graph ---
 
@@ -217,7 +269,11 @@ def build_agent_graph(
         route_after_tool_agent,
         {"tool_executor": "tool_executor", "build_context": "build_context"},
     )
-    graph.add_edge("tool_executor", "tool_agent")
+    graph.add_conditional_edges(
+        "tool_executor",
+        route_after_tool_executor,
+        {"tool_agent": "tool_agent", "build_context": "build_context"},
+    )
     graph.add_conditional_edges(
         "build_context",
         route_after_build_context,
@@ -256,7 +312,9 @@ def invoke_agent(
         "should_page": False,
         "context": None,
         "conflict_detected": False,
+        "patch_errors": [],
         "human_approved": False,
         "result": "",
+        "tool_turns": 0,
     }
     return graph.invoke(initial_state, config=config)
