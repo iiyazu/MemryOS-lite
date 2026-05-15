@@ -108,6 +108,7 @@ class PageRecord(Base):
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=80)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType, nullable=True)
+    superseded_by: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -270,6 +271,7 @@ class MemoryStore:
                     source_message_ids_json=json.dumps(page.source_message_ids),
                     confidence=int(page.confidence * 100),
                     version=page.version,
+                    superseded_by=page.superseded_by,
                     created_at=page.created_at,
                     updated_at=page.updated_at,
                 )
@@ -288,8 +290,8 @@ class MemoryStore:
 
         Updates the on-disk JSON (source of truth for the field) and the
         ``content_json`` + ``updated_at`` columns so that later loads see
-        the new state. Returns the updated page, or ``None`` if it does
-        not exist.
+        the new state. Clears the embedding so the page is excluded from
+        ANN retrieval. Returns the updated page, or ``None`` if not found.
         """
         page = self.load_page(page_id)
         if page is None:
@@ -297,6 +299,10 @@ class MemoryStore:
         page.superseded_by = by_page_id
         page.updated_at = utc_now()
         self.update_page(page)
+        with self.db() as db:
+            record = db.get(PageRecord, page_id)
+            if record is not None:
+                record.embedding = None
         return page
 
     def update_page(self, page: MemoryPage) -> None:
@@ -310,6 +316,7 @@ class MemoryStore:
             record.updated_at = page.updated_at
             record.version = page.version
             record.confidence = int(page.confidence * 100)
+            record.superseded_by = page.superseded_by
             page_path = Path(record.path)
         page_path.write_text(content_json, encoding="utf-8")
 
@@ -334,24 +341,34 @@ class MemoryStore:
         return MemoryPage.model_validate_json(path.read_text(encoding="utf-8"))
 
     def list_pages(
-        self, session_id: str | None = None, limit: int | None = None
+        self,
+        session_id: str | None = None,
+        limit: int | None = None,
+        include_superseded: bool = True,
     ) -> list[MemoryPage]:
         with self.db() as db:
             if limit is not None:
                 stmt = select(PageRecord).order_by(PageRecord.created_at.desc()).limit(limit)
                 if session_id is not None:
                     stmt = stmt.where(PageRecord.session_id == session_id)
+                if not include_superseded:
+                    stmt = stmt.where(PageRecord.superseded_by == None)  # noqa: E711
                 records = list(reversed(list(db.scalars(stmt))))
             else:
                 stmt = select(PageRecord).order_by(PageRecord.created_at.asc())
                 if session_id is not None:
                     stmt = stmt.where(PageRecord.session_id == session_id)
+                if not include_superseded:
+                    stmt = stmt.where(PageRecord.superseded_by == None)  # noqa: E711
                 records = list(db.scalars(stmt))
         pages: list[MemoryPage] = []
         for record in records:
-            page = self.load_page(record.id)
-            if page is not None:
-                pages.append(page)
+            if record.content_json:
+                pages.append(MemoryPage.model_validate_json(record.content_json))
+            else:
+                path = Path(record.path)
+                if path.exists():
+                    pages.append(MemoryPage.model_validate_json(path.read_text(encoding="utf-8")))
         return pages
 
     def list_global_core_pages(self) -> list[MemoryPage]:
