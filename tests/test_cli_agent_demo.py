@@ -16,3 +16,6 @@ def test_agent_demo_cli_runs_without_real_llm(tmp_path):
     assert "msg_" in result.output
     assert "Patch conflict review" in result.output
     assert "old_text does not exist" in result.output
+    assert "Agent trace" in result.output
+    assert "agent_answered" in result.output
+    assert "agent_patch_conflict_detected" in result.output

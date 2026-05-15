@@ -83,6 +83,21 @@ def _citation_footer(context: ContextPackage) -> str:
     return "Sources: " + ", ".join(f"[{message_id}]" for message_id in message_ids)
 
 
+def _tool_call_summaries(message: BaseMessage | None) -> list[dict[str, Any]]:
+    calls = getattr(message, "tool_calls", []) if message is not None else []
+    summaries: list[dict[str, Any]] = []
+    for call in calls:
+        if isinstance(call, dict):
+            summaries.append(
+                {
+                    "name": call.get("name"),
+                    "id": call.get("id"),
+                    "args": call.get("args", {}),
+                }
+            )
+    return summaries
+
+
 def _latest_patch_errors(service: MemoryOSService, session_id: str) -> list[str]:
     for trace in reversed(service.store.list_traces(session_id)):
         if trace.event_type not in {"patch_rejected", "patch_verified"}:
@@ -153,6 +168,12 @@ def build_agent_graph(
         intent = _content_text(response.content).strip().lower()
         if intent not in ("ingest", "recall", "update"):
             intent = "recall"
+        session = state.get("session_id", session_id)
+        service.trace(
+            session,
+            "agent_intent_routed",
+            {"intent": intent, "message": last_msg},
+        )
         return _state_with(state, intent=intent)
 
     def ingest_node(state: AgentState) -> AgentState:
@@ -181,6 +202,15 @@ def build_agent_graph(
             )
         )
         response = llm_with_tools.invoke([system, *messages])
+        session = state.get("session_id", session_id)
+        service.trace(
+            session,
+            "agent_tool_agent_invoked",
+            {
+                "tool_turns": state.get("tool_turns", 0),
+                "tool_calls": _tool_call_summaries(response),
+            },
+        )
         return _state_with(state, messages=[response])
 
     tool_node = ToolNode(tools)
@@ -190,9 +220,25 @@ def build_agent_graph(
         next_state = cast(AgentState, tool_node.invoke(state))
         session = next_state.get("session_id", session_id)
         patch_errors = _latest_patch_errors(service, session)
+        tool_turns = state.get("tool_turns", 0) + 1
+        service.trace(
+            session,
+            "agent_tool_turn_completed",
+            {
+                "tool_turns": tool_turns,
+                "patch_errors": patch_errors,
+                "stopped_due_to_max_turns": tool_turns >= settings.agent_max_tool_turns,
+            },
+        )
+        if patch_errors:
+            service.trace(
+                session,
+                "agent_patch_conflict_detected",
+                {"tool_turns": tool_turns, "errors": patch_errors},
+            )
         return _state_with(
             next_state,
-            tool_turns=state.get("tool_turns", 0) + 1,
+            tool_turns=tool_turns,
             patch_errors=patch_errors,
             conflict_detected=bool(patch_errors),
         )
@@ -211,12 +257,38 @@ def build_agent_graph(
             f"Context built: {context.estimated_tokens} tokens\n"
             f"{_format_context_citations(context)}"
         )
+        service.trace(
+            session,
+            "agent_context_evidence_selected",
+            {
+                "task": task,
+                "evidence_message_ids": [
+                    evidence.message_id for evidence in context.retrieved_evidence
+                ],
+                "evidence_page_ids": [evidence.page_id for evidence in context.retrieved_evidence],
+                "superseded_evidence": [
+                    evidence.message_id
+                    for evidence in context.retrieved_evidence
+                    if evidence.superseded
+                ],
+                "tool_turns": state.get("tool_turns", 0),
+            },
+        )
         return _state_with(state, context=context, result=result)
 
     def answer_with_citations_node(state: AgentState) -> AgentState:
         """Answer recall requests from retrieved raw evidence only."""
         context = state.get("context")
         if context is None or not context.retrieved_evidence:
+            session = state.get("session_id", session_id)
+            service.trace(
+                session,
+                "agent_answered",
+                {
+                    "insufficient_evidence": True,
+                    "citation_message_ids": [],
+                },
+            )
             return _state_with(
                 state,
                 result=("Insufficient retrieved evidence to answer with source citations."),
@@ -238,9 +310,26 @@ def build_agent_graph(
         )
         response = llm.invoke([system, prompt])
         answer = _content_text(response.content).strip()
-        if not answer:
+        insufficient_evidence = not bool(answer)
+        if insufficient_evidence:
             answer = "Insufficient retrieved evidence to answer with source citations."
         result = f"Answer:\n{answer}\n\n{_citation_footer(context)}"
+        session = state.get("session_id", session_id)
+        service.trace(
+            session,
+            "agent_answered",
+            {
+                "insufficient_evidence": insufficient_evidence,
+                "citation_message_ids": [
+                    evidence.message_id for evidence in context.retrieved_evidence
+                ],
+                "superseded_citation_ids": [
+                    evidence.message_id
+                    for evidence in context.retrieved_evidence
+                    if evidence.superseded
+                ],
+            },
+        )
         return _state_with(state, result=result)
 
     def conflict_check_node(state: AgentState) -> AgentState:

@@ -247,6 +247,14 @@ class TestAgentGraph:
         assert "Answer:" in state["result"]
         assert "Sources:" in state["result"]
         assert source.id in state["result"]
+        traces = service.store.list_traces(session.id)
+        answer_trace = next(trace for trace in traces if trace.event_type == "agent_answered")
+        assert answer_trace.payload["citation_message_ids"]
+        assert source.id in answer_trace.payload["citation_message_ids"]
+        evidence_trace = next(
+            trace for trace in traces if trace.event_type == "agent_context_evidence_selected"
+        )
+        assert source.id in evidence_trace.payload["evidence_message_ids"]
 
     def test_recall_refuses_when_no_retrieved_evidence(self, tmp_path):
         from memoryos_lite.agent_graph import build_agent_graph
@@ -328,6 +336,12 @@ class TestAgentGraph:
         assert state["tool_turns"] == 1
         assert tool_llm.invoke.call_count == 1
         assert state["context"] is not None
+        trace = next(
+            trace
+            for trace in service.store.list_traces(session.id)
+            if trace.event_type == "agent_tool_turn_completed"
+        )
+        assert trace.payload["stopped_due_to_max_turns"] is True
 
     def test_patch_tool_errors_mark_conflict_before_interrupt(self, tmp_path):
         from memoryos_lite.agent_graph import build_agent_graph
@@ -388,3 +402,9 @@ class TestAgentGraph:
         assert state["conflict_detected"] is True
         assert state["patch_errors"]
         assert "old_text" in state["patch_errors"][0]
+        trace = next(
+            trace
+            for trace in service.store.list_traces(session.id)
+            if trace.event_type == "agent_patch_conflict_detected"
+        )
+        assert "old_text" in trace.payload["errors"][0]

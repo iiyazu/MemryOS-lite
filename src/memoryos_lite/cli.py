@@ -259,6 +259,13 @@ def _run_agent_demo(data_dir: Path) -> None:
     errors = patch_state.get("patch_errors") or ["No patch errors recorded."]
     for error in errors:
         console.print(f"- {error}", markup=False)
+    trace_types = [
+        trace.event_type
+        for trace in service.store.list_traces(session.id)
+        if trace.event_type.startswith("agent_")
+    ]
+    console.print("\n[bold]Agent trace[/bold]")
+    console.print(", ".join(trace_types), markup=False)
 
 
 @eval_app.command("run")
