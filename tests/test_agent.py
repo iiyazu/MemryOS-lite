@@ -142,6 +142,7 @@ class TestAgentGraph:
         assert "paging" in graph.nodes
         assert "tool_agent" in graph.nodes
         assert "build_context" in graph.nodes
+        assert "answer" in graph.nodes
 
     def test_tool_loop_preserves_messages(self, tmp_path):
         from memoryos_lite.agent_graph import build_agent_graph
@@ -194,7 +195,7 @@ class TestAgentGraph:
         assert state["context"] is not None
         assert state["context"].task == "Search memory for MemoryOS"
 
-    def test_build_context_result_includes_citations(self, tmp_path):
+    def test_recall_result_includes_source_citations(self, tmp_path):
         from memoryos_lite.agent_graph import build_agent_graph
 
         settings = Settings(data_dir=tmp_path / ".memoryos", openai_api_key="sk-test-dummy")
@@ -217,7 +218,10 @@ class TestAgentGraph:
             )
         )
         router_llm = Mock()
-        router_llm.invoke.return_value = AIMessage(content="recall")
+        router_llm.invoke.side_effect = [
+            AIMessage(content="recall"),
+            AIMessage(content=f"MemoryOS Lite uses source citations [{source.id}]."),
+        ]
         tool_llm = Mock()
         tool_llm.invoke.return_value = AIMessage(content="Done.")
         router_llm.bind_tools.return_value = tool_llm
@@ -240,8 +244,44 @@ class TestAgentGraph:
                 config={"configurable": {"thread_id": "test-citations"}},
             )
 
-        assert "Citations:" in state["result"]
+        assert "Answer:" in state["result"]
+        assert "Sources:" in state["result"]
         assert source.id in state["result"]
+
+    def test_recall_refuses_when_no_retrieved_evidence(self, tmp_path):
+        from memoryos_lite.agent_graph import build_agent_graph
+
+        settings = Settings(data_dir=tmp_path / ".memoryos", openai_api_key="sk-test-dummy")
+        store = MemoryStore(settings=settings)
+        store.init_db()
+        service = MemoryOSService(settings=settings, store=store)
+        session = service.create_session("test_agent_no_evidence")
+        router_llm = Mock()
+        router_llm.invoke.return_value = AIMessage(content="recall")
+        tool_llm = Mock()
+        tool_llm.invoke.return_value = AIMessage(content="Done.")
+        router_llm.bind_tools.return_value = tool_llm
+
+        with patch("memoryos_lite.agent_graph.ChatOpenAI", return_value=router_llm):
+            graph = build_agent_graph(service, session.id, settings=settings)
+            state = graph.invoke(
+                {
+                    "messages": [HumanMessage(content="What does MemoryOS remember?")],
+                    "session_id": session.id,
+                    "intent": "",
+                    "should_page": False,
+                    "context": None,
+                    "conflict_detected": False,
+                    "patch_errors": [],
+                    "human_approved": False,
+                    "result": "",
+                    "tool_turns": 0,
+                },
+                config={"configurable": {"thread_id": "test-no-evidence"}},
+            )
+
+        assert "Insufficient retrieved evidence" in state["result"]
+        assert router_llm.invoke.call_count == 1
 
     def test_tool_loop_stops_at_configured_turn_bound(self, tmp_path):
         from memoryos_lite.agent_graph import build_agent_graph

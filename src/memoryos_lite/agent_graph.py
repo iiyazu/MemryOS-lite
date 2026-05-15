@@ -63,6 +63,26 @@ def _format_context_citations(context: ContextPackage) -> str:
     return "\n".join(lines)
 
 
+def _format_answer_evidence(context: ContextPackage) -> str:
+    lines = []
+    for index, evidence in enumerate(context.retrieved_evidence, start=1):
+        marker = " historical/superseded" if evidence.superseded else ""
+        text = " ".join(evidence.text.split())
+        lines.append(
+            f"[{index}] message_id={evidence.message_id}{marker}\n"
+            f"role={evidence.role.value}\n"
+            f"text={text}"
+        )
+    return "\n\n".join(lines)
+
+
+def _citation_footer(context: ContextPackage) -> str:
+    message_ids = [evidence.message_id for evidence in context.retrieved_evidence]
+    if not message_ids:
+        return "Sources: none"
+    return "Sources: " + ", ".join(f"[{message_id}]" for message_id in message_ids)
+
+
 def _latest_patch_errors(service: MemoryOSService, session_id: str) -> list[str]:
     for trace in reversed(service.store.list_traces(session_id)):
         if trace.event_type not in {"patch_rejected", "patch_verified"}:
@@ -191,6 +211,36 @@ def build_agent_graph(
         )
         return _state_with(state, context=context, result=result)
 
+    def answer_with_citations_node(state: AgentState) -> AgentState:
+        """Answer recall requests from retrieved raw evidence only."""
+        context = state.get("context")
+        if context is None or not context.retrieved_evidence:
+            return _state_with(
+                state,
+                result=("Insufficient retrieved evidence to answer with source citations."),
+            )
+
+        system = SystemMessage(
+            content=(
+                "You are an experimental memory QA node. Answer using only the "
+                "retrieved raw message evidence below. Do not use page summaries, "
+                "recent messages, or outside knowledge. Cite supporting message_id "
+                "values in square brackets. If the evidence is insufficient, say so."
+            )
+        )
+        prompt = HumanMessage(
+            content=(
+                f"Question:\n{context.task}\n\n"
+                f"Retrieved evidence:\n{_format_answer_evidence(context)}"
+            )
+        )
+        response = llm.invoke([system, prompt])
+        answer = _content_text(response.content).strip()
+        if not answer:
+            answer = "Insufficient retrieved evidence to answer with source citations."
+        result = f"Answer:\n{answer}\n\n{_citation_footer(context)}"
+        return _state_with(state, result=result)
+
     def conflict_check_node(state: AgentState) -> AgentState:
         """Check if the update introduces conflicts."""
         patch_errors = state.get("patch_errors", [])
@@ -234,6 +284,8 @@ def build_agent_graph(
     def route_after_build_context(state: AgentState) -> str:
         if state.get("intent") == "update" and state.get("conflict_detected"):
             return "conflict_check"
+        if state.get("intent") == "recall":
+            return "answer"
         return END
 
     # --- Build graph ---
@@ -247,6 +299,7 @@ def build_agent_graph(
     graph.add_node("tool_agent", tool_agent_node)
     graph.add_node("tool_executor", tool_executor_node)
     graph.add_node("build_context", build_context_node)
+    graph.add_node("answer", answer_with_citations_node)
     graph.add_node("conflict_check", conflict_check_node)
 
     # Set entry point
@@ -277,8 +330,9 @@ def build_agent_graph(
     graph.add_conditional_edges(
         "build_context",
         route_after_build_context,
-        {"conflict_check": "conflict_check", END: END},
+        {"answer": "answer", "conflict_check": "conflict_check", END: END},
     )
+    graph.add_edge("answer", END)
     graph.add_edge("conflict_check", END)
 
     # Compile with checkpointer for state persistence
