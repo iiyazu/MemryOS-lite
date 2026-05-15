@@ -38,6 +38,8 @@ from memoryos_lite.schemas import (
     ContextPackage,
     ContextPage,
     IngestResponse,
+    MemoryItem,
+    MemoryItemType,
     MemoryPage,
     MemoryPageDraft,
     MemoryPatch,
@@ -570,6 +572,88 @@ class PageVerifier:
         if not draft.summary.strip():
             errors.append("summary is required")
         return errors
+
+
+class ItemExtractor:
+    """Extracts atomic MemoryItems from a MemoryPage.
+
+    LLM path (mode=llm + api_key): structured output list of items.
+    Heuristic fallback: one item per fact/decision in the page.
+    """
+
+    def __init__(self, settings: Settings, llm_client: Any | None = None) -> None:
+        self.settings = settings
+        self._llm_client = llm_client
+
+    def extract(self, page: MemoryPage, messages: list[Message]) -> list[MemoryItem]:
+        if self._llm_client is not None:
+            try:
+                return self._extract_llm(page, messages)
+            except Exception:
+                pass
+        return self._extract_heuristic(page)
+
+    def _extract_heuristic(self, page: MemoryPage) -> list[MemoryItem]:
+        items: list[MemoryItem] = []
+        for fact in page.facts:
+            if fact and not is_generic_ack(fact):
+                items.append(
+                    MemoryItem(
+                        page_id=page.id,
+                        session_id=page.session_id,
+                        item_type=MemoryItemType.KNOWLEDGE,
+                        content=fact,
+                        source_message_ids=page.source_message_ids,
+                    )
+                )
+        for decision in page.decisions:
+            if decision and not is_generic_ack(decision):
+                items.append(
+                    MemoryItem(
+                        page_id=page.id,
+                        session_id=page.session_id,
+                        item_type=MemoryItemType.KNOWLEDGE,
+                        content=decision,
+                        source_message_ids=page.source_message_ids,
+                    )
+                )
+        return items
+
+    def _extract_llm(self, page: MemoryPage, messages: list[Message]) -> list[MemoryItem]:
+        from pydantic import BaseModel as _BaseModel
+
+        class _ItemList(_BaseModel):
+            items: list[MemoryItem]
+
+        transcript = "\n".join(
+            f"{m.id} [{m.role.value}]: {m.content}"
+            for m in messages
+            if m.id in set(page.source_message_ids)
+        )
+        facts_block = "\n".join(f"- {f}" for f in page.facts)
+        decisions_block = "\n".join(f"- {d}" for d in page.decisions)
+        system = SystemMessage(
+            content=(
+                "Extract atomic memory items from this page. Each item is ONE statement.\n"
+                "Types: profile (personal info/preferences), event (time-anchored occurrence),"
+                " knowledge (facts/decisions/technical choices), behavior (habits/patterns)\n"
+                "source_message_ids: IDs from the transcript that support this item.\n"
+                "Return a JSON list of items."
+            )
+        )
+        human = HumanMessage(
+            content=(
+                f"Facts:\n{facts_block}\n\nDecisions:\n{decisions_block}"
+                f"\n\nTranscript:\n{transcript}"
+            )
+        )
+        result = self._llm_client.invoke([system, human])
+        if not isinstance(result, _ItemList):
+            raise TypeError("unexpected LLM output type")
+        for item in result.items:
+            item.page_id = page.id
+            item.session_id = page.session_id
+        return result.items
 
 
 class PatchVerifier:
@@ -1166,6 +1250,27 @@ class MemoryOSService:
         self.context_builder = ContextBuilder(self.tokenizer, self.searcher, self.settings)
         self.dynamic_budget = DynamicBudget(self.settings, self.tokenizer)
         self.conflict_detector = ConflictDetector(lexical)
+        item_llm: Any | None = None
+        if (
+            self.settings.memoryos_item_extraction
+            and chat_api_key
+            and paging_mode_normalized == "llm"
+        ):
+            try:
+                from pydantic import BaseModel as _BaseModel
+
+                class _ItemList(_BaseModel):
+                    items: list[MemoryItem]
+
+                item_llm = ChatOpenAI(
+                    model=self.settings.chat_model,
+                    api_key=SecretStr(chat_api_key),
+                    base_url=self.settings.chat_base_url,
+                    temperature=0,
+                ).with_structured_output(_ItemList)
+            except Exception:
+                item_llm = None
+        self.item_extractor = ItemExtractor(self.settings, llm_client=item_llm)
 
     def _default_embedding_client(self) -> EmbeddingClient | None:
         if not self.settings.openai_api_key:
@@ -1264,6 +1369,11 @@ class MemoryOSService:
             self.store.save_page(page)
             committed_pages.append(page)
             self._index_page_embedding(page)
+            if self.settings.memoryos_item_extraction:
+                items = self.item_extractor.extract(page, messages)
+                self.store.save_items(items)
+                for item in items:
+                    self._index_item_embedding(item)
             self._supersede_conflicting_pages(session_id, page)
             PAGE_TOTAL.labels(mode=paging_mode).inc()
             self.trace(
@@ -1483,6 +1593,16 @@ class MemoryOSService:
                 "embedding_failed",
                 {"page_id": page.id, "error": str(exc)},
             )
+
+    def _index_item_embedding(self, item: MemoryItem) -> None:
+        if self.embedding_client is None or not item.content.strip():
+            return
+        try:
+            vector = self.embedding_client.embed(item.content)
+            if vector:
+                self.store.set_item_embedding(item.id, vector)
+        except Exception:
+            pass
 
     def build_context(
         self,

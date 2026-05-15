@@ -1,9 +1,11 @@
 from unittest.mock import Mock, patch
 
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService, OpenAIPageDraftClient, PagingAgent
+from memoryos_lite.engine import ItemExtractor, MemoryOSService, OpenAIPageDraftClient, PagingAgent
 from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 from memoryos_lite.schemas import (
+    MemoryItem,
+    MemoryItemType,
     MemoryPage,
     MemoryPageDraft,
     MemoryPatch,
@@ -788,3 +790,60 @@ def test_page_save_persists_embedding_and_hybrid_fuses_sources(tmp_path):
     assert hits
     assert hits[0].source == "hybrid"
     assert "lexical=" in hits[0].reason and "embedding=" in hits[0].reason
+
+
+def test_item_extractor_heuristic(service):
+    session = service.create_session("test")
+    page = MemoryPage(
+        session_id=session.id,
+        title="test",
+        summary="s",
+        facts=["用户住在上海", "技术栈选 Rust"],
+        decisions=["不做 Runbook Agent"],
+        source_message_ids=["msg_001"],
+    )
+    extractor = ItemExtractor(service.settings, llm_client=None)
+    items = extractor.extract(page, [])
+
+    assert len(items) == 3
+    assert all(isinstance(i, MemoryItem) for i in items)
+    assert all(i.page_id == page.id for i in items)
+    assert all(i.session_id == session.id for i in items)
+    contents = [i.content for i in items]
+    assert "用户住在上海" in contents
+    assert "不做 Runbook Agent" in contents
+
+
+def test_page_extracts_items(service):
+    session = service.create_session("test")
+    for content in [
+        "用户住在上海。",
+        "技术栈选择 Rust。",
+        "不做 Runbook Agent，改做 MemoryOS Lite。",
+        "需要 benchmark 对比。",
+    ]:
+        service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+
+    page = service.page(session.id)
+    assert page is not None
+
+    items = service.store.list_items(session.id)
+    assert len(items) > 0
+    assert all(i.page_id == page.id for i in items)
+    assert all(i.session_id == session.id for i in items)
+
+
+def test_store_item_embedding(service):
+    session = service.create_session("test")
+    item = MemoryItem(
+        page_id="page_test",
+        session_id=session.id,
+        item_type=MemoryItemType.KNOWLEDGE,
+        content="用户偏好 Vim",
+        source_message_ids=["msg_001"],
+    )
+    service.store.save_items([item])
+    service.store.set_item_embedding(item.id, [0.1] * 1536)
+    embeddings = service.store.get_item_embeddings([item.id])
+    assert item.id in embeddings
+    assert len(embeddings[item.id]) == 1536

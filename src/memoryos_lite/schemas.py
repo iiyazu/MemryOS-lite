@@ -81,6 +81,23 @@ class MemoryPage(MemoryPageDraft):
     """
 
 
+class MemoryItemType(StrEnum):
+    PROFILE = "profile"
+    EVENT = "event"
+    KNOWLEDGE = "knowledge"
+    BEHAVIOR = "behavior"
+
+
+class MemoryItem(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("item"))
+    page_id: str
+    session_id: str
+    item_type: MemoryItemType = MemoryItemType.KNOWLEDGE
+    content: str
+    source_message_ids: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class MemoryPatch(BaseModel):
     id: str = Field(default_factory=lambda: new_id("patch"))
     operation: PatchOperation

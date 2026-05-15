@@ -19,6 +19,8 @@ from sqlalchemy.types import TypeDecorator
 
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.schemas import (
+    MemoryItem,
+    MemoryItemType,
     MemoryPage,
     MemoryPatch,
     Message,
@@ -102,6 +104,19 @@ class PageRecord(Base):
         Index("ix_memory_pages_session_type", "session_id", "page_type"),
         Index("ix_memory_pages_created", "created_at"),
     )
+
+
+class ItemRecord(Base):
+    __tablename__ = "memory_items"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    page_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    item_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_message_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType, nullable=True)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class PatchRecord(Base):
@@ -432,6 +447,66 @@ class MemoryStore:
             )
             for row in records
         ]
+
+    def save_items(self, items: list[MemoryItem]) -> None:
+        if not items:
+            return
+        with self.db() as db:
+            for item in items:
+                db.add(
+                    ItemRecord(
+                        id=item.id,
+                        page_id=item.page_id,
+                        session_id=item.session_id,
+                        item_type=item.item_type.value,
+                        content=item.content,
+                        source_message_ids_json=json.dumps(item.source_message_ids),
+                        created_at=item.created_at,
+                    )
+                )
+
+    def list_items(
+        self,
+        session_id: str,
+        page_id: str | None = None,
+    ) -> list[MemoryItem]:
+        with self.db() as db:
+            stmt = (
+                select(ItemRecord)
+                .where(ItemRecord.session_id == session_id)
+                .order_by(ItemRecord.created_at.asc())
+            )
+            if page_id is not None:
+                stmt = stmt.where(ItemRecord.page_id == page_id)
+            records = list(db.scalars(stmt))
+        return [
+            MemoryItem(
+                id=row.id,
+                page_id=row.page_id,
+                session_id=row.session_id,
+                item_type=MemoryItemType(row.item_type),
+                content=row.content,
+                source_message_ids=json.loads(row.source_message_ids_json),
+                created_at=row.created_at,
+            )
+            for row in records
+        ]
+
+    def set_item_embedding(self, item_id: str, embedding: list[float]) -> None:
+        with self.db() as db:
+            record = db.get(ItemRecord, item_id)
+            if record is not None:
+                record.embedding = embedding
+
+    def get_item_embeddings(self, item_ids: list[str]) -> dict[str, list[float]]:
+        if not item_ids:
+            return {}
+        with self.db() as db:
+            stmt = select(ItemRecord.id, ItemRecord.embedding).where(
+                ItemRecord.id.in_(item_ids)
+            )
+            rows = list(db.execute(stmt))
+        return {item_id: emb for item_id, emb in rows if emb is not None}
 
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)
