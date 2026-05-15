@@ -26,6 +26,9 @@ the memory path, and show the measured tradeoff.
 - **Token-budgeted context building** — Dynamic budget allocation with pinned core profiles, recent messages, and retrieved pages
 - **Conflict detection guardrail** — slot/negation heuristics flag patches that contradict existing memory
 - **Source traceability** — Every fact in a context package traces back to source messages
+- **Experimental LangGraph agent demo** — tool-calling memory agent with
+  evidence-grounded citation answers, patch conflict interrupt, bounded tool
+  loops, and cross-session read rejection
 - **Evaluation harness** — deterministic recall/source checks plus optional LLM-as-judge scoring
 - **Observability** — Prometheus metrics for paging, retrieval, context build latency, and budget utilization
 
@@ -145,7 +148,8 @@ above the acceptance floor at `0.94`.
 
 ## Prototype Boundaries
 
-- LangGraph integration is an experimental demo, not production orchestration.
+- LangGraph integration is an experimental demo, not production orchestration; its
+  answer node is evidence-grounded, but it is not a general-purpose QA agent.
 - Heuristic paging is a deterministic fallback, not full semantic compression.
 - Conflict detection is a first-pass slot/negation guardrail.
 - Public eval metrics are deterministic retrieval/source-attribution diagnostics,

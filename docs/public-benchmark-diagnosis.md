@@ -309,6 +309,8 @@ M3b is still not a LoCoMo answer-quality fix:
   measurable, but answer projection and ranking still fail. Do not describe
   M3b as solving LoCoMo.
 
-M4 is an interview demo target, not a production-agent target: citation answers,
-conflict interrupt, max tool-loop turns, and cross-session read rejection are the
-only planned agent capabilities.
+M4 is an interview demo target, not a production-agent target. The current
+LangGraph demo supports evidence-grounded citation answers, patch conflict
+interrupt, max tool-loop turns, and cross-session read rejection. These are
+demo guardrails around the memory path, not full production orchestration or
+general-purpose agent reliability.
