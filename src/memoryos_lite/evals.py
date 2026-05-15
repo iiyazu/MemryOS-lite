@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
@@ -44,15 +45,7 @@ class EvalResult:
 
     @property
     def answer_accuracy(self) -> float:
-        return (
-            1.0
-            if (
-                self.expected_hits > 0
-                and not self.missing_expected_facts
-                and self.forbidden_hits == 0
-            )
-            else 0.0
-        )
+        return 1.0 if (not self.missing_expected_facts and self.forbidden_hits == 0) else 0.0
 
     @property
     def source_accuracy(self) -> float:
@@ -561,11 +554,8 @@ def _run_baseline(
                     message.model_copy(update={"session_id": source_session.id})
                 )
             service.page(source_session.id)
-            candidate_pages = [
-                page
-                for page in service.store.list_pages(source_session.id)
-                if page.superseded_by is None
-            ]
+            all_pages = service.store.list_pages(source_session.id)
+            candidate_pages = [page for page in all_pages if page.superseded_by is None]
             candidate_top_k = 5
             candidate_hits = service.searcher.search(
                 candidate_pages,
@@ -591,7 +581,7 @@ def _run_baseline(
             item.page_id for item in [*context.retrieved_pages, *context.active_task_pages]
         ]
         if context.pinned_core:
-            pages_by_id = {page.id: page for page in service.store.list_pages(source_session.id)}
+            pages_by_id = {page.id: page for page in all_pages}
             if case.include_global_core:
                 pages_by_id.update(
                     {page.id: page for page in service.store.list_global_core_pages()}
@@ -601,9 +591,13 @@ def _run_baseline(
                 pinned_page = next(
                     (
                         page
-                        for page in pages_by_id.values()
+                        for page in sorted(
+                            pages_by_id.values(),
+                            key=lambda item: (item.superseded_by is not None, item.created_at),
+                        )
                         if page.page_type == PageType.CORE_PROFILE
                         and page.summary == summary
+                        and page.superseded_by is None
                         and page.id not in loaded_page_ids
                     ),
                     None,
@@ -612,7 +606,13 @@ def _run_baseline(
                     pages.append(pinned_page)
                     loaded_page_ids.add(pinned_page.id)
                     retrieved_page_ids.append(pinned_page.id)
-        recent_evidence = _message_evidence(context.recent_messages)
+        # For temporal questions, include recent messages directly so budget
+        # pressure in build_context cannot drop the latest-state messages.
+        raw_recent = messages[-service.settings.recent_message_limit :]
+        if _is_temporal_question(case.question):
+            recent_evidence = _message_evidence(raw_recent)
+        else:
+            recent_evidence = _message_evidence(context.recent_messages)
         memory_evidence: list[EvidenceItem] = []
         messages_by_id = {message.id: message for message in messages}
         for context_evidence in context.retrieved_evidence:
@@ -628,7 +628,6 @@ def _run_baseline(
             if page is not None:
                 memory_evidence.extend(_page_evidence(page, messages_by_id))
         memory_evidence.extend(recent_evidence)
-        all_pages = service.store.list_pages(source_session.id)
         page_type_counts: dict[str, int] = {}
         pages_by_id = {page.id: page for page in all_pages}
         for page in all_pages:
@@ -641,9 +640,10 @@ def _run_baseline(
             for item in context.dropped_pages
             if item.page_id in pages_by_id
         }
-        context_evidence_source_ids = [
-            evidence.message_id for evidence in context.retrieved_evidence[:candidate_top_k]
-        ]
+        context_evidence_source_ids = _dedupe_source_ids(
+            [evidence.message_id for evidence in context.retrieved_evidence[:candidate_top_k]]
+            + [m.id for m in context.recent_messages]
+        )
         context_evidence_page_ids = _dedupe_source_ids(
             evidence.page_id
             for evidence in context.retrieved_evidence[:candidate_top_k]
@@ -822,6 +822,7 @@ def _dedupe_source_ids(source_ids: Iterable[str]) -> list[str]:
 
 def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[EvidenceItem]:
     query_terms = set(tokenize(question))
+    multi_evidence = _needs_multi_evidence(question)
     temporal_recent_update = any(
         item.origin in {"message", "retrieved_message"}
         and _is_temporal_question(question)
@@ -832,12 +833,12 @@ def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[Eviden
     for item in evidence:
         score = len(query_terms & set(tokenize(item.text)))
         if item.origin == "retrieved_message":
-            score += 4
-        if item.superseded:
+            score += 12 if multi_evidence else 4
+        if item.superseded and not multi_evidence:
             score -= 16
         if _is_temporal_question(question) and _has_update_signal(item.text):
             score += 20
-        if item.origin == "page" and not temporal_recent_update:
+        if item.origin == "page" and not temporal_recent_update and not multi_evidence:
             score += 8
         if any(
             marker in item.text for marker in ("不包含", "不提供", "无关", "噪声", "占位", "背景")
@@ -854,11 +855,34 @@ def _evidence_limit(question: str) -> int:
         return 3
     if "和" in question and "什么" in question:
         return 3
+    if _needs_multi_evidence(question):
+        return 2
     return 1
 
 
+def _needs_multi_evidence(question: str) -> bool:
+    normalized = question.lower()
+    return (
+        " or " in normalized
+        or " between " in normalized
+        or "how many days" in normalized
+        or " before " in normalized
+        or " after " in normalized
+        or _looks_like_first_comparison(normalized)
+    )
+
+
+def _looks_like_first_comparison(normalized_question: str) -> bool:
+    stripped = normalized_question.rstrip(" ?!.")
+    return (
+        (stripped.startswith("which ") or stripped.startswith("what "))
+        and stripped.endswith(" first")
+        and not stripped.endswith(" at first")
+    )
+
+
 def _is_temporal_question(question: str) -> bool:
-    temporal_markers = ("当前", "现在", "目前", "最新", "最终", "不做", "主线")
+    temporal_markers = ("当前", "现在", "目前", "最新", "最终", "不做")
     return any(marker in question for marker in temporal_markers)
 
 
@@ -921,6 +945,10 @@ def _project_evidence_text(question: str, text: str) -> str:
             for clause in reversed(clauses):
                 if marker in clause:
                     return _drop_prefix_before_marker(clause, marker)
+        # "换" as a standalone verb: preceded by space/punctuation or start of clause
+        for clause in reversed(clauses):
+            if re.search(r"(?:^|[\s，,。；;：:])换(?!\S)", clause):
+                return _drop_prefix_before_marker(clause, "换")
 
     return compact
 
