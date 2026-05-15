@@ -81,6 +81,9 @@ class PublicBenchmarkResult:
     dropped_page_reasons: dict[str, str]
     dropped_relevant_page_ids: list[str]
     dropped_relevant_page_count: int
+    superseded_source_recovered: int
+    candidate_budget_dropped: int
+    active_overlap_not_top5: int
     latency_ms: int
     question_type: str | None = None
 
@@ -514,6 +517,9 @@ def _to_public_result(
         dropped_page_reasons=output.dropped_page_reasons,
         dropped_relevant_page_ids=dropped_relevant_page_ids,
         dropped_relevant_page_count=len(dropped_relevant_page_ids),
+        superseded_source_recovered=output.superseded_source_recovered,
+        candidate_budget_dropped=output.candidate_budget_dropped,
+        active_overlap_not_top5=output.active_overlap_not_top5,
         latency_ms=latency_ms,
         question_type=public_case.question_type,
     )

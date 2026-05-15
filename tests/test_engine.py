@@ -228,6 +228,106 @@ def test_context_builder_uses_raw_evidence_when_page_is_over_budget(service):
     assert context_built.payload["retrieved_evidence"][0]["message_id"] == evidence_message.id
 
 
+def test_context_builder_can_recover_raw_evidence_from_superseded_page(service):
+    session = service.create_session("superseded evidence")
+    evidence_message = service.ingest(
+        session.id,
+        MessageCreate(
+            role=Role.USER,
+            content="[7 May 2023] Caroline attended the LGBTQ support group.",
+        ),
+    ).message
+    service.ingest(session.id, MessageCreate(role=Role.USER, content="Recent distractor."))
+    superseded_page = MemoryPage(
+        id="old_page_with_source",
+        session_id=session.id,
+        page_type=PageType.SOURCE_SUMMARY,
+        title="Old evidence page",
+        summary="Caroline attended the support group.",
+        source_message_ids=[evidence_message.id],
+        superseded_by="newer_page",
+    )
+    active_page = MemoryPage(
+        id="newer_page",
+        session_id=session.id,
+        page_type=PageType.SOURCE_SUMMARY,
+        title="New page",
+        summary="Unrelated active page.",
+        source_message_ids=[],
+    )
+    service.store.save_page(superseded_page)
+    service.store.save_page(active_page)
+
+    context = service.build_context(
+        session.id,
+        "When did Caroline attend the LGBTQ support group?",
+        budget=80,
+    )
+
+    assert context.retrieved_pages == []
+    assert context.retrieved_evidence
+    evidence = context.retrieved_evidence[0]
+    assert evidence.message_id == evidence_message.id
+    assert evidence.page_id == superseded_page.id
+    assert evidence.superseded is True
+    assert context.superseded_source_recovered == 1
+    context_built = service.store.list_traces(session.id)[-1]
+    assert context_built.payload["superseded_source_recovered"] == 1
+    assert context_built.payload["retrieved_evidence"][0]["superseded"] is True
+
+
+def test_context_builder_reserves_budget_for_raw_evidence_before_core_pages(service):
+    session = service.create_session("evidence reserve")
+    service.settings.memoryos_evidence_reserve_ratio = 0.5
+    service.settings.memoryos_evidence_reserve_tokens = 64
+    service.settings.memoryos_evidence_reserve_min_pages = 1
+    evidence_message = service.ingest(
+        session.id,
+        MessageCreate(
+            role=Role.USER,
+            content="Caroline attended the LGBTQ support group on 7 May 2023.",
+        ),
+    ).message
+    service.ingest(session.id, MessageCreate(role=Role.USER, content="Recent distractor."))
+    core_summary = "Core profile detail about Caroline support group context."
+    for index in range(3):
+        service.store.save_page(
+            MemoryPage(
+                id=f"core_page_{index}",
+                session_id=session.id,
+                page_type=PageType.CORE_PROFILE,
+                title=f"Core page {index}",
+                summary=core_summary,
+                source_message_ids=[],
+            )
+        )
+    service.store.save_page(
+        MemoryPage(
+            id="evidence_page",
+            session_id=session.id,
+            page_type=PageType.SOURCE_SUMMARY,
+            title="Evidence page",
+            summary="Support group evidence.",
+            source_message_ids=[evidence_message.id],
+        )
+    )
+    task = "When did Caroline attend the LGBTQ support group?"
+    budget = (
+        service.tokenizer.count(task)
+        + service.tokenizer.count(core_summary) * 3
+        + service.tokenizer.count(evidence_message.content)
+        - 1
+    )
+
+    context = service.build_context(session.id, task, budget=budget)
+
+    assert context.retrieved_evidence
+    assert context.retrieved_evidence[0].message_id == evidence_message.id
+    assert context.candidate_budget_dropped == 0
+    assert len(context.pinned_core) < 3
+    assert any(item.reason == "core_profile_exceeds_budget" for item in context.dropped_pages)
+
+
 def test_context_builder_compacts_long_raw_evidence_to_fit_budget(service):
     session = service.create_session("test")
     service.settings.memoryos_evidence_max_tokens = 32

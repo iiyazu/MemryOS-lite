@@ -109,6 +109,7 @@ class ContextEvidence(BaseModel):
     estimated_tokens: int
     metadata: dict[str, Any] = Field(default_factory=dict)
     page_id: str | None = None
+    superseded: bool = False
 
 
 class ContextPackage(BaseModel):
@@ -123,6 +124,9 @@ class ContextPackage(BaseModel):
     dropped_recent_messages: list[str] = Field(default_factory=list)
     retrieved_pages: list[ContextPage] = Field(default_factory=list)
     dropped_pages: list[ContextPage] = Field(default_factory=list)
+    superseded_source_recovered: int = 0
+    candidate_budget_dropped: int = 0
+    active_overlap_not_top5: int = 0
     estimated_tokens: int = 0
 
 

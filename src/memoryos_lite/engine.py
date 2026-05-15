@@ -1,5 +1,6 @@
 import re
 import time
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -105,6 +106,16 @@ class OpenAIPageDraftClient:
         if not isinstance(result, MemoryPageDraft):
             raise TypeError("structured output did not return MemoryPageDraft")
         return result
+
+
+@dataclass(frozen=True)
+class _RankedMessageEvidence:
+    score: float
+    overlap: int
+    message_index: int
+    message: Message
+    page_id: str
+    superseded: bool
 
 
 # Markers the heuristic pager uses to identify messages that supersede prior
@@ -429,11 +440,13 @@ class ContextBuilder:
         pages: list[MemoryPage],
         budget: int,
         retrieval_query: str | None = None,
+        superseded_pages: list[MemoryPage] | None = None,
     ) -> ContextPackage:
         query = retrieval_query or task
         recent_messages = messages[-self.settings.recent_message_limit :]
         task_tokens = self.tokenizer.count(task)
         used_tokens = task_tokens
+        superseded_pages = superseded_pages or []
         package = ContextPackage(
             session_id=session_id,
             task=task,
@@ -455,13 +468,31 @@ class ContextBuilder:
             package.estimated_tokens = task_tokens
             return package
 
+        selected_evidence_ids: set[str] = set()
+        source_page_refs = self._source_page_refs(pages, superseded_pages)
+        evidence_candidates, active_overlap_not_top5 = self._retrieve_message_evidence_diagnostics(
+            messages,
+            query=query,
+            source_page_refs=source_page_refs,
+            top_k=5,
+        )
+        package.active_overlap_not_top5 = active_overlap_not_top5
+        page_count_for_reserve = len(pages) + len(superseded_pages)
+        evidence_reserve = (
+            self._evidence_reserve(budget)
+            if evidence_candidates
+            and page_count_for_reserve >= self.settings.memoryos_evidence_reserve_min_pages
+            else 0
+        )
+        core_budget_limit = max(task_tokens, budget - evidence_reserve)
+
         pinned_core_page_ids: set[str] = set()
         dropped_core_page_ids: set[str] = set()
         core_pages = [page for page in pages if page.page_type == PageType.CORE_PROFILE]
         for page in core_pages:
             text = page.summary
             page_tokens = self.tokenizer.count(text)
-            if used_tokens + page_tokens <= budget:
+            if used_tokens + page_tokens <= core_budget_limit:
                 package.pinned_core.append(text)
                 pinned_core_page_ids.add(page.id)
                 used_tokens += page_tokens
@@ -476,19 +507,15 @@ class ContextBuilder:
                     )
                 )
 
-        selected_evidence_ids: set[str] = set()
-        source_page_ids = self._source_page_ids(pages)
-        evidence_candidates = self._retrieve_message_evidence(
-            messages,
-            query=query,
-            source_page_ids=source_page_ids,
-            top_k=5,
-        )
         for evidence in evidence_candidates:
             if used_tokens + evidence.estimated_tokens <= budget:
                 package.retrieved_evidence.append(evidence)
                 selected_evidence_ids.add(evidence.message_id)
                 used_tokens += evidence.estimated_tokens
+                if evidence.superseded:
+                    package.superseded_source_recovered += 1
+            else:
+                package.candidate_budget_dropped += 1
 
         hits = self.searcher.search(pages, query=query, top_k=max(5, len(pages)))
         for hit in hits:
@@ -530,17 +557,37 @@ class ContextBuilder:
         source_page_ids: dict[str, str],
         top_k: int,
     ) -> list[ContextEvidence]:
+        source_page_refs = {
+            source_id: (page_id, False) for source_id, page_id in source_page_ids.items()
+        }
+        evidence, _ = self._retrieve_message_evidence_diagnostics(
+            messages,
+            query=query,
+            source_page_refs=source_page_refs,
+            top_k=top_k,
+        )
+        return evidence
+
+    def _retrieve_message_evidence_diagnostics(
+        self,
+        messages: list[Message],
+        query: str,
+        source_page_refs: dict[str, tuple[str, bool]],
+        top_k: int,
+    ) -> tuple[list[ContextEvidence], int]:
         query_tokens = tokenize(query)
         if not query_tokens:
-            return []
-        candidates: list[tuple[int, Message, list[str], int]] = []
+            return [], 0
+        candidates: list[tuple[int, Message, list[str], int, str, bool]] = []
         query_token_set = set(query_tokens)
         for index, message in enumerate(messages):
             # Evidence retrieval is for persisted page sources only. Recent,
             # unpaged messages are still handled by the recent-message path so
             # they do not double-count or override page-backed attribution.
-            if message.id not in source_page_ids:
+            source_ref = source_page_refs.get(message.id)
+            if source_ref is None:
                 continue
+            page_id, superseded = source_ref
             compact = " ".join(message.content.split())
             if not compact:
                 continue
@@ -552,39 +599,58 @@ class ContextBuilder:
             overlap = len(query_token_set & set(tokens))
             if overlap <= 0:
                 continue
-            candidates.append((index, message, tokens, overlap))
+            candidates.append((index, message, tokens, overlap, page_id, superseded))
         if not candidates:
-            return []
-        bm25 = BM25Okapi([tokens for _, _, tokens, _ in candidates])
+            return [], 0
+        bm25 = BM25Okapi([tokens for _, _, tokens, _, _, _ in candidates])
         scores = bm25.get_scores(query_tokens)
         scored = sorted(
             (
-                (
-                    float(scores[candidate_index]),
-                    overlap,
+                _RankedMessageEvidence(
+                    score=float(scores[candidate_index]),
+                    overlap=overlap,
+                    message_index=message_index,
+                    message=message,
+                    page_id=page_id,
+                    superseded=superseded,
+                )
+                for candidate_index, (
                     message_index,
                     message,
-                )
-                for candidate_index, (message_index, message, _, overlap) in enumerate(candidates)
+                    _,
+                    overlap,
+                    page_id,
+                    superseded,
+                ) in enumerate(candidates)
             ),
-            key=lambda item: (item[0], item[1], item[2]),
+            key=lambda item: (item.score, item.overlap, item.message_index),
             reverse=True,
         )
+        top_ids = {item.message.id for item in scored[:top_k]}
+        active_overlap_not_top5 = sum(
+            1
+            for _, message, _, _, _, superseded in candidates
+            if not superseded and message.id not in top_ids
+        )
         evidence: list[ContextEvidence] = []
-        for score, overlap, _, message in scored[:top_k]:
-            evidence_text = self._evidence_text(message.content, query_tokens)
+        for item in scored[:top_k]:
+            evidence_text = self._evidence_text(item.message.content, query_tokens)
             evidence.append(
                 ContextEvidence(
-                    message_id=message.id,
+                    message_id=item.message.id,
                     text=evidence_text,
-                    role=message.role,
-                    metadata=message.metadata,
-                    page_id=source_page_ids.get(message.id),
-                    reason=f"message_bm25={score:.4f} overlap={overlap}",
+                    role=item.message.role,
+                    metadata=item.message.metadata,
+                    page_id=item.page_id,
+                    superseded=item.superseded,
+                    reason=(
+                        f"message_bm25={item.score:.4f} overlap={item.overlap}"
+                        f" superseded={str(item.superseded).lower()}"
+                    ),
                     estimated_tokens=self.tokenizer.count(evidence_text),
                 )
             )
-        return evidence
+        return evidence, active_overlap_not_top5
 
     @staticmethod
     def _is_low_value_evidence(text: str) -> bool:
@@ -646,6 +712,28 @@ class ContextBuilder:
             for source_id in page.source_message_ids:
                 source_page_ids.setdefault(source_id, page.id)
         return source_page_ids
+
+    @staticmethod
+    def _source_page_refs(
+        active_pages: list[MemoryPage],
+        superseded_pages: list[MemoryPage],
+    ) -> dict[str, tuple[str, bool]]:
+        source_page_refs: dict[str, tuple[str, bool]] = {}
+        for page in active_pages:
+            for source_id in page.source_message_ids:
+                source_page_refs.setdefault(source_id, (page.id, False))
+        for page in superseded_pages:
+            for source_id in page.source_message_ids:
+                source_page_refs.setdefault(source_id, (page.id, True))
+        return source_page_refs
+
+    def _evidence_reserve(self, budget: int) -> int:
+        ratio = max(0.0, min(1.0, self.settings.memoryos_evidence_reserve_ratio))
+        ratio_reserve = int(budget * ratio)
+        token_cap = max(0, self.settings.memoryos_evidence_reserve_tokens)
+        if token_cap == 0:
+            return ratio_reserve
+        return min(ratio_reserve, token_cap)
 
 
 class MemoryOSService:
@@ -1023,7 +1111,9 @@ class MemoryOSService:
         self._require_session(session_id)
         t0 = time.perf_counter()
         messages = self.store.list_messages(session_id)
-        pages = [p for p in self.store.list_pages(session_id) if p.superseded_by is None]
+        all_session_pages = self.store.list_pages(session_id)
+        pages = [p for p in all_session_pages if p.superseded_by is None]
+        superseded_pages = [p for p in all_session_pages if p.superseded_by is not None]
         if include_global_core:
             global_cores = [
                 p for p in self.store.list_global_core_pages() if p.superseded_by is None
@@ -1042,6 +1132,7 @@ class MemoryOSService:
             pages=pages,
             budget=effective_budget,
             retrieval_query=retrieval_query,
+            superseded_pages=superseded_pages,
         )
         elapsed = time.perf_counter() - t0
         CONTEXT_BUILD_SECONDS.observe(elapsed)
@@ -1066,6 +1157,9 @@ class MemoryOSService:
                 "retrieved_evidence": [
                     evidence.model_dump() for evidence in package.retrieved_evidence
                 ],
+                "superseded_source_recovered": package.superseded_source_recovered,
+                "candidate_budget_dropped": package.candidate_budget_dropped,
+                "active_overlap_not_top5": package.active_overlap_not_top5,
                 "retrieved_pages": [page.model_dump() for page in package.retrieved_pages],
                 "dropped_recent_messages": package.dropped_recent_messages,
                 "dropped_pages": [page.model_dump() for page in package.dropped_pages],

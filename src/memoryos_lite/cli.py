@@ -52,6 +52,9 @@ PUBLIC_TABLE_COLUMNS = [
     "dropped",
     "srcs/page",
     "rel_dropped",
+    "sup_rec",
+    "cand_drop",
+    "act_not5",
     "avg_ms",
 ]
 
@@ -257,6 +260,9 @@ def _public_table_rows(results: list[PublicBenchmarkResult]) -> list[dict[str, s
                 "dropped": f"{sum(item.dropped_pages for item in items) / len(items):.1f}",
                 "srcs/page": _avg_page_sources(items),
                 "rel_dropped": str(sum(item.dropped_relevant_page_count for item in items)),
+                "sup_rec": str(sum(item.superseded_source_recovered for item in items)),
+                "cand_drop": str(sum(item.candidate_budget_dropped for item in items)),
+                "act_not5": str(sum(item.active_overlap_not_top5 for item in items)),
                 "avg_ms": str(sum(item.latency_ms for item in items) // len(items)),
             }
         )

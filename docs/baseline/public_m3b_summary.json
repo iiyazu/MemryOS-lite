@@ -1,0 +1,46 @@
+{
+  "run_id": "m3b_memoryos_lite_public_50",
+  "description": "M3b supersession-aware raw evidence retrieval, memoryos_lite only, no LLM answer, no LLM judge.",
+  "results": [
+    {
+      "benchmark": "longmemeval",
+      "baseline": "memoryos_lite",
+      "cases": 50,
+      "pass_rate": 0.1,
+      "source_hit": 0.94,
+      "session_hit": 1.0,
+      "msg_source_hit_at_5": 0.12,
+      "msg_session_hit_at_5": 0.5,
+      "page_source_overlap_at_5": 1.0,
+      "page_session_overlap_at_5": 1.0,
+      "avg_context_tokens": 69.82,
+      "avg_page_count": 2.26,
+      "avg_loaded_pages": 1.86,
+      "avg_dropped_pages": 0.04,
+      "dropped_relevant_page_count": 2,
+      "superseded_source_recovered": 6,
+      "candidate_budget_dropped": 225,
+      "active_overlap_not_top5": 785
+    },
+    {
+      "benchmark": "locomo",
+      "baseline": "memoryos_lite",
+      "cases": 50,
+      "pass_rate": 0.02,
+      "source_hit": 0.0,
+      "session_hit": 0.0,
+      "msg_source_hit_at_5": 0.2083,
+      "msg_session_hit_at_5": 0.383,
+      "page_source_overlap_at_5": 0.25,
+      "page_session_overlap_at_5": 0.2553,
+      "avg_context_tokens": 82.02,
+      "avg_page_count": 24.0,
+      "avg_loaded_pages": 2.66,
+      "avg_dropped_pages": 10.34,
+      "dropped_relevant_page_count": 16,
+      "superseded_source_recovered": 27,
+      "candidate_budget_dropped": 187,
+      "active_overlap_not_top5": 10018
+    }
+  ]
+}

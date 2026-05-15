@@ -257,6 +257,49 @@ Tracked M3 aggregate snapshot:
 M3 summary hash:
 `9518d723b74ecb56a5d016b09dcfccc491b85c6dda2dbe550971cb8b243eda8d`
 
+## M3b Supersession-Aware Raw Evidence Retrieval
+
+T-06 showed that M3's LoCoMo failure was mostly not a page-window-size issue:
+`40/47` traced expected sources were present only in superseded pages and
+therefore excluded from active `source_page_ids`. M3b keeps page summary
+retrieval unchanged but lets superseded pages contribute raw-message evidence
+candidates. These snippets are marked with `ContextEvidence.superseded` so
+downstream scoring can treat them as lower-confidence historical evidence.
+
+M3b also reserves evidence budget only for multi-page dialogue contexts
+(`memoryos_evidence_reserve_min_pages = 8`,
+`memoryos_evidence_reserve_ratio = 0.6`,
+`memoryos_evidence_reserve_tokens = 64`). This avoids regressing smaller
+LongMemEval-style contexts while giving LoCoMo enough budget to load several
+evidence snippets before core-profile pages consume the whole 90-token budget.
+
+M3b diagnostic harness, no LLM, first 50, `memoryos_lite` only:
+
+| Benchmark | Pass | Source hit | Session hit | Msg source@5 | Msg session@5 | Page src overlap@5 | Page session overlap@5 | Avg tokens | Pages | Loaded | Dropped | Relevant dropped | Sup recovered | Candidate budget dropped | Active overlap not top5 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| LongMemEval | 0.10 | 0.94 | 1.00 | 0.12 | 0.50 | 1.00 | 1.00 | 69.8 | 2.3 | 1.9 | 0.0 | 2 | 6 | 225 | 785 |
+| LoCoMo | 0.02 | 0.00 | 0.00 | 0.21 | 0.38 | 0.25 | 0.26 | 82.0 | 24.0 | 2.7 | 10.3 | 16 | 27 | 187 | 10018 |
+
+Tracked M3b aggregate snapshot:
+`docs/baseline/public_m3b_summary.json`
+
+M3b summary hash:
+`1875597b7136d8a682526ab8849981a8f087f6d4e31f6b3a6975a80904d6c3c8`
+
+M3b is still not a LoCoMo answer-quality fix:
+
+- It meets the evidence-level target: LoCoMo `Msg source@5` rises from M3
+  `0.00` to `0.21`, and `25/50` cases load at least one superseded-source
+  evidence snippet.
+- LongMemEval final source hit stays above the acceptance floor (`0.94` vs the
+  required `>= 0.81`), because evidence reserve is gated to multi-page
+  contexts and superseded snippets are downweighted in deterministic answer
+  projection.
+- LoCoMo final deterministic `source_hit` / `session_hit` falls to `0.00/0.00`.
+  This is an accepted mixed result for M3b: the raw evidence path is now
+  measurable, but answer projection and ranking still fail. Do not describe
+  M3b as solving LoCoMo.
+
 M4 is an interview demo target, not a production-agent target: citation answers,
 conflict interrupt, max tool-loop turns, and cross-session read rejection are the
 only planned agent capabilities.

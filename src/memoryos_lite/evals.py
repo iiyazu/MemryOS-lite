@@ -94,6 +94,9 @@ class BaselineOutput:
     page_candidate_top_k: int | None = None
     page_candidate_source_ids: list[str] = field(default_factory=list)
     page_candidate_page_ids: list[str] = field(default_factory=list)
+    superseded_source_recovered: int = 0
+    candidate_budget_dropped: int = 0
+    active_overlap_not_top5: int = 0
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,7 @@ class EvidenceItem:
     text: str
     source_texts: dict[str, str]
     origin: str = "message"
+    superseded: bool = False
 
 
 def builtin_cases() -> list[EvalCase]:
@@ -617,6 +621,7 @@ def _run_baseline(
                     text=context_evidence.text,
                     source_texts={context_evidence.message_id: context_evidence.text},
                     origin="retrieved_message" if context_evidence.page_id else "message",
+                    superseded=context_evidence.superseded,
                 )
             )
         for page in pages:
@@ -665,6 +670,9 @@ def _run_baseline(
             page_candidate_top_k=candidate_top_k,
             page_candidate_source_ids=page_candidate_source_ids,
             page_candidate_page_ids=page_candidate_page_ids,
+            superseded_source_recovered=context.superseded_source_recovered,
+            candidate_budget_dropped=context.candidate_budget_dropped,
+            active_overlap_not_top5=context.active_overlap_not_top5,
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -765,6 +773,9 @@ def _baseline_from_evidence(
     page_candidate_top_k: int | None = None,
     page_candidate_source_ids: list[str] | None = None,
     page_candidate_page_ids: list[str] | None = None,
+    superseded_source_recovered: int = 0,
+    candidate_budget_dropped: int = 0,
+    active_overlap_not_top5: int = 0,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}
@@ -792,6 +803,9 @@ def _baseline_from_evidence(
         page_candidate_top_k=page_candidate_top_k,
         page_candidate_source_ids=page_candidate_source_ids or [],
         page_candidate_page_ids=page_candidate_page_ids or [],
+        superseded_source_recovered=superseded_source_recovered,
+        candidate_budget_dropped=candidate_budget_dropped,
+        active_overlap_not_top5=active_overlap_not_top5,
     )
 
 
@@ -818,7 +832,9 @@ def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[Eviden
     for item in evidence:
         score = len(query_terms & set(tokenize(item.text)))
         if item.origin == "retrieved_message":
-            score += 8
+            score += 4
+        if item.superseded:
+            score -= 16
         if _is_temporal_question(question) and _has_update_signal(item.text):
             score += 20
         if item.origin == "page" and not temporal_recent_update:

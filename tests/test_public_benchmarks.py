@@ -186,6 +186,9 @@ def test_public_benchmark_compare_baselines_reports_all_rows(tmp_path):
     }
     assert all(set(PUBLIC_TABLE_COLUMNS) <= set(row) for row in rows)
     assert all("rel_dropped" in row for row in rows)
+    assert all("sup_rec" in row for row in rows)
+    assert all("cand_drop" in row for row in rows)
+    assert all("act_not5" in row for row in rows)
     assert all("srcs/page" in row for row in rows)
     assert next(row for row in rows if row["baseline"] == "sliding_window")["msg_src@5"] == "-"
 

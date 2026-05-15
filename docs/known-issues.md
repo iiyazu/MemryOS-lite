@@ -231,11 +231,29 @@ source。其中 47 个 case 带 expected source id，3 个 QA 没有 evidence id
 
 M4 paging/ranking 改动至少应分别报告：
 
-- expected source superseded count 是否下降；
+- expected source superseded count 是否下降到 `<= 10/47`；
 - active expected source overlap=0 是否仍为 0；
 - expected source top-5 candidate 但 budget dropped 是否下降；
 - active overlap>0 but not top-5 是否下降；
-- actual `msg_source_hit_at_5` 是否从 frozen M3 的 `0.0` 改善。
+- actual `msg_source_hit_at_5` 是否从 frozen M3 的 `0.0` 改善到
+  `>= 0.15`；
+- LongMemEval source hit 不低于 M3 的 `0.86 - 0.05`，即 `>= 0.81`。
+
+M3b 的具体方向是 supersession-aware raw evidence retrieval：superseded
+pages 仍不参与 page summary retrieval / page-fact attribution，但其
+`source_message_ids` 可以作为 raw-message evidence candidates，并通过
+`ContextEvidence.superseded` 显式标记，供 scoring 降权和诊断使用。
+
+### M3b 当前结果
+
+已实现并冻结 first-50 public benchmark 诊断：
+
+- LoCoMo `msg_source_hit_at_5 = 0.2083`，超过 `>= 0.15` 下限。
+- LoCoMo `superseded_source_recovered = 27`，`25/50` case 至少恢复一条
+  superseded-source evidence。
+- LongMemEval `source_hit = 0.94`，超过 `>= 0.81` 下限。
+- LoCoMo final deterministic `source_hit/session_hit = 0.00/0.00`，说明 M3b
+  只改善 actual evidence loading，不解决 answer projection / ranking。
 
 ## Ticket #7 — _project_evidence_text 中单字「换」作为 priority_marker 过于宽泛
 

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     memoryos_page_window_max_messages: int = 24
     memoryos_page_window_max_tokens: int = 5_000
     memoryos_evidence_max_tokens: int = 48
+    memoryos_evidence_reserve_ratio: float = 0.6
+    memoryos_evidence_reserve_tokens: int = 64
+    memoryos_evidence_reserve_min_pages: int = 8
     memoryos_paging_mode: str = "heuristic"
     memoryos_llm_provider: str = "auto"
     openai_api_key: str | None = None
