@@ -51,9 +51,10 @@ def test_eval_forces_heuristic_paging_for_reproducibility(tmp_path):
     assert results
     assert trace_paths
     trace_text = "\n".join(path.read_text(encoding="utf-8") for path in trace_paths)
-    # FakePageDraftClient is injected in run_eval; it calls heuristic internally
-    # but the paging_agent sees it as a real llm_client → mode is "agentic"
-    assert '"paging_mode":"agentic"' in trace_text
+    # run_eval forces memoryos_paging_mode=heuristic and clears API keys,
+    # so paging always walks the heuristic path regardless of env keys.
+    assert '"paging_mode":"heuristic"' in trace_text
+    assert "agentic" not in trace_text
 
 
 def test_all_eval_baselines_obey_budget(tmp_path):

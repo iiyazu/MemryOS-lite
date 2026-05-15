@@ -645,6 +645,7 @@ def test_paging_agent_uses_llm_client_when_enabled(service):
 
 
 def test_paging_agent_falls_back_when_llm_fails(service):
+    service.settings.memoryos_paging_mode = "llm"
     agent = PagingAgent(service.settings, llm_client=FailingDraftClient())
     session = service.create_session("test")
     messages = []

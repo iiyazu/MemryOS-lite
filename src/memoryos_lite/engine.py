@@ -71,7 +71,11 @@ class ContextRotGuard:
 
 
 class PageDraftClient(Protocol):
-    def create_draft(self, messages: list[Message]) -> MemoryPageDraft:
+    def create_draft(
+        self,
+        messages: list[Message],
+        context_pages: list[MemoryPage] | None = None,
+    ) -> MemoryPageDraft:
         pass
 
 
@@ -262,7 +266,7 @@ class PagingAgent:
             return [], "none", None
         if len(page_messages) < 2:
             return [], "none", None
-        if self.llm_client is not None:
+        if self.llm_client is not None and self.settings.memoryos_paging_mode == "llm":
             drafts, had_fallback, fallback_error = self._agentic_drafts(
                 session_id, page_messages, existing_pages or []
             )
@@ -276,7 +280,8 @@ class PagingAgent:
         page_messages: list[Message],
         existing_pages: list[MemoryPage],
     ) -> tuple[list[MemoryPageDraft], bool, str | None]:
-        context_pages = existing_pages[-self.settings.memoryos_paging_context_pages :]
+        limit = self.settings.memoryos_paging_context_pages
+        context_pages = existing_pages[-limit:] if limit > 0 else []
         drafts: list[MemoryPageDraft] = []
         had_fallback = False
         fallback_error: str | None = None
@@ -285,6 +290,8 @@ class PagingAgent:
                 continue
             try:
                 draft = self.llm_client.create_draft(window, context_pages)  # type: ignore[union-attr]
+                if not draft.source_message_ids:
+                    raise ValueError("LLM returned no valid source_message_ids")
             except Exception as exc:
                 draft = self._heuristic_draft(session_id, window)
                 had_fallback = True
@@ -1088,7 +1095,7 @@ class MemoryOSService:
         self.rot_guard = ContextRotGuard(self.settings, self.tokenizer)
         llm_client: PageDraftClient | None = None
         llm_init_error: str | None = None
-        if self.settings.chat_api_key:
+        if self.settings.chat_api_key and self.settings.memoryos_paging_mode == "llm":
             try:
                 llm_client = OpenAIPageDraftClient(self.settings)
             except Exception as exc:
