@@ -9,8 +9,9 @@ import uvicorn
 from langchain_core.messages import AIMessage, HumanMessage
 from rich.console import Console
 from rich.table import Table
-from typer import Option, Typer
+from typer import Argument, Option, Typer
 
+from memoryos_lite.agent_answer_eval import AgentAnswerEvalSummary, run_agent_answer_eval
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import EvalResult, run_eval, run_eval_llm
@@ -38,6 +39,13 @@ EVAL_TABLE_COLUMNS = [
     "supporting",
 ]
 LLM_JUDGE_TABLE_COLUMNS = ["baseline", "cases", "pass_rate", "failed", "errors"]
+AGENT_ANSWER_TABLE_COLUMNS = [
+    "cases",
+    "has_citation",
+    "uses_retrieved_source",
+    "no_evidence_refusal",
+    "unsupported_rate",
+]
 PUBLIC_TABLE_COLUMNS = [
     "benchmark",
     "baseline",
@@ -314,6 +322,21 @@ def eval_run(
     console.print(f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}.json'}")
 
 
+@eval_app.command("agent-answer")
+def eval_agent_answer(run_id: str | None = None) -> None:
+    """Run deterministic agent-answer diagnostics without real LLM/API calls."""
+    settings = get_settings()
+    eval_run_id = run_id or datetime.now(UTC).strftime("agent_answer_%Y%m%d_%H%M%S")
+    summary = run_agent_answer_eval(settings, eval_run_id)
+    table = Table(*AGENT_ANSWER_TABLE_COLUMNS)
+    row = _agent_answer_table_row(summary)
+    table.add_row(*(row[column] for column in AGENT_ANSWER_TABLE_COLUMNS))
+    console.print(table)
+    console.print(
+        f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}_agent_answer.json'}"
+    )
+
+
 @eval_app.command("public")
 def eval_public(
     benchmark: Annotated[str, Option("--benchmark", "-k", help="longmemeval | locomo")],
@@ -364,6 +387,52 @@ def eval_public(
     console.print(f"[bold]Report:[/bold] {settings.data_dir / 'evals' / report_name}")
 
 
+@eval_app.command("manifest")
+def eval_manifest(
+    data_path: Annotated[str, Option("--data-path", "-d", help="Path to LongMemEval JSON")],
+    output_path: Annotated[
+        str, Option("--output", "-o", help="Output manifest path")
+    ] = ".memoryos/evals/manifests/longmemeval_50.json",
+    n: Annotated[int, Option("--n", help="Number of cases to sample")] = 50,
+    seed: Annotated[int, Option("--seed", help="Random seed for sampling")] = 42,
+) -> None:
+    """Create a fixed manifest for LongMemEval subset."""
+    from memoryos_lite.longmemeval_manifest import create_manifest
+
+    create_manifest(Path(data_path), Path(output_path), n=n, seed=seed)
+    console.print(f"[green]Manifest created:[/green] {output_path} ({n} cases, seed={seed})")
+
+
+@eval_app.command("diagnose")
+def eval_diagnose(
+    report_path: Annotated[str, Argument(help="Path to benchmark result JSON")],
+) -> None:
+    """Classify failure modes from a benchmark result file."""
+    from memoryos_lite.diagnostic_report import generate_report, load_results
+
+    results = load_results(Path(report_path))
+    report = generate_report(results)
+
+    console.print(f"\n[bold]Diagnostic Report[/bold] ({report['total_cases']} cases)\n")
+    console.print(f"Source hit rate: [green]{report['source_hit_rate']:.1%}[/green]\n")
+
+    console.print("[bold]Failure Breakdown:[/bold]")
+    for mode, count in sorted(report["failure_breakdown"].items(), key=lambda x: -x[1]):
+        pct = count / report["total_cases"] * 100 if report["total_cases"] > 0 else 0
+        color = "green" if mode == "pass" else "red"
+        console.print(f"  [{color}]{mode}[/{color}]: {count} ({pct:.0f}%)")
+
+    if report["typical_failures"]:
+        console.print("\n[bold]Typical Failures:[/bold]")
+        for mode, case_ids in report["typical_failures"].items():
+            console.print(f"  {mode}: {', '.join(case_ids)}")
+
+    item_contrib = report["item_contribution"]
+    console.print("\n[bold]Item Contribution:[/bold]")
+    console.print(f"  Item helped: {item_contrib['item_helped']}")
+    console.print(f"  Page only: {item_contrib['page_only']}")
+
+
 def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
     grouped: dict[str, list[JudgeVerdict]] = {}
     for result in results:
@@ -383,6 +452,21 @@ def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def _agent_answer_table_row(summary: AgentAnswerEvalSummary) -> dict[str, str]:
+    refusal = (
+        "-"
+        if summary.refusal_when_no_evidence is None
+        else f"{summary.refusal_when_no_evidence:.2f}"
+    )
+    return {
+        "cases": str(summary.total_cases),
+        "has_citation": f"{summary.answer_has_citation:.2f}",
+        "uses_retrieved_source": f"{summary.answer_uses_retrieved_source:.2f}",
+        "no_evidence_refusal": refusal,
+        "unsupported_rate": f"{summary.unsupported_answer_rate:.2f}",
+    }
 
 
 def _public_table_rows(results: list[PublicBenchmarkResult]) -> list[dict[str, str]]:
