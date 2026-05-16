@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -86,9 +86,17 @@ class PublicBenchmarkResult:
     active_overlap_not_top5: int
     latency_ms: int
     question_type: str | None = None
+    item_source_overlap_at_k: bool | None = None
+    item_promoted_evidence_count: int = 0
+    item_evidence_budget_dropped: int = 0
+    source_not_indexed: bool = False
+    item_hit_item_ids: list[str] = field(default_factory=list)
+    item_hit_source_ids: list[str] = field(default_factory=list)
 
     def to_report(self) -> dict[str, object]:
-        return asdict(self)
+        data = asdict(self)
+        data["pass"] = self.verdict == "pass"
+        return data
 
 
 def load_public_benchmark_cases(
@@ -165,6 +173,9 @@ def run_public_benchmark(
                 reasoning = "exact substring match"
                 expected_present = [public_case.expected_answer] if verdict_label == "pass" else []
                 expected_missing = [] if verdict_label == "pass" else [public_case.expected_answer]
+            item_metrics = _extract_item_metrics(
+                store, public_case.case.case_id, public_case.expected_source_ids
+            )
             results.append(
                 _to_public_result(
                     public_case,
@@ -178,6 +189,7 @@ def run_public_benchmark(
                     expected_missing,
                     output,
                     latency_ms,
+                    item_metrics,
                 )
             )
 
@@ -392,6 +404,48 @@ def _with_case_message_ids(case_id: str, messages: list[Message]) -> list[Messag
     ]
 
 
+def _extract_item_metrics(
+    store: Any, session_id: str, expected_source_ids: list[str]
+) -> dict[str, Any]:
+    """Extract item-level retrieval metrics from traces."""
+    traces = store.list_traces(session_id)
+    item_trace = next(
+        (t for t in traces if t.event_type == "item_retrieval"), None
+    )
+    if item_trace is None:
+        return {
+            "item_source_overlap_at_k": None,
+            "item_promoted_evidence_count": 0,
+            "item_evidence_budget_dropped": 0,
+            "source_not_indexed": False,
+            "item_hit_item_ids": [],
+            "item_hit_source_ids": [],
+        }
+    payload = item_trace.payload
+    hit_source_ids = payload.get("promoted_source_ids", [])
+    item_hit_ids = payload.get("item_hit_ids", [])
+    promoted_count = payload.get("promoted_evidence_count", 0)
+    budget_dropped = payload.get("item_evidence_budget_dropped", 0)
+
+    overlap = bool(set(hit_source_ids) & set(expected_source_ids))
+
+    all_indexed_sources: set[str] = set()
+    for page in store.list_pages(session_id):
+        all_indexed_sources.update(page.source_message_ids)
+    for item in store.list_items(session_id):
+        all_indexed_sources.update(item.source_message_ids)
+    source_not_indexed = not bool(set(expected_source_ids) & all_indexed_sources)
+
+    return {
+        "item_source_overlap_at_k": overlap,
+        "item_promoted_evidence_count": promoted_count,
+        "item_evidence_budget_dropped": budget_dropped,
+        "source_not_indexed": source_not_indexed,
+        "item_hit_item_ids": item_hit_ids,
+        "item_hit_source_ids": hit_source_ids,
+    }
+
+
 def _to_public_result(
     public_case: PublicBenchmarkCase,
     baseline: str,
@@ -404,6 +458,7 @@ def _to_public_result(
     expected_missing: list[str],
     output: BaselineOutput,
     latency_ms: int,
+    item_metrics: dict[str, Any] | None = None,
 ) -> PublicBenchmarkResult:
     source_set = set(source_ids)
     expected_source_set = set(public_case.expected_source_ids)
@@ -522,6 +577,12 @@ def _to_public_result(
         active_overlap_not_top5=output.active_overlap_not_top5,
         latency_ms=latency_ms,
         question_type=public_case.question_type,
+        item_source_overlap_at_k=(item_metrics or {}).get("item_source_overlap_at_k"),
+        item_promoted_evidence_count=(item_metrics or {}).get("item_promoted_evidence_count", 0),
+        item_evidence_budget_dropped=(item_metrics or {}).get("item_evidence_budget_dropped", 0),
+        source_not_indexed=(item_metrics or {}).get("source_not_indexed", False),
+        item_hit_item_ids=(item_metrics or {}).get("item_hit_item_ids", []),
+        item_hit_source_ids=(item_metrics or {}).get("item_hit_source_ids", []),
     )
 
 
@@ -587,7 +648,9 @@ class PublicAnswerer:
                     content=(
                         "You answer memory benchmark questions using only the provided "
                         "retrieved context. Answer concisely. If the context is insufficient, "
-                        "say that the memory does not contain enough information."
+                        "say that the memory does not contain enough information. For "
+                        "temporal-reasoning questions, use the timestamps in the retrieved "
+                        "context to determine order or duration."
                     )
                 ),
                 HumanMessage(content=f"Retrieved context:\n{context}\n\nQuestion: {question}"),
