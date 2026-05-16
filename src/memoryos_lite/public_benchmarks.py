@@ -193,6 +193,25 @@ def run_public_benchmark(
                 )
             )
 
+    # Build benchmark-message-id → MemoryOS-message-id mapping.
+    # _run_baseline creates sessions with title=case.case_id but an auto-generated
+    # session ID. We look up each session by title, then zip benchmark message IDs
+    # with stored message IDs (messages are ingested in order, IDs are preserved).
+    source_mapping: dict[str, str] = {}
+    for public_case in public_cases:
+        session = store.get_session_by_title(public_case.case.case_id)
+        if session is None:
+            continue
+        stored_msgs = store.list_messages(session.id)
+        for bench_msg, stored_msg in zip(public_case.messages, stored_msgs, strict=False):
+            source_mapping[bench_msg.id] = stored_msg.id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    mapping_path = run_dir / "source_mapping.json"
+    mapping_path.write_text(
+        json.dumps(source_mapping, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
     report_dir = settings.data_dir / "evals"
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{run_id}_{benchmark.lower()}.json"

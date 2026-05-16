@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from memoryos_lite.config import Settings
-from memoryos_lite.public_benchmarks import PublicBenchmarkResult, _extract_item_metrics
+from memoryos_lite.public_benchmarks import (
+    PublicBenchmarkResult,
+    _extract_item_metrics,
+    run_public_benchmark,
+)
 from memoryos_lite.schemas import TraceEvent, utc_now
 from memoryos_lite.store import create_store
 
@@ -146,3 +151,106 @@ def test_extract_item_metrics_with_trace_no_overlap(tmp_path):
     metrics = _extract_item_metrics(store, session_id, ["msg_001"])
     assert metrics["item_source_overlap_at_k"] is False
     assert metrics["item_hit_source_ids"] == ["msg_999"]
+
+
+# ---------------------------------------------------------------------------
+# source_mapping.json written by run_public_benchmark
+# ---------------------------------------------------------------------------
+
+
+def _make_locomo_data(tmp_path: Path, sample_id: str) -> Path:
+    data_path = tmp_path / "locomo.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": sample_id,
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "The final project is MemoryOS Lite.",
+                            },
+                            {
+                                "speaker": "Bob",
+                                "dia_id": "D1:2",
+                                "text": "Agreed, MemoryOS Lite it is.",
+                            },
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What is the final project?",
+                            "answer": "MemoryOS Lite",
+                            "evidence": ["D1:1"],
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return data_path
+
+
+def test_run_public_benchmark_writes_source_mapping(tmp_path):
+    data_path = _make_locomo_data(tmp_path, "sample_map")
+    eval_root = tmp_path / "eval_runs"
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_eval_data_dir=eval_root,
+    )
+
+    run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="mapping-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    mapping_path = eval_root / "mapping-test" / "source_mapping.json"
+    assert mapping_path.exists(), "source_mapping.json was not written"
+
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+    # Two messages were ingested; both benchmark IDs should appear as keys
+    expected_bench_ids = {
+        "sample_map_qa_001:sample_map:D1:1",
+        "sample_map_qa_001:sample_map:D1:2",
+    }
+    assert expected_bench_ids <= set(mapping.keys()), (
+        f"Expected benchmark IDs {expected_bench_ids} not all present in mapping keys: "
+        f"{set(mapping.keys())}"
+    )
+
+
+def test_run_public_benchmark_source_mapping_values_are_stored_ids(tmp_path):
+    data_path = _make_locomo_data(tmp_path, "sample_ids")
+    eval_root = tmp_path / "eval_runs"
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_eval_data_dir=eval_root,
+    )
+
+    run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="ids-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    mapping_path = eval_root / "ids-test" / "source_mapping.json"
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+
+    # All values must be non-empty strings (stored message IDs)
+    assert all(isinstance(v, str) and v for v in mapping.values()), (
+        "All mapping values must be non-empty strings"
+    )
+    # The mapping must be non-empty
+    assert len(mapping) >= 2

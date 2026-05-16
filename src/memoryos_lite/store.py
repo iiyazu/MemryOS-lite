@@ -213,6 +213,13 @@ class MemoryStore:
                 return None
             return Session(id=record.id, title=record.title, created_at=record.created_at)
 
+    def get_session_by_title(self, title: str) -> Session | None:
+        with self.db() as db:
+            record = db.scalar(select(SessionRecord).where(SessionRecord.title == title))
+            if record is None:
+                return None
+            return Session(id=record.id, title=record.title, created_at=record.created_at)
+
     def add_message(self, message: Message) -> Message:
         with self.db() as db:
             db.add(
@@ -507,6 +514,29 @@ class MemoryStore:
             )
             rows = list(db.execute(stmt))
         return {item_id: emb for item_id, emb in rows if emb is not None}
+
+    def load_item(self, item_id: str) -> MemoryItem | None:
+        with self.db() as db:
+            record = db.get(ItemRecord, item_id)
+            if record is None:
+                return None
+            return MemoryItem(
+                id=record.id,
+                page_id=record.page_id,
+                session_id=record.session_id,
+                item_type=MemoryItemType(record.item_type),
+                content=record.content,
+                source_message_ids=json.loads(record.source_message_ids_json),
+                created_at=record.created_at,
+            )
+
+    def update_item_content(self, item_id: str, content: str) -> bool:
+        with self.db() as db:
+            record = db.get(ItemRecord, item_id)
+            if record is None:
+                return False
+            record.content = content
+        return True
 
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)
