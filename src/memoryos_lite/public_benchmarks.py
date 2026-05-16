@@ -146,6 +146,8 @@ def run_public_benchmark(
     service = MemoryOSService(store=store, settings=run_settings)
     results: list[PublicBenchmarkResult] = []
 
+    source_mapping: dict[str, str] = {}
+
     for public_case in public_cases:
         for baseline in _expand_baselines(baselines):
             start = time.perf_counter()
@@ -192,19 +194,15 @@ def run_public_benchmark(
                     item_metrics,
                 )
             )
-
-    # Build benchmark-message-id → MemoryOS-message-id mapping.
-    # _run_baseline creates sessions with title=case.case_id but an auto-generated
-    # session ID. We look up each session by title, then zip benchmark message IDs
-    # with stored message IDs (messages are ingested in order, IDs are preserved).
-    source_mapping: dict[str, str] = {}
-    for public_case in public_cases:
+        # Collect source mapping before store resets for next case
         session = store.get_session_by_title(public_case.case.case_id)
-        if session is None:
-            continue
-        stored_msgs = store.list_messages(session.id)
-        for bench_msg, stored_msg in zip(public_case.messages, stored_msgs, strict=False):
-            source_mapping[bench_msg.id] = stored_msg.id
+        if session is not None:
+            stored_msgs = store.list_messages(session.id)
+            for bench_msg, stored_msg in zip(
+                public_case.messages, stored_msgs, strict=False
+            ):
+                source_mapping[bench_msg.id] = stored_msg.id
+
     run_dir.mkdir(parents=True, exist_ok=True)
     mapping_path = run_dir / "source_mapping.json"
     mapping_path.write_text(
@@ -241,6 +239,7 @@ def _load_longmemeval(data: Any) -> list[PublicBenchmarkCase]:
         messages: list[Message] = []
         expected_source_ids: list[str] = []
         source_sessions_by_id: dict[str, str] = {}
+        seen_message_ids: set[str] = set()
         haystack_sessions = item.get("haystack_sessions", [])
         for session_index, session in enumerate(haystack_sessions, start=1):
             session_id = (
@@ -259,6 +258,9 @@ def _load_longmemeval(data: Any) -> list[PublicBenchmarkCase]:
                     continue
                 role = _role_from_text(str(turn.get("role") or "user"))
                 message_id = f"{case_id}:{_safe_id(session_id)}:{turn_index:03d}"
+                if message_id in seen_message_ids:
+                    continue
+                seen_message_ids.add(message_id)
                 source_sessions_by_id[message_id] = session_id
                 if turn.get("has_answer") is True:
                     expected_source_ids.append(message_id)

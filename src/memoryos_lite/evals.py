@@ -536,8 +536,7 @@ def _run_baseline(
             retrieval_candidate_source_ids=[message.id for message in retrieval_candidates],
         )
     if baseline == "memoryos_lite":
-        if case.query_in_new_session:
-            service.store.reset()
+        service.store.reset()
         source_session = service.create_session(case.case_id)
         context_session = (
             service.create_session(f"{case.case_id}_query")

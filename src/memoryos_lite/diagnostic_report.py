@@ -1,7 +1,9 @@
 """Failure mode classification and diagnostic report generation for Phase 2.5."""
 from __future__ import annotations
 
+import json
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from memoryos_lite.public_benchmarks import PublicBenchmarkResult
@@ -91,3 +93,14 @@ def generate_report(results: list[PublicBenchmarkResult]) -> dict[str, Any]:
             "neither": total - item_helped - page_only - (total - pass_count),
         },
     }
+
+
+def load_results(report_path: Path) -> list[PublicBenchmarkResult]:
+    """Load PublicBenchmarkResult list from a JSON report file."""
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    results = []
+    fields = set(PublicBenchmarkResult.__dataclass_fields__)
+    for item in data:
+        kwargs = {k: v for k, v in item.items() if k in fields}
+        results.append(PublicBenchmarkResult(**kwargs))
+    return results
