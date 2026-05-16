@@ -20,6 +20,12 @@ class RewrittenQuery(BaseModel):
     reasoning: str = Field(description="Brief explanation of changes made")
 
 
+class ExpandedQueries(BaseModel):
+    """Structured output from multi-query expansion."""
+
+    variants: list[str] = Field(description="2-3 alternative phrasings of the query")
+
+
 class QueryRewriter:
     """Rewrites queries using LLM with optional profile context.
 
@@ -65,3 +71,36 @@ class QueryRewriter:
         if isinstance(result, RewrittenQuery):
             return result.rewritten
         return query
+
+    def expand(self, query: str, profile_context: str = "") -> list[str]:
+        """Generate alternative query phrasings for multi-path retrieval."""
+        if self._llm is None:
+            return [query]
+
+        system = (
+            "Generate 2-3 alternative phrasings of this query for memory retrieval. "
+            "Each variant should approach the question from a different angle. "
+            "Include keywords that might appear in the answer, not just the question. "
+            "Return concise query variants."
+        )
+        if profile_context:
+            system += f"\n\nUser profile context:\n{profile_context}"
+
+        structured = self._llm.with_structured_output(ExpandedQueries)
+        try:
+            result = structured.invoke(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": f"Original query: {query}"},
+                ]
+            )
+        except Exception:
+            return [query]
+
+        if isinstance(result, ExpandedQueries) and result.variants:
+            variants: list[str] = [query]
+            for variant in result.variants:
+                if variant and variant not in variants:
+                    variants.append(variant)
+            return variants[:4]
+        return [query]
