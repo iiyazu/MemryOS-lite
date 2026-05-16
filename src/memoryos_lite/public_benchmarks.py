@@ -92,6 +92,7 @@ class PublicBenchmarkResult:
     source_not_indexed: bool = False
     item_hit_item_ids: list[str] = field(default_factory=list)
     item_hit_source_ids: list[str] = field(default_factory=list)
+    item_count_in_session: int = 0
 
     def to_report(self) -> dict[str, object]:
         data = asdict(self)
@@ -177,8 +178,17 @@ def run_public_benchmark(
                 reasoning = "exact substring match"
                 expected_present = [public_case.expected_answer] if verdict_label == "pass" else []
                 expected_missing = [] if verdict_label == "pass" else [public_case.expected_answer]
+            # Use actual session ID (not case title) for item metrics
+            session_for_items = store.get_session_by_title(
+                public_case.case.case_id
+            )
+            actual_session_id = (
+                session_for_items.id
+                if session_for_items
+                else public_case.case.case_id
+            )
             item_metrics = _extract_item_metrics(
-                store, public_case.case.case_id, public_case.expected_source_ids
+                store, actual_session_id, public_case.expected_source_ids
             )
             results.append(
                 _to_public_result(
@@ -431,6 +441,9 @@ def _extract_item_metrics(
     store: Any, session_id: str, expected_source_ids: list[str]
 ) -> dict[str, Any]:
     """Extract item-level retrieval metrics from traces."""
+    all_items = store.list_items(session_id)
+    item_count_in_session = len(all_items)
+
     traces = store.list_traces(session_id)
     item_trace = next(
         (t for t in traces if t.event_type == "item_retrieval"), None
@@ -443,10 +456,11 @@ def _extract_item_metrics(
             "source_not_indexed": False,
             "item_hit_item_ids": [],
             "item_hit_source_ids": [],
+            "item_count_in_session": item_count_in_session,
         }
     payload = item_trace.payload
-    hit_source_ids = payload.get("promoted_source_ids", [])
-    item_hit_ids = payload.get("item_hit_ids", [])
+    hit_source_ids = payload.get("promoted_source_message_ids", [])
+    item_hit_ids = payload.get("item_hit_ids", hit_source_ids)
     promoted_count = payload.get("promoted_evidence_count", 0)
     budget_dropped = payload.get("item_evidence_budget_dropped", 0)
 
@@ -455,7 +469,7 @@ def _extract_item_metrics(
     all_indexed_sources: set[str] = set()
     for page in store.list_pages(session_id):
         all_indexed_sources.update(page.source_message_ids)
-    for item in store.list_items(session_id):
+    for item in all_items:
         all_indexed_sources.update(item.source_message_ids)
     source_not_indexed = not bool(set(expected_source_ids) & all_indexed_sources)
 
@@ -466,6 +480,7 @@ def _extract_item_metrics(
         "source_not_indexed": source_not_indexed,
         "item_hit_item_ids": item_hit_ids,
         "item_hit_source_ids": hit_source_ids,
+        "item_count_in_session": item_count_in_session,
     }
 
 
@@ -606,6 +621,7 @@ def _to_public_result(
         source_not_indexed=(item_metrics or {}).get("source_not_indexed", False),
         item_hit_item_ids=(item_metrics or {}).get("item_hit_item_ids", []),
         item_hit_source_ids=(item_metrics or {}).get("item_hit_source_ids", []),
+        item_count_in_session=(item_metrics or {}).get("item_count_in_session", 0),
     )
 
 

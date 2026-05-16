@@ -116,7 +116,7 @@ def test_extract_item_metrics_with_trace_overlap(tmp_path):
         event_type="item_retrieval",
         payload={
             "item_hit_ids": ["item_001", "item_002"],
-            "promoted_source_ids": ["msg_001", "msg_003"],
+            "promoted_source_message_ids": ["msg_001", "msg_003"],
             "promoted_evidence_count": 2,
             "item_evidence_budget_dropped": 1,
         },
@@ -140,7 +140,7 @@ def test_extract_item_metrics_with_trace_no_overlap(tmp_path):
         event_type="item_retrieval",
         payload={
             "item_hit_ids": ["item_010"],
-            "promoted_source_ids": ["msg_999"],
+            "promoted_source_message_ids": ["msg_999"],
             "promoted_evidence_count": 1,
             "item_evidence_budget_dropped": 0,
         },
