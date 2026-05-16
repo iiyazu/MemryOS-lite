@@ -140,6 +140,7 @@ def run_public_benchmark(
             "openai_api_key": None,
             "deepseek_api_key": None,
             "rot_safe_budget": 4_800,
+            "memoryos_embedding_provider": "fastembed",
         }
     )
     store = create_store(run_settings)

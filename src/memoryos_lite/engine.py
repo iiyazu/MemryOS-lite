@@ -1328,12 +1328,25 @@ class MemoryOSService:
         self.item_searcher = ItemSearcher(embedding_client=self.embedding_client)
 
     def _default_embedding_client(self) -> EmbeddingClient | None:
-        if not self.settings.openai_api_key:
+        provider = self.settings.memoryos_embedding_provider.strip().lower()
+        if provider == "fastembed":
+            from memoryos_lite.retrieval.providers.fastembed_client import (
+                FastEmbedClient,
+            )
+            return FastEmbedClient()
+        if provider == "none":
             return None
-        try:
-            return OpenAIEmbeddingClient(self.settings)
-        except Exception:
-            return None
+        if self.settings.openai_api_key:
+            try:
+                return OpenAIEmbeddingClient(self.settings)
+            except Exception:
+                pass
+        if self.settings.deepseek_api_key:
+            try:
+                return OpenAIEmbeddingClient(self.settings)
+            except Exception:
+                pass
+        return None
 
     def create_session(self, title: str) -> Any:
         session = self.store.create_session(title)

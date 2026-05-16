@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     openai_base_url: str | None = None
     memoryos_model: str = "gpt-4o-mini"
     memoryos_embedding_model: str = "text-embedding-3-small"
+    memoryos_embedding_provider: str = "auto"
     deepseek_api_key: str | None = None
     deepseek_base_url: str = DEEPSEEK_DEFAULT_BASE_URL
     deepseek_model: str = DEEPSEEK_DEFAULT_MODEL
