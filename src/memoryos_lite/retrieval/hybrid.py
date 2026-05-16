@@ -45,32 +45,44 @@ class HybridSearcher:
         if not pages or not query:
             return []
 
-        # Step 1: Query rewriting (LLM-based, no-op if no rewriter)
-        search_query = query
-        if self.query_rewriter is not None:
+        # Step 1: Query expansion (multi-query or single rewrite)
+        queries: list[str]
+        if self.query_rewriter is not None and hasattr(
+            self.query_rewriter, "expand"
+        ):
             try:
-                search_query = self.query_rewriter.rewrite(query, profile_context)
+                queries = self.query_rewriter.expand(query, profile_context)
             except Exception:
-                search_query = query
+                queries = [query]
+        elif self.query_rewriter is not None:
+            try:
+                queries = [self.query_rewriter.rewrite(query, profile_context)]
+            except Exception:
+                queries = [query]
+        else:
+            queries = [query]
 
-        # Step 2: Dual retrieval + RRF fusion
+        # Step 2: Per-query dual retrieval + merge
         per_source_k = max(top_k * 2, 10)
-        lexical_hits = self.lexical.search(pages, search_query, top_k=per_source_k)
-        embedding_hits: list[SearchHit] = []
-        if self.embedding is not None:
-            embedding_hits = self.embedding.search(pages, search_query, top_k=per_source_k)
+        all_ranked: dict[str, list[SearchHit]] = {}
+        for i, q in enumerate(queries):
+            lexical_hits = self.lexical.search(pages, q, top_k=per_source_k)
+            if lexical_hits:
+                all_ranked[f"lexical_{i}"] = lexical_hits
+            if self.embedding is not None:
+                emb_hits = self.embedding.search(
+                    pages, q, top_k=per_source_k
+                )
+                if emb_hits:
+                    all_ranked[f"embedding_{i}"] = emb_hits
 
-        ranked_lists: dict[str, list[SearchHit]] = {}
-        if lexical_hits:
-            ranked_lists["lexical"] = lexical_hits
-        if embedding_hits:
-            ranked_lists["embedding"] = embedding_hits
-
-        if not ranked_lists:
+        if not all_ranked:
             return []
-        fused = reciprocal_rank_fusion(ranked_lists, k=self.rrf_k, top_k=max(top_k * 2, 10))
+        fused = reciprocal_rank_fusion(
+            all_ranked, k=self.rrf_k, top_k=max(top_k * 2, 10)
+        )
 
-        # Step 3: LLM reranking (no-op if no reranker)
+        # Step 3: LLM reranking
         if self.reranker is not None:
             return self.reranker.rerank(fused, query, top_k=top_k)
         return fused[:top_k]
