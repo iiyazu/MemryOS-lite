@@ -484,9 +484,10 @@ def _run_baseline(
     messages: list[Message],
     service: MemoryOSService,
     settings: Settings,
+    budget_override: int | None = None,
 ) -> BaselineOutput:
     tokenizer = TokenEstimator()
-    budget = 90
+    budget = budget_override if budget_override is not None else 90
     task_tokens = tokenizer.count(case.question)
     if case.query_in_new_session and baseline != "memoryos_lite":
         return _baseline_from_evidence(case.question, [], task_tokens)

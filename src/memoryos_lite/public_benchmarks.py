@@ -138,6 +138,7 @@ def run_public_benchmark(
             "memoryos_paging_mode": "heuristic",
             "openai_api_key": None,
             "deepseek_api_key": None,
+            "rot_safe_budget": 4_800,
         }
     )
     store = create_store(run_settings)
@@ -157,6 +158,7 @@ def run_public_benchmark(
                 public_case.messages,
                 service,
                 run_settings,
+                budget_override=run_settings.rot_safe_budget,
             )
             answer = (
                 answerer.answer(public_case.case.question, output.sources)

@@ -124,11 +124,143 @@ def test_run_public_benchmark_without_llm_judge_writes_report(tmp_path):
 
     assert len(results) == 1
     assert results[0].verdict == "pass"
+    assert results[0].to_report()["pass"] is True
     assert results[0].source_hit is True
     assert results[0].source_hit_at_k is None
     assert results[0].source_overlap_ids == ["sample_b_qa_001:sample_b:D1:1"]
     assert results[0].session_overlap_ids == ["D1"]
     assert (settings.data_dir / "evals" / "public-test_locomo.json").exists()
+
+
+def test_longmemeval_temporal_comparison_keeps_two_raw_sources(tmp_path):
+    filler = " ".join(f"detail{i}" for i in range(80))
+    data_path = tmp_path / "longmemeval.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "question_id": "lme_temporal_two_sources",
+                    "question_type": "temporal-reasoning",
+                    "question": (
+                        "Which event did I attend first, the 'Effective Time Management' "
+                        "workshop or the 'Data Analysis using Python' webinar?"
+                    ),
+                    "answer": "'Data Analysis using Python' webinar",
+                    "answer_session_ids": ["s_late", "s_early"],
+                    "haystack_session_ids": ["s_late", "s_early"],
+                    "haystack_dates": [
+                        "2023/05/28 (Sun) 21:04",
+                        "2023/05/28 (Sun) 07:17",
+                    ],
+                    "haystack_sessions": [
+                        [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "I attended the workshop on "
+                                    '"Effective Time Management" at the local community '
+                                    f"center last Saturday. {filler}"
+                                ),
+                                "has_answer": True,
+                            },
+                            {"role": "assistant", "content": "Noted."},
+                            {"role": "user", "content": f"Later unrelated planning. {filler}"},
+                        ],
+                        [
+                            {
+                                "role": "user",
+                                "content": (
+                                    "I participated in a webinar on "
+                                    '"Data Analysis using Python" two months ago. '
+                                    f"{filler}"
+                                ),
+                                "has_answer": True,
+                            },
+                            {"role": "assistant", "content": "Noted."},
+                            {"role": "user", "content": "I saved notes from that webinar."},
+                            {"role": "assistant", "content": "Noted."},
+                            {"role": "user", "content": f"Later unrelated notes. {filler}"},
+                        ],
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="longmemeval",
+        data_path=data_path,
+        run_id="longmemeval-two-source-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    result = results[0]
+    assert result.retrieval_candidate_unit == "message"
+    assert set(result.source_overlap_ids) == set(result.expected_source_ids)
+    assert result.source_hit_at_k is True
+    assert result.session_hit_at_k is True
+    assert len(result.source_ids) == 2
+
+
+def test_longmemeval_temporal_anchor_exposes_page_candidate(tmp_path):
+    filler = " ".join(f"background{i}" for i in range(45))
+    data_path = tmp_path / "longmemeval.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "question_id": "lme_temporal_anchor_page",
+                    "question_type": "temporal-reasoning",
+                    "question": "When did I visit the Museum of Temporal Retrieval?",
+                    "answer": "March 19th",
+                    "answer_session_ids": ["s_temporal"],
+                    "haystack_session_ids": ["s_temporal"],
+                    "haystack_dates": ["2023/03/26 (Sun) 22:45"],
+                    "haystack_sessions": [
+                        [
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"{filler}. On March 19th, I visited the "
+                                    "Museum of Temporal Retrieval."
+                                ),
+                                "has_answer": True,
+                            },
+                            {"role": "assistant", "content": "Noted."},
+                            {
+                                "role": "user",
+                                "content": "Older unrelated note about groceries.",
+                            },
+                            {"role": "user", "content": "Recent unrelated note about weather."},
+                            {"role": "assistant", "content": "Noted."},
+                        ],
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="longmemeval",
+        data_path=data_path,
+        run_id="longmemeval-temporal-anchor-page-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    result = results[0]
+    expected_source_id = "lme_temporal_anchor_page:s_temporal:001"
+    assert result.page_source_overlap_at_k is True
+    assert expected_source_id in result.page_candidate_source_ids
 
 
 def test_public_benchmark_compare_baselines_reports_all_rows(tmp_path):
@@ -261,8 +393,8 @@ def test_public_benchmark_reports_dropped_relevant_memoryos_page(tmp_path):
     assert len(results) == 1
     result = results[0]
     assert result.page_count == 1
-    assert result.loaded_pages == 0
-    assert result.dropped_pages == 1
+    assert result.loaded_pages == 1
+    assert result.dropped_pages == 0
     assert result.source_hit is True
     assert result.source_hit_at_k is True
     assert result.page_source_overlap_at_k is True
@@ -272,9 +404,7 @@ def test_public_benchmark_reports_dropped_relevant_memoryos_page(tmp_path):
     assert result.retrieval_candidate_unit == "message"
     assert result.page_candidate_page_ids
     assert result.retrieval_candidate_source_ids
-    assert result.dropped_relevant_page_count == 1
-    assert result.dropped_relevant_page_ids
-    assert result.dropped_page_reasons[result.dropped_relevant_page_ids[0]]
+    assert result.dropped_relevant_page_count == 0
     assert result.page_type_counts
     assert result.page_source_counts == [3]
 
