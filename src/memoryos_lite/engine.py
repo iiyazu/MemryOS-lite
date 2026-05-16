@@ -25,6 +25,7 @@ from memoryos_lite.retrieval import (
     EmbeddingClient,
     EmbeddingSearcher,
     HybridSearcher,
+    ItemSearcher,
     LexicalSearcher,
     LLMReranker,
     QueryRewriter,
@@ -591,9 +592,35 @@ class ItemExtractor:
                 return self._extract_llm(page, messages)
             except Exception:
                 pass
-        return self._extract_heuristic(page)
+        return self._extract_heuristic(page, messages)
 
-    def _extract_heuristic(self, page: MemoryPage) -> list[MemoryItem]:
+    def _narrow_source_ids(
+        self, content: str, messages: list[Message], page_source_ids: list[str]
+    ) -> list[str]:
+        """Pick top 1-3 source messages with highest match to item content."""
+        if not content or not page_source_ids:
+            return page_source_ids[:1] if page_source_ids else []
+        source_msgs = [m for m in messages if m.id in set(page_source_ids)]
+        if not source_msgs:
+            return page_source_ids[:1] if page_source_ids else []
+        content_lower = content.lower().strip()
+        scored = []
+        for msg in source_msgs:
+            msg_lower = msg.content.lower().strip()
+            if content_lower in msg_lower or msg_lower in content_lower:
+                scored.append((len(content_lower) + 1000, msg.id))
+            else:
+                content_tokens = set(tokenize(content))
+                msg_tokens = set(tokenize(msg.content))
+                overlap = len(content_tokens & msg_tokens)
+                if overlap > 0:
+                    scored.append((overlap, msg.id))
+        if not scored:
+            return page_source_ids[:1]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [sid for _, sid in scored[:3]]
+
+    def _extract_heuristic(self, page: MemoryPage, messages: list[Message]) -> list[MemoryItem]:
         items: list[MemoryItem] = []
         for fact in page.facts:
             if fact and not is_generic_ack(fact):
@@ -603,7 +630,9 @@ class ItemExtractor:
                         session_id=page.session_id,
                         item_type=MemoryItemType.KNOWLEDGE,
                         content=fact,
-                        source_message_ids=page.source_message_ids,
+                        source_message_ids=self._narrow_source_ids(
+                            fact, messages, page.source_message_ids
+                        ),
                     )
                 )
         for decision in page.decisions:
@@ -614,7 +643,9 @@ class ItemExtractor:
                         session_id=page.session_id,
                         item_type=MemoryItemType.KNOWLEDGE,
                         content=decision,
-                        source_message_ids=page.source_message_ids,
+                        source_message_ids=self._narrow_source_ids(
+                            decision, messages, page.source_message_ids
+                        ),
                     )
                 )
         return items
@@ -650,10 +681,18 @@ class ItemExtractor:
         result = self._llm_client.invoke([system, human])
         if not isinstance(result, _ItemList):
             raise TypeError("unexpected LLM output type")
+        valid_ids = {m.id for m in messages if m.id in set(page.source_message_ids)}
         for item in result.items:
             item.page_id = page.id
             item.session_id = page.session_id
-        return result.items
+            item.source_message_ids = [
+                sid for sid in item.source_message_ids if sid in valid_ids
+            ]
+            if not item.source_message_ids:
+                item.source_message_ids = self._narrow_source_ids(
+                    item.content, messages, page.source_message_ids
+                )
+        return [it for it in result.items if it.source_message_ids]
 
 
 class PatchVerifier:
@@ -716,6 +755,7 @@ class ContextBuilder:
         budget: int,
         retrieval_query: str | None = None,
         superseded_pages: list[MemoryPage] | None = None,
+        item_evidence: list[ContextEvidence] | None = None,
     ) -> ContextPackage:
         query = retrieval_query or task
         recent_messages = messages[-self.settings.recent_message_limit :]
@@ -805,6 +845,20 @@ class ContextBuilder:
                     package.superseded_source_recovered += 1
             else:
                 package.candidate_budget_dropped += 1
+
+        # Item evidence: injected AFTER page-level evidence, BEFORE page summaries.
+        # This gives item evidence higher priority than page summaries and recent msgs.
+        item_evidence_dropped = 0
+        for item_ev in (item_evidence or []):
+            if item_ev.message_id in selected_evidence_ids:
+                continue
+            if used_tokens + item_ev.estimated_tokens <= budget:
+                package.retrieved_evidence.append(item_ev)
+                selected_evidence_ids.add(item_ev.message_id)
+                used_tokens += item_ev.estimated_tokens
+            else:
+                item_evidence_dropped += 1
+        package.candidate_budget_dropped += item_evidence_dropped
 
         hits = self.searcher.search(pages, query=query, top_k=max(5, len(pages)))
         for hit in hits:
@@ -1271,6 +1325,7 @@ class MemoryOSService:
             except Exception:
                 item_llm = None
         self.item_extractor = ItemExtractor(self.settings, llm_client=item_llm)
+        self.item_searcher = ItemSearcher(embedding_client=self.embedding_client)
 
     def _default_embedding_client(self) -> EmbeddingClient | None:
         if not self.settings.openai_api_key:
@@ -1594,15 +1649,93 @@ class MemoryOSService:
                 {"page_id": page.id, "error": str(exc)},
             )
 
-    def _index_item_embedding(self, item: MemoryItem) -> None:
+    def _index_item_embedding(self, item: MemoryItem) -> bool:
+        """Embed and store item vector. Returns True on success."""
         if self.embedding_client is None or not item.content.strip():
-            return
+            return False
         try:
             vector = self.embedding_client.embed(item.content)
             if vector:
                 self.store.set_item_embedding(item.id, vector)
+                return True
         except Exception:
             pass
+        return False
+
+    def _prepare_item_evidence(
+        self,
+        session_id: str,
+        query: str,
+        messages: list[Message],
+        pages: list[MemoryPage],
+    ) -> tuple[list[ContextEvidence], dict[str, Any] | None]:
+        """Prepare item-sourced evidence candidates for ContextBuilder.
+
+        Returns (candidates, trace_payload). Candidates are pre-filtered
+        (no generic acks, no low-value) and text-clipped, ready for budget
+        competition inside ContextBuilder.build().
+        """
+        if not self.settings.memoryos_item_extraction:
+            return [], None
+        items = self.store.list_items(session_id)
+        if not items:
+            return [], None
+        active_page_ids = {p.id for p in pages}
+        active_items = [
+            it for it in items
+            if it.page_id in active_page_ids or it.page_id.startswith("orphan_")
+        ]
+        if not active_items:
+            return [], None
+        item_ids = [it.id for it in active_items]
+        embeddings = self.store.get_item_embeddings(item_ids)
+        hits = self.item_searcher.search(
+            active_items, query, embeddings=embeddings, top_k=10
+        )
+        if not hits:
+            return [], {"item_hit_count": 0, "promoted_evidence_count": 0,
+                        "promoted_source_message_ids": []}
+        msg_by_id = {m.id: m for m in messages}
+        query_tokens = tokenize(query)
+        seen_ids: set[str] = set()
+        candidates: list[ContextEvidence] = []
+        max_candidates = self.settings.memoryos_item_evidence_max
+        for hit in hits:
+            if len(candidates) >= max_candidates:
+                break
+            for src_id in hit.item.source_message_ids:
+                if len(candidates) >= max_candidates:
+                    break
+                if src_id in seen_ids:
+                    continue
+                msg = msg_by_id.get(src_id)
+                if msg is None:
+                    continue
+                if is_generic_ack(msg.content):
+                    continue
+                if ContextBuilder._is_low_value_evidence(msg.content):
+                    continue
+                text = self.context_builder._evidence_text(
+                    msg.content, query_tokens
+                )
+                tokens = self.tokenizer.count(text)
+                candidates.append(
+                    ContextEvidence(
+                        message_id=src_id,
+                        text=text,
+                        role=msg.role,
+                        reason=f"item_hit:{hit.reason}",
+                        estimated_tokens=tokens,
+                        page_id=hit.item.page_id,
+                    )
+                )
+                seen_ids.add(src_id)
+        trace = {
+            "item_hit_count": len(hits),
+            "promoted_evidence_count": len(candidates),
+            "promoted_source_message_ids": [c.message_id for c in candidates],
+        }
+        return candidates, trace
 
     def build_context(
         self,
@@ -1629,6 +1762,12 @@ class MemoryOSService:
             if budget is not None
             else self.dynamic_budget.compute(messages, pages, task)
         )
+        item_evidence, item_trace = self._prepare_item_evidence(
+            session_id=session_id,
+            query=retrieval_query or task,
+            messages=messages,
+            pages=pages,
+        )
         package = self.context_builder.build(
             session_id=session_id,
             task=task,
@@ -1637,6 +1776,7 @@ class MemoryOSService:
             budget=effective_budget,
             retrieval_query=retrieval_query,
             superseded_pages=superseded_pages,
+            item_evidence=item_evidence,
         )
         elapsed = time.perf_counter() - t0
         CONTEXT_BUILD_SECONDS.observe(elapsed)
@@ -1669,6 +1809,20 @@ class MemoryOSService:
                 "dropped_pages": [page.model_dump() for page in package.dropped_pages],
             },
         )
+        if item_trace:
+            actual_promoted = [
+                e for e in package.retrieved_evidence
+                if e.reason.startswith("item_hit:")
+            ]
+            item_trace["candidate_count"] = item_trace.pop("promoted_evidence_count")
+            item_trace["promoted_evidence_count"] = len(actual_promoted)
+            item_trace["promoted_source_message_ids"] = [
+                e.message_id for e in actual_promoted
+            ]
+            item_trace["item_evidence_budget_dropped"] = (
+                item_trace["candidate_count"] - len(actual_promoted)
+            )
+            self.trace(session_id, "item_retrieval", item_trace)
         return package
 
     def search(
@@ -1786,6 +1940,105 @@ class MemoryOSService:
         except Exception as exc:
             PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
             self.trace(session_id, "embedding_failed", {"page_id": page.id, "error": str(exc)})
+
+    def create_item(
+        self,
+        session_id: str,
+        content: str,
+        item_type: str = "knowledge",
+        source_message_ids: list[str] | None = None,
+    ) -> MemoryItem | None:
+        self._require_session(session_id)
+        if not self.settings.memoryos_item_extraction:
+            return None
+        try:
+            itype = MemoryItemType(item_type)
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid item_type: {item_type}. "
+                f"Valid: {', '.join(t.value for t in MemoryItemType)}"
+            ) from exc
+        pages = self.store.list_pages(session_id, include_superseded=False)
+        page_id = pages[-1].id if pages else f"orphan_{session_id}"
+        if source_message_ids is None:
+            msgs = self.store.list_messages(session_id, limit=1)
+            source_message_ids = [msgs[0].id] if msgs else []
+        item = MemoryItem(
+            page_id=page_id,
+            session_id=session_id,
+            item_type=itype,
+            content=content,
+            source_message_ids=source_message_ids,
+        )
+        self.store.save_items([item])
+        self._index_item_embedding(item)
+        self.trace(session_id, "item_created", {
+            "item_id": item.id, "item_type": item_type, "content": content,
+        })
+        return item
+
+    def search_items(
+        self,
+        session_id: str,
+        query: str,
+        top_k: int = 5,
+        include_superseded: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._require_session(session_id)
+        if not self.settings.memoryos_item_extraction:
+            return []
+        items = self.store.list_items(session_id)
+        if not items:
+            return []
+        if not include_superseded:
+            superseded_page_ids = {
+                p.id for p in self.store.list_pages(session_id, include_superseded=True)
+                if p.superseded_by is not None
+            }
+            items = [
+                it for it in items
+                if it.page_id not in superseded_page_ids
+            ]
+        if not items:
+            return []
+        item_ids = [it.id for it in items]
+        embeddings = self.store.get_item_embeddings(item_ids)
+        hits = self.item_searcher.search(
+            items, query, embeddings=embeddings, top_k=top_k
+        )
+        self.trace(session_id, "items_searched", {
+            "query": query, "hit_count": len(hits),
+        })
+        return [
+            {"item_id": h.item.id, "content": h.item.content,
+             "item_type": h.item.item_type.value, "score": h.score,
+             "source_message_ids": h.item.source_message_ids}
+            for h in hits
+        ]
+
+    def patch_item(
+        self,
+        session_id: str,
+        item_id: str,
+        new_content: str,
+    ) -> str:
+        self._require_session(session_id)
+        if not self.settings.memoryos_item_extraction:
+            return "Item operations are disabled."
+        item = self.store.load_item(item_id)
+        if item is None:
+            return f"Item {item_id} not found."
+        if item.session_id != session_id:
+            return f"Item {item_id} belongs to a different session."
+        old_content = item.content
+        self.store.update_item_content(item_id, new_content)
+        item.content = new_content
+        embedded = self._index_item_embedding(item)
+        self.trace(session_id, "item_patched", {
+            "item_id": item_id, "old_content": old_content,
+            "new_content": new_content, "re_embedded": embedded,
+        })
+        return f"Item {item_id} updated."
 
     def trace(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
         self.store.add_trace(
