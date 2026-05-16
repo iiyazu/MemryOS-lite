@@ -14,7 +14,7 @@
 
 | Phase | 目标 | Exit Criteria |
 |-------|------|---------------|
-| 2.5 | LongMemEval 50-case retrieval 诊断基线 | 6 维 metrics baseline + 失败模式分类报告 |
+| 2.5 | LongMemEval 50-case retrieval 诊断基线 | 7 维 metrics baseline + 失败模式分类报告 |
 | 2.6 | 数据驱动检索优化 | before/after 可解释提升 + anti-overfitting 验证 |
 | 3 | Structured Think-Act-Observe + Demo | fake LLM demo 可跑 + trace 可审计 + benchmark 不退化 |
 
@@ -28,7 +28,7 @@
 
 用 LongMemEval 50-case 子集建立当前系统的 retrieval 诊断基线，确认 page/item/evidence 链路的真实贡献。
 
-### 6 维 Retrieval Metrics
+### 7 维 Retrieval Metrics
 
 | Metric | 含义 |
 |--------|------|
@@ -36,14 +36,17 @@
 | `page_source_overlap@k` | 检索到的 top-k pages 的 source_message_ids 包含 target |
 | `item_source_overlap@k` | 检索到的 top-k items 的 source_message_ids 包含 target |
 | `item_promoted_evidence_count` | item evidence 实际进入 retrieved_evidence 的数量 |
-| `candidate_budget_dropped` | 因预算不足被丢弃的 evidence 候选数 |
+| `candidate_budget_dropped` | 因预算不足被丢弃的 page-level evidence 候选数 |
+| `item_evidence_budget_dropped` | 因预算不足被丢弃的 item-level evidence 候选数 |
 | `source_not_indexed` | target source message 不在任何 page/item 的 source_message_ids 中 |
 
 ### 主线流程
 
-1. 准备 50-case 子集，按 question type 均匀采样
+1. 准备 50-case 子集，按 question type 均匀采样（固定 seed）
+   - **Manifest 固化**：采样结果保存为 `.memoryos/evals/manifests/longmemeval_50.json`，后续所有 Phase 2.5/2.6 跑分必须使用同一 manifest，确保 before/after 可比
 2. 跑 ingest → page/item extraction → build_context
-3. 记录 6 维 retrieval metrics
+   - **Source ID mapping**：benchmark adapter 持久化映射 `benchmark_turn_id → MemoryOS message.id`，保存在 manifest 同目录。无 source label 的 case 跳过 retrieval score，仅参与 answer score（如启用）
+3. 记录 retrieval metrics（见下方 7 维表）
 4. 分类失败模式（见 Phase 2.6 指标化命名）
 5. 输出诊断报告
 
@@ -60,7 +63,7 @@
 
 ### Exit Criteria
 
-- 50 cases 的 6 维 retrieval metrics baseline 数据
+- 50 cases 的 7 维 retrieval metrics baseline 数据
 - 失败 cases 按指标化类别分类完成
 - 诊断报告：每类失败的占比 + 典型 case 示例
 
@@ -115,7 +118,7 @@ source_hit miss 是最终现象，诊断时追溯具体子原因：
 
 - before/after 对比表：每次优化的 delta + 影响的 case IDs
 - 内置 eval 保持 1.00/1.00
-- LongMemEval 子集 source_hit 有可量化提升
+- LongMemEval 子集 source_hit 有可量化提升；若无提升，需输出明确 no-gain analysis 和下一步瓶颈归因
 - 每个优化决策有一句话解释"为什么这样做"
 
 ### 不做
@@ -295,7 +298,7 @@ memory_thought → memory_observation(skipped) → context_built
 | 组件 | 技术 |
 |------|------|
 | Agent 编排 | LangGraph StateGraph |
-| LLM | OpenAI-compatible (deepseek-v4-flash / gpt-4o-mini) |
+| LLM | OpenAI-compatible chat model, configured via env (e.g. deepseek-v4-flash, gpt-4o-mini) |
 | 存储 | SQLite + Qdrant (optional) |
 | Embedding | text-embedding-3-small |
 | 检索 | BM25 + embedding cosine + item-level RAG |
