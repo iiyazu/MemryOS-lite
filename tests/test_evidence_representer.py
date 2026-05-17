@@ -1,11 +1,15 @@
-from memoryos_lite.retrieval.evidence_representer import EvidenceRepresenter, EvidenceCandidate
-from memoryos_lite.schemas import Message, MemoryPage, Role
+from memoryos_lite.retrieval.evidence_representer import EvidenceRepresenter
+from memoryos_lite.schemas import MemoryPage, Message, Role
+
 
 def _msg(content, role=Role.USER, msg_id="m1", session_id="s1"):
     return Message(id=msg_id, session_id=session_id, role=role, content=content)
 
 def _page(title="Test Page", summary="A summary of events"):
-    return MemoryPage(id="p1", session_id="s1", title=title, summary=summary, source_message_ids=["m1","m2","m3"])
+    return MemoryPage(
+        id="p1", session_id="s1", title=title, summary=summary,
+        source_message_ids=["m1", "m2", "m3"],
+    )
 
 def test_raw_strategy():
     r = EvidenceRepresenter(strategy="raw")

@@ -19,6 +19,11 @@ class EvidenceCandidate:
 
 class EvidenceRepresenter:
     def __init__(self, strategy: EvidenceStrategy = "deterministic_context") -> None:
+        valid: set[str] = {"raw", "deterministic_context", "page_context_plus_raw"}
+        if strategy not in valid:
+            raise ValueError(
+                f"Unknown evidence strategy {strategy!r}. Valid: {sorted(valid)}"
+            )
         self._strategy = strategy
 
     @property

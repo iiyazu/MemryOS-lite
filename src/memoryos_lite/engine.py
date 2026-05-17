@@ -806,7 +806,10 @@ class ContextBuilder:
             )
         )
         # Contextual evidence as supplemental recall (never replaces legacy)
-        if self.settings.memoryos_evidence_representation != "legacy" and self.evidence_representer is not None:
+        if (
+            self.settings.memoryos_evidence_representation != "legacy"
+            and self.evidence_representer is not None
+        ):
             pages_by_id = {p.id: p for p in pages}
             for sp in superseded_pages:
                 pages_by_id.setdefault(sp.id, sp)

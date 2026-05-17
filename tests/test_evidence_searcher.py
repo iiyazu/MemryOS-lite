@@ -1,9 +1,12 @@
-from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher, EvidenceHit
 from memoryos_lite.retrieval.evidence_representer import EvidenceCandidate
+from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher
 
 
 def _c(msg_id, index_text, original=None):
-    return EvidenceCandidate(message_id=msg_id, index_text=index_text, original_text=original or index_text, display_text=original or index_text)
+    return EvidenceCandidate(
+        message_id=msg_id, index_text=index_text,
+        original_text=original or index_text, display_text=original or index_text,
+    )
 
 
 def test_bm25_basic():
@@ -30,8 +33,12 @@ def test_no_match():
 
 def test_contextual_prefix_helps():
     s = EvidenceSearcher()
+    ctx_prefix = (
+        "[session=s1] Previous: What is Caroline's relationship status?"
+        " Current: She is single now."
+    )
     hits = s.search([
-        _c("m1", "[session=s1] Previous: What is Caroline's relationship status? Current: She is single now.", "She is single now."),
+        _c("m1", ctx_prefix, "She is single now."),
         _c("m2", "[session=s1] Current: The weather is great.", "The weather is great."),
     ], query="Caroline relationship status", top_k=2)
     assert hits[0].message_id == "m1"

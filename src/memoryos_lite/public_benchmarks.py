@@ -136,7 +136,7 @@ def run_public_benchmark(
         update={
             "data_dir": run_dir,
             "database_url": None,
-            "memoryos_paging_mode": "heuristic",
+            "memoryos_paging_mode": settings.memoryos_paging_mode,
             "openai_api_key": None,
             "deepseek_api_key": settings.deepseek_api_key,
             "rot_safe_budget": 4_800,
