@@ -528,14 +528,14 @@ def build_agent_graph(
         """Check if agent wants to call tools or is done."""
         messages = state.get("messages", [])
         if state.get("tool_turns", 0) >= settings.agent_max_tool_turns:
-            return "build_context"
+            return "memory_think"
         if messages and hasattr(messages[-1], "tool_calls") and messages[-1].tool_calls:
             return "tool_executor"
-        return "build_context"
+        return "memory_think"
 
     def route_after_tool_executor(state: AgentState) -> str:
         if state.get("tool_turns", 0) >= settings.agent_max_tool_turns:
-            return "build_context"
+            return "memory_think"
         return "tool_agent"
 
     def route_after_build_context(state: AgentState) -> str:
@@ -547,6 +547,50 @@ def build_agent_graph(
 
     # --- Build graph ---
 
+    def _memory_think_wrapper(state: AgentState) -> AgentState:
+        """Graph-node wrapper for memory_think_node_fn."""
+        session = state.get("session_id", session_id)
+        result = memory_think_node_fn(state)
+        decision = result.get("memory_decision")
+        service.trace(
+            session,
+            "memory_thought",
+            {
+                "action": decision["action"] if decision else "none",
+                "reason_code": decision["reason_code"] if decision else "irrelevant",
+                "confidence": decision["confidence"] if decision else 0.0,
+            },
+        )
+        return result
+
+    def _memory_action_wrapper(state: AgentState) -> AgentState:
+        """Graph-node wrapper for memory_action_node_fn."""
+        session = state.get("session_id", session_id)
+        result = memory_action_node_fn(state, service=service)
+        obs = result.get("memory_observation")
+        service.trace(
+            session,
+            "memory_action",
+            {
+                "success": obs["success"] if obs else False,
+                "recalled_item_ids": obs["recalled_item_ids"] if obs else [],
+                "patched_item_id": obs["patched_item_id"] if obs else None,
+                "error": obs["error"] if obs else None,
+            },
+        )
+        return result
+
+    def _memory_observe_wrapper(state: AgentState) -> AgentState:
+        """Graph-node wrapper for memory_observe_node_fn."""
+        session = state.get("session_id", session_id)
+        result = memory_observe_node_fn(state)
+        service.trace(
+            session,
+            "memory_observation",
+            {"summary": result.get("observation_summary", "")},
+        )
+        return result
+
     graph = StateGraph(AgentState)
 
     # Add nodes
@@ -555,6 +599,9 @@ def build_agent_graph(
     graph.add_node("paging", paging_node)
     graph.add_node("tool_agent", tool_agent_node)
     graph.add_node("tool_executor", tool_executor_node)
+    graph.add_node("memory_think", _memory_think_wrapper)
+    graph.add_node("memory_action", _memory_action_wrapper)
+    graph.add_node("memory_observe", _memory_observe_wrapper)
     graph.add_node("build_context", build_context_node)
     graph.add_node("answer", answer_with_citations_node)
     graph.add_node("conflict_check", conflict_check_node)
@@ -577,13 +624,16 @@ def build_agent_graph(
     graph.add_conditional_edges(
         "tool_agent",
         route_after_tool_agent,
-        {"tool_executor": "tool_executor", "build_context": "build_context"},
+        {"tool_executor": "tool_executor", "memory_think": "memory_think"},
     )
     graph.add_conditional_edges(
         "tool_executor",
         route_after_tool_executor,
-        {"tool_agent": "tool_agent", "build_context": "build_context"},
+        {"tool_agent": "tool_agent", "memory_think": "memory_think"},
     )
+    graph.add_edge("memory_think", "memory_action")
+    graph.add_edge("memory_action", "memory_observe")
+    graph.add_edge("memory_observe", "build_context")
     graph.add_conditional_edges(
         "build_context",
         route_after_build_context,
