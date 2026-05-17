@@ -32,6 +32,8 @@ from memoryos_lite.retrieval import (
     Searcher,
     SearchHit,
 )
+from memoryos_lite.retrieval.evidence_representer import EvidenceCandidate, EvidenceRepresenter
+from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.retrieval.providers import OpenAIEmbeddingClient, QdrantEmbeddingStore
 from memoryos_lite.schemas import (
@@ -746,6 +748,14 @@ class ContextBuilder:
         self.searcher = searcher
         self.settings = settings
         self._bm25_evidence_cache: dict[tuple[tuple[str, int], ...], BM25Okapi] = {}
+        if self.settings.memoryos_evidence_representation != "legacy":
+            self.evidence_representer: EvidenceRepresenter | None = EvidenceRepresenter(
+                strategy=self.settings.memoryos_evidence_representation,  # type: ignore[arg-type]
+            )
+            self.evidence_searcher: EvidenceSearcher | None = EvidenceSearcher()
+        else:
+            self.evidence_representer = None
+            self.evidence_searcher = None
 
     def build(
         self,
@@ -786,12 +796,28 @@ class ContextBuilder:
 
         selected_evidence_ids: set[str] = set()
         source_page_refs = self._source_page_refs(pages, superseded_pages)
-        evidence_candidates, active_overlap_not_top5 = self._retrieve_message_evidence_diagnostics(
-            messages,
-            query=query,
-            source_page_refs=source_page_refs,
-            top_k=5,
-        )
+        if self.settings.memoryos_evidence_representation == "legacy":
+            evidence_candidates, active_overlap_not_top5 = (
+                self._retrieve_message_evidence_diagnostics(
+                    messages,
+                    query=query,
+                    source_page_refs=source_page_refs,
+                    top_k=5,
+                )
+            )
+        else:
+            pages_by_id = {p.id: p for p in pages}
+            for sp in superseded_pages:
+                pages_by_id.setdefault(sp.id, sp)
+            evidence_candidates, active_overlap_not_top5 = (
+                self._retrieve_contextual_evidence_diagnostics(
+                    messages,
+                    query=query,
+                    source_page_refs=source_page_refs,
+                    pages_by_id=pages_by_id,
+                    top_k=self.settings.memoryos_evidence_candidate_top_k,
+                )
+            )
         package.active_overlap_not_top5 = active_overlap_not_top5
         page_count_for_reserve = len(pages) + len(superseded_pages)
         evidence_reserve = (
@@ -1006,6 +1032,125 @@ class ContextBuilder:
                 )
             )
         return evidence, active_overlap_not_top5
+
+    def _build_evidence_candidates(
+        self,
+        messages: list[Message],
+        source_page_refs: dict[str, tuple[str, bool]],
+        pages_by_id: dict[str, MemoryPage],
+    ) -> list[EvidenceCandidate]:
+        """Build EvidenceCandidates at runtime from paged source messages."""
+        if self.evidence_representer is None:
+            return []
+        msg_index = {m.id: i for i, m in enumerate(messages)}
+        nb = self.settings.memoryos_evidence_context_neighbors_before
+        na = self.settings.memoryos_evidence_context_neighbors_after
+        candidates: list[EvidenceCandidate] = []
+        for msg in messages:
+            ref = source_page_refs.get(msg.id)
+            if ref is None:
+                continue
+            page_id, superseded = ref
+            if superseded:
+                continue
+            # Apply same filters as legacy path
+            compact = " ".join(msg.content.split())
+            if not compact:
+                continue
+            if self._is_low_value_evidence(compact):
+                continue
+            if msg.role == Role.ASSISTANT and is_generic_ack(compact):
+                continue
+            idx = msg_index.get(msg.id)
+            if idx is None:
+                continue
+            neighbors_before = messages[max(0, idx - nb):idx]
+            neighbors_after = messages[idx + 1:idx + 1 + na]
+            page = pages_by_id.get(page_id)
+            c = self.evidence_representer.build_candidate(
+                msg,
+                neighbors_before=neighbors_before,
+                neighbors_after=neighbors_after,
+                session_id=msg.session_id,
+                page=page,
+            )
+            candidates.append(c)
+        return candidates
+
+    def _retrieve_contextual_evidence_diagnostics(
+        self,
+        messages: list[Message],
+        query: str,
+        source_page_refs: dict[str, tuple[str, bool]],
+        pages_by_id: dict[str, MemoryPage],
+        top_k: int,
+    ) -> tuple[list[ContextEvidence], int]:
+        """Contextual evidence retrieval. Returns (evidence, active_overlap_not_top5)."""
+        candidates = self._build_evidence_candidates(messages, source_page_refs, pages_by_id)
+        if not candidates:
+            return self._retrieve_message_evidence_diagnostics(
+                messages, query, source_page_refs, top_k
+            )
+        assert self.evidence_searcher is not None
+        hits = self.evidence_searcher.search(candidates, query, top_k=top_k)
+        if not hits and self.settings.memoryos_evidence_direct_raw_fallback:
+            return self._retrieve_message_evidence_diagnostics(
+                messages, query, source_page_refs, top_k
+            )
+        # Diversify hits by page/session group (same logic as legacy path)
+        if self._needs_multi_evidence(query):
+            hits = self._diversify_contextual_hits(hits, messages, source_page_refs)
+        evidence: list[ContextEvidence] = []
+        for hit in hits:
+            ref = source_page_refs.get(hit.message_id)
+            page_id = ref[0] if ref else ""
+            msg = next((m for m in messages if m.id == hit.message_id), None)
+            evidence_text = self._evidence_text(
+                hit.original_text,
+                tokenize(query),
+            )
+            evidence.append(
+                ContextEvidence(
+                    message_id=hit.message_id,
+                    text=evidence_text,
+                    role=msg.role if msg else Role.USER,
+                    metadata=msg.metadata if msg else {},
+                    page_id=page_id,
+                    reason=f"contextual_bm25={hit.score:.4f}",
+                    estimated_tokens=self.tokenizer.count(evidence_text),
+                )
+            )
+        return evidence, 0
+
+    @staticmethod
+    def _diversify_contextual_hits(
+        hits: list,
+        messages: list[Message],
+        source_page_refs: dict[str, tuple[str, bool]],
+    ) -> list:
+        """Diversify contextual evidence hits by session/page group."""
+        from memoryos_lite.retrieval.evidence_searcher import EvidenceHit
+
+        msg_by_id = {m.id: m for m in messages}
+        diversified: list[EvidenceHit] = []
+        selected_ids: set[str] = set()
+        seen_groups: set[str] = set()
+        for hit in hits:
+            msg = msg_by_id.get(hit.message_id)
+            ref = source_page_refs.get(hit.message_id)
+            page_id = ref[0] if ref else ""
+            group = str(
+                (msg.metadata.get("benchmark_session_id") if msg else None)
+                or page_id
+                or (msg.session_id if msg else "")
+            )
+            if group in seen_groups:
+                continue
+            diversified.append(hit)
+            selected_ids.add(hit.message_id)
+            seen_groups.add(group)
+        diversified.extend(h for h in hits if h.message_id not in selected_ids)
+        return diversified
 
     @staticmethod
     def _looks_like_assistant_answer_query(query: str) -> bool:
