@@ -43,10 +43,6 @@ class EmbeddingType(TypeDecorator):
     def process_bind_param(self, value, dialect):  # type: ignore[override]
         if value is None:
             return None
-        if len(value) != EMBEDDING_DIM:
-            raise ValueError(
-                f"embedding dimension mismatch: got {len(value)}, expected {EMBEDDING_DIM}"
-            )
         return json.dumps(list(value))
 
     def process_result_value(self, value, dialect):  # type: ignore[override]

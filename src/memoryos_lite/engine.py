@@ -92,6 +92,7 @@ class OpenAIPageDraftClient:
             api_key=SecretStr(api_key),
             base_url=settings.chat_base_url,
             temperature=0,
+            timeout=settings.memoryos_llm_timeout_s,
         ).with_structured_output(MemoryPageDraft)
 
     def create_draft(
@@ -1266,6 +1267,7 @@ class MemoryOSService:
                     url=self.settings.qdrant_url,
                     collection=self.settings.qdrant_collection,
                     dim=self.embedding_client.dim,
+                    timeout=self.settings.memoryos_qdrant_timeout_s,
                 )
             except Exception as exc:
                 qdrant_store = None
@@ -1282,6 +1284,7 @@ class MemoryOSService:
                 model=self.settings.chat_model,
                 api_key=chat_api_key,
                 base_url=self.settings.chat_base_url,
+                timeout=self.settings.memoryos_llm_timeout_s,
             )
             if self.settings.memoryos_rewrite_enabled and chat_api_key
             else None
@@ -1291,6 +1294,7 @@ class MemoryOSService:
                 model=self.settings.chat_model,
                 api_key=chat_api_key,
                 base_url=self.settings.chat_base_url,
+                timeout=self.settings.memoryos_llm_timeout_s,
             )
             if self.settings.memoryos_rerank_enabled and chat_api_key
             else None
@@ -1321,6 +1325,7 @@ class MemoryOSService:
                     api_key=SecretStr(chat_api_key),
                     base_url=self.settings.chat_base_url,
                     temperature=0,
+                    timeout=self.settings.memoryos_llm_timeout_s,
                 ).with_structured_output(_ItemList)
             except Exception:
                 item_llm = None

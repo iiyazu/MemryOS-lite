@@ -847,3 +847,29 @@ def test_store_item_embedding(service):
     embeddings = service.store.get_item_embeddings([item.id])
     assert item.id in embeddings
     assert len(embeddings[item.id]) == 1536
+
+
+def test_store_allows_embeddings_from_different_providers(service):
+    session = service.create_session("mixed-embedding-dims")
+    first = MemoryItem(
+        page_id="page_test",
+        session_id=session.id,
+        item_type=MemoryItemType.KNOWLEDGE,
+        content="OpenAI sized vector",
+        source_message_ids=["msg_001"],
+    )
+    second = MemoryItem(
+        page_id="page_test",
+        session_id=session.id,
+        item_type=MemoryItemType.KNOWLEDGE,
+        content="fastembed sized vector",
+        source_message_ids=["msg_002"],
+    )
+    service.store.save_items([first, second])
+
+    service.store.set_item_embedding(first.id, [0.1] * 1536)
+    service.store.set_item_embedding(second.id, [0.2] * 384)
+
+    embeddings = service.store.get_item_embeddings([first.id, second.id])
+    assert len(embeddings[first.id]) == 1536
+    assert len(embeddings[second.id]) == 384

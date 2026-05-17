@@ -146,3 +146,71 @@ def create_memory_tools(service: MemoryOSService, session_id: str):
         return "\n".join(lines)
 
     return [search_memory, read_page, write_page, patch_page, list_pages]
+
+
+def create_item_tools(service: MemoryOSService, session_id: str):
+    """Create bound item-level memory tools for a specific session."""
+
+    @tool
+    def memorize_item(content: str, item_type: str = "knowledge") -> str:
+        """Actively memorize an atomic fact as a MemoryItem.
+
+        Use this when the user states a durable fact, preference, or decision
+        that should be remembered long-term.
+
+        Args:
+            content: A single atomic statement to memorize.
+            item_type: One of 'profile', 'event', 'knowledge', 'behavior'.
+
+        Returns:
+            Confirmation with the new item ID, or error message.
+        """
+        try:
+            item = service.create_item(session_id, content, item_type)
+        except ValueError as exc:
+            return str(exc)
+        if item is None:
+            return "Item memory is disabled."
+        return f"Memorized [{item.id}] ({item.item_type.value}): {item.content}"
+
+    @tool
+    def recall_items(query: str, top_k: int = 5) -> str:
+        """Search atomic memory items by semantic relevance.
+
+        Use this before answering questions about past conversations or
+        user preferences.
+
+        Args:
+            query: Natural language search query.
+            top_k: Maximum number of results.
+
+        Returns:
+            Formatted list of matching items with IDs and content.
+        """
+        hits = service.search_items(session_id, query, top_k=top_k)
+        if not hits:
+            return "No matching memory items found."
+        lines = []
+        for h in hits:
+            lines.append(
+                f"- [{h['item_id']}] ({h['item_type']}, score={h['score']:.3f}): "
+                f"{h['content']}"
+            )
+        return "\n".join(lines)
+
+    @tool
+    def patch_item(item_id: str, new_content: str) -> str:
+        """Update an existing memory item with corrected content.
+
+        Use this when the user corrects a previously memorized fact.
+
+        Args:
+            item_id: ID of the item to update.
+            new_content: The corrected content.
+
+        Returns:
+            Confirmation or error message.
+        """
+        return service.patch_item(session_id, item_id, new_content)
+
+    return [memorize_item, recall_items, patch_item]

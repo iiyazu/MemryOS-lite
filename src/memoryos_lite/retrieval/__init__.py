@@ -9,6 +9,7 @@ from memoryos_lite.retrieval.base import (
 )
 from memoryos_lite.retrieval.embedding import EmbeddingSearcher
 from memoryos_lite.retrieval.hybrid import HybridSearcher
+from memoryos_lite.retrieval.item_searcher import ItemSearcher, ItemSearchHit
 from memoryos_lite.retrieval.lexical import LexicalSearcher, tokenize
 from memoryos_lite.retrieval.query_rewriter import QueryRewriter
 from memoryos_lite.retrieval.reranker import LLMReranker
@@ -17,6 +18,8 @@ __all__ = [
     "EmbeddingClient",
     "EmbeddingSearcher",
     "HybridSearcher",
+    "ItemSearchHit",
+    "ItemSearcher",
     "LLMReranker",
     "LexicalSearcher",
     "QueryRewriter",

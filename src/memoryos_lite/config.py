@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     deepseek_model: str = DEEPSEEK_DEFAULT_MODEL
     memoryos_rewrite_enabled: bool = False
     memoryos_rerank_enabled: bool = False
+    memoryos_llm_timeout_s: float = 60.0
+    memoryos_qdrant_timeout_s: float = 10.0
     agent_max_tool_turns: int = 10
     qdrant_url: str | None = None
     qdrant_collection: str = "memoryos_pages"

@@ -292,6 +292,7 @@ def build_agent_graph(
             model=settings.chat_model,
             api_key=api_key,  # type: ignore[arg-type]
             temperature=0,
+            timeout=settings.memoryos_llm_timeout_s,
             **kwargs,
         )
 

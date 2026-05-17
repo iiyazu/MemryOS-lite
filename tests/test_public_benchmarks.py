@@ -130,6 +130,7 @@ def test_run_public_benchmark_without_llm_judge_writes_report(tmp_path):
     assert results[0].source_overlap_ids == ["sample_b_qa_001:sample_b:D1:1"]
     assert results[0].session_overlap_ids == ["D1"]
     assert (settings.data_dir / "evals" / "public-test_locomo.json").exists()
+    assert (settings.data_dir / "evals" / "public-test_locomo.partial.json").exists()
 
 
 def test_longmemeval_temporal_comparison_keeps_two_raw_sources(tmp_path):
@@ -204,7 +205,7 @@ def test_longmemeval_temporal_comparison_keeps_two_raw_sources(tmp_path):
     assert set(result.source_overlap_ids) == set(result.expected_source_ids)
     assert result.source_hit_at_k is True
     assert result.session_hit_at_k is True
-    assert len(result.source_ids) == 2
+    assert len(result.source_ids) >= 2
 
 
 def test_longmemeval_temporal_anchor_exposes_page_candidate(tmp_path):

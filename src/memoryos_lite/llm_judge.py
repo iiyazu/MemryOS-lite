@@ -63,6 +63,7 @@ class LLMJudge:
             model=settings.chat_model,
             api_key=SecretStr(api_key),
             temperature=0.0,
+            timeout=settings.memoryos_llm_timeout_s,
             **kwargs,
         )
 

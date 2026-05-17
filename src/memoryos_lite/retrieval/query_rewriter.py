@@ -37,6 +37,7 @@ class QueryRewriter:
         model: str = "gpt-4o-mini",
         api_key: str | None = None,
         base_url: str | None = None,
+        timeout: float | None = 60.0,
     ) -> None:
         self._llm = None
         if api_key:
@@ -45,7 +46,13 @@ class QueryRewriter:
             kwargs: dict[str, str] = {}
             if base_url:
                 kwargs["base_url"] = base_url
-            self._llm = ChatOpenAI(model=model, api_key=api_key, temperature=0, **kwargs)  # type: ignore[arg-type]
+            self._llm = ChatOpenAI(
+                model=model,
+                api_key=api_key,
+                temperature=0,
+                timeout=timeout,
+                **kwargs,
+            )  # type: ignore[arg-type]
 
     def rewrite(self, query: str, profile_context: str = "") -> str:
         """Rewrite query for better retrieval. Returns raw query if no LLM."""

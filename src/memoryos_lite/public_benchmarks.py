@@ -141,8 +141,8 @@ def run_public_benchmark(
             "deepseek_api_key": settings.deepseek_api_key,
             "rot_safe_budget": 4_800,
             "memoryos_embedding_provider": "fastembed",
-            "memoryos_rewrite_enabled": bool(settings.deepseek_api_key),
-            "memoryos_rerank_enabled": bool(settings.deepseek_api_key),
+            "memoryos_rewrite_enabled": settings.memoryos_rewrite_enabled,
+            "memoryos_rerank_enabled": settings.memoryos_rerank_enabled,
         }
     )
     store = create_store(run_settings)
@@ -152,6 +152,16 @@ def run_public_benchmark(
     results: list[PublicBenchmarkResult] = []
 
     source_mapping: dict[str, str] = {}
+    report_dir = settings.data_dir / "evals"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / f"{run_id}_{benchmark.lower()}.json"
+    partial_report_path = report_dir / f"{run_id}_{benchmark.lower()}.partial.json"
+
+    def write_partial_report() -> None:
+        partial_report_path.write_text(
+            json.dumps([result.to_report() for result in results], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     for public_case in public_cases:
         for baseline in _expand_baselines(baselines):
@@ -164,21 +174,36 @@ def run_public_benchmark(
                 run_settings,
                 budget_override=run_settings.rot_safe_budget,
             )
-            answer = (
-                answerer.answer(public_case.case.question, output.sources)
-                if answerer is not None
-                else output.answer
-            )
+            answer = output.answer
+            answer_error: str | None = None
+            if answerer is not None:
+                try:
+                    answer = answerer.answer(public_case.case.question, output.sources)
+                except Exception as exc:
+                    answer_error = f"answer_error: {exc}"
+                    answer = ""
             latency_ms = int((time.perf_counter() - start) * 1000)
             if judge is not None:
-                verdict = judge.judge(public_case.case, answer)
-                verdict_label = verdict.verdict
-                reasoning = verdict.reasoning
-                expected_present = verdict.expected_present
-                expected_missing = verdict.expected_missing
+                if answer_error is not None:
+                    verdict_label = "error"
+                    reasoning = answer_error
+                    expected_present = []
+                    expected_missing = list(public_case.case.expected_facts)
+                else:
+                    try:
+                        verdict = judge.judge(public_case.case, answer)
+                        verdict_label = verdict.verdict
+                        reasoning = verdict.reasoning
+                        expected_present = verdict.expected_present
+                        expected_missing = verdict.expected_missing
+                    except Exception as exc:
+                        verdict_label = "error"
+                        reasoning = f"judge_error: {exc}"
+                        expected_present = []
+                        expected_missing = list(public_case.case.expected_facts)
             else:
                 verdict_label = "pass" if public_case.expected_answer in answer else "fail"
-                reasoning = "exact substring match"
+                reasoning = answer_error or "exact substring match"
                 expected_present = [public_case.expected_answer] if verdict_label == "pass" else []
                 expected_missing = [] if verdict_label == "pass" else [public_case.expected_answer]
             # Use actual session ID (not case title) for item metrics
@@ -217,6 +242,7 @@ def run_public_benchmark(
                 public_case.messages, stored_msgs, strict=False
             ):
                 source_mapping[bench_msg.id] = stored_msg.id
+        write_partial_report()
 
     run_dir.mkdir(parents=True, exist_ok=True)
     mapping_path = run_dir / "source_mapping.json"
@@ -225,9 +251,6 @@ def run_public_benchmark(
         encoding="utf-8",
     )
 
-    report_dir = settings.data_dir / "evals"
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / f"{run_id}_{benchmark.lower()}.json"
     report_path.write_text(
         json.dumps([result.to_report() for result in results], ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -675,6 +698,7 @@ class PublicAnswerer:
             model=settings.chat_model,
             api_key=SecretStr(api_key),
             temperature=0.0,
+            timeout=settings.memoryos_llm_timeout_s,
             **kwargs,
         )
 

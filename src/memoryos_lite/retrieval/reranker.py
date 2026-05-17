@@ -44,6 +44,7 @@ class LLMReranker:
         model: str = "gpt-4o-mini",
         api_key: str | None = None,
         base_url: str | None = None,
+        timeout: float | None = 60.0,
     ) -> None:
         self._llm = None
         if api_key:
@@ -52,7 +53,13 @@ class LLMReranker:
             kwargs: dict[str, str] = {}
             if base_url:
                 kwargs["base_url"] = base_url
-            self._llm = ChatOpenAI(model=model, api_key=api_key, temperature=0, **kwargs)  # type: ignore[arg-type]
+            self._llm = ChatOpenAI(
+                model=model,
+                api_key=api_key,
+                temperature=0,
+                timeout=timeout,
+                **kwargs,
+            )  # type: ignore[arg-type]
 
     def rerank(self, hits: list[SearchHit], query: str, top_k: int = 5) -> list[SearchHit]:
         """Rerank hits by LLM-scored relevance. Returns top_k results."""
