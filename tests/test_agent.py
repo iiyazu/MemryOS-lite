@@ -251,6 +251,9 @@ class TestAgentGraph:
         answer_trace = next(trace for trace in traces if trace.event_type == "agent_answered")
         assert answer_trace.payload["citation_message_ids"]
         assert source.id in answer_trace.payload["citation_message_ids"]
+        assert answer_trace.payload["answer_eval"]["answer_has_citation"] is True
+        assert answer_trace.payload["answer_eval"]["answer_uses_retrieved_source"] is True
+        assert answer_trace.payload["answer_eval"]["unsupported_answer"] is False
         evidence_trace = next(
             trace for trace in traces if trace.event_type == "agent_context_evidence_selected"
         )
@@ -290,6 +293,13 @@ class TestAgentGraph:
 
         assert "Insufficient retrieved evidence" in state["result"]
         assert router_llm.invoke.call_count == 1
+        answer_trace = next(
+            trace
+            for trace in service.store.list_traces(session.id)
+            if trace.event_type == "agent_answered"
+        )
+        assert answer_trace.payload["answer_eval"]["refusal_when_no_evidence"] is True
+        assert answer_trace.payload["answer_eval"]["unsupported_answer"] is False
 
     def test_tool_loop_stops_at_configured_turn_bound(self, tmp_path):
         from memoryos_lite.agent_graph import build_agent_graph
@@ -408,3 +418,67 @@ class TestAgentGraph:
             if trace.event_type == "agent_patch_conflict_detected"
         )
         assert "old_text" in trace.payload["errors"][0]
+
+
+def test_memory_think_node_recall_intent():
+    """memory_think_node classifies a question as recall."""
+    from memoryos_lite.agent_graph import MemoryDecision, memory_think_node_fn
+
+    fake_decision = MemoryDecision(
+        action="recall",
+        reason_code="memory_question",
+        query="Where does Alice live?",
+        content="",
+        confidence=0.9,
+    )
+    state = {"messages": [HumanMessage(content="Where does Alice live?")]}
+    result = memory_think_node_fn(state, fake_decision=fake_decision)
+    assert result["memory_decision"]["action"] == "recall"
+    assert result["memory_decision"]["query"] == "Where does Alice live?"
+
+
+def test_memory_think_node_memorize_intent():
+    """memory_think_node classifies a fact statement as memorize."""
+    from memoryos_lite.agent_graph import MemoryDecision, memory_think_node_fn
+
+    fake_decision = MemoryDecision(
+        action="memorize",
+        reason_code="durable_fact",
+        query="",
+        content="Alice lives in Shanghai",
+        confidence=0.95,
+    )
+    state = {"messages": [HumanMessage(content="I live in Shanghai")]}
+    result = memory_think_node_fn(state, fake_decision=fake_decision)
+    assert result["memory_decision"]["action"] == "memorize"
+    assert result["memory_decision"]["content"] == "Alice lives in Shanghai"
+
+
+def test_memory_observe_node_deterministic():
+    """memory_observe_node parses observation without LLM."""
+    from memoryos_lite.agent_graph import MemoryObservation, memory_observe_node_fn
+
+    observation = MemoryObservation(
+        success=True,
+        recalled_item_ids=["item_001", "item_002"],
+        patched_item_id=None,
+        error=None,
+    )
+    state = {"memory_observation": observation}
+    result = memory_observe_node_fn(state)
+    assert result["observation_summary"] == "recalled 2 items"
+
+
+def test_memory_observe_node_error():
+    """memory_observe_node reports error."""
+    from memoryos_lite.agent_graph import MemoryObservation, memory_observe_node_fn
+
+    observation = MemoryObservation(
+        success=False,
+        recalled_item_ids=[],
+        patched_item_id=None,
+        error="no item found to patch",
+    )
+    state = {"memory_observation": observation}
+    result = memory_observe_node_fn(state)
+    assert "error" in result["observation_summary"]

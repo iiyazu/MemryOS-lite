@@ -11,7 +11,7 @@ Demonstrates:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, TypedDict, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -20,10 +20,11 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
+from memoryos_lite.agent_answer_eval import evaluate_agent_answer
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import ContextPackage, MessageCreate, Role
-from memoryos_lite.tools import create_memory_tools
+from memoryos_lite.tools import create_item_tools, create_memory_tools
 
 
 class AgentState(TypedDict, total=False):
@@ -39,6 +40,148 @@ class AgentState(TypedDict, total=False):
     human_approved: bool
     result: str
     tool_turns: int
+    memory_decision: MemoryDecision | None
+    memory_observation: MemoryObservation | None
+    observation_summary: str
+
+
+class MemoryDecision(TypedDict):
+    """Structured output from memory_think_node."""
+
+    action: Literal["memorize", "recall", "patch", "answer_directly", "none"]
+    reason_code: Literal[
+        "durable_fact",
+        "memory_question",
+        "correction",
+        "sufficient_context",
+        "irrelevant",
+    ]
+    query: str
+    content: str
+    confidence: float
+
+
+class MemoryObservation(TypedDict):
+    """Result of memory_action_node execution."""
+
+    success: bool
+    recalled_item_ids: list[str]
+    patched_item_id: str | None
+    error: str | None
+
+
+def memory_think_node_fn(
+    state: AgentState,
+    fake_decision: MemoryDecision | None = None,
+) -> AgentState:
+    """Classify user message into a memory lifecycle action."""
+    if fake_decision is not None:
+        return _state_with(state, memory_decision=fake_decision)
+    return _state_with(
+        state,
+        memory_decision=MemoryDecision(
+            action="none",
+            reason_code="irrelevant",
+            query="",
+            content="",
+            confidence=0.0,
+        ),
+    )
+
+
+def memory_action_node_fn(
+    state: AgentState,
+    service: MemoryOSService | None = None,
+) -> AgentState:
+    """Deterministic dispatch based on MemoryDecision."""
+    decision = state.get("memory_decision")
+    if decision is None or service is None:
+        return _state_with(
+            state,
+            memory_observation=MemoryObservation(
+                success=False,
+                recalled_item_ids=[],
+                patched_item_id=None,
+                error="no decision or service",
+            ),
+        )
+    session = state.get("session_id", "")
+    action = decision["action"]
+
+    if action == "memorize":
+        item = service.memorize_item(session, decision["content"])
+        return _state_with(
+            state,
+            memory_observation=MemoryObservation(
+                success=True,
+                recalled_item_ids=[item.id],
+                patched_item_id=None,
+                error=None,
+            ),
+        )
+    if action == "recall":
+        items = service.recall_items(session, decision["query"])
+        return _state_with(
+            state,
+            memory_observation=MemoryObservation(
+                success=True,
+                recalled_item_ids=[item.id for item in items],
+                patched_item_id=None,
+                error=None,
+            ),
+        )
+    if action == "patch":
+        items = service.recall_items(session, decision["query"])
+        if not items:
+            return _state_with(
+                state,
+                memory_observation=MemoryObservation(
+                    success=False,
+                    recalled_item_ids=[],
+                    patched_item_id=None,
+                    error="no item found to patch",
+                ),
+            )
+        target = items[0]
+        service.patch_item(session, target.id, decision["content"])
+        return _state_with(
+            state,
+            memory_observation=MemoryObservation(
+                success=True,
+                recalled_item_ids=[item.id for item in items],
+                patched_item_id=target.id,
+                error=None,
+            ),
+        )
+    # answer_directly / none → skip
+    return _state_with(
+        state,
+        memory_observation=MemoryObservation(
+            success=True,
+            recalled_item_ids=[],
+            patched_item_id=None,
+            error=None,
+        ),
+    )
+
+
+def memory_observe_node_fn(state: AgentState) -> AgentState:
+    """Deterministic summary of memory action results."""
+    obs = state.get("memory_observation")
+    if obs is None:
+        return _state_with(state, observation_summary="no observation")
+    if not obs["success"]:
+        return _state_with(
+            state, observation_summary=f"error: {obs['error']}"
+        )
+    parts: list[str] = []
+    if obs["recalled_item_ids"]:
+        parts.append(f"recalled {len(obs['recalled_item_ids'])} items")
+    if obs["patched_item_id"]:
+        parts.append(f"patched {obs['patched_item_id']}")
+    if not parts:
+        parts.append("no memory action taken")
+    return _state_with(state, observation_summary="; ".join(parts))
 
 
 def _state_with(state: AgentState, **updates: Any) -> AgentState:
@@ -144,6 +287,7 @@ def build_agent_graph(
         )
 
     tools = create_memory_tools(service, session_id)
+    tools.extend(create_item_tools(service, session_id))
     llm_with_tools = llm.bind_tools(tools)
 
     # --- Node definitions ---
@@ -197,7 +341,13 @@ def build_agent_graph(
         system = SystemMessage(
             content=(
                 "You are a memory management agent. Use the available tools to "
-                "search, read, write, or patch memory pages as needed. "
+                "search, read, write, or patch memory pages as needed.\n\n"
+                "Item-level tools:\n"
+                "- memorize_item: when the user states a durable fact, preference, "
+                "or decision worth remembering long-term.\n"
+                "- recall_items: before answering questions about past conversations "
+                "or user preferences.\n"
+                "- patch_item: when correcting a previously memorized atomic fact.\n\n"
                 "Be concise and precise in your tool usage."
             )
         )
@@ -280,6 +430,8 @@ def build_agent_graph(
         """Answer recall requests from retrieved raw evidence only."""
         context = state.get("context")
         if context is None or not context.retrieved_evidence:
+            refusal = "Insufficient retrieved evidence to answer with source citations."
+            answer_eval = evaluate_agent_answer(refusal, [])
             session = state.get("session_id", session_id)
             service.trace(
                 session,
@@ -287,11 +439,12 @@ def build_agent_graph(
                 {
                     "insufficient_evidence": True,
                     "citation_message_ids": [],
+                    "answer_eval": answer_eval.to_report(),
                 },
             )
             return _state_with(
                 state,
-                result=("Insufficient retrieved evidence to answer with source citations."),
+                result=refusal,
             )
 
         system = SystemMessage(
@@ -299,7 +452,9 @@ def build_agent_graph(
                 "You are an experimental memory QA node. Answer using only the "
                 "retrieved raw message evidence below. Do not use page summaries, "
                 "recent messages, or outside knowledge. Cite supporting message_id "
-                "values in square brackets. If the evidence is insufficient, say so."
+                "values in square brackets. For temporal-reasoning questions, use "
+                "the timestamps in the retrieved evidence to determine order or "
+                "duration. If the evidence is insufficient, say so."
             )
         )
         prompt = HumanMessage(
@@ -314,6 +469,7 @@ def build_agent_graph(
         if insufficient_evidence:
             answer = "Insufficient retrieved evidence to answer with source citations."
         result = f"Answer:\n{answer}\n\n{_citation_footer(context)}"
+        answer_eval = evaluate_agent_answer(result, context.retrieved_evidence)
         session = state.get("session_id", session_id)
         service.trace(
             session,
@@ -328,6 +484,7 @@ def build_agent_graph(
                     for evidence in context.retrieved_evidence
                     if evidence.superseded
                 ],
+                "answer_eval": answer_eval.to_report(),
             },
         )
         return _state_with(state, result=result)
@@ -356,7 +513,7 @@ def build_agent_graph(
             return "tool_agent"
 
     def route_after_ingest(state: AgentState) -> str:
-        return "paging" if state.get("should_page") else "build_context"
+        return "paging" if state.get("should_page") else "tool_agent"
 
     def route_after_tool_agent(state: AgentState) -> str:
         """Check if agent wants to call tools or is done."""
@@ -405,9 +562,9 @@ def build_agent_graph(
     graph.add_conditional_edges(
         "ingest",
         route_after_ingest,
-        {"paging": "paging", "build_context": "build_context"},
+        {"paging": "paging", "tool_agent": "tool_agent"},
     )
-    graph.add_edge("paging", "build_context")
+    graph.add_edge("paging", "tool_agent")
     graph.add_conditional_edges(
         "tool_agent",
         route_after_tool_agent,
