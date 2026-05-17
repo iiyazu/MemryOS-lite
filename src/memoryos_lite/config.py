@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     memoryos_paging_context_pages: int = 10
     memoryos_item_extraction: bool = True
     memoryos_item_evidence_max: int = 3
+    memoryos_evidence_representation: str = "deterministic_context"
+    memoryos_evidence_direct_raw_fallback: bool = True
+    memoryos_evidence_candidate_top_k: int = 20
+    memoryos_evidence_context_neighbors_before: int = 2
+    memoryos_evidence_context_neighbors_after: int = 1
     memoryos_llm_provider: str = "auto"
     openai_api_key: str | None = None
     openai_base_url: str | None = None
