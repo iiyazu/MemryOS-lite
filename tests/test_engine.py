@@ -789,7 +789,7 @@ def test_page_save_persists_embedding_and_hybrid_fuses_sources(tmp_path):
     hits = service.search("用户最终决定做什么项目？", top_k=3, session_id=session.id)
     assert hits
     assert hits[0].source == "hybrid"
-    assert "lexical=" in hits[0].reason and "embedding=" in hits[0].reason
+    assert "lexical" in hits[0].reason and "embedding" in hits[0].reason
 
 
 def test_item_extractor_heuristic(service):

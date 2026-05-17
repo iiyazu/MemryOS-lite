@@ -781,6 +781,11 @@ def _baseline_from_evidence(
     sources: dict[str, str] = {}
     for item in selected:
         sources.update(item.source_texts)
+    # Also include retrieved_message evidence so source_hit measures
+    # engine retrieval quality, not just answer-projection selection.
+    for item in evidence:
+        if item.origin == "retrieved_message":
+            sources.update(item.source_texts)
     answer = _project_answer(question, selected) if selected else "未找到相关记忆"
     return BaselineOutput(
         answer=answer,
