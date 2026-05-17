@@ -109,30 +109,39 @@ def memory_action_node_fn(
     action = decision["action"]
 
     if action == "memorize":
-        item = service.memorize_item(session, decision["content"])
+        item = service.create_item(session, decision["content"])
+        item_id = item.id if item else ""
         return _state_with(
             state,
             memory_observation=MemoryObservation(
-                success=True,
-                recalled_item_ids=[item.id],
+                success=item is not None,
+                recalled_item_ids=[item_id] if item_id else [],
                 patched_item_id=None,
-                error=None,
+                error=None if item else "item creation disabled",
             ),
         )
     if action == "recall":
-        items = service.recall_items(session, decision["query"])
+        items = service.store.list_items(session)
+        query_lower = decision["query"].lower()
+        matched = [it for it in items if query_lower in it.content.lower()]
+        if not matched:
+            matched = items
         return _state_with(
             state,
             memory_observation=MemoryObservation(
                 success=True,
-                recalled_item_ids=[item.id for item in items],
+                recalled_item_ids=[it.id for it in matched[:5]],
                 patched_item_id=None,
                 error=None,
             ),
         )
     if action == "patch":
-        items = service.recall_items(session, decision["query"])
-        if not items:
+        items = service.store.list_items(session)
+        query_lower = decision["query"].lower()
+        matched = [it for it in items if query_lower in it.content.lower()]
+        if not matched:
+            matched = items
+        if not matched:
             return _state_with(
                 state,
                 memory_observation=MemoryObservation(
@@ -142,13 +151,13 @@ def memory_action_node_fn(
                     error="no item found to patch",
                 ),
             )
-        target = items[0]
+        target = matched[0]
         service.patch_item(session, target.id, decision["content"])
         return _state_with(
             state,
             memory_observation=MemoryObservation(
                 success=True,
-                recalled_item_ids=[item.id for item in items],
+                recalled_item_ids=[it.id for it in matched],
                 patched_item_id=target.id,
                 error=None,
             ),
