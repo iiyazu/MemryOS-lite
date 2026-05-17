@@ -152,6 +152,7 @@ make lint
 - SQLAlchemy + Alembic (SQLite)
 - LangChain + LangGraph
 - tiktoken, rank-bm25, fastembed
+- Qdrant（可选 ANN 向量检索后端）
 - Prometheus client
 - Docker + docker-compose
 
