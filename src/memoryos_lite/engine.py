@@ -796,28 +796,33 @@ class ContextBuilder:
 
         selected_evidence_ids: set[str] = set()
         source_page_refs = self._source_page_refs(pages, superseded_pages)
-        if self.settings.memoryos_evidence_representation == "legacy":
-            evidence_candidates, active_overlap_not_top5 = (
-                self._retrieve_message_evidence_diagnostics(
-                    messages,
-                    query=query,
-                    source_page_refs=source_page_refs,
-                    top_k=5,
-                )
+        # Always run legacy evidence retrieval first (proven baseline)
+        evidence_candidates, active_overlap_not_top5 = (
+            self._retrieve_message_evidence_diagnostics(
+                messages,
+                query=query,
+                source_page_refs=source_page_refs,
+                top_k=5,
             )
-        else:
+        )
+        # Contextual evidence as supplemental recall (never replaces legacy)
+        if self.settings.memoryos_evidence_representation != "legacy" and self.evidence_representer is not None:
             pages_by_id = {p.id: p for p in pages}
             for sp in superseded_pages:
                 pages_by_id.setdefault(sp.id, sp)
-            evidence_candidates, active_overlap_not_top5 = (
-                self._retrieve_contextual_evidence_diagnostics(
-                    messages,
-                    query=query,
-                    source_page_refs=source_page_refs,
-                    pages_by_id=pages_by_id,
-                    top_k=self.settings.memoryos_evidence_candidate_top_k,
-                )
+            ctx_evidence, _ = self._retrieve_contextual_evidence_diagnostics(
+                messages,
+                query=query,
+                source_page_refs=source_page_refs,
+                pages_by_id=pages_by_id,
+                top_k=self.settings.memoryos_evidence_candidate_top_k,
             )
+            # Merge: legacy first, contextual supplements (dedupe by message_id)
+            seen_ids = {e.message_id for e in evidence_candidates}
+            for e in ctx_evidence:
+                if e.message_id not in seen_ids:
+                    evidence_candidates.append(e)
+                    seen_ids.add(e.message_id)
         package.active_overlap_not_top5 = active_overlap_not_top5
         page_count_for_reserve = len(pages) + len(superseded_pages)
         evidence_reserve = (
