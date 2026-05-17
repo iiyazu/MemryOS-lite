@@ -145,6 +145,52 @@ def test_contextual_evidence_active_overlap_is_zero(contextual_service):
     assert context.active_overlap_not_top5 == 0
 
 
+def test_dual_path_legacy_hit_preserved_when_contextual_misses(tmp_path):
+    """Critical regression test: when legacy finds the correct source but
+    contextual would rank a different message higher, the final evidence
+    must still contain the legacy hit."""
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        rot_safe_budget=12,
+        recent_message_limit=1,
+        memoryos_evidence_representation="deterministic_context",
+        memoryos_evidence_candidate_top_k=5,
+    )
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(store=store, settings=settings)
+
+    session = service.create_session("regression test")
+    # Message that legacy BM25 can find directly (contains "Spotify" + "playlist")
+    service.ingest(
+        session.id,
+        MessageCreate(role=Role.USER, content="I created a playlist on Spotify called Chill Vibes"),
+    )
+    service.ingest(
+        session.id,
+        MessageCreate(role=Role.ASSISTANT, content="Nice name! What kind of music?"),
+    )
+    # Filler that might confuse contextual (mentions music but not Spotify)
+    for i in range(10):
+        service.ingest(
+            session.id,
+            MessageCreate(role=Role.USER, content=f"I like jazz and lo-fi beats {i}"),
+        )
+        service.ingest(
+            session.id,
+            MessageCreate(role=Role.ASSISTANT, content=f"Great taste in music {i}"),
+        )
+
+    page = service.page(session.id)
+    assert page is not None
+
+    context = service.build_context(session.id, "Spotify playlist name", budget=500)
+    evidence_texts = " ".join(e.text for e in context.retrieved_evidence)
+    assert "Spotify" in evidence_texts or "Chill Vibes" in evidence_texts, (
+        f"Legacy hit must be preserved. Got: {evidence_texts}"
+    )
+
+
 def test_page_context_plus_raw_strategy(tmp_path):
     """page_context_plus_raw strategy also works end-to-end."""
     settings = Settings(

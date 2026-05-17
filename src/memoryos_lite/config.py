@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     memoryos_item_evidence_max: int = 3
     memoryos_evidence_representation: str = "legacy"
     memoryos_evidence_direct_raw_fallback: bool = True
-    memoryos_evidence_candidate_top_k: int = 20
+    memoryos_evidence_candidate_top_k: int = 5
     memoryos_evidence_context_neighbors_before: int = 2
     memoryos_evidence_context_neighbors_after: int = 1
     memoryos_llm_provider: str = "auto"
@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     qdrant_collection: str = "memoryos_pages"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
+
+    @property
+    def resolved_evidence_representation(self) -> str:
+        val = self.memoryos_evidence_representation.strip().lower()
+        valid = {"legacy", "raw", "deterministic_context", "page_context_plus_raw"}
+        if val not in valid:
+            raise ValueError(
+                f"MEMORYOS_EVIDENCE_REPRESENTATION={val!r} invalid. "
+                f"Valid: {sorted(valid)}"
+            )
+        return val
 
     @property
     def resolved_llm_provider(self) -> str:

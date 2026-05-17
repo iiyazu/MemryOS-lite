@@ -750,7 +750,7 @@ class ContextBuilder:
         self._bm25_evidence_cache: dict[tuple[tuple[str, int], ...], BM25Okapi] = {}
         if self.settings.memoryos_evidence_representation != "legacy":
             self.evidence_representer: EvidenceRepresenter | None = EvidenceRepresenter(
-                strategy=self.settings.memoryos_evidence_representation,  # type: ignore[arg-type]
+                strategy=self.settings.resolved_evidence_representation,  # type: ignore[arg-type]
             )
             self.evidence_searcher: EvidenceSearcher | None = EvidenceSearcher()
         else:
@@ -805,6 +805,8 @@ class ContextBuilder:
                 top_k=5,
             )
         )
+        legacy_evidence_count = len(evidence_candidates)
+        contextual_evidence_count = 0
         # Contextual evidence as supplemental recall (never replaces legacy)
         if (
             self.settings.memoryos_evidence_representation != "legacy"
@@ -818,7 +820,7 @@ class ContextBuilder:
                 query=query,
                 source_page_refs=source_page_refs,
                 pages_by_id=pages_by_id,
-                top_k=self.settings.memoryos_evidence_candidate_top_k,
+                top_k=5,
             )
             # Merge: legacy first, contextual supplements (dedupe by message_id)
             seen_ids = {e.message_id for e in evidence_candidates}
@@ -826,6 +828,7 @@ class ContextBuilder:
                 if e.message_id not in seen_ids:
                     evidence_candidates.append(e)
                     seen_ids.add(e.message_id)
+                    contextual_evidence_count += 1
         package.active_overlap_not_top5 = active_overlap_not_top5
         page_count_for_reserve = len(pages) + len(superseded_pages)
         evidence_reserve = (
