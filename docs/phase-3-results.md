@@ -8,13 +8,14 @@ actions (memorize/recall/patch/answer_directly/none).
 
 ## Results
 
-| Metric | Value |
-|--------|-------|
-| Hard eval | 1.00/1.00 |
-| LongMemEval source_hit | 46/50 (92%) |
-| LongMemEval answer_accuracy (LLM judge) | 38/50 (76%) |
-| Full pytest | 275 pass |
-| Ruff lint | clean |
+| Metric | SQLite cosine | Qdrant ANN |
+|--------|--------------|------------|
+| Hard eval | 1.00/1.00 | 1.00/1.00 |
+| LongMemEval source_hit | 46/50 (92%) | 46/50 (92%) |
+| LongMemEval answer_accuracy (LLM judge) | 38/50 (76%) | 40/50 (80%) |
+| Full pytest | 275 pass | 275 pass |
+| fail→pass | — | +2 |
+| pass→fail | — | 0 |
 
 ## Architecture
 

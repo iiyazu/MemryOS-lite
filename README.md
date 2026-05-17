@@ -13,12 +13,12 @@ MemoryOS Lite 探索如何将长对话摄入、分页压缩为可审计的记忆
 
 ## 核心指标
 
-| 指标 | 结果 |
-|------|------|
-| Hard eval（确定性） | 1.00/1.00 |
-| LongMemEval source_hit | 92%（46/50） |
-| LongMemEval answer_accuracy（LLM judge） | 76%（38/50） |
-| 全量测试 | 275 pass |
+| 指标 | SQLite cosine | Qdrant ANN |
+|------|--------------|------------|
+| Hard eval（确定性） | 1.00/1.00 | 1.00/1.00 |
+| LongMemEval source_hit | 92%（46/50） | 92%（46/50） |
+| LongMemEval answer_accuracy（LLM judge） | 76%（38/50） | **80%（40/50）** |
+| 全量测试 | 275 pass | 275 pass |
 
 ## 架构
 
