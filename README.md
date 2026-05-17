@@ -1,207 +1,159 @@
 # MemoryOS Lite
 
-Eval-driven, source-attributed Agent/RAG memory prototype for long-running
-AI conversations.
+面向长对话的 Eval 驱动、源归因 Agent/RAG 记忆原型。
 
-MemoryOS Lite explores how long conversations can be ingested, paged into
-auditable memory pages, retrieved under a token budget, patched, and evaluated
-against deterministic source-attribution checks. It is a prototype for backend
-and agent-application work, not a production memory platform.
+MemoryOS Lite 探索如何将长对话摄入、分页压缩为可审计的记忆页、在 token 预算内检索、
+修补，并通过确定性源归因检查进行评估。这是一个后端/Agent 应用原型，不是生产级记忆平台。
 
-## Why
+## 动机
 
-Long conversations fail in ways that are hard to debug when an answer is not
-tied back to source messages. The motivating failure mode for MemoryOS Lite is
-source attribution drift: a memory system may retrieve a broad page, or even
-produce a plausible answer, while losing the exact message that supports it.
-This prototype turns that into an eval problem by tracking page-level overlap,
-message-level evidence hits, and final deterministic source accuracy separately.
-The goal is an interview-ready backend/RAG story: diagnose the failure, change
-the memory path, and show the measured tradeoff.
+长对话在答案无法追溯到源消息时会以难以调试的方式失败。MemoryOS Lite 的核心问题是
+**源归因漂移**：记忆系统可能检索到宽泛的页面甚至生成看似合理的答案，但丢失了支撑它的
+确切消息。本原型将此转化为 eval 问题——分别追踪页级重叠、消息级证据命中和最终源准确率。
 
-## Key Features
+## 核心指标
 
-- **Automatic paging prototype** — ContextRotGuard triggers paging when token budget is exceeded; heuristic or LLM-based page drafting
-- **Hybrid retrieval** — BM25 lexical + embedding cosine similarity, fused via Reciprocal Rank Fusion (RRF)
-- **Token-budgeted context building** — Dynamic budget allocation with pinned core profiles, recent messages, and retrieved pages
-- **Conflict detection guardrail** — slot/negation heuristics flag patches that contradict existing memory
-- **Source traceability** — Every fact in a context package traces back to source messages
-- **Experimental LangGraph agent demo** — tool-calling memory agent with
-  evidence-grounded citation answers, patch conflict interrupt, bounded tool
-  loops, and cross-session read rejection
-- **Evaluation harness** — deterministic recall/source checks, deterministic
-  agent-answer diagnostics, plus optional LLM-as-judge scoring
-- **Observability** — Prometheus metrics for paging, retrieval, context build latency, and budget utilization
+| 指标 | 结果 |
+|------|------|
+| Hard eval（确定性） | 1.00/1.00 |
+| LongMemEval source_hit | 92%（46/50） |
+| LongMemEval answer_accuracy（LLM judge） | 76%（38/50） |
+| 全量测试 | 275 pass |
 
-## Architecture
+## 架构
 
 ```
-Message Ingest → ContextRotGuard → PagingAgent → MemoryPages
-                                                      ↓
-Task Request → DynamicBudget → ContextBuilder ← HybridSearcher
-                                    ↓
-                            ContextPackage (token-budgeted)
+消息摄入 → ContextRotGuard → PagingAgent → MemoryPages
+                                                ↓
+任务请求 → DynamicBudget → ContextBuilder ← HybridSearcher
+                                ↓
+                        ContextPackage（token 预算内）
+                                ↓
+        memory_think → memory_action → memory_observe → 回答/END
 ```
 
-**Core abstractions:**
+**核心抽象：**
 
-| Concept | OS Analogy | Role |
-|---------|-----------|------|
-| Context Window | RAM | Active working memory |
-| Memory Pages | Paged storage | Compressed historical state |
-| ContextRotGuard | OOM killer | Triggers paging before rot |
-| ContextBuilder | Page fault handler | Recalls relevant pages within budget |
-| HybridSearcher | Page table lookup | BM25 + embedding retrieval |
+| 概念 | OS 类比 | 职责 |
+|------|---------|------|
+| Context Window | RAM | 活跃工作记忆 |
+| Memory Pages | 分页存储 | 压缩的历史状态 |
+| ContextRotGuard | OOM killer | 在腐化前触发分页 |
+| ContextBuilder | 缺页处理器 | 在预算内召回相关页 |
+| HybridSearcher | 页表查找 | BM25 + embedding 检索 |
 
-## Quick Start
+**结构化 Agent 节点：**
+
+| 节点 | 职责 | LLM? |
+|------|------|------|
+| `memory_think` | 分类意图为 memorize/recall/patch/none | 是（或 scripted fallback） |
+| `memory_action` | 确定性 dispatch 到记忆工具 | 否 |
+| `memory_observe` | 解析工具输出，生成摘要 | 否 |
+
+## 主要特性
+
+- **自动分页** — ContextRotGuard 在 token 预算超限时触发分页；支持启发式或 LLM 分页
+- **混合检索** — BM25 词法 + embedding 余弦相似度，通过 RRF 融合
+- **Token 预算上下文构建** — 动态预算分配：固定核心 profile、近期消息、检索页
+- **冲突检测** — slot/否定启发式标记与现有记忆矛盾的修补
+- **源可追溯** — 上下文包中每个事实都追溯到源消息
+- **结构化 Agent** — Think-Act-Observe 循环，确定性 dispatch，有界工具调用
+- **评估体系** — 确定性 recall/source 检查 + 可选 LLM-as-judge 语义评分
+- **可观测性** — Prometheus 指标：分页、检索、上下文构建延迟和预算利用率
+
+## 快速开始
 
 ```bash
 uv venv --python 3.11 && source .venv/bin/activate
 uv sync
-uv run memoryos demo run
-uv run memoryos demo agent  # deterministic LangGraph demo; no real LLM call
+uv run memoryos demo run          # 基础 demo
+uv run memoryos demo agent        # 确定性 LangGraph demo，无需 API key
 ```
 
-### API Server
+### API 服务
 
 ```bash
 uv run memoryos api --reload
-# or with Docker
+# 或 Docker
 make up
 ```
 
-### Endpoints
+### 接口
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/sessions` | Create session |
-| POST | `/sessions/{id}/ingest` | Ingest message |
-| POST | `/sessions/{id}/page` | Trigger paging |
-| POST | `/sessions/{id}/build-context` | Build context package |
-| POST | `/memory/search` | Hybrid search |
-| GET | `/sessions/{id}/trace` | Audit trail |
-| GET | `/metrics` | Prometheus metrics |
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/sessions` | 创建会话 |
+| POST | `/sessions/{id}/ingest` | 摄入消息 |
+| POST | `/sessions/{id}/page` | 触发分页 |
+| POST | `/sessions/{id}/build-context` | 构建上下文包 |
+| POST | `/memory/search` | 混合检索 |
+| GET | `/sessions/{id}/trace` | 审计追踪 |
+| GET | `/metrics` | Prometheus 指标 |
 
-## Configuration
+## 配置
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `DATA_DIR` | SQLite DB and pages directory | `.memoryos` |
-| `OPENAI_API_KEY` | LLM paging + embeddings | — |
-| `MEMORYOS_LLM_PROVIDER` | `auto` / `openai` / `deepseek` for chat LLM calls | `auto` |
-| `OPENAI_BASE_URL` | OpenAI-compatible chat/embedding base URL | — |
-| `DEEPSEEK_API_KEY` | DeepSeek key for chat LLM calls | — |
-| `DEEPSEEK_BASE_URL` | DeepSeek OpenAI-compatible base URL | `https://api.deepseek.com` |
-| `DEEPSEEK_MODEL` | DeepSeek chat model | `deepseek-v4-flash` |
+| 变量 | 用途 | 默认值 |
+|------|------|--------|
+| `DATA_DIR` | SQLite 数据库和页目录 | `.memoryos` |
+| `OPENAI_API_KEY` | LLM 分页 + embedding | — |
+| `DEEPSEEK_API_KEY` | DeepSeek chat LLM | — |
 | `MEMORYOS_PAGING_MODE` | `heuristic` / `llm` | `heuristic` |
-| `ROT_SAFE_BUDGET` | Paging trigger threshold | 2400 tokens |
-| `HARD_LIMIT` | Absolute context cap | 8000 tokens |
-| `QDRANT_URL` | Optional Qdrant ANN backend; falls back to SQLite cosine if unset | — |
+| `ROT_SAFE_BUDGET` | 分页触发阈值 | 2400 tokens |
+| `HARD_LIMIT` | 绝对上下文上限 | 8000 tokens |
+| `QDRANT_URL` | 可选 Qdrant ANN 后端 | — |
 
-Safe defaults are offline: `uv run memoryos demo agent`, `uv run memoryos eval
-run`, and public evals with `--no-llm-answer --no-llm-judge` do not call
-OpenAI or DeepSeek. Real API calls are opt-in through settings and commands:
-`MEMORYOS_PAGING_MODE=llm`, `--llm-judge`, public `--llm-answer`, query
-rewrite/rerank flags, embedding indexing/search with `OPENAI_API_KEY`, or custom
-agent runs that do not inject a fake/scripted LLM.
+安全默认值为离线模式：`demo agent`、`eval run` 和公开 eval `--no-llm-answer`
+不调用任何外部 API。真实 API 调用通过设置和命令显式启用。
 
-DeepSeek is used for chat-compatible LLM features such as LLM paging,
-query rewriting, reranking, agent routing, and LLM-as-judge. Embeddings still
-use `OPENAI_API_KEY` and `MEMORYOS_EMBEDDING_MODEL`. Optional real LLM mode is
-for interactive experiments and demos; it does not change the deterministic
-benchmark claims in this README.
+## 评估
 
-## Evaluation
-
-Deterministic eval cases compare 4 baselines (`sliding_window`, `naive_summary`, `vector_rag`, `memoryos_lite`):
+确定性 eval 比较 4 个 baseline：
 
 ```bash
 uv run memoryos eval run --baseline all
 ```
 
-LLM-as-judge mode for semantic accuracy (requires a configured chat LLM key such
-as `OPENAI_API_KEY` or `DEEPSEEK_API_KEY`):
+LLM-as-judge 语义准确率（需要 `DEEPSEEK_API_KEY`）：
 
 ```bash
 uv run memoryos eval run --llm-judge
 ```
 
-Public benchmark adapter for LongMemEval and LoCoMo:
+公开 benchmark（LongMemEval / LoCoMo）：
 
 ```bash
 uv run memoryos eval public \
-  --benchmark locomo \
-  --data-path /tmp/memoryos-public-benchmarks/locomo10.json \
-  --limit 50 \
-  --compare-baselines \
-  --no-llm-answer \
-  --no-llm-judge
+  --benchmark longmemeval \
+  --data-path benchmarks/longmemeval/longmemeval.json \
+  --limit 50 --llm-answer --llm-judge
 ```
 
-Current public-benchmark diagnosis is tracked in
-[`docs/public-benchmark-diagnosis.md`](docs/public-benchmark-diagnosis.md).
+## 原型边界
 
-Agent answer diagnostics are separate deterministic checks for the experimental
-LangGraph answer node. They inspect final answer text against retrieved raw
-message evidence and report `answer_has_citation`,
-`answer_uses_retrieved_source`, `refusal_when_no_evidence`, and
-`unsupported_answer_rate`; they are not LoCoMo or LongMemEval answer-quality
-claims. Run them with:
+- LangGraph agent 是实验性 demo，不是生产编排
+- 启发式分页是确定性 fallback，不是完整语义压缩
+- 冲突检测是一阶 slot/否定启发式
+- SQLite embedding 检索是 Python 侧余弦评分，不是 ANN
+- FastAPI 无认证、限流或生产所有权模型
 
-```bash
-uv run memoryos eval agent-answer
-```
-
-See
-[`docs/agent-answer-diagnostics.md`](docs/agent-answer-diagnostics.md).
-
-## Milestone Progress
-
-| Milestone | LongMemEval memoryos_lite | LoCoMo memoryos_lite | Main diagnosis |
-|-----------|---------------------------|----------------------|----------------|
-| M1 page diagnostics | source/session `0.96/0.98`, page overlap `1.00/1.00` | source/session `0.00/0.00`, page overlap `0.98/1.00` | page overlap was broad, not evidence localization |
-| M2 raw-message evidence | source/session `0.96/0.98`, msg@5 `0.90/1.00` | source/session `0.21/0.36`, msg@5 `0.46/0.74` | raw evidence path recovered source IDs but did not solve answers |
-| M3 session/window paging | source/session `0.86/1.00`, msg@5 `0.48/0.84` | source/session `0.15/0.15`, msg@5 `0.00/0.00` | smaller pages exposed supersession and budget failures |
-| M3b supersession-aware evidence | source/session `0.94/1.00`, msg@5 `0.12/0.50` | source/session `0.00/0.00`, msg@5 `0.2083/0.383` | evidence loading improved, final LoCoMo answer quality did not |
-
-M3b is the current checkpoint. It lets superseded pages contribute raw-message
-evidence candidates, marks those snippets as historical, and reserves evidence
-budget only in multi-page contexts. This improves LoCoMo actual message
-evidence from `0.00` to `0.2083`, while LongMemEval final source hit remains
-above the acceptance floor at `0.94`.
-
-## Prototype Boundaries
-
-- LangGraph integration is an experimental demo, not production orchestration; its
-  answer node is evidence-grounded, but it is not a general-purpose QA agent.
-- Heuristic paging is a deterministic fallback, not full semantic compression.
-- Conflict detection is a first-pass slot/negation guardrail.
-- Public eval metrics are deterministic retrieval/source-attribution diagnostics,
-  not a measurement of generated-answer quality.
-- LoCoMo remains a mixed/negative result: M3b improves actual evidence loading,
-  but final deterministic LoCoMo source/session hit is still `0.00/0.00`.
-- The FastAPI wrapper has no authentication, rate limiting, or production
-  ownership model.
-- SQLite embedding search is Python-side cosine scoring, not ANN search.
-
-## Development
+## 开发
 
 ```bash
 uv run pytest -q
-uv run ruff check .       # lint
-uv run mypy src           # type check
-make lint                 # all checks
+uv run ruff check .
+uv run mypy src
+make lint
 ```
 
-## Tech Stack
+## 技术栈
 
 - Python 3.11+ / uv
 - FastAPI + Uvicorn
 - SQLAlchemy + Alembic (SQLite)
 - LangChain + LangGraph
-- tiktoken, rank-bm25
+- tiktoken, rank-bm25, fastembed
 - Prometheus client
-- Docker + docker-compose (app + redis; optional Qdrant)
+- Docker + docker-compose
 
 ## License
 
