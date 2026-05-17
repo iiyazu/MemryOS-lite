@@ -138,9 +138,11 @@ def run_public_benchmark(
             "database_url": None,
             "memoryos_paging_mode": "heuristic",
             "openai_api_key": None,
-            "deepseek_api_key": None,
+            "deepseek_api_key": settings.deepseek_api_key,
             "rot_safe_budget": 4_800,
             "memoryos_embedding_provider": "fastembed",
+            "memoryos_rewrite_enabled": bool(settings.deepseek_api_key),
+            "memoryos_rerank_enabled": bool(settings.deepseek_api_key),
         }
     )
     store = create_store(run_settings)
