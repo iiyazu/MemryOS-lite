@@ -15,3 +15,5 @@ htmlcov/
 .idea/
 .vscode/
 .claude/
+benchmarks/locomo/*.json
+benchmarks/longmemeval/*.json
