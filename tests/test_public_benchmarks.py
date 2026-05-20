@@ -1,3 +1,5 @@
+import builtins
+import importlib
 import json
 
 from memoryos_lite.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
@@ -80,6 +82,26 @@ def test_load_locomo_cases_maps_qa_evidence(tmp_path):
     assert cases[0].case.case_id == "sample_a_qa_001"
     assert cases[0].expected_source_ids == ["sample_a_qa_001:sample_a:D1:1"]
     assert cases[0].expected_session_ids == ["D1"]
+
+
+def test_cli_public_helpers_import_without_agent_answer_eval(monkeypatch):
+    import memoryos_lite.cli as cli
+
+    original_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == "memoryos_lite.agent_answer_eval":
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.delitem(
+        importlib.sys.modules, "memoryos_lite.agent_answer_eval", raising=False
+    )
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    reloaded = importlib.reload(cli)
+
+    assert "benchmark" in reloaded.PUBLIC_TABLE_COLUMNS
 
 
 def test_run_public_benchmark_without_llm_judge_writes_report(tmp_path):

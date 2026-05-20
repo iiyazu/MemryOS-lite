@@ -11,7 +11,6 @@ from rich.console import Console
 from rich.table import Table
 from typer import Argument, Option, Typer
 
-from memoryos_lite.agent_answer_eval import AgentAnswerEvalSummary, run_agent_answer_eval
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import EvalResult, run_eval, run_eval_llm
@@ -325,6 +324,8 @@ def eval_run(
 @eval_app.command("agent-answer")
 def eval_agent_answer(run_id: str | None = None) -> None:
     """Run deterministic agent-answer diagnostics without real LLM/API calls."""
+    from memoryos_lite.agent_answer_eval import run_agent_answer_eval
+
     settings = get_settings()
     eval_run_id = run_id or datetime.now(UTC).strftime("agent_answer_%Y%m%d_%H%M%S")
     summary = run_agent_answer_eval(settings, eval_run_id)
@@ -454,7 +455,7 @@ def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
     return rows
 
 
-def _agent_answer_table_row(summary: AgentAnswerEvalSummary) -> dict[str, str]:
+def _agent_answer_table_row(summary: Any) -> dict[str, str]:
     refusal = (
         "-"
         if summary.refusal_when_no_evidence is None

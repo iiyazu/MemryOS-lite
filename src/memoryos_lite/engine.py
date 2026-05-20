@@ -1531,9 +1531,10 @@ class MemoryOSService:
             token_count=self.tokenizer.count(request.content),
         )
         self.store.add_message(message)
-        created = self.store.ensure_episodes_for_session(session_id)
-        if created:
-            self.trace(session_id, "episode_indexed", {"created": created})
+        if self.settings.resolved_recall_pipeline == "v2":
+            created = self.store.ensure_episodes_for_session(session_id)
+            if created:
+                self.trace(session_id, "episode_indexed", {"created": created})
         token_count = self.store.session_token_count(session_id)
         should_page = token_count >= self.settings.rot_safe_budget
         self.trace(

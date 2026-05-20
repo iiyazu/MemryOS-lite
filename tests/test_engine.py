@@ -691,8 +691,15 @@ def test_recall_pipeline_defaults_to_v1(tmp_path):
 
     settings = Settings(data_dir=tmp_path / ".memoryos")
     service = MemoryOSService(settings=settings)
+    session = service.create_session("test")
+    service.ingest(session.id, MessageCreate(role=Role.USER, content="事实 A"))
 
     assert service.settings.memoryos_recall_pipeline == "v1"
+    assert service.store.list_episodes(session.id) == []
+    assert all(
+        trace.event_type != "episode_indexed"
+        for trace in service.store.list_traces(session.id)
+    )
 
 
 def test_paging_mode_llm_without_key_returns_heuristic_fallback(service):
