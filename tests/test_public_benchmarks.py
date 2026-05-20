@@ -406,6 +406,7 @@ def test_public_benchmark_reports_dropped_relevant_memoryos_page(tmp_path):
     assert result.page_candidate_page_ids
     assert result.retrieval_candidate_source_ids
     assert result.dropped_relevant_page_count == 0
+    assert result.source_not_indexed is False
     assert result.page_type_counts
     assert result.page_source_counts == [3]
 
@@ -534,4 +535,6 @@ def test_public_benchmark_reports_v2_recall_diagnostics(tmp_path):
     assert report["episode_candidate_message_ids"]
     assert "planned_evidence_message_ids" in report
     assert "item_source_hit_at_10" in report
-    assert "source_not_indexed" in report
+    assert report["episode_source_hit_at_10"] is True
+    assert report["planned_evidence_source_hit_at_5"] is True
+    assert report["source_not_indexed"] is False

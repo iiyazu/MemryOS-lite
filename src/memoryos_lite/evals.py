@@ -668,12 +668,18 @@ def _run_baseline(
         planned_evidence_message_ids = _metadata_string_list(
             context.metadata, "planned_evidence_message_ids"
         )
+        all_item_indexed_source_ids = _dedupe_source_ids(
+            source_id
+            for item in service.store.list_items(source_session.id)
+            for source_id in item.source_message_ids
+        )
         required_source_ids = _case_required_source_ids(case)
         required_source_set = set(required_source_ids)
         item_candidate_set = set(item_candidate_source_ids[:10])
         episode_candidate_set = set(episode_candidate_message_ids[:10])
         planned_evidence_set = set(planned_evidence_message_ids[:5])
-        indexed_source_set = set(indexed_source_ids) | set(item_candidate_source_ids)
+        indexed_source_set = set(indexed_source_ids) | set(all_item_indexed_source_ids)
+        has_v2_index_diagnostics = "indexed_source_ids" in context.metadata
         item_source_hit_at_10 = (
             bool(required_source_set & item_candidate_set) if required_source_set else None
         )
@@ -684,7 +690,9 @@ def _run_baseline(
             bool(required_source_set & planned_evidence_set) if required_source_set else None
         )
         source_not_indexed = (
-            not bool(required_source_set & indexed_source_set) if required_source_set else False
+            not bool(required_source_set & indexed_source_set)
+            if required_source_set and has_v2_index_diagnostics
+            else False
         )
         return _baseline_from_evidence(
             case.question,
