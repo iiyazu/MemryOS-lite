@@ -11,12 +11,17 @@ except ModuleNotFoundError as exc:
         "qdrant_client",
     }:
         raise
+    qdrant_import_error = exc
+
+    class QdrantEmbeddingStore:  # type: ignore[no-redef]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise ImportError(
+                "QdrantEmbeddingStore requires the optional qdrant provider"
+            ) from qdrant_import_error
 
 __all__ = [
     "DeterministicEmbeddingClient",
     "FakePageDraftClient",
     "OpenAIEmbeddingClient",
+    "QdrantEmbeddingStore",
 ]
-
-if "QdrantEmbeddingStore" in globals():
-    __all__.append("QdrantEmbeddingStore")

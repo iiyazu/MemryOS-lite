@@ -7,10 +7,20 @@ Python-side cosine over embeddings fetched from the relational store.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from memoryos_lite.retrieval.base import EmbeddingClient, SearchHit, cosine_similarity
-from memoryos_lite.retrieval.providers.qdrant import QdrantEmbeddingStore
 from memoryos_lite.schemas import MemoryPage
 from memoryos_lite.store import MemoryStore
+
+
+class QdrantEmbeddingStore(Protocol):
+    def query(
+        self,
+        vector: list[float],
+        top_k: int,
+        page_ids: list[str] | None = None,
+    ) -> list[tuple[str, float]]: ...
 
 
 class EmbeddingSearcher:

@@ -17,22 +17,8 @@ from memoryos_lite.retrieval.query_analyzer import (
 from memoryos_lite.retrieval.query_rewriter import QueryRewriter
 from memoryos_lite.retrieval.reranker import LLMReranker
 
-_OPTIONAL_QDRANT_MODULES = {
-    "memoryos_lite.retrieval.providers.qdrant",
-    "qdrant_client",
-}
-
-try:
-    from memoryos_lite.retrieval.embedding import EmbeddingSearcher
-except ModuleNotFoundError as exc:
-    if exc.name not in _OPTIONAL_QDRANT_MODULES:
-        raise
-
-try:
-    from memoryos_lite.retrieval.hybrid import HybridSearcher
-except ModuleNotFoundError as exc:
-    if exc.name not in _OPTIONAL_QDRANT_MODULES:
-        raise
+from memoryos_lite.retrieval.embedding import EmbeddingSearcher
+from memoryos_lite.retrieval.hybrid import HybridSearcher
 
 try:
     from memoryos_lite.retrieval.item_searcher import ItemSearcher, ItemSearchHit
@@ -40,10 +26,24 @@ except ModuleNotFoundError as exc:
     if exc.name != "memoryos_lite.retrieval.item_searcher":
         raise
 
+    class ItemSearchHit:  # type: ignore[no-redef]
+        pass
+
+    class ItemSearcher:  # type: ignore[no-redef]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def search(self, *args: object, **kwargs: object) -> list[ItemSearchHit]:
+            return []
+
 __all__ = [
     "EmbeddingClient",
+    "EmbeddingSearcher",
     "EpisodeHit",
     "EpisodeSearcher",
+    "HybridSearcher",
+    "ItemSearchHit",
+    "ItemSearcher",
     "LLMReranker",
     "LexicalSearcher",
     "QueryAnalysis",
@@ -56,12 +56,3 @@ __all__ = [
     "reciprocal_rank_fusion",
     "tokenize",
 ]
-
-if "ItemSearcher" in globals():
-    __all__.extend(["ItemSearchHit", "ItemSearcher"])
-
-if "EmbeddingSearcher" in globals():
-    __all__.append("EmbeddingSearcher")
-
-if "HybridSearcher" in globals():
-    __all__.append("HybridSearcher")
