@@ -19,6 +19,7 @@ from sqlalchemy.types import TypeDecorator
 
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.schemas import (
+    Episode,
     MemoryItem,
     MemoryItemType,
     MemoryPage,
@@ -77,6 +78,28 @@ class MessageRecord(Base):
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (Index("ix_messages_session_created", "session_id", "created_at"),)
+
+
+class EpisodeRecord(Base):
+    __tablename__ = "episodes"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    message_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    index_text: Mapped[str] = mapped_column(Text, nullable=False)
+    benchmark_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    benchmark_date: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_message_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType, nullable=True)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_episodes_session_position", "session_id", "position"),
+        Index("ix_episodes_session_message", "session_id", "message_id"),
+    )
 
 
 class PageRecord(Base):
@@ -260,6 +283,139 @@ class MemoryStore:
             )
             for row in records
         ]
+
+    def save_episode(self, episode: Episode) -> Episode:
+        with self.db() as db:
+            db.add(
+                EpisodeRecord(
+                    id=episode.id,
+                    session_id=episode.session_id,
+                    message_id=episode.message_id,
+                    role=episode.role.value,
+                    text=episode.text,
+                    index_text=episode.index_text,
+                    benchmark_session_id=episode.benchmark_session_id,
+                    benchmark_date=episode.benchmark_date,
+                    position=episode.position,
+                    source_message_ids_json=json.dumps(episode.source_message_ids),
+                    created_at=episode.created_at,
+                )
+            )
+        return episode
+
+    def list_episodes(self, session_id: str) -> list[Episode]:
+        with self.db() as db:
+            stmt = (
+                select(EpisodeRecord)
+                .where(EpisodeRecord.session_id == session_id)
+                .order_by(EpisodeRecord.position.asc(), EpisodeRecord.created_at.asc())
+            )
+            records = list(db.scalars(stmt))
+        return [self._episode_from_record(row) for row in records]
+
+    def ensure_episodes_for_session(self, session_id: str) -> int:
+        messages = self.list_messages(session_id)
+        if not messages:
+            return 0
+
+        with self.db() as db:
+            existing_message_ids = set(
+                db.scalars(
+                    select(EpisodeRecord.message_id).where(
+                        EpisodeRecord.session_id == session_id
+                    )
+                )
+            )
+            max_position = db.scalar(
+                select(func.coalesce(func.max(EpisodeRecord.position), 0)).where(
+                    EpisodeRecord.session_id == session_id
+                )
+            )
+            position = int(max_position or 0)
+            created = 0
+            for message in messages:
+                if message.id in existing_message_ids:
+                    continue
+                position += 1
+                episode = self._episode_from_message(message, position)
+                db.add(
+                    EpisodeRecord(
+                        id=episode.id,
+                        session_id=episode.session_id,
+                        message_id=episode.message_id,
+                        role=episode.role.value,
+                        text=episode.text,
+                        index_text=episode.index_text,
+                        benchmark_session_id=episode.benchmark_session_id,
+                        benchmark_date=episode.benchmark_date,
+                        position=episode.position,
+                        source_message_ids_json=json.dumps(episode.source_message_ids),
+                        created_at=episode.created_at,
+                    )
+                )
+                created += 1
+        return created
+
+    def set_episode_embedding(self, episode_id: str, embedding: list[float]) -> None:
+        with self.db() as db:
+            record = db.get(EpisodeRecord, episode_id)
+            if record is not None:
+                record.embedding = embedding
+
+    def get_episode_embeddings(self, episode_ids: list[str]) -> dict[str, list[float]]:
+        if not episode_ids:
+            return {}
+        with self.db() as db:
+            stmt = select(EpisodeRecord.id, EpisodeRecord.embedding).where(
+                EpisodeRecord.id.in_(episode_ids)
+            )
+            rows = list(db.execute(stmt))
+        return {episode_id: emb for episode_id, emb in rows if emb is not None}
+
+    def _episode_from_record(self, record: EpisodeRecord) -> Episode:
+        return Episode(
+            id=record.id,
+            session_id=record.session_id,
+            message_id=record.message_id,
+            role=Role(record.role),
+            text=record.text,
+            index_text=record.index_text,
+            benchmark_session_id=record.benchmark_session_id,
+            benchmark_date=record.benchmark_date,
+            position=record.position,
+            source_message_ids=json.loads(record.source_message_ids_json),
+            created_at=record.created_at,
+        )
+
+    def _episode_from_message(self, message: Message, position: int) -> Episode:
+        benchmark_session_id = message.metadata.get("benchmark_session_id")
+        benchmark_date = message.metadata.get("benchmark_date")
+        text_value = message.content
+        if isinstance(benchmark_session_id, str):
+            prefix = f"[{benchmark_session_id}] "
+            if text_value.startswith(prefix):
+                text_value = text_value[len(prefix) :]
+        index_parts = []
+        if isinstance(benchmark_session_id, str):
+            index_parts.append(f"session={benchmark_session_id}")
+        if isinstance(benchmark_date, str):
+            index_parts.append(f"date={benchmark_date}")
+        index_parts.append(f"speaker={message.role.value}")
+        index_text = f"[{' '.join(index_parts)}] {text_value}"
+        return Episode(
+            session_id=message.session_id,
+            message_id=message.id,
+            role=message.role,
+            text=text_value,
+            index_text=index_text,
+            benchmark_session_id=benchmark_session_id
+            if isinstance(benchmark_session_id, str)
+            else None,
+            benchmark_date=benchmark_date if isinstance(benchmark_date, str) else None,
+            position=position,
+            source_message_ids=[message.id],
+            created_at=message.created_at,
+        )
 
     def session_token_count(self, session_id: str) -> int:
         with self.db() as db:

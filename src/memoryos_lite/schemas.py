@@ -48,6 +48,20 @@ class Message(MessageCreate):
     token_count: int = 0
 
 
+class Episode(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("epi"))
+    session_id: str
+    message_id: str
+    role: Role
+    text: str
+    index_text: str
+    benchmark_session_id: str | None = None
+    benchmark_date: str | None = None
+    position: int
+    source_message_ids: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class Session(BaseModel):
     id: str = Field(default_factory=lambda: new_id("ses"))
     title: str = "Untitled session"
