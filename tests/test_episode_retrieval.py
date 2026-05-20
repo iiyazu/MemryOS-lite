@@ -3,6 +3,10 @@ from memoryos_lite.retrieval.query_analyzer import QueryAnalyzer, QueryKind
 from memoryos_lite.schemas import Episode, Role
 
 
+def test_retrieval_package_imports_without_optional_providers():
+    import memoryos_lite.retrieval  # noqa: F401
+
+
 def test_query_analyzer_detects_assistant_source():
     result = QueryAnalyzer().analyze("What did you recommend last time?")
     assert result.kind == QueryKind.ASSISTANT_SOURCE
