@@ -1,140 +1,134 @@
 # MemoryOS Lite
 
-面向长对话的 Eval 驱动、源归因 Agent/RAG 记忆原型。
+面向长对话的 eval 驱动、源归因 Agent/RAG 记忆原型。
 
-MemoryOS Lite 探索如何将长对话摄入、分页压缩为可审计的记忆页、在 token 预算内检索、
-修补，并通过确定性源归因检查进行评估。这是一个后端/Agent 应用原型，不是生产级记忆平台。
+MemoryOS Lite 的核心目标是让长期对话里的“记忆命中”可测、可追溯、可调试。系统保留原始消息、分页摘要、原子 item 和可选 episode-first recall，并通过确定性 benchmark 检查证据是否真的回到上下文中。
 
-## 动机
+这不是生产级 MemoryOS。它适合作为 agent 应用开发实习/面试项目，展示后端记忆管线、源归因评估、上下文预算控制和可审计 agent demo。
 
-长对话在答案无法追溯到源消息时会以难以调试的方式失败。MemoryOS Lite 的核心问题是
-**源归因漂移**：记忆系统可能检索到宽泛的页面甚至生成看似合理的答案，但丢失了支撑它的
-确切消息。本原型将此转化为 eval 问题——分别追踪页级重叠、消息级证据命中和最终源准确率。
+## 当前状态
 
-## 核心指标
+- 默认 recall 路径仍是 `v1`，保持旧行为稳定。
+- `v2` episode-first recall 通过 `MEMORYOS_RECALL_PIPELINE=v2` 显式启用。
+- 存储以 SQLite 为当前实现，Alembic 迁移到 `0004_add_episodes`。
+- Qdrant 是可选 ANN/vector 实验后端，不是默认依赖。
+- 最新验证：`uv run pytest -q` -> `311 passed, 1 warning`。
+- hard eval：`1.00/1.00`。
+- v2 smoke：LongMemEval `episode_source_hit_at_10 = 8/10`，LoCoMo `episode_source_hit_at_10 = 5/10`。
 
-| 指标 | SQLite cosine | Qdrant ANN |
-|------|--------------|------------|
-| Hard eval（确定性） | 1.00/1.00 | 1.00/1.00 |
-| LongMemEval source_hit | 92%（46/50） | 92%（46/50） |
-| LongMemEval answer_accuracy（LLM judge） | 76%（38/50） | **80%（40/50）** |
-| 全量测试 | 275 pass | 275 pass |
+## 架构概览
 
-## 架构
+```text
+ingest(message)
+  -> Message
+  -> v1: page/item/recent-message context path
+  -> v2 opt-in: Episode backfill/indexing
 
+build_context(task)
+  -> v1 ContextBuilder by default
+  -> v2 RecallPipeline when MEMORYOS_RECALL_PIPELINE=v2
+       QueryAnalyzer
+       EpisodeSearcher
+       Evidence planning
+       ContextPackage(metadata diagnostics)
 ```
-消息摄入 → ContextRotGuard → PagingAgent → MemoryPages
-                                                ↓
-任务请求 → DynamicBudget → ContextBuilder ← HybridSearcher
-                                ↓
-                        ContextPackage（token 预算内）
-                                ↓
-        memory_think → memory_action → memory_observe → 回答/END
-```
 
-**核心抽象：**
+核心对象：
 
-| 概念 | OS 类比 | 职责 |
-|------|---------|------|
-| Context Window | RAM | 活跃工作记忆 |
-| Memory Pages | 分页存储 | 压缩的历史状态 |
-| ContextRotGuard | OOM killer | 在腐化前触发分页 |
-| ContextBuilder | 缺页处理器 | 在预算内召回相关页 |
-| HybridSearcher | 页表查找 | BM25 + embedding 检索 |
+| 对象 | 职责 |
+|---|---|
+| `Message` | 原始对话轮次，所有证据的最终来源 |
+| `Episode` | v2 的 raw-message retrieval 单元，一条消息一条 episode |
+| `MemoryPage` | 分页压缩和审计 artifact |
+| `MemoryItem` | 从 page 派生的语义支持/诊断单元 |
+| `ContextPackage` | 预算内上下文、源证据和诊断 metadata |
 
-**结构化 Agent 节点：**
+## 文档
 
-| 节点 | 职责 | LLM? |
-|------|------|------|
-| `memory_think` | 分类意图为 memorize/recall/patch/none | 是（或 scripted fallback） |
-| `memory_action` | 确定性 dispatch 到记忆工具 | 否 |
-| `memory_observe` | 解析工具输出，生成摘要 | 否 |
-
-## 主要特性
-
-- **自动分页** — ContextRotGuard 在 token 预算超限时触发分页；支持启发式或 LLM 分页
-- **混合检索** — BM25 词法 + embedding 余弦相似度，通过 RRF 融合
-- **Token 预算上下文构建** — 动态预算分配：固定核心 profile、近期消息、检索页
-- **冲突检测** — slot/否定启发式标记与现有记忆矛盾的修补
-- **源可追溯** — 上下文包中每个事实都追溯到源消息
-- **结构化 Agent** — Think-Act-Observe 循环，确定性 dispatch，有界工具调用
-- **评估体系** — 确定性 recall/source 检查 + 可选 LLM-as-judge 语义评分
-- **可观测性** — Prometheus 指标：分页、检索、上下文构建延迟和预算利用率
+- `docs/public-benchmark-diagnosis.md`：当前 benchmark 口径和 v2 smoke 结果。
+- `docs/source-guide.md`：源码导读和模块边界。
+- `docs/store-interface.md`：SQLite store schema 和迁移说明。
+- `docs/known-issues.md`：当前接受的限制和下一步修复方向。
+- `docs/agentic-memory-roadmap-zh.md`：后续路线图。
+- `docs/agent-answer-diagnostics.md`：deterministic agent answer diagnostics。
 
 ## 快速开始
 
 ```bash
-uv venv --python 3.11 && source .venv/bin/activate
+uv venv --python 3.11
+source .venv/bin/activate
 uv sync
-uv run memoryos demo run          # 基础 demo
-uv run memoryos demo agent        # 确定性 LangGraph demo，无需 API key
+uv run memoryos demo run
+uv run memoryos demo agent
 ```
 
-### API 服务
+`demo agent` 使用确定性 fake/scripted 路径，不需要 API key。
+
+## API 服务
 
 ```bash
 uv run memoryos api --reload
-# 或 Docker
+```
+
+或使用 Docker：
+
+```bash
 make up
 ```
 
-### 接口
+主要接口：
 
 | 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/sessions` | 创建会话 |
-| POST | `/sessions/{id}/ingest` | 摄入消息 |
-| POST | `/sessions/{id}/page` | 触发分页 |
-| POST | `/sessions/{id}/build-context` | 构建上下文包 |
-| POST | `/memory/search` | 混合检索 |
-| GET | `/sessions/{id}/trace` | 审计追踪 |
-| GET | `/metrics` | Prometheus 指标 |
+|---|---|---|
+| `POST` | `/sessions` | 创建会话 |
+| `POST` | `/sessions/{id}/ingest` | 摄入消息 |
+| `POST` | `/sessions/{id}/page` | 触发分页 |
+| `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
+| `POST` | `/memory/search` | 检索记忆 |
+| `GET` | `/sessions/{id}/trace` | 查看审计 trace |
+| `GET` | `/metrics` | Prometheus metrics |
 
 ## 配置
 
 | 变量 | 用途 | 默认值 |
-|------|------|--------|
-| `DATA_DIR` | SQLite 数据库和页目录 | `.memoryos` |
-| `OPENAI_API_KEY` | LLM 分页 + embedding | — |
-| `DEEPSEEK_API_KEY` | DeepSeek chat LLM | — |
-| `MEMORYOS_PAGING_MODE` | `heuristic` / `llm` | `heuristic` |
-| `ROT_SAFE_BUDGET` | 分页触发阈值 | 2400 tokens |
-| `HARD_LIMIT` | 绝对上下文上限 | 8000 tokens |
-| `QDRANT_URL` | 可选 Qdrant ANN 后端 | — |
+|---|---|---|
+| `DATA_DIR` | SQLite DB、page mirror、trace 文件目录 | `.memoryos` |
+| `MEMORYOS_RECALL_PIPELINE` | `v1` 或 `v2` recall path | `v1` |
+| `MEMORYOS_PAGING_MODE` | `heuristic` 或 `llm` | `heuristic` |
+| `ROT_SAFE_BUDGET` | 分页触发阈值 | `2400` |
+| `HARD_LIMIT` | 上下文硬上限 | `8000` |
+| `OPENAI_API_KEY` | OpenAI chat/embedding 实验 | unset |
+| `DEEPSEEK_API_KEY` | DeepSeek chat 实验 | unset |
+| `QDRANT_URL` | 可选 Qdrant ANN 后端 | unset |
 
-安全默认值为离线模式：`demo agent`、`eval run` 和公开 eval `--no-llm-answer`
-不调用任何外部 API。真实 API 调用通过设置和命令显式启用。
+默认路径离线可跑；真实 LLM、embedding 或 Qdrant 都需要显式配置。
 
 ## 评估
 
-确定性 eval 比较 4 个 baseline：
+内置确定性 eval：
 
 ```bash
 uv run memoryos eval run --baseline all
+uv run memoryos eval run --case-set hard --baseline memoryos_lite
 ```
 
-LLM-as-judge 语义准确率（需要 `DEEPSEEK_API_KEY`）：
+公开 benchmark smoke：
 
 ```bash
-uv run memoryos eval run --llm-judge
-```
-
-公开 benchmark（LongMemEval / LoCoMo）：
-
-```bash
-uv run memoryos eval public \
+MEMORYOS_RECALL_PIPELINE=v2 uv run memoryos eval public \
   --benchmark longmemeval \
   --data-path benchmarks/longmemeval/longmemeval.json \
-  --limit 50 --llm-answer --llm-judge
+  --baseline memoryos_lite \
+  --limit 10 \
+  --no-llm-answer \
+  --no-llm-judge
 ```
 
-## 原型边界
+Agent answer diagnostics：
 
-- LangGraph agent 是实验性 demo，不是生产编排
-- 启发式分页是确定性 fallback，不是完整语义压缩
-- 冲突检测是一阶 slot/否定启发式
-- SQLite embedding 检索是 Python 侧余弦评分，不是 ANN
-- FastAPI 无认证、限流或生产所有权模型
+```bash
+uv run memoryos eval agent-answer
+```
 
 ## 开发
 
@@ -145,16 +139,12 @@ uv run mypy src
 make lint
 ```
 
-## 技术栈
+## 原型边界
 
-- Python 3.11+ / uv
-- FastAPI + Uvicorn
-- SQLAlchemy + Alembic (SQLite)
-- LangChain + LangGraph
-- tiktoken, rank-bm25, fastembed
-- Qdrant（可选 ANN 向量检索后端）
-- Prometheus client
-- Docker + docker-compose
+- LangGraph agent 是 demo，不是完整生产 agent runtime。
+- 启发式分页和冲突检测是确定性 fallback，不是完整语义记忆模型。
+- v2 当前优化 evidence recall/planning，answer quality 仍需后续阶段处理。
+- FastAPI 无认证、限流、多租户或生产 ownership model。
 
 ## License
 
