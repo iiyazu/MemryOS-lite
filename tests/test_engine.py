@@ -685,6 +685,16 @@ def test_service_traces_llm_init_fallback(tmp_path):
     assert committed.payload["paging_mode"] == "heuristic"
 
 
+def test_recall_pipeline_defaults_to_v1(tmp_path):
+    from memoryos_lite.config import Settings
+    from memoryos_lite.engine import MemoryOSService
+
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    service = MemoryOSService(settings=settings)
+
+    assert service.settings.memoryos_recall_pipeline == "v1"
+
+
 def test_paging_mode_llm_without_key_returns_heuristic_fallback(service):
     service.settings.memoryos_paging_mode = " LLM "  # whitespace + uppercase
     agent = PagingAgent(service.settings, llm_client=None)

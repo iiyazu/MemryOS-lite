@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     memoryos_item_extraction: bool = True
     memoryos_item_evidence_max: int = 3
     memoryos_evidence_representation: str = "legacy"
+    memoryos_recall_pipeline: str = "v1"
     memoryos_evidence_direct_raw_fallback: bool = True
     memoryos_evidence_candidate_top_k: int = 5
     memoryos_evidence_context_neighbors_before: int = 2
@@ -58,6 +59,13 @@ class Settings(BaseSettings):
                 f"MEMORYOS_EVIDENCE_REPRESENTATION={val!r} invalid. "
                 f"Valid: {sorted(valid)}"
             )
+        return val
+
+    @property
+    def resolved_recall_pipeline(self) -> str:
+        val = self.memoryos_recall_pipeline.strip().lower()
+        if val not in {"v1", "v2"}:
+            raise ValueError("MEMORYOS_RECALL_PIPELINE must be 'v1' or 'v2'")
         return val
 
     @property
