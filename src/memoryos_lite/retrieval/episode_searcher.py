@@ -7,6 +7,47 @@ from memoryos_lite.retrieval.query_analyzer import QueryAnalysis, QueryKind
 from memoryos_lite.schemas import Episode, Role
 
 
+_ENGLISH_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+    "you",
+}
+
+
+def _content_tokens(tokens: list[str]) -> set[str]:
+    return {token for token in tokens if token not in _ENGLISH_STOPWORDS}
+
+
 @dataclass(frozen=True)
 class EpisodeHit:
     episode: Episode
@@ -24,16 +65,17 @@ class EpisodeSearcher:
         analysis: QueryAnalysis | None = None,
     ) -> list[EpisodeHit]:
         query_tokens = tokenize(query)
-        if not episodes or not query_tokens:
+        query_content_tokens = _content_tokens(query_tokens)
+        if not episodes or not query_content_tokens:
             return []
         corpus = [tokenize(episode.index_text) for episode in episodes]
         bm25 = BM25Okapi(corpus)
         scores = bm25.get_scores(query_tokens)
         hits: list[EpisodeHit] = []
-        for episode, score in zip(episodes, scores, strict=False):
-            token_overlap = len(
-                set(query_tokens) & set(tokenize(episode.index_text))
-            )
+        for episode, episode_tokens, score in zip(
+            episodes, corpus, scores, strict=False
+        ):
+            token_overlap = len(query_content_tokens & _content_tokens(episode_tokens))
             if token_overlap <= 0:
                 continue
             adjusted = float(score) + token_overlap
