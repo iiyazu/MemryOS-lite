@@ -36,6 +36,7 @@ from memoryos_lite.retrieval.evidence_representer import EvidenceCandidate, Evid
 from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.retrieval.providers import OpenAIEmbeddingClient, QdrantEmbeddingStore
+from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import (
     ContextEvidence,
     ContextPackage,
@@ -1463,6 +1464,11 @@ class MemoryOSService:
         )
         self.context_builder = ContextBuilder(self.tokenizer, self.searcher, self.settings)
         self.dynamic_budget = DynamicBudget(self.settings, self.tokenizer)
+        self.recall_pipeline = RecallPipeline(
+            store=self.store,
+            settings=self.settings,
+            tokenizer=self.tokenizer,
+        )
         self.conflict_detector = ConflictDetector(lexical)
         item_llm: Any | None = None
         if (
@@ -1525,6 +1531,9 @@ class MemoryOSService:
             token_count=self.tokenizer.count(request.content),
         )
         self.store.add_message(message)
+        created = self.store.ensure_episodes_for_session(session_id)
+        if created:
+            self.trace(session_id, "episode_indexed", {"created": created})
         token_count = self.store.session_token_count(session_id)
         should_page = token_count >= self.settings.rot_safe_budget
         self.trace(
@@ -1936,6 +1945,39 @@ class MemoryOSService:
             if budget is not None
             else self.dynamic_budget.compute(messages, pages, task)
         )
+        if self.settings.resolved_recall_pipeline == "v2":
+            package = self.recall_pipeline.build_context(
+                session_id=session_id,
+                task=task,
+                budget=effective_budget,
+                retrieval_query=retrieval_query,
+            )
+            elapsed = time.perf_counter() - t0
+            CONTEXT_BUILD_SECONDS.observe(elapsed)
+            CONTEXT_TOKENS.observe(package.estimated_tokens)
+            if effective_budget > 0:
+                CONTEXT_BUDGET_USED_RATIO.observe(
+                    package.estimated_tokens / effective_budget
+                )
+            self.trace(
+                session_id,
+                "context_built",
+                {
+                    "task": task,
+                    "budget": effective_budget,
+                    "budget_source": "explicit" if budget is not None else "dynamic",
+                    "estimated_tokens": package.estimated_tokens,
+                    "task_tokens": package.task_tokens,
+                    "task_truncated": package.task_truncated,
+                    "retrieved_evidence": [
+                        evidence.model_dump() for evidence in package.retrieved_evidence
+                    ],
+                    "candidate_budget_dropped": package.candidate_budget_dropped,
+                    "recall_pipeline": "v2",
+                    **package.metadata,
+                },
+            )
+            return package
         item_evidence, item_trace = self._prepare_item_evidence(
             session_id=session_id,
             query=retrieval_query or task,

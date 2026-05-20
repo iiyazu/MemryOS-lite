@@ -1,6 +1,7 @@
 from memoryos_lite.config import Settings
+from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
-from memoryos_lite.schemas import Message, Role
+from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 
 
@@ -100,3 +101,18 @@ def test_recall_pipeline_tracks_dropped_evidence_when_evidence_exceeds_budget(tm
     assert package.metadata["budget_dropped_relevant"] == 1
     assert package.metadata["episode_candidate_message_ids"] == ["msg_bob"]
     assert package.metadata["planned_evidence_message_ids"] == []
+
+
+def test_service_build_context_uses_v2_when_opted_in(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_recall_pipeline="v2",
+    )
+    service = MemoryOSService(settings=settings)
+    session = service.create_session("v2")
+    service.ingest(session.id, MessageCreate(role=Role.USER, content="Carol moved to Berlin."))
+
+    package = service.build_context(session.id, "Where did Carol move?", budget=200)
+
+    assert package.retrieved_evidence
+    assert package.retrieved_evidence[0].metadata["origin"] == "episode"
