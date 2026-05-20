@@ -86,10 +86,18 @@ class PublicBenchmarkResult:
     active_overlap_not_top5: int
     latency_ms: int
     question_type: str | None = None
+    episode_source_hit_at_10: bool | None = None
+    item_source_hit_at_10: bool | None = None
+    planned_evidence_source_hit_at_5: bool | None = None
+    budget_dropped_relevant: int = 0
+    source_not_indexed: bool = False
+    indexed_source_ids: list[str] = field(default_factory=list)
+    item_candidate_source_ids: list[str] = field(default_factory=list)
+    episode_candidate_message_ids: list[str] = field(default_factory=list)
+    planned_evidence_message_ids: list[str] = field(default_factory=list)
     item_source_overlap_at_k: bool | None = None
     item_promoted_evidence_count: int = 0
     item_evidence_budget_dropped: int = 0
-    source_not_indexed: bool = False
     item_hit_item_ids: list[str] = field(default_factory=list)
     item_hit_source_ids: list[str] = field(default_factory=list)
     item_count_in_session: int = 0
@@ -141,6 +149,7 @@ def run_public_benchmark(
             "deepseek_api_key": settings.deepseek_api_key,
             "rot_safe_budget": 4_800,
             "memoryos_embedding_provider": "fastembed",
+            "memoryos_recall_pipeline": settings.memoryos_recall_pipeline,
             "memoryos_rewrite_enabled": settings.memoryos_rewrite_enabled,
             "memoryos_rerank_enabled": settings.memoryos_rerank_enabled,
         }
@@ -641,10 +650,20 @@ def _to_public_result(
         active_overlap_not_top5=output.active_overlap_not_top5,
         latency_ms=latency_ms,
         question_type=public_case.question_type,
+        episode_source_hit_at_10=output.episode_source_hit_at_10,
+        item_source_hit_at_10=output.item_source_hit_at_10,
+        planned_evidence_source_hit_at_5=output.planned_evidence_source_hit_at_5,
+        budget_dropped_relevant=output.budget_dropped_relevant,
+        source_not_indexed=(
+            output.source_not_indexed or (item_metrics or {}).get("source_not_indexed", False)
+        ),
+        indexed_source_ids=output.indexed_source_ids,
+        item_candidate_source_ids=output.item_candidate_source_ids,
+        episode_candidate_message_ids=output.episode_candidate_message_ids,
+        planned_evidence_message_ids=output.planned_evidence_message_ids,
         item_source_overlap_at_k=(item_metrics or {}).get("item_source_overlap_at_k"),
         item_promoted_evidence_count=(item_metrics or {}).get("item_promoted_evidence_count", 0),
         item_evidence_budget_dropped=(item_metrics or {}).get("item_evidence_budget_dropped", 0),
-        source_not_indexed=(item_metrics or {}).get("source_not_indexed", False),
         item_hit_item_ids=(item_metrics or {}).get("item_hit_item_ids", []),
         item_hit_source_ids=(item_metrics or {}).get("item_hit_source_ids", []),
         item_count_in_session=(item_metrics or {}).get("item_count_in_session", 0),

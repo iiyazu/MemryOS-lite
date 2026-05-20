@@ -90,6 +90,15 @@ class BaselineOutput:
     superseded_source_recovered: int = 0
     candidate_budget_dropped: int = 0
     active_overlap_not_top5: int = 0
+    item_source_hit_at_10: bool | None = None
+    episode_source_hit_at_10: bool | None = None
+    planned_evidence_source_hit_at_5: bool | None = None
+    budget_dropped_relevant: int = 0
+    source_not_indexed: bool = False
+    indexed_source_ids: list[str] = field(default_factory=list)
+    item_candidate_source_ids: list[str] = field(default_factory=list)
+    episode_candidate_message_ids: list[str] = field(default_factory=list)
+    planned_evidence_message_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -649,6 +658,34 @@ def _run_baseline(
             for evidence in context.retrieved_evidence[:candidate_top_k]
             if evidence.page_id is not None
         )
+        indexed_source_ids = _metadata_string_list(context.metadata, "indexed_source_ids")
+        item_candidate_source_ids = _metadata_string_list(
+            context.metadata, "item_candidate_source_ids"
+        )
+        episode_candidate_message_ids = _metadata_string_list(
+            context.metadata, "episode_candidate_message_ids"
+        )
+        planned_evidence_message_ids = _metadata_string_list(
+            context.metadata, "planned_evidence_message_ids"
+        )
+        required_source_ids = _case_required_source_ids(case)
+        required_source_set = set(required_source_ids)
+        item_candidate_set = set(item_candidate_source_ids[:10])
+        episode_candidate_set = set(episode_candidate_message_ids[:10])
+        planned_evidence_set = set(planned_evidence_message_ids[:5])
+        indexed_source_set = set(indexed_source_ids) | set(item_candidate_source_ids)
+        item_source_hit_at_10 = (
+            bool(required_source_set & item_candidate_set) if required_source_set else None
+        )
+        episode_source_hit_at_10 = (
+            bool(required_source_set & episode_candidate_set) if required_source_set else None
+        )
+        planned_evidence_source_hit_at_5 = (
+            bool(required_source_set & planned_evidence_set) if required_source_set else None
+        )
+        source_not_indexed = (
+            not bool(required_source_set & indexed_source_set) if required_source_set else False
+        )
         return _baseline_from_evidence(
             case.question,
             memory_evidence,
@@ -673,6 +710,15 @@ def _run_baseline(
             superseded_source_recovered=context.superseded_source_recovered,
             candidate_budget_dropped=context.candidate_budget_dropped,
             active_overlap_not_top5=context.active_overlap_not_top5,
+            item_source_hit_at_10=item_source_hit_at_10,
+            episode_source_hit_at_10=episode_source_hit_at_10,
+            planned_evidence_source_hit_at_5=planned_evidence_source_hit_at_5,
+            budget_dropped_relevant=_metadata_int(context.metadata, "budget_dropped_relevant"),
+            source_not_indexed=source_not_indexed,
+            indexed_source_ids=indexed_source_ids,
+            item_candidate_source_ids=item_candidate_source_ids,
+            episode_candidate_message_ids=episode_candidate_message_ids,
+            planned_evidence_message_ids=planned_evidence_message_ids,
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -776,6 +822,15 @@ def _baseline_from_evidence(
     superseded_source_recovered: int = 0,
     candidate_budget_dropped: int = 0,
     active_overlap_not_top5: int = 0,
+    item_source_hit_at_10: bool | None = None,
+    episode_source_hit_at_10: bool | None = None,
+    planned_evidence_source_hit_at_5: bool | None = None,
+    budget_dropped_relevant: int = 0,
+    source_not_indexed: bool = False,
+    indexed_source_ids: list[str] | None = None,
+    item_candidate_source_ids: list[str] | None = None,
+    episode_candidate_message_ids: list[str] | None = None,
+    planned_evidence_message_ids: list[str] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}
@@ -811,6 +866,15 @@ def _baseline_from_evidence(
         superseded_source_recovered=superseded_source_recovered,
         candidate_budget_dropped=candidate_budget_dropped,
         active_overlap_not_top5=active_overlap_not_top5,
+        item_source_hit_at_10=item_source_hit_at_10,
+        episode_source_hit_at_10=episode_source_hit_at_10,
+        planned_evidence_source_hit_at_5=planned_evidence_source_hit_at_5,
+        budget_dropped_relevant=budget_dropped_relevant,
+        source_not_indexed=source_not_indexed,
+        indexed_source_ids=indexed_source_ids or [],
+        item_candidate_source_ids=item_candidate_source_ids or [],
+        episode_candidate_message_ids=episode_candidate_message_ids or [],
+        planned_evidence_message_ids=planned_evidence_message_ids or [],
     )
 
 
@@ -823,6 +887,31 @@ def _dedupe_source_ids(source_ids: Iterable[str]) -> list[str]:
         deduped.append(source_id)
         seen.add(source_id)
     return deduped
+
+
+def _metadata_string_list(metadata: dict[str, object], key: str) -> list[str]:
+    value = metadata.get(key)
+    if not isinstance(value, list):
+        return []
+    return _dedupe_source_ids(item for item in value if isinstance(item, str))
+
+
+def _metadata_int(metadata: dict[str, object], key: str) -> int:
+    value = metadata.get(key)
+    return value if isinstance(value, int) else 0
+
+
+def _case_required_source_ids(case: EvalCase) -> list[str]:
+    return _dedupe_source_ids(
+        [
+            *case.required_sources,
+            *[
+                source_id
+                for source_ids in case.required_fact_sources.values()
+                for source_id in source_ids
+            ],
+        ]
+    )
 
 
 def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[EvidenceItem]:

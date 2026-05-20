@@ -485,3 +485,53 @@ def test_public_benchmark_reports_windowed_page_diagnostics(tmp_path):
     assert result.dropped_relevant_page_count == 0
     assert result.page_source_counts == [2, 2]
     assert len(result.page_summary_token_counts) == 2
+
+
+def test_public_benchmark_reports_v2_recall_diagnostics(tmp_path):
+    data_path = tmp_path / "locomo.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "sample_v2",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "The v2 recall marker is MemoryOS Lite.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What is the v2 recall marker?",
+                            "answer": "MemoryOS Lite",
+                            "evidence": ["D1:1"],
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_recall_pipeline="v2",
+    )
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v2-diagnostics-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert report["episode_candidate_message_ids"]
+    assert "planned_evidence_message_ids" in report
+    assert "item_source_hit_at_10" in report
+    assert "source_not_indexed" in report
