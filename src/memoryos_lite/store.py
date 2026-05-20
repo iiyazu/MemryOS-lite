@@ -97,6 +97,7 @@ class EpisodeRecord(Base):
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        Index("ix_episodes_message_id", "message_id"),
         Index("ix_episodes_session_position", "session_id", "position"),
         Index("ix_episodes_session_message", "session_id", "message_id"),
     )
