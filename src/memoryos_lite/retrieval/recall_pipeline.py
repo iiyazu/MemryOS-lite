@@ -45,6 +45,24 @@ class RecallPipeline:
                 for source_id in episode.source_message_ids
             }
         )
+        if package.task_tokens > budget:
+            dropped = len(hits)
+            package.task_truncated = True
+            package.estimated_tokens = package.task_tokens
+            package.candidate_budget_dropped = dropped
+            package.metadata.update(
+                {
+                    "episode_backfilled": created,
+                    "item_candidate_source_ids": [],
+                    "indexed_source_ids": indexed_source_ids,
+                    "episode_candidate_message_ids": candidate_ids,
+                    "planned_evidence_message_ids": [],
+                    "planned_evidence_origins": [],
+                    "budget_dropped_relevant": dropped,
+                }
+            )
+            return package
+
         planned_ids: list[str] = []
         dropped = 0
         for hit in hits:
