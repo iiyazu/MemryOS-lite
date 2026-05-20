@@ -203,7 +203,7 @@ class MemoryStore:
                 conn.execute(
                     text(
                         "INSERT INTO alembic_version (version_num)"
-                        " VALUES ('0002_add_superseded_by')"
+                        " VALUES ('0004_add_episodes')"
                     )
                 )
 
