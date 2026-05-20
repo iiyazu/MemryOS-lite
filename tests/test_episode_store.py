@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from memoryos_lite.config import Settings
 from memoryos_lite.schemas import Episode, Message, Role
 from memoryos_lite.store import create_store
@@ -46,6 +48,41 @@ def test_ensure_episodes_for_session_backfills_store_inserted_messages(tmp_path)
     assert [episode.message_id for episode in episodes] == ["msg_direct"]
     assert episodes[0].position == 1
     assert "Bob prefers tea" in episodes[0].index_text
+
+    assert store.ensure_episodes_for_session("ses_direct") == 0
+    assert store.list_episodes("ses_direct") == episodes
+
+
+def test_ensure_episodes_for_session_orders_tied_timestamps_by_message_id(tmp_path):
+    store = create_store(Settings(data_dir=tmp_path / ".memoryos"))
+    store.reset()
+    created_at = datetime(2026, 5, 1, tzinfo=UTC)
+    store.add_message(
+        Message(
+            id="msg_b",
+            session_id="ses_tied",
+            role=Role.USER,
+            content="Second by id.",
+            created_at=created_at,
+        )
+    )
+    store.add_message(
+        Message(
+            id="msg_a",
+            session_id="ses_tied",
+            role=Role.USER,
+            content="First by id.",
+            created_at=created_at,
+        )
+    )
+
+    assert store.ensure_episodes_for_session("ses_tied") == 2
+
+    episodes = store.list_episodes("ses_tied")
+    assert [(episode.message_id, episode.position) for episode in episodes] == [
+        ("msg_a", 1),
+        ("msg_b", 2),
+    ]
 
 
 def test_episode_embedding_round_trip(tmp_path):

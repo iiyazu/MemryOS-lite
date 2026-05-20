@@ -314,11 +314,16 @@ class MemoryStore:
         return [self._episode_from_record(row) for row in records]
 
     def ensure_episodes_for_session(self, session_id: str) -> int:
-        messages = self.list_messages(session_id)
-        if not messages:
-            return 0
-
         with self.db() as db:
+            message_stmt = (
+                select(MessageRecord)
+                .where(MessageRecord.session_id == session_id)
+                .order_by(MessageRecord.created_at.asc(), MessageRecord.id.asc())
+            )
+            message_records = list(db.scalars(message_stmt))
+            if not message_records:
+                return 0
+
             existing_message_ids = set(
                 db.scalars(
                     select(EpisodeRecord.message_id).where(
@@ -333,7 +338,16 @@ class MemoryStore:
             )
             position = int(max_position or 0)
             created = 0
-            for message in messages:
+            for message_record in message_records:
+                message = Message(
+                    id=message_record.id,
+                    session_id=message_record.session_id,
+                    role=Role(message_record.role),
+                    content=message_record.content,
+                    metadata=json.loads(message_record.metadata_json),
+                    created_at=message_record.created_at,
+                    token_count=message_record.token_count,
+                )
                 if message.id in existing_message_ids:
                     continue
                 position += 1
