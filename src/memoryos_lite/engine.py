@@ -806,7 +806,6 @@ class ContextBuilder:
                 top_k=5,
             )
         )
-        legacy_evidence_count = len(evidence_candidates)
         contextual_evidence_count = 0
         # Contextual evidence as supplemental recall (never replaces legacy)
         if (
