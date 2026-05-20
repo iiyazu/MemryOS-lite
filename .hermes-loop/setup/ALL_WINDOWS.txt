@@ -1,0 +1,23 @@
+================================================================
+  Hermes Loop 调教 Prompt — 4 个 Codex 窗口
+================================================================
+
+在 4 个独立的 Codex 窗口中分别粘贴以下内容：
+
+  窗口 1: cat .hermes-loop/setup/god_setup.txt | codex -
+  窗口 2: cat .hermes-loop/setup/plan_agent_setup.txt | codex -
+  窗口 3: cat .hermes-loop/setup/execute_agent_setup.txt | codex -
+  窗口 4: cat .hermes-loop/setup/review_agent_setup.txt | codex -
+
+或者直接在 Codex 对话中粘贴对应 prompt 文件全文。
+
+================================================================
+  核心规则
+================================================================
+
+- God 只读 `blueprint.md` 和 `state.json` 里的当前计划。
+- Plan 只围绕 God 当前 dispatch 的 phase 展开。
+- Execute 只执行 `plan_final.md`。
+- Review 只按 God 的指标做判定。
+
+不要把旧 process docs 当成当前流程。

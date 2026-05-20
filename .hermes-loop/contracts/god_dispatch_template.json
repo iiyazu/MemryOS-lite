@@ -1,0 +1,38 @@
+{
+  "_comment": "God fills this from blueprint.md and state.json. This is a generic Memory v3 dispatch template, not a phase-specific plan.",
+  "phase": "phase-0",
+  "phase_index": 0,
+  "phase_name": "Baseline Freeze + Architecture Decision",
+  "target_state": "legacy-stable",
+  "task_description": "Freeze the legacy baseline, confirm the old evidence-planner split is superseded, define adapter/reference boundaries, and write the migration glossary.",
+  "for_plan_agent": {
+    "goal": "Produce the phase spec and implementation plan from the matching blueprint section.",
+    "constraints": [
+      "Do not implement before the spec and plan pass review.",
+      "Keep legacy v1/v2 behavior unchanged unless God explicitly changes the target state.",
+      "Preserve source-backed memory rules.",
+      "State compatibility impact and rollback/shadow behavior explicitly."
+    ],
+    "relevant_files": [
+      ".hermes-loop/blueprint.md",
+      ".hermes-loop/state.json",
+      "src/memoryos_lite/**",
+      "tests/**",
+      "benchmarks/**"
+    ],
+    "design_notes": "Read the phase heading in blueprint.md, then produce phase-local spec.md and plan.md. Do not use obsolete process docs as the active plan."
+  },
+  "for_review_agent": {
+    "tests_must_pass": true,
+    "regression_bar": "zero unintended legacy regressions; default v1/v2 behavior remains unchanged unless God explicitly accepts a migration delta",
+    "spec_checklist": [
+      "The plan implements the current blueprint phase, not obsolete v2 process work.",
+      "The target compatibility state is explicit.",
+      "Legacy behavior and adapters are accounted for.",
+      "Source-backed memory constraints are preserved.",
+      "Tests and benchmark commands are listed when relevant."
+    ],
+    "benchmark_commands": [],
+    "benchmark_pass_threshold": null
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "verdict": "ACK",
+  "phase": "phase-0",
+  "phase_name": "Baseline Freeze + Architecture Decision",
+  "target_state": "legacy-stable",
+  "evidence": {
+    "tests_passed": 311,
+    "checks_passed": 5,
+    "spec_checklist_all": true,
+    "files_created": [
+      "docs/memory-v3-architecture.md",
+      "docs/memory-v3-glossary.md"
+    ],
+    "no_py_modified": true
+  }
+}
