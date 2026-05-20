@@ -159,6 +159,7 @@ class ContextPackage(BaseModel):
     candidate_budget_dropped: int = 0
     active_overlap_not_top5: int = 0
     estimated_tokens: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TraceEvent(BaseModel):
