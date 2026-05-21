@@ -1,19 +1,21 @@
 {
   "version": "2.0",
-  "current_state": "DONE",
-  "current_phase_idx": 9,
+  "current_state": "GOD_DISPATCH",
+  "current_phase_idx": 1,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": null,
-    "state": "DONE"
+    "phase": "phase-1",
+    "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": null,
-    "state": "DONE"
+    "phase": "phase-2",
+    "state": "PLAN_STORM"
   },
   "research_lane": {
-    "phases": []
+    "phases": [
+      "phase-3"
+    ]
   },
   "review_lane": {
     "active": false,
@@ -40,6 +42,24 @@
             "no_py_modified": true
           },
           "commit": "d770b8e"
+        },
+        {
+          "completed_at": "2026-05-22T03:08:42+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "context_bundle": "work/phase-0/context_bundle.md",
+            "tests_passed": 355,
+            "checks_passed": 6,
+            "case_level_eval": {
+              "longmemeval": "1/5 projected no-LLM smoke",
+              "locomo": "0/5 projected no-LLM smoke"
+            },
+            "review": "work/phase-0/reviews/codex-review-rerun.md",
+            "reflection": "work/phase-0/reflect_phase-0.md",
+            "no_behavior_changes": true,
+            "kernel_default_unchanged": true
+          },
+          "commit": null
         }
       ]
     },
@@ -47,7 +67,7 @@
       "id": "phase-1",
       "name": "Memory v3 Contracts",
       "target_state": "legacy-stable",
-      "status": "completed",
+      "status": "in_progress",
       "state_history": [
         {
           "completed_at": "2026-05-20T19:00:00+00:00",
@@ -65,7 +85,7 @@
       "id": "phase-2",
       "name": "Recall Memory Layer",
       "target_state": "shadow-read",
-      "status": "completed",
+      "status": "pending",
       "state_history": [
         {
           "completed_at": "2026-05-20T19:00:00+00:00",
@@ -97,7 +117,7 @@
       "id": "phase-3",
       "name": "Core Memory Blocks",
       "target_state": "shadow-write",
-      "status": "completed",
+      "status": "pending",
       "state_history": [
         {
           "completed_at": "2026-05-21T09:00:00+00:00",
@@ -115,7 +135,7 @@
       "id": "phase-4",
       "name": "Archival Memory Store",
       "target_state": "shadow-write",
-      "status": "completed",
+      "status": "pending",
       "state_history": [
         {
           "completed_at": "2026-05-21T20:00:00+00:00",
@@ -133,7 +153,7 @@
       "id": "phase-5",
       "name": "Memory Lifecycle + Promotion Policy",
       "target_state": "shadow-read",
-      "status": "completed",
+      "status": "pending",
       "state_history": [
         {
           "completed_at": "2026-05-21T19:47:16+08:00",
@@ -151,7 +171,7 @@
       "id": "phase-6",
       "name": "Context Composer + Agentic Kernel",
       "target_state": "opt-in-v3",
-      "status": "completed",
+      "status": "pending",
       "state_history": [
         {
           "completed_at": "2026-05-21T20:49:21+08:00",
@@ -169,7 +189,7 @@
       "id": "phase-7",
       "name": "Benchmark + Evaluation Compatibility",
       "target_state": "bench-candidate",
-      "status": "completed",
+      "status": "pending",
       "state_history": [
         {
           "completed_at": "2026-05-21T21:24:23+08:00",
@@ -201,7 +221,7 @@
       "id": "phase-8",
       "name": "Legacy Adapter + Deprecation Decision",
       "target_state": "default-candidate",
-      "status": "completed",
+      "status": "pending",
       "state_history": [
         {
           "completed_at": "2026-05-21T21:39:03+08:00",
@@ -227,5 +247,5 @@
       ]
     }
   ],
-  "last_updated": "2026-05-22T00:32:36+08:00"
+  "last_updated": "2026-05-22T03:08:42+08:00"
 }

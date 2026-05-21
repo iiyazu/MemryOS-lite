@@ -1,149 +1,134 @@
-# Spec: Phase 3 - Core Memory Blocks
+# phase: phase-0
 
-## Goal
+## Active Goal
 
-Add Letta-style core memory blocks with durable shadow-write persistence and
-traceable mutation history while keeping default `v1` behavior and the opt-in
-`v2` recall path unchanged.
+> Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.
 
-Target compatibility state: `shadow-write`.
+## Sources
 
-Phase 3 must add a real core-memory persistence boundary, but it must not feed
-core memory into the default legacy context path yet.
+- `.hermes-loop/work/phase-0/context_bundle.md`: defines Phase 0 as a baseline freeze and case harness over the real v3 public benchmark path, with no behavior optimization.
+- `.hermes-loop/work/phase-0/brainstorm.md`: recommends the fresh deterministic freeze route: focused tests, refreshed 5-case no-LLM public smoke, one explicit opt-in kernel smoke, then a per-case matrix.
+- `.hermes-loop/work/phase-0/god_dispatch.json`: provides the exact verification commands, red evidence, usable ACK checklist, and review focus.
 
-## Source Inputs
+## Baseline Freeze Contract
 
-- `.hermes-loop/god_dispatch.json`: phase `phase-3`, target `shadow-write`.
-- `.hermes-loop/brainstorm.md`: recommends SQLite shadow-store + internal
-  core-memory service over contract-only or legacy page/item reuse.
-- `.hermes-loop/blueprint.md`: phase-3 tasks and acceptance criteria.
-- `src/memoryos_lite/v3_contracts.py`: already defines `CoreMemoryBlock`,
-  `CoreMemoryUpdate`, `MemoryHistoryEvent`, `SourceRef`, and `ApprovalState`.
-- `src/memoryos_lite/store.py`: current SQLite store, Alembic stamping, and
-  legacy page/item/episode persistence.
-- `src/memoryos_lite/engine.py`: default context builder must remain unchanged.
-- `tests/test_v3_contracts.py`: existing core-memory contract coverage.
+Phase 0 freezes the current benchmark-visible baseline before later behavior changes. It must prove that current reports expose enough case-level diagnostics to compare future LongMemEval and LoCoMo changes without hiding regressions.
+
+The frozen path is:
+
+```text
+public benchmark -> MemoryOSService.ingest/build_context -> v3 ContextComposer -> PublicBenchmarkResult diagnostics
+```
+
+Contract requirements:
+
+- LongMemEval and LoCoMo must be reported separately.
+- Every smoke case must have a stable case ID and an explicit per-case classification.
+- Aggregate pass rate is secondary; it cannot replace case rows.
+- `source_hit` / `source_accuracy` must not be treated as pure evidence localization without supporting episode/planned/context diagnostics.
+- `MEMORYOS_MEMORY_ARCH=v3` is the v3 public smoke setting; `MEMORYOS_MEMORY_ARCH=v1` fallback must remain available.
+- `MEMORYOS_AGENT_KERNEL=v1` is opt-in only; kernel trace evidence is valid only when the command explicitly sets that environment variable.
+- Phase 0 must not claim retrieval, context composer, answer prompt, or kernel improvement.
+- Missing diagnostics require repeat/adjust, or a focused failing test before production code changes.
+
+## Artifacts
+
+This PLAN_DRAFT task creates only:
+
+- `.hermes-loop/work/phase-0/spec.md`
+- `.hermes-loop/work/phase-0/plan.md`
+
+The later execute lane is expected to create or refresh:
+
+- `.hermes-loop/work/phase-0/baseline_case_matrix.md`
+- `.hermes-loop/work/phase-0/result.md`
+- `.hermes-loop/work/phase-0/execute_review.md`
+- review and ACK artifacts only after review passes
+- `.memoryos/evals/phase0_v3_lme_5case_longmemeval.json`
+- `.memoryos/evals/phase0_v3_locomo_5case_locomo.json`
+- `.memoryos/evals/phase0_v3_kernel_locomo_1case_locomo.json`
+- matching `.partial.json` files only as failed-run evidence, never as successful baseline artifacts
+
+## Allowed Writes
+
+For this PLAN_DRAFT dispatch, allowed writes are limited to the two Markdown files named above.
+
+For the later execute lane, allowed writes are limited to phase-local evidence artifacts, generated eval reports, and a focused failing test only if a required diagnostic is absent and cannot be verified from existing tests. Production code changes are not expected in Phase 0.
+
+Forbidden writes for Phase 0 unless a later dispatch explicitly changes scope:
+
+- `src/`
+- non-focused `tests/` changes
+- `docs/`
+- `.hermes-loop/state.json`
+- `.hermes-loop/blueprint.md`
+- benchmark data files
+- prompt-only or report-only edits that claim architecture progress
+- any change that enables the v3 kernel by default
 
 ## Non-Goals
 
-- Do not change default `build_context()` behavior.
-- Do not wire core memory into `ContextBuilder` or `RecallPipeline`.
-- Do not add public API routes for core memory in this phase.
-- Do not add automatic source-less core-memory writes.
-- Do not invent a second public core-memory schema outside `v3_contracts.py`.
-- Do not merge core memory with archival memory or recall memory.
+- No retrieval optimization.
+- No context composer behavior optimization.
+- No answer prompt optimization.
+- No kernel-loop behavior optimization.
+- No Letta runtime dependency.
+- No case-id hack, expected-answer leak, or benchmark-specific shortcut.
+- No state promotion from plan text alone.
+- No ACK if diagnostics, tests, or case rows are missing.
 
-## Design
+## Baseline Case Matrix Shape
 
-### Contract Boundary
+`baseline_case_matrix.md` must start with the active goal quoted exactly and cite `.hermes-loop/work/phase-0/context_bundle.md`.
 
-`v3_contracts.py` stays the canonical contract layer. Phase 3 may tighten
-validators there, but it should not move the core-memory models into
-`schemas.py`.
+Required sections:
 
-The existing `CoreMemoryBlock` model is the persisted block shape. Phase 3 may
-extend it with soft-delete metadata (`deleted_at`, `deleted_by_event_id`) so the
-store can hide deleted blocks by default while preserving audit history.
+- `Source Inputs`: context bundle, brainstorm, dispatch, benchmark data paths, and report paths.
+- `Run Summary`: command, run ID, benchmark, limit, LLM answer/judge mode, report path, result count, and command status.
+- `Default And Opt-In Checks`: `memory_arch`, v1 fallback evidence, default kernel absence, explicit opt-in kernel trace presence.
+- `LongMemEval Cases`: one row per refreshed LongMemEval smoke case.
+- `LoCoMo Cases`: one row per refreshed LoCoMo smoke case.
+- `Diagnostic Gaps`: any missing fields, partial reports, unstable IDs, or blocked commands.
+- `Decision`: `advance`, `repeat`, or `adjust`, with evidence.
 
-`CoreMemoryUpdate` remains the mutation contract for append / replace / update.
-Delete is better represented as a service/store operation with explicit reason
-and history fields than as a fake content update.
+Required case-row columns:
 
-### Persistence Boundary
+| Column | Meaning |
+|---|---|
+| `benchmark` | `longmemeval` or `locomo`. |
+| `run_id` | Exact run ID used in the command. |
+| `report_path` | Generated `.memoryos/evals/*.json` path. |
+| `case_id` | Stable case ID from the report. |
+| `result` | Pass/fail/projected or judged status from the report. |
+| `taxonomy` | One failure taxonomy value. |
+| `retrieval_evidence` | Episode/planned/retrieved evidence hit or miss, with field names. |
+| `context_evidence` | Whether selected context contains the needed evidence, if reported. |
+| `answer_status` | Correct, unsupported, overconfident, exact-match fail, or judge issue. |
+| `v3_diagnostics` | Presence of `v3_layer_counts`, `v3_budget_decisions`, and `v3_diagnostics`. |
+| `kernel_trace` | `absent_by_default`, `present_opt_in`, or `unexpected`. |
+| `notes` | Short source-grounded explanation; no aggregate-only claim. |
 
-Add first-class SQLite records for:
+## Failure Taxonomy
 
-- `core_memory_blocks`
-- `core_memory_history`
+Use exactly one primary taxonomy value per case:
 
-The block record should persist:
+- `pass`: case passed under the report's stated scoring mode.
+- `retrieval_miss`: no useful episode/planned/retrieved evidence reached the diagnostic path.
+- `evidence_hit_answer_fail`: evidence was found, but the projected or judged answer failed.
+- `context_missing_evidence`: retrieval had evidence, but selected context or answer context did not carry it.
+- `answer_unsupported_overconfident`: answer claims more than the evidence supports.
+- `judge_questionable`: judge or exact-match behavior is suspect and requires manual inspection.
+- `diagnostic_gap`: report lacks fields needed to classify the case.
+- `run_blocked`: command did not produce a usable report.
 
-- block id
-- label
-- description
-- value
-- limit tokens
-- source refs
-- metadata
-- created / updated timestamps
-- optional soft-delete metadata
+## ACK Boundary
 
-The history record should persist:
+Phase 0 can only ACK at usable level when:
 
-- history id
-- memory id
-- memory type `core_block`
-- operation
-- actor
-- reason
-- source refs
-- before snapshot
-- after snapshot
-- created timestamp
-
-History is append-only. Every mutation writes one `MemoryHistoryEvent`.
-
-### Mutation Semantics
-
-Implement a small internal core-memory service, for example
-`src/memoryos_lite/core_memory.py`, that owns behavior:
-
-- create requires source refs or approved manual provenance.
-- append concatenates onto the current value with a stable separator.
-- update replaces the whole value.
-- replace requires `old`, verifies it exists in the current value, and replaces
-  the first exact match deterministically.
-- delete soft-deletes the block and keeps it out of default reads.
-- any mutation that would exceed `limit_tokens` is rejected instead of
-  truncated.
-
-Manual provenance must use the existing approval machinery, not a weaker custom
-flag. The manual path must use `source_type="manual"` with a real non-empty
-`approval_id`.
-
-### Rendering
-
-Add an explicit renderer, such as `render_core_memory_blocks(blocks) -> str`,
-that formats blocks deterministically and is not called by default context
-building.
-
-Recommended output shape:
-
-```text
-[Core Memory]
-- <label> (<limit_tokens> tokens)
-  <description>
-  <value>
-```
-
-Ordering should be deterministic: created time, then label, then id. Deleted
-blocks should be skipped by default.
-
-### Compatibility
-
-`MemoryOSService.build_context()` stays as-is. The default legacy context path
-must not pick up core memory automatically. The new service and renderer are
-opt-in internal helpers for future composer work.
-
-Fresh SQLite databases must be stamped to the new Alembic head that includes the
-core-memory migration.
-
-## Error Handling
-
-- Missing block ids should raise `LookupError`.
-- Invalid provenance or invalid mutation shape should raise `ValueError` or
-  `ValidationError` at the contract boundary.
-- Over-limit writes should raise `ValueError`.
-- Replace should fail if `old` is absent from the current value.
-- Deleted blocks should stay readable only through explicit `include_deleted`
-  access in the store.
-
-## Acceptance Criteria
-
-- Blocks can be created, read, updated, and deleted.
-- Update history is traceable in `core_memory_history`.
-- Blocks persist limit, label, description, value, and source refs.
-- Source-backed enforcement is tested.
-- Render format exists but is opt-in only.
-- Default `build_context()` output remains unchanged.
-- Full test suite remains green.
+- focused tests pass;
+- full `uv run pytest -q` and `uv run ruff check .` pass before ACK;
+- refreshed LongMemEval and LoCoMo case rows exist separately;
+- report fields include `memory_arch`, `v3_layer_counts`, `v3_budget_decisions`, `v3_diagnostics`, and `kernel_trace_events`;
+- v1 fallback, v3 default, and kernel opt-in constraints are verified;
+- `result.md` and `execute_review.md` cite the active goal and context bundle;
+- review finds no demo-only completion, hidden regression, benchmark leakage, default-kernel enablement, or missing diagnostic gap.

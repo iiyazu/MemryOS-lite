@@ -1,0 +1,32 @@
+{
+  "phase": "phase-0",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "verdict": "PASS",
+  "context_bundle": "work/phase-0/context_bundle.md",
+  "review_file": "work/phase-0/reviews/codex-review-rerun.md",
+  "supersedes": [
+    {
+      "path": "work/phase-0/reviews/codex-review.md",
+      "verdict": "FAIL",
+      "reason": "stale after result.md and execute_review.md disclosed pre-existing dirty governance files separately from Phase 0 execution writes"
+    }
+  ],
+  "blockers": [],
+  "findings": [
+    "Phase 0 artifacts cite the active goal and context bundle.",
+    "The previous dirty-governance-file blocker is resolved in result.md and execute_review.md.",
+    "No src/, tests/, docs/, or benchmarks diff was introduced by Phase 0 execution.",
+    "LongMemEval and LoCoMo case-level failures remain separated.",
+    "source_hit is not treated as pure evidence localization.",
+    "The v3 kernel remains opt-in and default reports have no kernel trace events."
+  ],
+  "review_verdict": {
+    "overfitting_risk": "low",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false
+  },
+  "decision": "advance"
+}

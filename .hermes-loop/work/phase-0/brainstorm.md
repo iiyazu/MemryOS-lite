@@ -1,165 +1,75 @@
-# PLAN_STORM Brainstorm — Phase 3 Core Memory Blocks
+# phase: phase-0
 
-## Inputs Read
+## Active Goal
 
-- `.hermes-loop/god_dispatch.json`: phase-3 requires Letta-style core blocks, history, append / replace / update semantics, render format, opt-in/internal only, and source-backed enforcement.
-- `.hermes-loop/state.json`: current state is `PLAN_STORM`, current phase is `phase-3`.
-- `.hermes-loop/contracts/state_machine.json`: `PLAN_STORM` output is `.hermes-loop/brainstorm.md`; next state is `PLAN_DRAFT`.
-- `.hermes-loop/blueprint.md`: Phase 3 target state is `shadow-write`; legacy context must not become v3 by default.
-- `CLAUDE.md` / `AGENTS.md`: default recall path remains `v1`; v2 remains opt-in; SQLite is authoritative; filesystem outputs are debug mirrors.
-- `src/memoryos_lite/v3_contracts.py`: already defines `CoreMemoryBlock`, `CoreMemoryUpdate`, `MemoryHistoryEvent`, `SourceRef`, `ApprovalState`, and v3 future table names.
-- `src/memoryos_lite/store.py`: SQLite store currently has records and CRUD for sessions, messages, episodes, pages, items, patches, and traces; no core-memory tables or CRUD yet.
-- `src/memoryos_lite/engine.py`: service facade owns ingest/context/search flows; default context routing should remain untouched.
-- `tests/test_v3_contracts.py`: source-ref and core-update validation already exist at contract level; persistence and operation semantics are not yet covered.
+> Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.
 
-## Current Shape
+## Bundle And Assumptions
 
-Phase 1 already established v3 contracts, so Phase 3 should not invent a second core-memory schema in `schemas.py`. The missing layer is the shadow-write implementation boundary:
+Read `.hermes-loop/work/phase-0/context_bundle.md` before any other phase-local artifact, then read `.hermes-loop/work/phase-0/god_dispatch.json`.
 
-- persistent core-memory blocks,
-- persistent history events,
-- operation semantics for create / append / replace / update / delete,
-- a renderer that can be called explicitly later by the v3 composer,
-- tests proving source-backed enforcement and traceability.
+Bundle assumptions relied on:
 
-The safest phase boundary is internal/store-level APIs plus focused service helpers. Do not inject rendered core memory into `MemoryOSService.build_context()` yet.
+- Phase 0 is a baseline freeze and case-harness phase, not a retrieval, context, prompt, or kernel optimization phase.
+- Current weak smoke must stay visible: LongMemEval v3 projected `1/5`, LoCoMo v3 projected `0/5`, kernel opt-in LLM judge `1/5` on both listed 5-case runs.
+- The active path is public benchmark -> `MemoryOSService.ingest/build_context` -> v3 `ContextComposer` -> `PublicBenchmarkResult` diagnostics.
+- `MEMORYOS_MEMORY_ARCH=v3` remains the default architecture, `MEMORYOS_MEMORY_ARCH=v1` remains fallback, and `MEMORYOS_AGENT_KERNEL=v1` remains opt-in only.
+- A usable ACK needs stable per-case rows, separated LongMemEval and LoCoMo results, v3 diagnostic fields, kernel trace presence/absence, focused test status, and explicit non-advance if evidence is missing.
 
-## Option A — Contract-Only Expansion
+Additional evidence checked:
 
-Extend `v3_contracts.py` with stricter validators and helper functions, but avoid new SQLite tables in this phase.
+- `src/memoryos_lite/config.py` keeps `memoryos_memory_arch = "v3"`, `memoryos_agent_kernel = "off"`, and `memoryos_recall_pipeline = "v1"`.
+- `src/memoryos_lite/engine.py` only routes into the v3 composer when resolved arch is `v3` and `memoryos_memory_arch` is explicitly set; kernel runner is constructed only when `resolved_agent_kernel == "v1"`.
+- `src/memoryos_lite/evals.py` and `src/memoryos_lite/public_benchmarks.py` carry `memory_arch`, `v3_context`, `v3_layer_counts`, `v3_budget_decisions`, `v3_diagnostics`, and `kernel_trace_events`.
+- `tests/test_public_benchmarks.py` asserts v3 diagnostic reporting and the opt-in kernel trace sequence.
+- `docs/public-benchmark-diagnosis.md` warns that final `source_hit` is not pure retrieval localization.
 
-Expected implementation:
+## Approaches
 
-- Add validators such as `CoreMemoryUpdate.operation == "replace"` requiring `old`.
-- Add pure helpers for append / replace / update and render formatting.
-- Keep all tests in `tests/test_v3_contracts.py`.
+### A. Artifact-only freeze from existing reports
 
-Pros:
+Use the recent `.memoryos/evals` reports cited by the bundle, transcribe the listed 5-case failures into `baseline_case_matrix.md`, and run only focused tests.
 
-- Very low regression risk.
-- Minimal surface area.
-- Fast to implement and review.
+Pros: fastest; minimal cost; avoids changing runtime behavior.  
+Cons: risks stale report metadata; may not prove current code still emits the same diagnostic fields; weak if later phases need fresh run IDs.
 
-Cons:
+### B. Fresh deterministic freeze with focused tests
 
-- Fails the phase acceptance that blocks can be created, read, updated, and deleted.
-- History would not be durable.
-- Does not achieve `shadow-write`; it remains contract-only.
+Run focused tests, then refresh 5-case LongMemEval and LoCoMo with `MEMORYOS_MEMORY_ARCH=v3`, `--no-llm-answer`, and `--no-llm-judge`; run one kernel smoke only with `MEMORYOS_AGENT_KERNEL=v1`; build `baseline_case_matrix.md` from the new reports and record any blockers.
 
-Verdict: reject. Useful as part of the implementation, but insufficient for Phase 3.
+Pros: best fit for Phase 0; freezes current code, stable case IDs, diagnostic fields, and kernel opt-in behavior without optimizing; keeps LongMemEval and LoCoMo separate.  
+Cons: still smoke-level evidence; no full-chain judge gate unless provider access is available; deterministic projection may classify answer failures conservatively.
 
-## Option B — Recommended: SQLite Shadow Store + Internal Core Service
+### C. Diagnostics-first implementation
 
-Add first-class shadow-write persistence for core blocks and history, using the existing SQLite store pattern and v3 contract models.
+Add or adjust diagnostics before refreshing the baseline, with failing tests first if current reports cannot classify cases.
 
-Expected implementation:
-
-- Add SQLAlchemy records in `src/memoryos_lite/store.py`:
-  - `CoreMemoryBlockRecord` for `core_memory_blocks`.
-  - `CoreMemoryHistoryRecord` for `core_memory_history`.
-- Add Alembic migration `0005_add_core_memory.py`, and stamp fresh local DBs to the new head only when creating a fresh DB.
-- Add store CRUD:
-  - `create_core_memory_block(block)`
-  - `get_core_memory_block(block_id)`
-  - `list_core_memory_blocks(session_id=None, include_deleted=False)`
-  - `update_core_memory_block(block)`
-  - `delete_core_memory_block(block_id, source_refs, actor, reason)`
-  - `append_core_memory_history(event)`
-  - `list_core_memory_history(block_id)`
-- Add a small internal module, for example `src/memoryos_lite/core_memory.py`, that owns semantics:
-  - create requires non-empty `source_refs` or explicit manual provenance via `SourceRef(source_type="manual", approval_id=...)`.
-  - append adds content to existing value with stable separator.
-  - replace requires `old`, verifies the old text exists, and replaces it.
-  - update sets the full block value to the supplied content when the caller has source refs or approved manual provenance.
-  - delete marks the block deleted or removes it while preserving history; soft delete is safer for audit.
-  - every mutation writes `MemoryHistoryEvent` with before / after snapshots.
-- Add render helper:
-  - explicit method such as `render_core_memory_blocks(blocks) -> str`.
-  - deterministic format, e.g. `[Core Memory]\n<label> (<limit>): <value>`.
-  - not called from default `build_context()`.
-- Add tests:
-  - store-level CRUD and history roundtrip.
-  - append / replace / update semantics.
-  - delete keeps traceable history.
-  - source-less create/update fails.
-  - render format is deterministic and opt-in.
-  - legacy `build_context()` output is unchanged unless an explicit future v3 hook calls the renderer.
-
-Pros:
-
-- Directly satisfies Phase 3 acceptance.
-- Keeps v1/v2 behavior stable because APIs are internal/opt-in.
-- Reuses existing `v3_contracts.py` models instead of duplicating schema.
-- Creates a durable foundation for Phase 5 promotion policy and Phase 6 composer.
-- Review can verify behavior with deterministic tests, no LLM required.
-
-Cons:
-
-- Adds migration and store surface area.
-- Requires careful JSON serialization for `SourceRef` / history snapshots.
-- Soft-delete design must be explicit so deleted blocks do not render later.
-
-Verdict: recommended. This is the smallest implementation that actually reaches `shadow-write`.
-
-## Option C — Reuse Legacy MemoryPage / MemoryItem as Core Blocks
-
-Represent core memory through existing `MemoryPage(page_type=CORE_PROFILE)` and `MemoryItem` records, then add thin wrappers.
-
-Expected implementation:
-
-- Create core blocks as `MemoryPage` or `MemoryItem`.
-- Use existing page/item CRUD and trace events for audit.
-- Render from `list_global_core_pages()` or page summaries.
-
-Pros:
-
-- No migration needed.
-- Lower immediate implementation cost.
-- Existing retrieval/search code can see the data.
-
-Cons:
-
-- Violates the v3 direction that Page/Item are legacy archival inputs, not new v3 targets.
-- Audit history would be ad hoc and incomplete.
-- Source refs are weaker because `MemoryItem` only stores source message IDs.
-- Raises risk that core pages accidentally leak into legacy context/retrieval.
-- Makes later archival/core separation harder.
-
-Verdict: reject. It saves time now but works against the blueprint.
+Pros: useful if required fields are actually absent or impossible to classify.  
+Cons: high risk of turning Phase 0 into behavior or instrumentation work; violates the intended freeze unless missing diagnostics are proven; can mask whether current baseline was ever usable.
 
 ## Recommendation
 
-Choose Option B.
+Use Approach B as the default route.
 
-Design the Phase 3 plan around a narrow shadow-write slice:
-
-1. Strengthen v3 core-memory contracts only where needed for unambiguous semantics.
-2. Add durable SQLite tables and migration for core blocks and core history.
-3. Add store CRUD and a small internal core-memory service for operation semantics.
-4. Add deterministic render formatting, but keep it out of default context building.
-5. Prove source-backed enforcement and history traceability with focused tests.
-
-## Key Design Decisions for PLAN_DRAFT
-
-- Source-backed enforcement should live in both contracts and service/store entry points. Pydantic validation catches invalid `CoreMemoryUpdate`; service methods should also reject source-less block creation.
-- Manual provenance should use existing `SourceRef(source_type="manual", approval_id=...)` or an approved `ApprovalState`; do not invent a weaker `manual=True` flag.
-- History should use `MemoryHistoryEvent(memory_type="core_block")` for every create/update/delete. For create, use operation `add`; for append/update, use `update`; for replace, use `replace`; for delete, use `delete`.
-- Prefer soft delete with `deleted_at` / `deleted_by_event_id` metadata or columns so audit survives and render/list defaults can hide deleted blocks.
-- Keep `CoreMemoryBlock` in `v3_contracts.py` for this phase rather than moving it into `schemas.py`; `schemas.py` remains legacy/public API until v3 is promoted.
-- Add no automatic LLM extraction, promotion, or default composer integration in Phase 3. Those belong to later phases.
+Execution should be: confirm defaults and active dispatch, run the focused tests, refresh deterministic 5-case reports for both benchmarks, run the opt-in one-case kernel smoke, then write the baseline matrix with explicit case IDs and taxonomy. Only fall back to Approach C if a real report lacks required v3 diagnostics or stable case identifiers; if that happens, add a failing test before touching production code. Approach A is acceptable only as a temporary fallback if local benchmark execution is blocked, and it should not satisfy usable ACK by itself.
 
 ## Risks
 
-- Migration stamping risk: fresh DB stamping must move to the new head without breaking existing Alembic upgrades.
-- Token-limit semantics: `limit_tokens` exists, but enforcing exact token budgets may require `TokenEstimator`. The implementation plan should either enforce via existing estimator or explicitly cap by estimated tokens in service tests.
-- Replace ambiguity: plan should require `old` for replace and fail if `old` is not found, avoiding silent full-block replacement.
-- Delete semantics: hard delete would satisfy CRUD but weaken traceability. Soft delete is better for this phase.
-- API exposure risk: adding FastAPI endpoints now may imply public behavior. Keep this internal unless the spec explicitly opts into API routes.
+- Conflating final `source_hit` with evidence localization; matrix rows should prefer episode/planned evidence, selected context, and v3 diagnostics when available.
+- Hiding LoCoMo regressions behind LongMemEval rows or aggregate pass rate.
+- Treating 5-case smoke as benchmark improvement evidence instead of baseline inspection.
+- Accidentally running kernel smoke without explicit `MEMORYOS_AGENT_KERNEL=v1`, or interpreting kernel traces as default behavior.
+- Losing the `MEMORYOS_MEMORY_ARCH=v1` fallback while asserting v3 behavior.
+- Letting optional 30-case LLM judge absence pass as a milestone gate instead of recording a provider/cost blocker.
 
-## Acceptance Mapping
+## Demo-only Or Partial Completion
 
-- Blocks can be created, read, updated, and deleted: Option B store/service CRUD tests.
-- Update history is traceable: `core_memory_history` table plus `list_core_memory_history(block_id)` tests.
-- Blocks have limit, label, description, value, and source refs: `CoreMemoryBlockRecord` roundtrip tests.
-- Source-backed enforcement is tested: source-less create/update tests and manual provenance tests.
-- Render format exists without default legacy context: renderer unit test plus legacy `build_context()` regression test.
+Counts as demo-only or partial:
+
+- A matrix without stable case IDs or without separate LongMemEval and LoCoMo sections.
+- Aggregate pass-rate notes without per-case failure classification.
+- Reports that omit `memory_arch`, `v3_layer_counts`, `v3_budget_decisions`, `v3_diagnostics`, or kernel trace presence/absence.
+- Kernel evidence collected without explicit opt-in, or any claim that the v3 kernel is now default.
+- Prompt/report-only language claiming architecture progress without case-level evidence.
+- Any `advance` decision when focused tests fail, required reports are missing, or diagnostic gaps remain unexplained.
+- Any source, test, docs, `state.json`, or `blueprint.md` change performed as part of this brainstorm task.
