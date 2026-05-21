@@ -1,11 +1,11 @@
 {
   "version": "2.0",
-  "current_phase_idx": 8,
+  "current_phase_idx": 9,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-8",
-    "state": "EXECUTE"
+    "phase": null,
+    "state": "DONE"
   },
   "plan_lane": {
     "phase": null,
@@ -200,9 +200,31 @@
       "id": "phase-8",
       "name": "Legacy Adapter + Deprecation Decision",
       "target_state": "default-candidate",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-21T21:39:03+08:00",
+          "ack_evidence": {
+            "tests_passed": 352,
+            "checks_passed": 2,
+            "spec_checklist_all": true,
+            "decision": "defer",
+            "benchmark_scores": {
+              "hard_eval": {
+                "accuracy": "1.00/1.00",
+                "source_accuracy": "1.00/1.00",
+                "cases": 16
+              },
+              "v3_public_smoke": {
+                "longmemeval": "memory_arch/v3_layer_counts/v3_budget_decisions/v3_diagnostics present",
+                "locomo": "memory_arch/v3_layer_counts/v3_budget_decisions/v3_diagnostics present"
+              }
+            }
+          },
+          "commit": "7f19edb"
+        }
+      ]
     }
   ],
-  "last_updated": "2026-05-21T21:24:23+08:00"
+  "last_updated": "2026-05-21T13:39:32.570163+00:00"
 }

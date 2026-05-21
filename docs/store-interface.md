@@ -14,6 +14,8 @@ are debug mirrors, not the primary state.
 | Items | `memory_items` | none | DB |
 | Patches | `memory_patches` | none | DB |
 | Traces | `trace_events` | `.memoryos/traces/*.jsonl` | DB |
+| Core memory | `core_memory_blocks`, `core_memory_history` | none | DB |
+| Archival memory | `archival_documents`, `archival_chunks`, `archival_passages`, `archival_memories`, `archival_memory_history` | none | DB |
 
 ## Tables
 
@@ -107,10 +109,47 @@ Store methods:
 - `payload_json`
 - `created_at`
 
+### `core_memory_blocks`
+
+- `id`
+- `label`
+- `description`
+- `value`
+- `limit_tokens`
+- `source_refs_json`
+- `metadata_json`
+- `deleted`
+- `created_at`
+- `updated_at`
+
+### `core_memory_history`
+
+- `id`
+- `memory_id`
+- `memory_type`
+- `operation`
+- `before_json`
+- `after_json`
+- `source_refs_json`
+- `actor`
+- `reason`
+- `created_at`
+
+### `archival_documents`, `archival_chunks`, `archival_passages`
+
+These tables back the opt-in v3 archival route. Documents are long-lived source
+containers, chunks are document spans, and passages are retrieval units returned
+to the v3 composer.
+
+### `archival_memories`, `archival_memory_history`
+
+These tables store source-backed long-term facts/preferences/events and their
+add/update/delete audit history.
+
 ## Initialization And Migrations
 
 `create_store()` initializes tables with SQLAlchemy metadata and stamps
-`alembic_version` to `0004_add_episodes` for fresh local databases.
+`alembic_version` to `0006_add_archival_memory` for fresh local databases.
 
 Current migration head:
 
@@ -120,6 +159,8 @@ Current migration head:
 | `0002` | Add page supersession |
 | `0003` | Add memory items |
 | `0004` | Add episodes |
+| `0005` | Add core memory |
+| `0006` | Add archival memory |
 
 Use Alembic for existing database upgrades:
 

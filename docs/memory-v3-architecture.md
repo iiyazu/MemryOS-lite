@@ -7,7 +7,7 @@
 
 | Check | Result |
 |-------|--------|
-| Full pytest | 311 passed, 1 warning |
+| Full pytest | 352 passed, 1 warning |
 | Hard eval | 1.00/1.00 |
 | LongMemEval v2 smoke | episode_source_hit_at_10 = 8/10 |
 | LoCoMo v2 smoke | episode_source_hit_at_10 = 5/10 |
@@ -79,7 +79,9 @@ Execution control plane:
 | default-candidate | v3 may become default if God approves |
 | legacy-deprecated | Old paths enter cleanup |
 
-Unless Review and God explicitly approve, no phase enables v3 by default.
+Unless Review and God explicitly approve, no phase enables v3 by default. The
+current phase-8 decision keeps v3 opt-in because public smoke verifies
+diagnostic reporting, not default-readiness.
 
 ## Superseded
 

@@ -2,7 +2,7 @@
 
 面向长对话的 eval 驱动、源归因 Agent/RAG 记忆原型。
 
-MemoryOS Lite 的核心目标是让长期对话里的“记忆命中”可测、可追溯、可调试。系统保留原始消息、分页摘要、原子 item 和可选 episode-first recall，并通过确定性 benchmark 检查证据是否真的回到上下文中。
+MemoryOS Lite 的核心目标是让长期对话里的“记忆命中”可测、可追溯、可调试。系统保留原始消息、分页摘要、原子 item、可选 episode-first recall，以及 opt-in v3 layered composer 诊断，并通过确定性 benchmark 检查证据是否真的回到上下文中。
 
 这不是生产级 MemoryOS。它适合作为 agent 应用开发实习/面试项目，展示后端记忆管线、源归因评估、上下文预算控制和可审计 agent demo。
 
@@ -10,11 +10,14 @@ MemoryOS Lite 的核心目标是让长期对话里的“记忆命中”可测、
 
 - 默认 recall 路径仍是 `v1`，保持旧行为稳定。
 - `v2` episode-first recall 通过 `MEMORYOS_RECALL_PIPELINE=v2` 显式启用。
-- 存储以 SQLite 为当前实现，Alembic 迁移到 `0004_add_episodes`。
+- `v3` layered composer 处于 bench-candidate，必须通过 `MEMORYOS_MEMORY_ARCH=v3` 显式启用；它不是默认路径。
+- agentic kernel 仍是 opt-in：`MEMORYOS_AGENT_KERNEL=v1`。
+- 存储以 SQLite 为当前实现，Alembic 迁移到 `0006_add_archival_memory`。
 - Qdrant 是可选 ANN/vector 实验后端，不是默认依赖。
-- 最新验证：`uv run pytest -q` -> `311 passed, 1 warning`。
+- 最新验证：`uv run pytest -q` -> `352 passed, 1 warning`。
 - hard eval：`1.00/1.00`。
 - v2 smoke：LongMemEval `episode_source_hit_at_10 = 8/10`，LoCoMo `episode_source_hit_at_10 = 5/10`。
+- v3 public smoke 已能输出 `memory_arch`、`v3_layer_counts`、`v3_budget_decisions`、`v3_diagnostics`；默认切换暂缓。
 
 ## 架构概览
 
@@ -31,6 +34,9 @@ build_context(task)
        EpisodeSearcher
        Evidence planning
        ContextPackage(metadata diagnostics)
+  -> v3 ContextComposer when MEMORYOS_MEMORY_ARCH=v3
+       core / recall / archival / recent layers
+       ContextPackage-compatible payload with v3 diagnostics
 ```
 
 核心对象：
@@ -41,6 +47,8 @@ build_context(task)
 | `Episode` | v2 的 raw-message retrieval 单元，一条消息一条 episode |
 | `MemoryPage` | 分页压缩和审计 artifact |
 | `MemoryItem` | 从 page 派生的语义支持/诊断单元 |
+| `CoreMemoryBlock` | v3 always-in-context block，写入需要 source refs 或 approval |
+| `ArchivalDocument` / `ArchivalPassage` / `ArchivalMemory` | v3 archival layer 的文档、检索 passage 和长期记忆单元 |
 | `ContextPackage` | 预算内上下文、源证据和诊断 metadata |
 
 ## 文档
@@ -94,6 +102,8 @@ make up
 |---|---|---|
 | `DATA_DIR` | SQLite DB、page mirror、trace 文件目录 | `.memoryos` |
 | `MEMORYOS_RECALL_PIPELINE` | `v1` 或 `v2` recall path | `v1` |
+| `MEMORYOS_MEMORY_ARCH` | `v1` 或 opt-in `v3` context composer | `v1` |
+| `MEMORYOS_AGENT_KERNEL` | `off` 或 opt-in `v1` kernel | `off` |
 | `MEMORYOS_PAGING_MODE` | `heuristic` 或 `llm` | `heuristic` |
 | `ROT_SAFE_BUDGET` | 分页触发阈值 | `2400` |
 | `HARD_LIMIT` | 上下文硬上限 | `8000` |
@@ -122,6 +132,14 @@ MEMORYOS_RECALL_PIPELINE=v2 uv run memoryos eval public \
   --limit 10 \
   --no-llm-answer \
   --no-llm-judge
+
+MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public \
+  --benchmark locomo \
+  --data-path benchmarks/locomo/locomo10.json \
+  --baseline memoryos_lite \
+  --limit 10 \
+  --no-llm-answer \
+  --no-llm-judge
 ```
 
 Agent answer diagnostics：
@@ -144,6 +162,7 @@ make lint
 - LangGraph agent 是 demo，不是完整生产 agent runtime。
 - 启发式分页和冲突检测是确定性 fallback，不是完整语义记忆模型。
 - v2 当前优化 evidence recall/planning，answer quality 仍需后续阶段处理。
+- v3 当前用于 benchmark 诊断和 layered composer 实验，默认启用已暂缓。
 - FastAPI 无认证、限流、多租户或生产 ownership model。
 
 ## License

@@ -68,7 +68,7 @@ Known local baseline:
 
 | Check | Result |
 |---|---:|
-| Full pytest | `311 passed, 1 warning` |
+| Full pytest | `352 passed, 1 warning` |
 | Hard eval | `1.00/1.00` |
 | LongMemEval v2 smoke | `episode_source_hit_at_10 = 8/10` |
 | LoCoMo v2 smoke | `episode_source_hit_at_10 = 5/10` |

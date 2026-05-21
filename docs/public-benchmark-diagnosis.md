@@ -6,8 +6,9 @@ It is a baseline note, not a full history log.
 ## Current Positioning
 
 MemoryOS Lite is an eval-driven, source-attributed Agent/RAG memory prototype.
-The current default path remains `v1`; the new episode-first recall path is
-enabled only with `MEMORYOS_RECALL_PIPELINE=v2`.
+The current default path remains `v1`; episode-first recall is enabled only with
+`MEMORYOS_RECALL_PIPELINE=v2`, and the layered v3 composer is enabled only with
+`MEMORYOS_MEMORY_ARCH=v3`.
 
 The benchmark goal for the current phase is evidence recall and diagnostic
 clarity. Answer pass rate is tracked separately because answer quality can fail
@@ -19,7 +20,7 @@ Verified current local baseline:
 
 | Check | Result |
 |---|---:|
-| Full pytest | `311 passed, 1 warning` |
+| Full pytest | `352 passed, 1 warning` |
 | Hard eval, `memoryos_lite` | `accuracy 1.00`, `source_hit 1.00` |
 
 v2 public smoke, no LLM answer/judge:
@@ -29,6 +30,13 @@ v2 public smoke, no LLM answer/judge:
 | LongMemEval | 10 | 0/10 | 8/10 | 8/10 | 0 | 0/10 |
 | LoCoMo | 10 | 0/10 | 5/10 | 5/10 | 0 | 0/10 |
 
+v3 public smoke, no LLM answer/judge:
+
+| Benchmark | Cases | Status |
+|---|---:|---|
+| LongMemEval | 10 | report includes `memory_arch`, `v3_layer_counts`, `v3_budget_decisions`, `v3_diagnostics` |
+| LoCoMo | 10 | report includes `memory_arch`, `v3_layer_counts`, `v3_budget_decisions`, `v3_diagnostics` |
+
 Commands:
 
 ```bash
@@ -37,6 +45,14 @@ uv run memoryos eval run --case-set hard --baseline memoryos_lite
 MEMORYOS_RECALL_PIPELINE=v2 uv run memoryos eval public \
   --benchmark longmemeval \
   --data-path benchmarks/longmemeval/longmemeval.json \
+  --baseline memoryos_lite \
+  --limit 10 \
+  --no-llm-answer \
+  --no-llm-judge
+
+MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public \
+  --benchmark locomo \
+  --data-path benchmarks/locomo/locomo10.json \
   --baseline memoryos_lite \
   --limit 10 \
   --no-llm-answer \
@@ -61,6 +77,9 @@ Use the metrics for different questions:
 | `planned_evidence_source_hit_at_5` | Did evidence planning keep the source near the top? |
 | `budget_dropped_relevant` | Was a relevant planned source dropped by context budget? |
 | `source_not_indexed` | Was the expected source absent from the v2 indexed source set? |
+| `v3_layer_counts` | Which v3 layers contributed selected context items? |
+| `v3_budget_decisions` | Which v3 layers fit or dropped items under budget? |
+| `v3_diagnostics` | Per-item v3 inclusion/drop reason, score, tokens, and source refs. |
 | `source_hit` | Final deterministic source projection; useful, but not pure retrieval localization. |
 
 Do not use page-level overlap or final projected `source_hit` alone as proof

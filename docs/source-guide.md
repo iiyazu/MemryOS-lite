@@ -16,6 +16,7 @@ MemoryOSService
   build_context()
     -> v1 ContextBuilder by default
     -> v2 RecallPipeline when MEMORYOS_RECALL_PIPELINE=v2
+    -> v3 ContextComposer when MEMORYOS_MEMORY_ARCH=v3
 ```
 
 ## Important Modules
@@ -27,6 +28,10 @@ MemoryOSService
 | `store.py` | SQLite persistence, JSON debug mirrors, trace storage, episode backfill. |
 | `engine.py` | Application facade and v1 context/paging orchestration. |
 | `retrieval/` | Search primitives and v2 recall helpers. |
+| `context_composer.py` | Opt-in v3 layered composer and budget diagnostics. |
+| `agent_kernel.py` | Opt-in v3 kernel step runner, policy decisions, approval pause traces. |
+| `v3_contracts.py` | v3 source refs, core/archival contracts, context package, kernel contracts. |
+| `core_memory.py` | Source-backed core memory block service. |
 | `public_benchmarks.py` | LongMemEval/LoCoMo loading, baseline execution, report fields. |
 | `evals.py` | Built-in deterministic evals and baseline output structure. |
 | `agent_graph.py` | Experimental LangGraph demo nodes. |
@@ -65,6 +70,21 @@ MEMORYOS_RECALL_PIPELINE=v2
 answering layer; `index_text` adds deterministic context such as role, date,
 benchmark session, and neighboring turns for retrieval.
 
+### v3 Layered Composer
+
+The v3 path is opt-in and remains a bench-candidate, not the default:
+
+```text
+MEMORYOS_MEMORY_ARCH=v3
+  -> ContextComposer
+  -> task / core / recall / archival / recent layers
+  -> ContextPackage-compatible payload
+  -> metadata: v3_context, v3_layer_counts, v3_budget_decisions, v3_diagnostics
+```
+
+`MEMORYOS_AGENT_KERNEL=v1` enables the separate experimental kernel path. It is
+not required for normal API/CLI context building.
+
 ## Storage Model
 
 SQLite is the authoritative store. Page JSON files and trace JSONL files are
@@ -79,6 +99,13 @@ Core tables:
 - `memory_items`
 - `memory_patches`
 - `trace_events`
+- `core_memory_blocks`
+- `core_memory_history`
+- `archival_documents`
+- `archival_chunks`
+- `archival_passages`
+- `archival_memories`
+- `archival_memory_history`
 
 See `docs/store-interface.md` for the table contract.
 
@@ -90,6 +117,14 @@ uv run memoryos eval run --case-set hard --baseline memoryos_lite
 MEMORYOS_RECALL_PIPELINE=v2 uv run memoryos eval public \
   --benchmark longmemeval \
   --data-path benchmarks/longmemeval/longmemeval.json \
+  --baseline memoryos_lite \
+  --limit 10 \
+  --no-llm-answer \
+  --no-llm-judge
+
+MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public \
+  --benchmark locomo \
+  --data-path benchmarks/locomo/locomo10.json \
   --baseline memoryos_lite \
   --limit 10 \
   --no-llm-answer \

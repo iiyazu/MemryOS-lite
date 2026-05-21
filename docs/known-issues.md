@@ -3,20 +3,26 @@
 This file tracks current limitations that are intentionally left for later
 work. Historical phase notes have been removed from this baseline document.
 
-## 1. v2 Recall Is Opt-In
+## 1. v2 Recall And v3 Composer Are Opt-In
 
-Default behavior remains `v1`. Episode indexing and v2 recall are enabled only
-when `MEMORYOS_RECALL_PIPELINE=v2`.
+Default behavior remains `v1`.
+
+- Episode indexing and v2 recall are enabled only when
+  `MEMORYOS_RECALL_PIPELINE=v2`.
+- The v3 layered composer is enabled only when `MEMORYOS_MEMORY_ARCH=v3`.
+- The v3 kernel is enabled only when `MEMORYOS_AGENT_KERNEL=v1`.
 
 Why this is acceptable:
 
 - Existing API/eval behavior stays stable.
 - v2 can be evaluated without changing default persistence or trace behavior.
+- v3 public smoke now emits layered diagnostics, but the evidence is not strong
+  enough to promote v3 to default.
 
 Future direction:
 
-- Promote v2 only after larger LongMemEval/LoCoMo slices show stable gains and
-  answer-quality regressions are understood.
+- Promote v2/v3 only after larger LongMemEval/LoCoMo slices show stable gains
+  and answer-quality regressions are understood.
 
 ## 2. LoCoMo Remains Hard
 
@@ -65,6 +71,13 @@ Preferred v2 metrics:
 - `planned_evidence_source_hit_at_5`
 - `budget_dropped_relevant`
 - `source_not_indexed`
+
+Preferred v3 report fields:
+
+- `memory_arch`
+- `v3_layer_counts`
+- `v3_budget_decisions`
+- `v3_diagnostics`
 
 Future direction:
 
