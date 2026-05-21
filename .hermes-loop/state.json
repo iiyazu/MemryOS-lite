@@ -1,20 +1,19 @@
 {
   "version": "2.0",
-  "current_phase_idx": 5,
+  "current_phase_idx": 6,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-4",
+    "phase": "phase-6",
     "state": "EXECUTE"
   },
   "plan_lane": {
-    "phase": "phase-5",
-    "state": "PLAN_SELF_REVIEW"
+    "phase": "phase-7",
+    "state": "PLAN_STORM"
   },
   "research_lane": {
     "phases": [
-      "phase-6",
-      "phase-7"
+      "phase-8"
     ]
   },
   "review_lane": {
@@ -127,7 +126,7 @@
             "spec_checklist_all": true,
             "benchmark_scores": {}
           },
-          "commit": null
+          "commit": "7580e1d"
         }
       ]
     },
@@ -135,14 +134,25 @@
       "id": "phase-5",
       "name": "Memory Lifecycle + Promotion Policy",
       "target_state": "shadow-read",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-21T19:47:16+08:00",
+          "ack_evidence": {
+            "tests_passed": 346,
+            "checks_passed": 1,
+            "spec_checklist_all": true,
+            "benchmark_scores": {}
+          },
+          "commit": "7580e1d"
+        }
+      ]
     },
     {
       "id": "phase-6",
       "name": "Context Composer + Agentic Kernel",
       "target_state": "opt-in-v3",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": []
     },
     {
@@ -160,5 +170,5 @@
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-21T20:00:00+00:00"
+  "last_updated": "2026-05-21T20:10:54+08:00"
 }

@@ -1,0 +1,43 @@
+{
+  "phase": "phase-6",
+  "phase_index": 6,
+  "phase_name": "Context Composer + Agentic Kernel",
+  "target_state": "opt-in-v3",
+  "task_description": "从 blueprint.md 的 phase-6 段提取的任务。\n- Build the layered composer.\n- Wrap it in an agentic step runner that refreshes and sanitizes messages, resolves valid tools with tool rules and approval state, builds the model request, executes tool calls, persists assistant/tool/approval messages, and decides continue/stop/pause/compact.\n- Compose task, core memory, recall evidence, archival passages / archival documents, recent messages, and fallback docs.\n- Replace the current thin split while keeping adapters.\n- Use a Letta-style archive access order: fetch attached archives first, then pass passage-level results into the composer.\n- v3 composer is enabled through feature flags.\n- Kernel execution is opt-in and can be toggled independently during migration.\n- Output remains compatible with ContextPackage plus v3 metadata.\n- Legacy v1/v2 build_context still runs.\n",
+  "for_plan_agent": {
+    "goal": "完成 Context Composer 与 Agentic Kernel 的设计、契约与 TDD 计划，确保 v3 仍保持 opt-in，且旧的 build_context 路径不被破坏。",
+    "constraints": [
+      "目标兼容状态: opt-in-v3",
+      "遵守 blueprint.md 中的兼容性要求，v3 composer 和 kernel 都必须通过 feature flag 控制",
+      "保持 legacy v1/v2 build_context 路径继续可用",
+      "不得把未批准的 core / archival mutation 直接接入默认执行路径",
+      "上下文输出必须保留 ContextPackage 兼容性，同时补充 v3 diagnostics"
+    ],
+    "relevant_files": [
+      ".hermes-loop/blueprint.md",
+      ".hermes-loop/state.json",
+      "CLAUDE.md",
+      "src/memoryos_lite/engine.py",
+      "src/memoryos_lite/retrieval/**",
+      "src/memoryos_lite/core_memory.py",
+      "src/memoryos_lite/v3_contracts.py",
+      "tests/**"
+    ],
+    "design_notes": "本 phase 的关键风险是把 composer 和 kernel 混成一层、破坏 legacy build_context、或者把 approval / tool policy 变成隐式副作用。Plan 必须先定义 layered context 结构、诊断字段、以及 step runner 的 durable state，再考虑任何 tool execution 细节。"
+  },
+  "for_review_agent": {
+    "tests_must_pass": true,
+    "regression_bar": "zero unintended legacy regressions; v1/v2 build_context remains available and unchanged unless God accepts a migration delta",
+    "spec_checklist": [
+      "The layered composer includes task, core memory, recall evidence, archival passages or documents, recent messages, and fallback docs.",
+      "The agentic step runner persists assistant, tool, and approval messages plus continuation state.",
+      "Tool policy and approval gating are explicit and durable.",
+      "ContextPackage compatibility is preserved while v3 metadata and diagnostics are added.",
+      "Legacy v1/v2 build_context continues to work behind existing paths."
+    ],
+    "benchmark_commands": [
+      "uv run pytest -q"
+    ],
+    "benchmark_pass_threshold": "legacy baseline remains green"
+  }
+}

@@ -8,9 +8,11 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
+from memoryos_lite.agent_kernel import SimpleAgentStepRunner
 from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
+from memoryos_lite.context_composer import V3ContextComposer
 from memoryos_lite.observability import (
     CONTEXT_BUDGET_USED_RATIO,
     CONTEXT_BUILD_SECONDS,
@@ -58,6 +60,7 @@ from memoryos_lite.schemas import (
 from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
+from memoryos_lite.v3_contracts import ContextComposerRequest, ContextPackageV3
 
 __all__ = [
     "ContextRotGuard",
@@ -1468,6 +1471,17 @@ class MemoryOSService:
             settings=self.settings,
             tokenizer=self.tokenizer,
         )
+        self.v3_context_composer = V3ContextComposer(
+            store=self.store,
+            settings=self.settings,
+            tokenizer=self.tokenizer,
+            recall_pipeline=self.recall_pipeline,
+        )
+        self.agent_kernel = (
+            SimpleAgentStepRunner(store=self.store)
+            if self.settings.resolved_agent_kernel == "v1"
+            else None
+        )
         self.conflict_detector = ConflictDetector(lexical)
         item_llm: Any | None = None
         if (
@@ -1945,6 +1959,37 @@ class MemoryOSService:
             if budget is not None
             else self.dynamic_budget.compute(messages, pages, task)
         )
+        if self.settings.resolved_memory_arch == "v3":
+            v3_package = self.v3_context_composer.build(
+                ContextComposerRequest(
+                    session_id=session_id,
+                    task=task,
+                    budget=effective_budget,
+                    retrieval_query=retrieval_query,
+                )
+            )
+            package = self._context_package_from_v3(v3_package)
+            elapsed = time.perf_counter() - t0
+            CONTEXT_BUILD_SECONDS.observe(elapsed)
+            CONTEXT_TOKENS.observe(package.estimated_tokens)
+            if effective_budget > 0:
+                CONTEXT_BUDGET_USED_RATIO.observe(
+                    package.estimated_tokens / effective_budget
+                )
+            self.trace(
+                session_id,
+                "context_built",
+                {
+                    "task": task,
+                    "budget": effective_budget,
+                    "budget_source": "explicit" if budget is not None else "dynamic",
+                    "estimated_tokens": package.estimated_tokens,
+                    "memory_arch": "v3",
+                    "v3_layer_counts": package.metadata["v3_layer_counts"],
+                    "v3_budget_decisions": package.metadata["v3_budget_decisions"],
+                },
+            )
+            return package
         if self.settings.resolved_recall_pipeline == "v2":
             package = self.recall_pipeline.build_context(
                 session_id=session_id,
@@ -2039,6 +2084,73 @@ class MemoryOSService:
                 item_trace["candidate_count"] - len(actual_promoted)
             )
             self.trace(session_id, "item_retrieval", item_trace)
+        return package
+
+    def _context_package_from_v3(self, v3_package: ContextPackageV3) -> ContextPackage:
+        package = ContextPackage(
+            session_id=v3_package.session_id,
+            task=v3_package.task,
+            task_tokens=self.tokenizer.count(v3_package.task),
+        )
+        layer_counts: dict[str, int] = {}
+        messages_by_id = {
+            message.id: message for message in self.store.list_messages(v3_package.session_id)
+        }
+        for item in v3_package.items:
+            layer_counts[item.layer] = layer_counts.get(item.layer, 0) + 1
+            if item.layer == "core":
+                package.pinned_core.append(item.text)
+            elif item.layer == "recent":
+                message = messages_by_id.get(item.item_id)
+                if message is not None:
+                    package.recent_messages.append(message)
+            elif item.layer in {"recall", "archival", "fallback"}:
+                message_ref = next(
+                    (
+                        ref
+                        for ref in item.source_refs
+                        if getattr(ref.source_type, "value", ref.source_type) == "message"
+                    ),
+                    None,
+                )
+                package.retrieved_evidence.append(
+                    ContextEvidence(
+                        message_id=message_ref.source_id if message_ref else item.item_id,
+                        text=item.text,
+                        role=Role.USER,
+                        reason=str(item.metadata.get("reason", item.layer)),
+                        estimated_tokens=item.estimated_tokens,
+                        metadata={
+                            "origin": item.layer,
+                            "v3_item_id": item.item_id,
+                            **item.metadata,
+                        },
+                    )
+                )
+        package.estimated_tokens = int(
+            v3_package.metadata.get(
+                "estimated_tokens",
+                sum(item.estimated_tokens for item in v3_package.items),
+            )
+        )
+        package.candidate_budget_dropped = sum(
+            len(decision.dropped_item_ids) for decision in v3_package.budget_decisions
+        )
+        package.metadata.update(
+            {
+                "memory_arch": "v3",
+                "v3_context": v3_package.model_dump(mode="json"),
+                "v3_layer_counts": layer_counts,
+                "v3_budget_decisions": [
+                    decision.model_dump(mode="json")
+                    for decision in v3_package.budget_decisions
+                ],
+                "v3_diagnostics": [
+                    diagnostic.model_dump(mode="json")
+                    for diagnostic in v3_package.diagnostics
+                ],
+            }
+        )
         return package
 
     def search(

@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     memoryos_item_extraction: bool = True
     memoryos_item_evidence_max: int = 3
     memoryos_evidence_representation: str = "legacy"
+    memoryos_memory_arch: str = "v1"
+    memoryos_agent_kernel: str = "off"
     memoryos_recall_pipeline: str = "v1"
     memoryos_evidence_direct_raw_fallback: bool = True
     memoryos_evidence_candidate_top_k: int = 5
@@ -59,6 +61,20 @@ class Settings(BaseSettings):
                 f"MEMORYOS_EVIDENCE_REPRESENTATION={val!r} invalid. "
                 f"Valid: {sorted(valid)}"
             )
+        return val
+
+    @property
+    def resolved_memory_arch(self) -> str:
+        val = self.memoryos_memory_arch.strip().lower()
+        if val not in {"v1", "v3"}:
+            raise ValueError("MEMORYOS_MEMORY_ARCH must be 'v1' or 'v3'")
+        return val
+
+    @property
+    def resolved_agent_kernel(self) -> str:
+        val = self.memoryos_agent_kernel.strip().lower()
+        if val not in {"off", "v1"}:
+            raise ValueError("MEMORYOS_AGENT_KERNEL must be 'off' or 'v1'")
         return val
 
     @property
