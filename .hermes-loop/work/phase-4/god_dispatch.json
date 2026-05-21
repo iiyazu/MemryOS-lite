@@ -1,0 +1,41 @@
+{
+  "phase": "phase-4",
+  "phase_index": 4,
+  "phase_name": "Archival Memory Store",
+  "target_state": "shadow-write",
+  "task_description": "从 blueprint.md 的 phase-4 段提取的任务。\n- Design the archival schema from scratch.\n- Add ArchivalDocument, ArchivalChunk, ArchivalPassage, ArchivalMemory, ArchivalMemoryHistory, ArchiveAttachment, and optional ArchivalEntityLink.\n- Keep old Page/Item as migration input or adapter only.\n- Add Letta-style archive attachment so agents, projects, and sources can retrieve scoped attached archives.\n- Add a passage-level retrieval path that supports archive_id, source_id, file_id, tags, date, text, vector, and hybrid queries.\n- Explicit docs can enter archive.\n- Message, sleep, and retrieval consolidation jobs can produce archival documents, passages, or archival memories.\n- Archival memory supports add, search, update, delete, and history.\n- Archive search returns passage-level evidence with source refs, scope, created/updated metadata, score, and citation.\n",
+  "for_plan_agent": {
+    "goal": "完成 Archival Memory Store 的设计、契约与实现计划，确保新 archival 层从旧 Page/Item 中解耦并保持现有默认行为稳定。",
+    "constraints": [
+      "目标兼容状态: shadow-write",
+      "遵守 blueprint.md 中的兼容性要求，Page/Item 只能作为迁移输入或适配层",
+      "保持 source-backed 规则，不得把无来源内容自动写入 archival memory",
+      "默认 v1/v2 行为不变，新的 archival 路径只能通过显式接入或迁移通道出现"
+    ],
+    "relevant_files": [
+      ".hermes-loop/blueprint.md",
+      ".hermes-loop/state.json",
+      "CLAUDE.md",
+      "src/memoryos_lite/store.py",
+      "src/memoryos_lite/schemas.py",
+      "src/memoryos_lite/retrieval/**",
+      "tests/**"
+    ],
+    "design_notes": "本 phase 的核心风险是 schema 设计过宽、Page/Item 继续承担新语义、以及 passage 级检索和历史表之间的边界不清。Plan 必须把 document / chunk / passage / memory / history / attachment 的职责拆开，并明确迁移与适配边界。"
+  },
+  "for_review_agent": {
+    "tests_must_pass": true,
+    "regression_bar": "zero unintended legacy regressions; default v1/v2 behavior remains unchanged unless God explicitly accepts a migration delta",
+    "spec_checklist": [
+      "ArchivalDocument, ArchivalChunk, ArchivalPassage, ArchivalMemory, ArchivalMemoryHistory, and ArchiveAttachment are all accounted for.",
+      "Page/Item are treated only as migration input or adapter, not the new target model.",
+      "Passage-level retrieval supports archive_id, source_id, file_id, tags, date, text, vector, and hybrid search.",
+      "Add, search, update, delete, and history semantics are explicit for archival memory.",
+      "Source-backed evidence and citation metadata are preserved in archive search results."
+    ],
+    "benchmark_commands": [
+      "uv run pytest -q"
+    ],
+    "benchmark_pass_threshold": "legacy baseline remains green"
+  }
+}

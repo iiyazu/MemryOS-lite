@@ -17,9 +17,11 @@ from memoryos_lite.v3_contracts import (
     V3_KEEP_TABLES,
     V3_NO_NEW_TARGETS,
     ApprovalState,
+    ArchivalChunk,
     ArchivalDocument,
     ArchivalMemory,
     ArchivalPassage,
+    ArchiveAttachment,
     ContextComposerRequest,
     ContextLayerItem,
     ContextPackageV3,
@@ -200,6 +202,44 @@ def test_page_and_item_are_legacy_inputs_not_archival_targets():
     assert document.id.startswith("adoc_")
     assert memory.id.startswith("amem_")
     assert passage.id.startswith("apsg_")
+
+
+def test_archival_contracts_include_chunk_attachment_and_first_class_metadata():
+    ref = SourceRef(source_type="message", source_id="msg_1", session_id="ses_1")
+    chunk = ArchivalChunk(
+        id="achunk_1",
+        document_id="adoc_1",
+        archive_id="archive_1",
+        text="Alice moved to Shanghai.",
+        start=0,
+        end=24,
+        source_refs=[ref],
+    )
+    passage = ArchivalPassage(
+        id="apsg_1",
+        document_id="adoc_1",
+        chunk_id=chunk.id,
+        archive_id="archive_1",
+        text=chunk.text,
+        source_id="source_1",
+        file_id="file_1",
+        tags=["travel"],
+        source_refs=[ref],
+    )
+    attachment = ArchiveAttachment(
+        id="aatt_1",
+        archive_id="archive_1",
+        scope_type="agent",
+        scope_id="agent_1",
+        source_refs=[ref],
+    )
+
+    assert chunk.document_id == "adoc_1"
+    assert passage.chunk_id == chunk.id
+    assert passage.source_id == "source_1"
+    assert passage.file_id == "file_1"
+    assert passage.updated_at is not None
+    assert attachment.scope_type == "agent"
 
 
 def test_core_memory_update_requires_source_refs_or_approval():

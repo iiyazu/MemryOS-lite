@@ -1,5 +1,9 @@
 """Retrieval layer: BM25 lexical + embedding cosine + RRF hybrid fusion + LLM rewrite/rerank."""
 
+from memoryos_lite.retrieval.archival_searcher import (
+    ArchivalPassageHit,
+    ArchivalPassageSearcher,
+)
 from memoryos_lite.retrieval.base import (
     EmbeddingClient,
     Searcher,
@@ -7,11 +11,13 @@ from memoryos_lite.retrieval.base import (
     cosine_similarity,
     reciprocal_rank_fusion,
 )
+from memoryos_lite.retrieval.embedding import EmbeddingSearcher
 from memoryos_lite.retrieval.episode_searcher import (
     EpisodeHit,
     EpisodeSearcher,
     RecallMemorySearcher,
 )
+from memoryos_lite.retrieval.hybrid import HybridSearcher
 from memoryos_lite.retrieval.lexical import LexicalSearcher, tokenize
 from memoryos_lite.retrieval.query_analyzer import (
     QueryAnalysis,
@@ -20,9 +26,6 @@ from memoryos_lite.retrieval.query_analyzer import (
 )
 from memoryos_lite.retrieval.query_rewriter import QueryRewriter
 from memoryos_lite.retrieval.reranker import LLMReranker
-
-from memoryos_lite.retrieval.embedding import EmbeddingSearcher
-from memoryos_lite.retrieval.hybrid import HybridSearcher
 
 try:
     from memoryos_lite.retrieval.item_searcher import ItemSearcher, ItemSearchHit
@@ -43,6 +46,8 @@ except ModuleNotFoundError as exc:
 __all__ = [
     "EmbeddingClient",
     "EmbeddingSearcher",
+    "ArchivalPassageHit",
+    "ArchivalPassageSearcher",
     "EpisodeHit",
     "EpisodeSearcher",
     "HybridSearcher",

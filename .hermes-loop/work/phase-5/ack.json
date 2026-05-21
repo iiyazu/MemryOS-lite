@@ -1,0 +1,12 @@
+{
+  "phase": "phase-5",
+  "verdict": "ACK",
+  "phase_name": "Memory Lifecycle + Promotion Policy",
+  "target_state": "shadow-read",
+  "evidence": {
+    "tests_passed": 346,
+    "checks_passed": 1,
+    "spec_checklist_all": true,
+    "benchmark_scores": {}
+  }
+}

@@ -1,6 +1,7 @@
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,19 @@ from memoryos_lite.schemas import (
     TraceEvent,
     utc_now,
 )
-from memoryos_lite.v3_contracts import CoreMemoryBlock, MemoryHistoryEvent, SourceRef
+from memoryos_lite.v3_contracts import (
+    ArchivalChunk,
+    ArchivalDocument,
+    ArchivalMemory,
+    ArchivalPassage,
+    ArchiveAttachment,
+    CoreMemoryBlock,
+    IdentityScope,
+    MemoryHistoryEvent,
+    SourceRef,
+    SourceSpan,
+    ensure_persisted_identity_scope,
+)
 
 EMBEDDING_DIM = 1536
 
@@ -201,6 +214,126 @@ class CoreMemoryHistoryRecord(Base):
     )
 
 
+class ArchivalDocumentRecord(Base):
+    __tablename__ = "archival_documents"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    archive_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    file_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    producer: Mapped[str] = mapped_column(String(32), nullable=False, default="explicit_document")
+    legacy_page_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ArchivalChunkRecord(Base):
+    __tablename__ = "archival_chunks"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    archive_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    start: Mapped[int] = mapped_column(Integer, nullable=False)
+    end: Mapped[int] = mapped_column(Integer, nullable=False)
+    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_archival_chunks_document_start", "document_id", "start"),)
+
+
+class ArchivalPassageRecord(Base):
+    __tablename__ = "archival_passages"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    document_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    chunk_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    archive_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    citation_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    citation_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    file_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scope_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    score: Mapped[float | None] = mapped_column(nullable=True)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    legacy_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_archival_passages_archive_source", "archive_id", "source_id"),
+        Index("ix_archival_passages_archive_file", "archive_id", "file_id"),
+    )
+
+
+class ArchivalMemoryRecord(Base):
+    __tablename__ = "archival_memories"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    archive_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    identity_scope_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    file_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    history_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    entity_links_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    legacy_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_archival_memories_archive_type", "archive_id", "memory_type"),)
+
+
+class ArchivalMemoryHistoryRecord(Base):
+    __tablename__ = "archival_memory_history"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    memory_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_archival_memory_history_memory_created", "memory_id", "created_at"),
+    )
+
+
+class ArchiveAttachmentRecord(Base):
+    __tablename__ = "archive_attachments"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    archive_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_archive_attachments_scope", "scope_type", "scope_id"),)
+
+
 class MemoryStore:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -245,12 +378,12 @@ class MemoryStore:
                 conn.execute(
                     text(
                         "INSERT INTO alembic_version (version_num)"
-                        " VALUES ('0005_add_core_memory')"
+                        " VALUES ('0006_add_archival_memory')"
                     )
                 )
-            elif row[0] != "0005_add_core_memory":
+            elif row[0] != "0006_add_archival_memory":
                 conn.execute(
-                    text("UPDATE alembic_version SET version_num = '0005_add_core_memory'")
+                    text("UPDATE alembic_version SET version_num = '0006_add_archival_memory'")
                 )
 
     @contextmanager
@@ -495,6 +628,122 @@ class MemoryStore:
         return [SourceRef.model_validate(ref) for ref in json.loads(source_refs_json)]
 
     @staticmethod
+    def _dump_json(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _aware(value: datetime | None) -> datetime | None:
+        if value is None or value.tzinfo is not None:
+            return value
+        return value.replace(tzinfo=UTC)
+
+    @staticmethod
+    def _require_source_refs(source_refs: list[SourceRef], write_name: str) -> None:
+        if not source_refs:
+            raise ValueError(f"{write_name} requires source_refs")
+
+    @staticmethod
+    def _document_from_record(record: ArchivalDocumentRecord) -> ArchivalDocument:
+        return ArchivalDocument(
+            id=record.id,
+            archive_id=record.archive_id,
+            title=record.title,
+            text=record.text,
+            version=record.version,
+            source_id=record.source_id,
+            file_id=record.file_id,
+            tags=json.loads(record.tags_json),
+            source_refs=MemoryStore._load_source_refs(record.source_refs_json),
+            producer=record.producer,
+            legacy_page_id=record.legacy_page_id,
+            metadata=json.loads(record.metadata_json),
+            created_at=MemoryStore._aware(record.created_at),
+            updated_at=MemoryStore._aware(record.updated_at),
+        )
+
+    @staticmethod
+    def _chunk_from_record(record: ArchivalChunkRecord) -> ArchivalChunk:
+        return ArchivalChunk(
+            id=record.id,
+            document_id=record.document_id,
+            archive_id=record.archive_id,
+            text=record.text,
+            start=record.start,
+            end=record.end,
+            tags=json.loads(record.tags_json),
+            source_refs=MemoryStore._load_source_refs(record.source_refs_json),
+            metadata=json.loads(record.metadata_json),
+            created_at=MemoryStore._aware(record.created_at),
+            updated_at=MemoryStore._aware(record.updated_at),
+        )
+
+    @staticmethod
+    def _passage_from_record(record: ArchivalPassageRecord) -> ArchivalPassage:
+        citation = None
+        if record.citation_start is not None and record.citation_end is not None:
+            citation = SourceSpan(start=record.citation_start, end=record.citation_end)
+        scope = None
+        if record.scope_json:
+            scope = IdentityScope.model_validate(json.loads(record.scope_json))
+        return ArchivalPassage(
+            id=record.id,
+            document_id=record.document_id,
+            chunk_id=record.chunk_id,
+            archive_id=record.archive_id,
+            text=record.text,
+            citation=citation,
+            source_id=record.source_id,
+            file_id=record.file_id,
+            scope=scope,
+            tags=json.loads(record.tags_json),
+            score=record.score,
+            source_refs=MemoryStore._load_source_refs(record.source_refs_json),
+            legacy_item_id=record.legacy_item_id,
+            metadata=json.loads(record.metadata_json),
+            created_at=MemoryStore._aware(record.created_at),
+            updated_at=MemoryStore._aware(record.updated_at),
+        )
+
+    @staticmethod
+    def _archival_memory_from_record(record: ArchivalMemoryRecord) -> ArchivalMemory:
+        scope = None
+        if record.identity_scope_json:
+            scope = IdentityScope.model_validate(json.loads(record.identity_scope_json))
+        return ArchivalMemory(
+            id=record.id,
+            archive_id=record.archive_id,
+            memory_type=record.memory_type,  # type: ignore[arg-type]
+            content=record.content,
+            identity_scope=scope,
+            source_id=record.source_id,
+            file_id=record.file_id,
+            tags=json.loads(record.tags_json),
+            source_refs=MemoryStore._load_source_refs(record.source_refs_json),
+            history=[
+                MemoryHistoryEvent.model_validate(event)
+                for event in json.loads(record.history_json)
+            ],
+            entity_links=json.loads(record.entity_links_json),
+            legacy_item_id=record.legacy_item_id,
+            metadata=json.loads(record.metadata_json),
+            created_at=MemoryStore._aware(record.created_at),
+            updated_at=MemoryStore._aware(record.updated_at),
+            deleted_at=MemoryStore._aware(record.deleted_at),
+        )
+
+    @staticmethod
+    def _archive_attachment_from_record(record: ArchiveAttachmentRecord) -> ArchiveAttachment:
+        return ArchiveAttachment(
+            id=record.id,
+            archive_id=record.archive_id,
+            scope_type=record.scope_type,  # type: ignore[arg-type]
+            scope_id=record.scope_id,
+            source_refs=MemoryStore._load_source_refs(record.source_refs_json),
+            metadata=json.loads(record.metadata_json),
+            created_at=MemoryStore._aware(record.created_at),
+        )
+
+    @staticmethod
     def _core_block_from_record(record: CoreMemoryBlockRecord) -> CoreMemoryBlock:
         return CoreMemoryBlock(
             id=record.id,
@@ -679,6 +928,363 @@ class MemoryStore:
             )
             records = list(db.scalars(stmt))
         return [self._history_event_from_record(record) for record in records]
+
+    def create_archival_document(self, document: ArchivalDocument) -> ArchivalDocument:
+        self._require_source_refs(document.source_refs, "archival document write")
+        with self.db() as db:
+            db.add(
+                ArchivalDocumentRecord(
+                    id=document.id,
+                    archive_id=document.archive_id,
+                    title=document.title,
+                    text=document.text,
+                    version=document.version,
+                    source_id=document.source_id,
+                    file_id=document.file_id,
+                    tags_json=self._dump_json(document.tags),
+                    source_refs_json=self._dump_source_refs(document.source_refs),
+                    producer=document.producer,
+                    legacy_page_id=document.legacy_page_id,
+                    metadata_json=self._dump_json(document.metadata),
+                    created_at=document.created_at,
+                    updated_at=document.updated_at,
+                )
+            )
+        return document
+
+    def get_archival_document(self, document_id: str) -> ArchivalDocument | None:
+        with self.db() as db:
+            record = db.get(ArchivalDocumentRecord, document_id)
+            return None if record is None else self._document_from_record(record)
+
+    def create_archival_chunk(self, chunk: ArchivalChunk) -> ArchivalChunk:
+        self._require_source_refs(chunk.source_refs, "archival chunk write")
+        with self.db() as db:
+            db.add(
+                ArchivalChunkRecord(
+                    id=chunk.id,
+                    document_id=chunk.document_id,
+                    archive_id=chunk.archive_id,
+                    text=chunk.text,
+                    start=chunk.start,
+                    end=chunk.end,
+                    tags_json=self._dump_json(chunk.tags),
+                    source_refs_json=self._dump_source_refs(chunk.source_refs),
+                    metadata_json=self._dump_json(chunk.metadata),
+                    created_at=chunk.created_at,
+                    updated_at=chunk.updated_at,
+                )
+            )
+        return chunk
+
+    def list_archival_chunks(self, document_id: str | None = None) -> list[ArchivalChunk]:
+        with self.db() as db:
+            stmt = select(ArchivalChunkRecord).order_by(
+                ArchivalChunkRecord.start.asc(),
+                ArchivalChunkRecord.created_at.asc(),
+            )
+            if document_id is not None:
+                stmt = stmt.where(ArchivalChunkRecord.document_id == document_id)
+            records = list(db.scalars(stmt))
+        return [self._chunk_from_record(record) for record in records]
+
+    def create_archival_passage(self, passage: ArchivalPassage) -> ArchivalPassage:
+        self._require_source_refs(passage.source_refs, "archival passage write")
+        with self.db() as db:
+            db.add(
+                ArchivalPassageRecord(
+                    id=passage.id,
+                    document_id=passage.document_id,
+                    chunk_id=passage.chunk_id,
+                    archive_id=passage.archive_id,
+                    text=passage.text,
+                    citation_start=passage.citation.start if passage.citation else None,
+                    citation_end=passage.citation.end if passage.citation else None,
+                    source_id=passage.source_id,
+                    file_id=passage.file_id,
+                    scope_json=(
+                        passage.scope.model_dump_json() if passage.scope is not None else None
+                    ),
+                    tags_json=self._dump_json(passage.tags),
+                    score=passage.score,
+                    source_refs_json=self._dump_source_refs(passage.source_refs),
+                    legacy_item_id=passage.legacy_item_id,
+                    metadata_json=self._dump_json(passage.metadata),
+                    created_at=passage.created_at,
+                    updated_at=passage.updated_at,
+                )
+            )
+        return passage
+
+    def list_archival_passages(
+        self,
+        archive_id: str | None = None,
+        source_id: str | None = None,
+        file_id: str | None = None,
+    ) -> list[ArchivalPassage]:
+        with self.db() as db:
+            stmt = select(ArchivalPassageRecord).order_by(
+                ArchivalPassageRecord.created_at.asc(),
+                ArchivalPassageRecord.id.asc(),
+            )
+            if archive_id is not None:
+                stmt = stmt.where(ArchivalPassageRecord.archive_id == archive_id)
+            if source_id is not None:
+                stmt = stmt.where(ArchivalPassageRecord.source_id == source_id)
+            if file_id is not None:
+                stmt = stmt.where(ArchivalPassageRecord.file_id == file_id)
+            records = list(db.scalars(stmt))
+        return [self._passage_from_record(record) for record in records]
+
+    def create_archive_attachment(self, attachment: ArchiveAttachment) -> ArchiveAttachment:
+        self._require_source_refs(attachment.source_refs, "archive attachment write")
+        with self.db() as db:
+            db.add(
+                ArchiveAttachmentRecord(
+                    id=attachment.id,
+                    archive_id=attachment.archive_id,
+                    scope_type=attachment.scope_type,
+                    scope_id=attachment.scope_id,
+                    source_refs_json=self._dump_source_refs(attachment.source_refs),
+                    metadata_json=self._dump_json(attachment.metadata),
+                    created_at=attachment.created_at,
+                )
+            )
+        return attachment
+
+    def list_archive_attachments(
+        self,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+    ) -> list[ArchiveAttachment]:
+        with self.db() as db:
+            stmt = select(ArchiveAttachmentRecord).order_by(
+                ArchiveAttachmentRecord.created_at.asc(),
+                ArchiveAttachmentRecord.id.asc(),
+            )
+            if scope_type is not None:
+                stmt = stmt.where(ArchiveAttachmentRecord.scope_type == scope_type)
+            if scope_id is not None:
+                stmt = stmt.where(ArchiveAttachmentRecord.scope_id == scope_id)
+            records = list(db.scalars(stmt))
+        return [self._archive_attachment_from_record(record) for record in records]
+
+    def add_archival_memory(
+        self,
+        memory: ArchivalMemory,
+        *,
+        actor: str,
+        reason: str,
+    ) -> ArchivalMemory:
+        self._require_source_refs(memory.source_refs, "archival memory write")
+        ensure_persisted_identity_scope(memory.identity_scope)
+        event = MemoryHistoryEvent(
+            memory_id=memory.id,
+            memory_type="archival_memory",
+            operation="add",
+            actor=actor,  # type: ignore[arg-type]
+            reason=reason,
+            after=memory.model_dump(mode="json"),
+            source_refs=list(memory.source_refs),
+            created_at=memory.created_at,
+        )
+        memory.history.append(event)
+        with self.db() as db:
+            db.add(self._archival_memory_record(memory))
+            db.add(self._archival_history_record(event))
+        return memory
+
+    def update_archival_memory(
+        self,
+        memory_id: str,
+        *,
+        content: str,
+        source_refs: list[SourceRef],
+        actor: str,
+        reason: str,
+    ) -> ArchivalMemory | None:
+        self._require_source_refs(source_refs, "archival memory update")
+        with self.db() as db:
+            record = db.get(ArchivalMemoryRecord, memory_id)
+            if record is None:
+                return None
+            before = self._archival_memory_from_record(record)
+            record.content = content
+            record.source_refs_json = self._dump_source_refs(source_refs)
+            record.updated_at = utc_now()
+            updated = self._archival_memory_from_record(record)
+            event = MemoryHistoryEvent(
+                memory_id=memory_id,
+                memory_type="archival_memory",
+                operation="update",
+                actor=actor,  # type: ignore[arg-type]
+                reason=reason,
+                before=before.model_dump(mode="json"),
+                after=updated.model_dump(mode="json"),
+                source_refs=list(source_refs),
+                created_at=record.updated_at,
+            )
+            history = json.loads(record.history_json)
+            history.append(event.model_dump(mode="json"))
+            record.history_json = self._dump_json(history)
+            db.add(self._archival_history_record(event))
+            return self._archival_memory_from_record(record)
+
+    def delete_archival_memory(
+        self,
+        memory_id: str,
+        *,
+        source_refs: list[SourceRef],
+        actor: str,
+        reason: str,
+    ) -> ArchivalMemory | None:
+        self._require_source_refs(source_refs, "archival memory delete")
+        with self.db() as db:
+            record = db.get(ArchivalMemoryRecord, memory_id)
+            if record is None:
+                return None
+            before = self._archival_memory_from_record(record)
+            record.deleted_at = utc_now()
+            record.updated_at = record.deleted_at
+            deleted = self._archival_memory_from_record(record)
+            event = MemoryHistoryEvent(
+                memory_id=memory_id,
+                memory_type="archival_memory",
+                operation="delete",
+                actor=actor,  # type: ignore[arg-type]
+                reason=reason,
+                before=before.model_dump(mode="json"),
+                after=None,
+                source_refs=list(source_refs),
+                created_at=record.deleted_at,
+            )
+            history = json.loads(record.history_json)
+            history.append(event.model_dump(mode="json"))
+            record.history_json = self._dump_json(history)
+            db.add(self._archival_history_record(event))
+            return deleted
+
+    def list_archival_memory_history(self, memory_id: str) -> list[MemoryHistoryEvent]:
+        with self.db() as db:
+            stmt = (
+                select(ArchivalMemoryHistoryRecord)
+                .where(ArchivalMemoryHistoryRecord.memory_id == memory_id)
+                .order_by(
+                    ArchivalMemoryHistoryRecord.created_at.asc(),
+                    ArchivalMemoryHistoryRecord.id.asc(),
+                )
+            )
+            records = list(db.scalars(stmt))
+        return [self._history_event_from_record(record) for record in records]
+
+    def create_archival_document_from_message(
+        self,
+        message: Message,
+        *,
+        archive_id: str,
+        title: str,
+    ) -> ArchivalDocument:
+        ref = SourceRef(source_type="message", source_id=message.id, session_id=message.session_id)
+        return self.create_archival_document(
+            ArchivalDocument(
+                id=f"adoc_{message.id}",
+                archive_id=archive_id,
+                title=title,
+                text=message.content,
+                source_refs=[ref],
+                producer="message",
+            )
+        )
+
+    def create_archival_passage_from_document(
+        self,
+        document: ArchivalDocument,
+        *,
+        text: str,
+        source_refs: list[SourceRef],
+    ) -> ArchivalPassage:
+        return self.create_archival_passage(
+            ArchivalPassage(
+                id=f"apsg_{document.id}",
+                document_id=document.id,
+                archive_id=document.archive_id,
+                text=text,
+                citation=SourceSpan(start=0, end=len(text)),
+                source_id=document.source_id,
+                file_id=document.file_id,
+                tags=list(document.tags),
+                source_refs=source_refs,
+                metadata={"producer": document.producer},
+            )
+        )
+
+    def create_archival_memory_from_consolidation(
+        self,
+        *,
+        content: str,
+        memory_type: str,
+        archive_id: str,
+        source_refs: list[SourceRef],
+    ) -> ArchivalMemory:
+        return self.add_archival_memory(
+            ArchivalMemory(
+                id=f"amem_{len(content)}_{archive_id}",
+                archive_id=archive_id,
+                memory_type=memory_type,  # type: ignore[arg-type]
+                content=content,
+                source_refs=source_refs,
+                metadata={"producer": "consolidation"},
+            ),
+            actor="system",
+            reason="consolidation",
+        )
+
+    def _archival_memory_record(self, memory: ArchivalMemory) -> ArchivalMemoryRecord:
+        return ArchivalMemoryRecord(
+            id=memory.id,
+            archive_id=memory.archive_id,
+            memory_type=memory.memory_type,
+            content=memory.content,
+            identity_scope_json=(
+                memory.identity_scope.model_dump_json()
+                if memory.identity_scope is not None
+                else None
+            ),
+            source_id=memory.source_id,
+            file_id=memory.file_id,
+            tags_json=self._dump_json(memory.tags),
+            source_refs_json=self._dump_source_refs(memory.source_refs),
+            history_json=self._dump_json(
+                [event.model_dump(mode="json") for event in memory.history]
+            ),
+            entity_links_json=self._dump_json(memory.entity_links),
+            legacy_item_id=memory.legacy_item_id,
+            metadata_json=self._dump_json(memory.metadata),
+            created_at=memory.created_at,
+            updated_at=memory.updated_at,
+            deleted_at=memory.deleted_at,
+        )
+
+    def _archival_history_record(
+        self,
+        event: MemoryHistoryEvent,
+    ) -> ArchivalMemoryHistoryRecord:
+        return ArchivalMemoryHistoryRecord(
+            id=event.id,
+            memory_id=event.memory_id,
+            memory_type=event.memory_type,
+            operation=event.operation,
+            actor=event.actor,
+            reason=event.reason,
+            source_refs_json=self._dump_source_refs(event.source_refs),
+            before_json=(
+                json.dumps(event.before, ensure_ascii=False) if event.before is not None else None
+            ),
+            after_json=(
+                json.dumps(event.after, ensure_ascii=False) if event.after is not None else None
+            ),
+            created_at=event.created_at,
+        )
 
     def save_page(self, page: MemoryPage) -> MemoryPage:
         page_dir = self.pages_dir / page.session_id

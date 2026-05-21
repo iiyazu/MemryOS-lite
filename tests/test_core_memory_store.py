@@ -44,9 +44,9 @@ def test_core_memory_store_round_trip_history_and_soft_delete(tmp_path):
     assert store.list_core_memory_history("core_1")[-1].operation == "delete"
 
 
-def test_init_db_stamps_new_core_memory_head(tmp_path):
+def test_init_db_stamps_current_migration_head(tmp_path):
     store = MemoryStore(_settings(tmp_path))
     store.init_db()
     with store.db() as db:
         version = db.scalar(text("select version_num from alembic_version limit 1"))
-    assert version == "0005_add_core_memory"
+    assert version == "0006_add_archival_memory"

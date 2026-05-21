@@ -172,35 +172,84 @@ class ArchivalDocument(BaseModel):
     title: str
     text: str
     version: int = 1
+    source_id: str | None = None
+    file_id: str | None = None
     tags: list[str] = Field(default_factory=list)
     source_refs: list[SourceRef] = Field(default_factory=list)
+    producer: Literal["explicit_document", "message", "sleep", "retrieval"] | str = (
+        "explicit_document"
+    )
     legacy_page_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ArchivalChunk(BaseModel):
+    id: str
+    document_id: str
+    archive_id: str | None = None
+    text: str
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+    tags: list[str] = Field(default_factory=list)
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> ArchivalChunk:
+        if self.start > self.end:
+            raise ValueError("ArchivalChunk.start must be less than or equal to end")
+        return self
 
 
 class ArchivalPassage(BaseModel):
     id: str
     document_id: str | None = None
+    chunk_id: str | None = None
     archive_id: str | None = None
     text: str
     citation: SourceSpan | None = None
+    source_id: str | None = None
+    file_id: str | None = None
+    scope: IdentityScope | None = None
     tags: list[str] = Field(default_factory=list)
     score: float | None = None
     source_refs: list[SourceRef] = Field(default_factory=list)
     legacy_item_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class ArchivalMemory(BaseModel):
     id: str
+    archive_id: str | None = None
     memory_type: Literal["fact", "preference", "event", "procedure", "knowledge"]
     content: str
     identity_scope: IdentityScope | None = None
+    source_id: str | None = None
+    file_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
     source_refs: list[SourceRef] = Field(default_factory=list)
     history: list[MemoryHistoryEvent] = Field(default_factory=list)
     entity_links: list[str] = Field(default_factory=list)
     legacy_item_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    deleted_at: datetime | None = None
+
+
+class ArchiveAttachment(BaseModel):
+    id: str
+    archive_id: str
+    scope_type: Literal["agent", "project", "source", "user", "run", "session"]
+    scope_id: str
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -261,6 +310,31 @@ class CoreMemoryUpdate(BaseModel):
         if self.operation == "replace" and not self.old:
             raise ValueError("replace core memory updates require old")
         return self
+
+
+MemoryWriteSource = Literal[
+    "explicit_instruction",
+    "message_extraction",
+    "sleep_consolidation",
+]
+PromotionStatus = Literal["pending", "approved", "applied", "rejected", "deferred"]
+
+
+class PromotionCandidate(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("pcand"))
+    source_layer: Literal["recall", "archival", "document", "message_log"]
+    target_layer: Literal["archival", "core"]
+    operation: Literal["add", "update", "delete", "promote"]
+    content: str = Field(min_length=1)
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    identity_scope: IdentityScope | None = None
+    reason: str = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    status: PromotionStatus = "pending"
+    write_source: MemoryWriteSource
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class ContextLayerItem(BaseModel):
@@ -422,9 +496,11 @@ V3_KEEP_TABLES: set[str] = {
 
 V3_FUTURE_TABLES: set[str] = {
     "archival_documents",
+    "archival_chunks",
     "archival_passages",
     "archival_memories",
     "archival_memory_history",
+    "archive_attachments",
     "core_memory_blocks",
     "core_memory_history",
     "tool_policy_rules",
@@ -549,6 +625,8 @@ __all__ = [
     "AgentStepRunner",
     "ApprovalGate",
     "ApprovalState",
+    "ArchiveAttachment",
+    "ArchivalChunk",
     "ArchivalDocument",
     "ArchivalMemory",
     "ArchivalPassage",
@@ -564,8 +642,11 @@ __all__ = [
     "IdentityScope",
     "KernelTraceEvent",
     "LayerBudgetDecision",
+    "MemoryWriteSource",
     "MemoryHistoryEvent",
     "MessageLogEntry",
+    "PromotionCandidate",
+    "PromotionStatus",
     "REQUIRED_V3_ADAPTERS",
     "RecallMemoryEntry",
     "SourceRef",
