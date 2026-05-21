@@ -14,9 +14,10 @@ MemoryOSService
   page()
     -> MemoryPage / MemoryItem / trace
   build_context()
-    -> v1 ContextBuilder by default
+    -> v3 ContextComposer by default
+    -> v1 ContextBuilder when MEMORYOS_MEMORY_ARCH=v1
     -> v2 RecallPipeline when MEMORYOS_RECALL_PIPELINE=v2
-    -> v3 ContextComposer when MEMORYOS_MEMORY_ARCH=v3
+    -> agent kernel remains opt-in
 ```
 
 ## Important Modules
@@ -40,18 +41,21 @@ MemoryOSService
 
 ## Retrieval Paths
 
-### v1 Default
+### v3 Default
 
-The default path keeps backward compatibility:
+The default path now uses the layered v3 composer while preserving `v1`
+as an explicit fallback:
 
 ```text
-Message
-  -> MemoryPage / MemoryItem via paging
-  -> ContextBuilder
-  -> ContextPackage
+Message Log
+  -> Recall Memory
+  -> Archival Memory
+  -> Core Memory
+  -> ContextComposer
+  -> ContextPackage-compatible payload
 ```
 
-This path remains the default because existing API/eval behavior depends on it.
+Pin `MEMORYOS_MEMORY_ARCH=v1` to recover the legacy path.
 
 ### v2 Episode-First Recall
 
@@ -70,20 +74,17 @@ MEMORYOS_RECALL_PIPELINE=v2
 answering layer; `index_text` adds deterministic context such as role, date,
 benchmark session, and neighboring turns for retrieval.
 
-### v3 Layered Composer
-
-The v3 path is opt-in and remains a bench-candidate, not the default:
+### v1 Legacy Fallback
 
 ```text
-MEMORYOS_MEMORY_ARCH=v3
-  -> ContextComposer
-  -> task / core / recall / archival / recent layers
-  -> ContextPackage-compatible payload
-  -> metadata: v3_context, v3_layer_counts, v3_budget_decisions, v3_diagnostics
+MEMORYOS_MEMORY_ARCH=v1
+  -> ContextBuilder
+  -> MemoryPage / MemoryItem via paging
+  -> ContextPackage
 ```
 
-`MEMORYOS_AGENT_KERNEL=v1` enables the separate experimental kernel path. It is
-not required for normal API/CLI context building.
+`MEMORYOS_RECALL_PIPELINE=v2` still enables the separate episode-first recall
+path. `MEMORYOS_AGENT_KERNEL=v1` remains a separate experimental opt-in.
 
 ## Storage Model
 

@@ -106,6 +106,7 @@ class PublicBenchmarkResult:
     v3_layer_counts: dict[str, int] = field(default_factory=dict)
     v3_budget_decisions: list[dict[str, Any]] = field(default_factory=list)
     v3_diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    kernel_trace_events: list[str] = field(default_factory=list)
 
     def to_report(self) -> dict[str, object]:
         data = asdict(self)
@@ -677,6 +678,7 @@ def _to_public_result(
         v3_layer_counts=output.v3_layer_counts,
         v3_budget_decisions=output.v3_budget_decisions,
         v3_diagnostics=output.v3_diagnostics,
+        kernel_trace_events=output.kernel_trace_events,
     )
 
 

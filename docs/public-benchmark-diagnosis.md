@@ -6,9 +6,8 @@ It is a baseline note, not a full history log.
 ## Current Positioning
 
 MemoryOS Lite is an eval-driven, source-attributed Agent/RAG memory prototype.
-The current default path remains `v1`; episode-first recall is enabled only with
-`MEMORYOS_RECALL_PIPELINE=v2`, and the layered v3 composer is enabled only with
-`MEMORYOS_MEMORY_ARCH=v3`.
+The current default path is `v3`; `v1` remains an explicit fallback, and
+episode-first recall is still available with `MEMORYOS_RECALL_PIPELINE=v2`.
 
 The benchmark goal for the current phase is evidence recall and diagnostic
 clarity. Answer pass rate is tracked separately because answer quality can fail

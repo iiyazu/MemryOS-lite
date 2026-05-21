@@ -79,9 +79,9 @@ Execution control plane:
 | default-candidate | v3 may become default if God approves |
 | legacy-deprecated | Old paths enter cleanup |
 
-Unless Review and God explicitly approve, no phase enables v3 by default. The
-current phase-8 decision keeps v3 opt-in because public smoke verifies
-diagnostic reporting, not default-readiness.
+The current runtime defaults to v3 composer behavior. Legacy `v1` remains
+available through `MEMORYOS_MEMORY_ARCH=v1`, and the agentic kernel remains
+explicitly opt-in through `MEMORYOS_AGENT_KERNEL=v1`.
 
 ## Superseded
 

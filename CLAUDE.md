@@ -8,12 +8,14 @@ MemoryOS Lite is an **eval-driven, source-attributed Agent/RAG memory prototype*
 
 Current baseline:
 
-- Default recall path is `v1`.
+- Default memory architecture is `v3` layered composer.
+- Legacy `v1` ContextBuilder is still available with `MEMORYOS_MEMORY_ARCH=v1`.
 - Episode-first recall is opt-in with `MEMORYOS_RECALL_PIPELINE=v2`.
+- The v3 kernel remains opt-in with `MEMORYOS_AGENT_KERNEL=v1`.
 - Storage is SQLite-first with Alembic migrations through `0004_add_episodes`.
 - Qdrant is optional for ANN/vector experiments.
 - No separate production database backend is configured in the current code.
-- Full verification: `uv run pytest -q` -> `311 passed, 1 warning`.
+- Full verification: `uv run pytest -q` -> `352 passed, 1 warning`.
 - Hard eval: `uv run memoryos eval run --case-set hard --baseline memoryos_lite` -> `1.00/1.00`.
 - v2 smoke diagnostics:
   - LongMemEval limit 10: `episode_source_hit_at_10 = 8/10`, `planned_evidence_source_hit_at_5 = 8/10`.
@@ -26,11 +28,13 @@ Main lifecycle:
 ```text
 ingest(message)
   -> store Message
-  -> v1 default: existing page/item/recent-message path
+  -> v3 default: layered context composer path
+  -> v1 fallback: existing page/item/recent-message path when MEMORYOS_MEMORY_ARCH=v1
   -> v2 opt-in: ensure Episode records for raw-message recall
 
 build_context(task)
-  -> v1 ContextBuilder unless configured otherwise
+  -> v3 ContextComposer by default
+  -> v1 ContextBuilder when settings.resolved_memory_arch == "v1"
   -> v2 RecallPipeline when settings.resolved_recall_pipeline == "v2"
 ```
 

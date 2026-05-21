@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     memoryos_item_extraction: bool = True
     memoryos_item_evidence_max: int = 3
     memoryos_evidence_representation: str = "legacy"
-    memoryos_memory_arch: str = "v1"
+    memoryos_memory_arch: str = "v3"
     memoryos_agent_kernel: str = "off"
     memoryos_recall_pipeline: str = "v1"
     memoryos_evidence_direct_raw_fallback: bool = True

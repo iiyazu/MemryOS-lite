@@ -1,3 +1,5 @@
+# phase: phase-3
+
 # Execute Self-Review: Phase 3 - Core Memory Blocks
 
 ## 小问题修复

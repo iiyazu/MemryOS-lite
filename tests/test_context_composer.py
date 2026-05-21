@@ -23,6 +23,13 @@ def _ref(source_id: str = "msg_1") -> SourceRef:
     return SourceRef(source_type="message", source_id=source_id, session_id="ses_1")
 
 
+def test_settings_default_to_v3_composer_with_kernel_off(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    assert settings.resolved_memory_arch == "v3"
+    assert settings.resolved_agent_kernel == "off"
+
+
 def test_settings_resolve_v3_composer_and_kernel_flags(tmp_path):
     settings = Settings(
         data_dir=tmp_path / ".memoryos",

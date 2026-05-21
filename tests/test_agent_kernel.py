@@ -1,6 +1,7 @@
 from memoryos_lite.agent_kernel import (
     ApprovalGateV1,
     SimpleAgentStepRunner,
+    SimpleToolExecutionManager,
     SimpleToolPolicyEngine,
 )
 from memoryos_lite.config import Settings
@@ -73,3 +74,61 @@ def test_kernel_pauses_when_tool_requires_approval(tmp_path):
         "approval_pending",
         "kernel_step_completed",
     ]
+
+
+def test_kernel_resumes_approval_and_executes_archive_write(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    runner = SimpleAgentStepRunner(
+        store=store,
+        tool_policy_engine=SimpleToolPolicyEngine(
+            rules=[
+                ToolPolicyRule(
+                    id="rule_1",
+                    tool_name="archive_write",
+                    effect="require_approval",
+                    reason="approval required",
+                )
+            ]
+        ),
+        approval_gate=ApprovalGateV1(),
+        tool_execution_manager=SimpleToolExecutionManager(store=store),
+    )
+    request = AgentStepRequest(
+        session_id="ses_1",
+        input_messages=[],
+        context=ContextPackageV3(session_id="ses_1", task="demo"),
+    )
+    first = runner.run_step(
+        request,
+        tool_requests=[
+            ToolExecutionRequest(
+                session_id="ses_1",
+                tool_name="archive_write",
+                arguments={"content": "approved archival fact", "memory_type": "fact"},
+            )
+        ],
+    )
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+
+    resumed = runner.run_step(
+        request,
+        tool_requests=[
+            ToolExecutionRequest(
+                session_id="ses_1",
+                tool_name="archive_write",
+                arguments={"content": "approved archival fact", "memory_type": "fact"},
+                approval_id=approval_id,
+            )
+        ],
+    )
+
+    assert resumed.continuation == "stop"
+    executed = next(event for event in resumed.trace if event.event_type == "tool_executed")
+    memory_id = executed.payload["result"]["memory_id"]
+    history = store.list_archival_memory_history(memory_id)
+    assert history[0].after["content"] == "approved archival fact"
+    assert history[0].source_refs[0].approval_id == approval_id

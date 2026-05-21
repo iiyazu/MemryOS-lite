@@ -44,6 +44,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = [".hermes-loop"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -57,4 +58,3 @@ python_version = "3.11"
 [[tool.mypy.overrides]]
 module = ["qdrant_client.*"]
 ignore_missing_imports = true
-

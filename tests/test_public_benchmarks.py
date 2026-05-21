@@ -399,6 +399,7 @@ def test_public_benchmark_reports_dropped_relevant_memoryos_page(tmp_path):
     )
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v1",
         memoryos_page_window_max_messages=100,
         memoryos_page_window_max_tokens=100_000,
     )
@@ -488,6 +489,7 @@ def test_public_benchmark_reports_windowed_page_diagnostics(tmp_path):
     )
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v1",
         memoryos_page_window_max_messages=2,
         memoryos_page_window_max_tokens=10_000,
     )
@@ -613,5 +615,67 @@ def test_public_benchmark_reports_v3_context_diagnostics(tmp_path):
     assert report["v3_layer_counts"]["recent"] >= 1
     assert report["v3_budget_decisions"]
     assert report["v3_diagnostics"]
+    assert report["indexed_source_ids"]
+    assert report["episode_candidate_message_ids"]
+    assert report["planned_evidence_message_ids"]
     assert "episode_source_hit_at_10" in report
     assert "planned_evidence_source_hit_at_5" in report
+
+
+def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
+    data_path = tmp_path / "locomo_kernel.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "sample_kernel",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "The kernel marker is MemoryOS Lite.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What is the kernel marker?",
+                            "answer": "MemoryOS Lite",
+                            "evidence": ["D1:1"],
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_agent_kernel="v1",
+    )
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v3-kernel-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert report["memory_arch"] == "v3"
+    assert report["kernel_trace_events"] == [
+        "kernel_step_started",
+        "tool_policy_decision",
+        "approval_pending",
+        "kernel_step_completed",
+        "kernel_step_started",
+        "tool_policy_decision",
+        "approval_granted",
+        "tool_executed",
+        "kernel_step_completed",
+    ]

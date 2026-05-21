@@ -3,26 +3,26 @@
 This file tracks current limitations that are intentionally left for later
 work. Historical phase notes have been removed from this baseline document.
 
-## 1. v2 Recall And v3 Composer Are Opt-In
+## 1. v2 Recall Is Opt-In, v3 Composer Is Default
 
-Default behavior remains `v1`.
+Default behavior now uses `v3`.
 
 - Episode indexing and v2 recall are enabled only when
   `MEMORYOS_RECALL_PIPELINE=v2`.
-- The v3 layered composer is enabled only when `MEMORYOS_MEMORY_ARCH=v3`.
+- The v3 layered composer is the default memory architecture.
+- `MEMORYOS_MEMORY_ARCH=v1` remains available as an explicit fallback.
 - The v3 kernel is enabled only when `MEMORYOS_AGENT_KERNEL=v1`.
 
 Why this is acceptable:
 
-- Existing API/eval behavior stays stable.
-- v2 can be evaluated without changing default persistence or trace behavior.
-- v3 public smoke now emits layered diagnostics, but the evidence is not strong
-  enough to promote v3 to default.
+- Existing API/eval behavior stays stable when callers pin `v1`.
+- v2 can still be evaluated explicitly without changing default memory routing.
+- v3 public smoke now emits layered diagnostics and is the default path.
 
 Future direction:
 
-- Promote v2/v3 only after larger LongMemEval/LoCoMo slices show stable gains
-  and answer-quality regressions are understood.
+- Promote kernel defaulting only after larger LongMemEval/LoCoMo slices show
+  stable gains and approval/pause behavior is understood.
 
 ## 2. LoCoMo Remains Hard
 

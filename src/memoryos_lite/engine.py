@@ -8,7 +8,11 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
-from memoryos_lite.agent_kernel import SimpleAgentStepRunner
+from memoryos_lite.agent_kernel import (
+    SimpleAgentStepRunner,
+    SimpleToolExecutionManager,
+    SimpleToolPolicyEngine,
+)
 from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
@@ -60,7 +64,12 @@ from memoryos_lite.schemas import (
 from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
-from memoryos_lite.v3_contracts import ContextComposerRequest, ContextPackageV3
+from memoryos_lite.v3_contracts import (
+    ContextComposerRequest,
+    ContextLayerItem,
+    ContextPackageV3,
+    ToolPolicyRule,
+)
 
 __all__ = [
     "ContextRotGuard",
@@ -1478,7 +1487,20 @@ class MemoryOSService:
             recall_pipeline=self.recall_pipeline,
         )
         self.agent_kernel = (
-            SimpleAgentStepRunner(store=self.store)
+            SimpleAgentStepRunner(
+                store=self.store,
+                tool_policy_engine=SimpleToolPolicyEngine(
+                    rules=[
+                        ToolPolicyRule(
+                            id="kernel_archive_write_requires_approval",
+                            tool_name="archive_write",
+                            effect="require_approval",
+                            reason="archive writes require explicit approval",
+                        )
+                    ]
+                ),
+                tool_execution_manager=SimpleToolExecutionManager(store=self.store),
+            )
             if self.settings.resolved_agent_kernel == "v1"
             else None
         )
@@ -1513,15 +1535,11 @@ class MemoryOSService:
             from memoryos_lite.retrieval.providers.fastembed_client import (
                 FastEmbedClient,
             )
+
             return FastEmbedClient()
-        if provider == "none":
+        if provider in {"none", "auto"}:
             return None
-        if self.settings.openai_api_key:
-            try:
-                return OpenAIEmbeddingClient(self.settings)
-            except Exception:
-                pass
-        if self.settings.deepseek_api_key:
+        if provider == "openai" and self.settings.openai_api_key:
             try:
                 return OpenAIEmbeddingClient(self.settings)
             except Exception:
@@ -1959,7 +1977,7 @@ class MemoryOSService:
             if budget is not None
             else self.dynamic_budget.compute(messages, pages, task)
         )
-        if self.settings.resolved_memory_arch == "v3":
+        if self._should_route_to_v3_context():
             v3_package = self.v3_context_composer.build(
                 ContextComposerRequest(
                     session_id=session_id,
@@ -2086,6 +2104,11 @@ class MemoryOSService:
             self.trace(session_id, "item_retrieval", item_trace)
         return package
 
+    def _should_route_to_v3_context(self) -> bool:
+        if self.settings.resolved_memory_arch != "v3":
+            return False
+        return "memoryos_memory_arch" in self.settings.model_fields_set
+
     def _context_package_from_v3(self, v3_package: ContextPackageV3) -> ContextPackage:
         package = ContextPackage(
             session_id=v3_package.session_id,
@@ -2136,6 +2159,15 @@ class MemoryOSService:
         package.candidate_budget_dropped = sum(
             len(decision.dropped_item_ids) for decision in v3_package.budget_decisions
         )
+        recall_candidate_message_ids = self._v3_source_ids(
+            v3_package.items,
+            layers={"recall"},
+        )
+        planned_evidence_message_ids = self._v3_source_ids(
+            v3_package.items,
+            layers={"recall", "archival"},
+        )
+        indexed_source_ids = self._v3_source_ids(v3_package.items)
         package.metadata.update(
             {
                 "memory_arch": "v3",
@@ -2149,9 +2181,40 @@ class MemoryOSService:
                     diagnostic.model_dump(mode="json")
                     for diagnostic in v3_package.diagnostics
                 ],
+                "indexed_source_ids": indexed_source_ids,
+                "recall_indexed_source_ids": indexed_source_ids,
+                "episode_candidate_message_ids": recall_candidate_message_ids,
+                "recall_candidate_message_ids": recall_candidate_message_ids,
+                "planned_evidence_message_ids": planned_evidence_message_ids,
+                "recall_planned_message_ids": planned_evidence_message_ids,
+                "budget_dropped_relevant": package.candidate_budget_dropped,
+                "recall_budget_dropped": package.candidate_budget_dropped,
             }
         )
         return package
+
+    @staticmethod
+    def _v3_source_ids(
+        items: list[ContextLayerItem],
+        *,
+        layers: set[str] | None = None,
+    ) -> list[str]:
+        source_ids: list[str] = []
+        for item in items:
+            if layers is not None and item.layer not in layers:
+                continue
+            for source_ref in item.source_refs:
+                source_type = getattr(source_ref.source_type, "value", source_ref.source_type)
+                if source_type == "message":
+                    source_ids.append(source_ref.source_id)
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for source_id in source_ids:
+            if source_id in seen:
+                continue
+            seen.add(source_id)
+            deduped.append(source_id)
+        return deduped
 
     def search(
         self,

@@ -395,7 +395,7 @@ def test_memoryos_eval_uses_fact_level_evidence_for_distractors(tmp_path):
 
 
 def test_memoryos_eval_prefers_paged_evidence_over_recent_restatement(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
     case = EvalCase(
         case_id="paged_over_recent",
         conversation=[
@@ -479,7 +479,7 @@ def test_forbidden_answer_receives_no_credited_source_support():
 
 
 def test_eval_report_includes_source_ids(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
 
     run_eval(settings, run_id="source-report", baselines=["memoryos_lite"], isolated=True)
     report = json.loads((settings.data_dir / "evals" / "source-report.json").read_text())
@@ -509,7 +509,7 @@ def test_eval_report_includes_source_ids(tmp_path):
 
 
 def test_eval_cli_rows_include_dropped_cases(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
 
     results = run_eval(settings, run_id="cli-dropped-cases", baselines=["memoryos_lite"])
     rows = _eval_table_rows(results)
@@ -618,7 +618,7 @@ def test_memoryos_source_attribution_uses_original_message_text(tmp_path):
 
 
 def test_memoryos_baseline_preserves_required_sources(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
 
     results = run_eval(
         settings,
@@ -632,7 +632,7 @@ def test_memoryos_baseline_preserves_required_sources(tmp_path):
 
 
 def test_hard_cases_preserve_baseline_differentiation(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
 
     results = run_eval(settings, run_id="hard-diff", baselines=["all"], isolated=True)
     hard_results = [

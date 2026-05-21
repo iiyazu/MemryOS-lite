@@ -14,6 +14,12 @@ from memoryos_lite.schemas import EvalCase, MemoryPage, Message, MessageCreate, 
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
+from memoryos_lite.v3_contracts import (
+    AgentStepRequest,
+    ContextPackageV3,
+    ToolExecutionRequest,
+    message_to_log_entry,
+)
 
 CASE_COUNT = 8
 
@@ -104,6 +110,7 @@ class BaselineOutput:
     v3_layer_counts: dict[str, int] = field(default_factory=dict)
     v3_budget_decisions: list[dict[str, object]] = field(default_factory=list)
     v3_diagnostics: list[dict[str, object]] = field(default_factory=list)
+    kernel_trace_events: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -715,6 +722,59 @@ def _run_baseline(
         v3_layer_counts = context.metadata.get("v3_layer_counts")
         v3_budget_decisions = context.metadata.get("v3_budget_decisions")
         v3_diagnostics = context.metadata.get("v3_diagnostics")
+        kernel_trace_events: list[str] = []
+        v3_context_raw = context.metadata.get("v3_context")
+        if (
+            service.agent_kernel is not None
+            and isinstance(v3_context_raw, dict)
+            and settings.resolved_memory_arch == "v3"
+        ):
+            v3_context_package = ContextPackageV3.model_validate(v3_context_raw)
+            tool_request = ToolExecutionRequest(
+                session_id=context_session.id,
+                tool_name="archive_write",
+                arguments={
+                    "content": f"Benchmark question reviewed: {case.question}",
+                    "memory_type": "fact",
+                    "reason": "public benchmark kernel probe",
+                    "source": "public_benchmark_kernel_probe",
+                },
+            )
+            step = service.agent_kernel.run_step(
+                AgentStepRequest(
+                    session_id=context_session.id,
+                    input_messages=[
+                        message_to_log_entry(message)
+                        for message in context.recent_messages
+                    ],
+                    context=v3_context_package,
+                ),
+                tool_requests=[tool_request],
+            )
+            kernel_trace_events = [event.event_type for event in step.trace]
+            approval_id = next(
+                (
+                    event.approval_id
+                    for event in step.trace
+                    if event.event_type == "approval_pending" and event.approval_id
+                ),
+                None,
+            )
+            if step.continuation == "pause" and approval_id:
+                resumed = service.agent_kernel.run_step(
+                    AgentStepRequest(
+                        session_id=context_session.id,
+                        input_messages=[
+                            message_to_log_entry(message)
+                            for message in context.recent_messages
+                        ],
+                        context=v3_context_package,
+                    ),
+                    tool_requests=[
+                        tool_request.model_copy(update={"approval_id": approval_id})
+                    ],
+                )
+                kernel_trace_events.extend(event.event_type for event in resumed.trace)
         return _baseline_from_evidence(
             case.question,
             memory_evidence,
@@ -773,6 +833,7 @@ def _run_baseline(
                 if isinstance(v3_diagnostics, list)
                 else None
             ),
+            kernel_trace_events=kernel_trace_events,
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -890,6 +951,7 @@ def _baseline_from_evidence(
     v3_layer_counts: dict[str, int] | None = None,
     v3_budget_decisions: list[dict[str, object]] | None = None,
     v3_diagnostics: list[dict[str, object]] | None = None,
+    kernel_trace_events: list[str] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}
@@ -939,6 +1001,7 @@ def _baseline_from_evidence(
         v3_layer_counts=v3_layer_counts or {},
         v3_budget_decisions=v3_budget_decisions or [],
         v3_diagnostics=v3_diagnostics or [],
+        kernel_trace_events=kernel_trace_events or [],
     )
 
 
