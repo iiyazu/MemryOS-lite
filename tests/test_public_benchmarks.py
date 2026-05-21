@@ -562,3 +562,56 @@ def test_public_benchmark_reports_v2_recall_diagnostics(tmp_path):
     assert report["episode_source_hit_at_10"] is True
     assert report["planned_evidence_source_hit_at_5"] is True
     assert report["source_not_indexed"] is False
+
+
+def test_public_benchmark_reports_v3_context_diagnostics(tmp_path):
+    data_path = tmp_path / "locomo_v3.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "sample_v3",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "The v3 recall marker is MemoryOS Lite.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What is the v3 recall marker?",
+                            "answer": "MemoryOS Lite",
+                            "evidence": ["D1:1"],
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+    )
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v3-diagnostics-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert report["memory_arch"] == "v3"
+    assert report["v3_layer_counts"]["task"] == 1
+    assert report["v3_layer_counts"]["recent"] >= 1
+    assert report["v3_budget_decisions"]
+    assert report["v3_diagnostics"]
+    assert "episode_source_hit_at_10" in report
+    assert "planned_evidence_source_hit_at_5" in report

@@ -99,6 +99,11 @@ class BaselineOutput:
     item_candidate_source_ids: list[str] = field(default_factory=list)
     episode_candidate_message_ids: list[str] = field(default_factory=list)
     planned_evidence_message_ids: list[str] = field(default_factory=list)
+    memory_arch: str | None = None
+    v3_context: dict[str, object] = field(default_factory=dict)
+    v3_layer_counts: dict[str, int] = field(default_factory=dict)
+    v3_budget_decisions: list[dict[str, object]] = field(default_factory=list)
+    v3_diagnostics: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -705,6 +710,11 @@ def _run_baseline(
             if required_source_set and has_v2_index_diagnostics
             else False
         )
+        memory_arch = context.metadata.get("memory_arch")
+        v3_context = context.metadata.get("v3_context")
+        v3_layer_counts = context.metadata.get("v3_layer_counts")
+        v3_budget_decisions = context.metadata.get("v3_budget_decisions")
+        v3_diagnostics = context.metadata.get("v3_diagnostics")
         return _baseline_from_evidence(
             case.question,
             memory_evidence,
@@ -742,6 +752,27 @@ def _run_baseline(
             item_candidate_source_ids=item_candidate_source_ids,
             episode_candidate_message_ids=episode_candidate_message_ids,
             planned_evidence_message_ids=planned_evidence_message_ids,
+            memory_arch=memory_arch if isinstance(memory_arch, str) else None,
+            v3_context=v3_context if isinstance(v3_context, dict) else None,
+            v3_layer_counts=(
+                {
+                    str(layer): count
+                    for layer, count in v3_layer_counts.items()
+                    if isinstance(count, int)
+                }
+                if isinstance(v3_layer_counts, dict)
+                else None
+            ),
+            v3_budget_decisions=(
+                [item for item in v3_budget_decisions if isinstance(item, dict)]
+                if isinstance(v3_budget_decisions, list)
+                else None
+            ),
+            v3_diagnostics=(
+                [item for item in v3_diagnostics if isinstance(item, dict)]
+                if isinstance(v3_diagnostics, list)
+                else None
+            ),
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -854,6 +885,11 @@ def _baseline_from_evidence(
     item_candidate_source_ids: list[str] | None = None,
     episode_candidate_message_ids: list[str] | None = None,
     planned_evidence_message_ids: list[str] | None = None,
+    memory_arch: str | None = None,
+    v3_context: dict[str, object] | None = None,
+    v3_layer_counts: dict[str, int] | None = None,
+    v3_budget_decisions: list[dict[str, object]] | None = None,
+    v3_diagnostics: list[dict[str, object]] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}
@@ -898,6 +934,11 @@ def _baseline_from_evidence(
         item_candidate_source_ids=item_candidate_source_ids or [],
         episode_candidate_message_ids=episode_candidate_message_ids or [],
         planned_evidence_message_ids=planned_evidence_message_ids or [],
+        memory_arch=memory_arch,
+        v3_context=v3_context or {},
+        v3_layer_counts=v3_layer_counts or {},
+        v3_budget_decisions=v3_budget_decisions or [],
+        v3_diagnostics=v3_diagnostics or [],
     )
 
 

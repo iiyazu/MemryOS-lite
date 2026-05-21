@@ -101,6 +101,11 @@ class PublicBenchmarkResult:
     item_hit_item_ids: list[str] = field(default_factory=list)
     item_hit_source_ids: list[str] = field(default_factory=list)
     item_count_in_session: int = 0
+    memory_arch: str | None = None
+    v3_context: dict[str, Any] = field(default_factory=dict)
+    v3_layer_counts: dict[str, int] = field(default_factory=dict)
+    v3_budget_decisions: list[dict[str, Any]] = field(default_factory=list)
+    v3_diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
     def to_report(self) -> dict[str, object]:
         data = asdict(self)
@@ -667,6 +672,11 @@ def _to_public_result(
         item_hit_item_ids=(item_metrics or {}).get("item_hit_item_ids", []),
         item_hit_source_ids=(item_metrics or {}).get("item_hit_source_ids", []),
         item_count_in_session=(item_metrics or {}).get("item_count_in_session", 0),
+        memory_arch=output.memory_arch,
+        v3_context=output.v3_context,
+        v3_layer_counts=output.v3_layer_counts,
+        v3_budget_decisions=output.v3_budget_decisions,
+        v3_diagnostics=output.v3_diagnostics,
     )
 
 

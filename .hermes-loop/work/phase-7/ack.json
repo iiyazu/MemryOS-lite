@@ -1,0 +1,13 @@
+{
+  "phase": "phase-7",
+  "status": "acknowledged",
+  "evidence": {
+    "tests": "uv run pytest -q",
+    "result": "352 passed, 1 warning",
+    "hard_eval": "accuracy=1.00 source_accuracy=1.00 cases=16",
+    "v3_public_smoke": [
+      ".memoryos/evals/v3_lme_phase7_smoke_longmemeval.json",
+      ".memoryos/evals/v3_locomo_phase7_smoke_locomo.json"
+    ]
+  }
+}
