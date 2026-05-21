@@ -1,20 +1,20 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 2,
+  "current_phase_idx": 3,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-2",
+    "phase": "phase-3",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-3",
+    "phase": "phase-4",
     "state": "PLAN_STORM"
   },
   "research_lane": {
     "phases": [
-      "phase-4"
+      "phase-5"
     ]
   },
   "review_lane": {
@@ -102,9 +102,9 @@
     },
     {
       "id": "phase-2",
-      "name": "Recall Memory Layer",
-      "target_state": "shadow-read",
-      "status": "in_progress",
+      "name": "Evidence Harness And Failure Taxonomy",
+      "target_state": "bench-diagnostic",
+      "status": "completed",
       "state_history": [
         {
           "completed_at": "2026-05-20T19:00:00+00:00",
@@ -129,6 +129,25 @@
             }
           },
           "commit": "52c467c"
+        },
+        {
+          "completed_at": "2026-05-22T06:26:27+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "context_bundle": "work/phase-2/context_bundle.md",
+            "review": "work/phase-2/reviews/codex-review.md",
+            "reflection": "work/phase-2/reflect_phase-2.md",
+            "tests_passed": 366,
+            "checks_passed": 3,
+            "case_level_eval": {
+              "longmemeval": "30 full-chain LLM judge: 18 pass / 12 fail; retrieval_miss=3; context_missing_evidence=12; unsupported_answer=15",
+              "locomo": "30 full-chain LLM judge: 7 pass / 23 fail; retrieval_miss=11; context_missing_evidence=10; unsupported_answer=9"
+            },
+            "diagnostic_only": true,
+            "no_benchmark_improvement_claim": true,
+            "kernel_default_unchanged": true
+          },
+          "commit": "ed7c84b"
         }
       ]
     },
@@ -136,7 +155,7 @@
       "id": "phase-3",
       "name": "Core Memory Blocks",
       "target_state": "shadow-write",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": [
         {
           "completed_at": "2026-05-21T09:00:00+00:00",
@@ -266,5 +285,5 @@
       ]
     }
   ],
-  "last_updated": "2026-05-22T04:21:05+08:00"
+  "last_updated": "2026-05-22T06:26:27+08:00"
 }
