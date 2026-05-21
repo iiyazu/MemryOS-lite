@@ -214,6 +214,8 @@ class CoreMemoryBlock(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    deleted_at: datetime | None = None
+    deleted_by_event_id: str | None = None
 
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "expired", "cancelled"]
@@ -256,6 +258,8 @@ class CoreMemoryUpdate(BaseModel):
                 raise ValueError(
                     "core memory updates require source_refs or approved approval_state"
                 )
+        if self.operation == "replace" and not self.old:
+            raise ValueError("replace core memory updates require old")
         return self
 
 

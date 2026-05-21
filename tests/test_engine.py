@@ -15,6 +15,7 @@ from memoryos_lite.schemas import (
     Role,
 )
 from memoryos_lite.store import create_store
+from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
 
 
 def test_ingest_triggers_paging_and_commits_page(service):
@@ -184,6 +185,25 @@ def test_context_builder_retrieves_relevant_page(service):
     loaded_ids = [item.page_id for item in context.retrieved_pages + context.active_task_pages]
     assert page.id in loaded_ids
     assert context.estimated_tokens <= 800
+
+
+def test_build_context_ignores_core_memory_blocks(service):
+    session = service.create_session("core-memory-regression")
+    service.store.create_core_memory_block(
+        CoreMemoryBlock(
+            id="core_1",
+            label="profile",
+            description="Stable user facts",
+            value="Alice lives in Shanghai.",
+            limit_tokens=100,
+            source_refs=[SourceRef(source_type="message", source_id="msg_1")],
+        )
+    )
+
+    context = service.build_context(session.id, "用户最终决定做什么？", budget=200)
+
+    assert all(not key.startswith("core_") for key in context.metadata)
+    assert "Alice lives in Shanghai." not in context.model_dump_json()
 
 
 def test_context_builder_deduplicates_pinned_core_pages_by_id(service):

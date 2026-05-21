@@ -258,6 +258,30 @@ def test_core_memory_update_requires_source_refs_or_approval():
         )
 
 
+def test_core_memory_block_defaults_soft_delete_fields():
+    block = CoreMemoryBlock(
+        id="core_2",
+        label="profile",
+        description="Stable user facts",
+        value="Alice lives in Shanghai.",
+        limit_tokens=200,
+        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
+    )
+
+    assert block.deleted_at is None
+    assert block.deleted_by_event_id is None
+
+
+def test_core_memory_replace_requires_old_value():
+    with pytest.raises(ValidationError):
+        CoreMemoryUpdate(
+            block_id="core_1",
+            operation="replace",
+            content="Alice lives in Suzhou.",
+            source_refs=[SourceRef(source_type="message", source_id="msg_2")],
+        )
+
+
 def test_context_package_v3_groups_layer_items_and_budget_decisions():
     package = ContextPackageV3(
         session_id="ses_1",

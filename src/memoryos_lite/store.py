@@ -31,6 +31,7 @@ from memoryos_lite.schemas import (
     TraceEvent,
     utc_now,
 )
+from memoryos_lite.v3_contracts import CoreMemoryBlock, MemoryHistoryEvent, SourceRef
 
 EMBEDDING_DIM = 1536
 
@@ -163,6 +164,43 @@ class TraceRecord(Base):
     )
 
 
+class CoreMemoryBlockRecord(Base):
+    __tablename__ = "core_memory_blocks"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    limit_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    deleted_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_core_memory_blocks_created", "created_at"),)
+
+
+class CoreMemoryHistoryRecord(Base):
+    __tablename__ = "core_memory_history"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    memory_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_core_memory_history_memory_created", "memory_id", "created_at"),
+    )
+
+
 class MemoryStore:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -189,6 +227,9 @@ class MemoryStore:
                 raise
         # Stamp alembic_version so `alembic upgrade head` on an existing DB
         # does not fail with "table already exists".
+        self._stamp_alembic_head()
+
+    def _stamp_alembic_head(self) -> None:
         with self.engine.begin() as conn:
             conn.execute(
                 text(
@@ -204,8 +245,12 @@ class MemoryStore:
                 conn.execute(
                     text(
                         "INSERT INTO alembic_version (version_num)"
-                        " VALUES ('0004_add_episodes')"
+                        " VALUES ('0005_add_core_memory')"
                     )
+                )
+            elif row[0] != "0005_add_core_memory":
+                conn.execute(
+                    text("UPDATE alembic_version SET version_num = '0005_add_core_memory'")
                 )
 
     @contextmanager
@@ -440,6 +485,200 @@ class MemoryStore:
                 )
             )
         return int(total or 0)
+
+    @staticmethod
+    def _dump_source_refs(source_refs: list[SourceRef]) -> str:
+        return json.dumps([ref.model_dump(mode="json") for ref in source_refs], ensure_ascii=False)
+
+    @staticmethod
+    def _load_source_refs(source_refs_json: str) -> list[SourceRef]:
+        return [SourceRef.model_validate(ref) for ref in json.loads(source_refs_json)]
+
+    @staticmethod
+    def _core_block_from_record(record: CoreMemoryBlockRecord) -> CoreMemoryBlock:
+        return CoreMemoryBlock(
+            id=record.id,
+            label=record.label,
+            description=record.description,
+            value=record.value,
+            limit_tokens=record.limit_tokens,
+            source_refs=MemoryStore._load_source_refs(record.source_refs_json),
+            metadata=json.loads(record.metadata_json),
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            deleted_at=record.deleted_at,
+            deleted_by_event_id=record.deleted_by_event_id,
+        )
+
+    @staticmethod
+    def _history_event_from_record(record: CoreMemoryHistoryRecord) -> MemoryHistoryEvent:
+        return MemoryHistoryEvent(
+            id=record.id,
+            memory_id=record.memory_id,
+            memory_type=record.memory_type,  # type: ignore[arg-type]
+            operation=record.operation,  # type: ignore[arg-type]
+            source_refs=MemoryStore._load_source_refs(record.source_refs_json),
+            actor=record.actor,  # type: ignore[arg-type]
+            reason=record.reason,
+            before=json.loads(record.before_json) if record.before_json is not None else None,
+            after=json.loads(record.after_json) if record.after_json is not None else None,
+            created_at=record.created_at,
+        )
+
+    @staticmethod
+    def _history_record_from_event(event: MemoryHistoryEvent) -> CoreMemoryHistoryRecord:
+        return CoreMemoryHistoryRecord(
+            id=event.id,
+            memory_id=event.memory_id,
+            memory_type=event.memory_type,
+            operation=event.operation,
+            actor=event.actor,
+            reason=event.reason,
+            source_refs_json=MemoryStore._dump_source_refs(event.source_refs),
+            before_json=(
+                json.dumps(event.before, ensure_ascii=False) if event.before is not None else None
+            ),
+            after_json=(
+                json.dumps(event.after, ensure_ascii=False) if event.after is not None else None
+            ),
+            created_at=event.created_at,
+        )
+
+    def create_core_memory_block(
+        self,
+        block: CoreMemoryBlock,
+        *,
+        actor: str = "system",
+        reason: str = "core memory block created",
+    ) -> CoreMemoryBlock:
+        created = CoreMemoryBlock(
+            id=block.id,
+            label=block.label,
+            description=block.description,
+            value=block.value,
+            limit_tokens=block.limit_tokens,
+            source_refs=list(block.source_refs),
+            metadata=dict(block.metadata),
+            created_at=block.created_at,
+            updated_at=block.updated_at,
+        )
+        event = MemoryHistoryEvent(
+            memory_id=created.id,
+            memory_type="core_block",
+            operation="add",
+            actor=actor,  # type: ignore[arg-type]
+            reason=reason,
+            before=None,
+            after=created.model_dump(mode="json"),
+            source_refs=list(created.source_refs),
+            created_at=created.created_at,
+        )
+        with self.db() as db:
+            db.add(
+                CoreMemoryBlockRecord(
+                    id=created.id,
+                    label=created.label,
+                    description=created.description,
+                    value=created.value,
+                    limit_tokens=created.limit_tokens,
+                    source_refs_json=self._dump_source_refs(created.source_refs),
+                    metadata_json=json.dumps(created.metadata, ensure_ascii=False),
+                    deleted_at=created.deleted_at,
+                    deleted_by_event_id=created.deleted_by_event_id,
+                    created_at=created.created_at,
+                    updated_at=created.updated_at,
+                )
+            )
+            db.add(self._history_record_from_event(event))
+        return created
+
+    def get_core_memory_block(
+        self,
+        block_id: str,
+        include_deleted: bool = False,
+    ) -> CoreMemoryBlock | None:
+        with self.db() as db:
+            record = db.get(CoreMemoryBlockRecord, block_id)
+            if record is None:
+                return None
+            if record.deleted_at is not None and not include_deleted:
+                return None
+            return self._core_block_from_record(record)
+
+    def list_core_memory_blocks(self, include_deleted: bool = False) -> list[CoreMemoryBlock]:
+        with self.db() as db:
+            stmt = select(CoreMemoryBlockRecord).order_by(
+                CoreMemoryBlockRecord.created_at.asc(),
+                CoreMemoryBlockRecord.label.asc(),
+                CoreMemoryBlockRecord.id.asc(),
+            )
+            records = list(db.scalars(stmt))
+        blocks = [self._core_block_from_record(record) for record in records]
+        if include_deleted:
+            return blocks
+        return [block for block in blocks if block.deleted_at is None]
+
+    def update_core_memory_block(self, block: CoreMemoryBlock) -> CoreMemoryBlock | None:
+        with self.db() as db:
+            record = db.get(CoreMemoryBlockRecord, block.id)
+            if record is None:
+                return None
+            record.label = block.label
+            record.description = block.description
+            record.value = block.value
+            record.limit_tokens = block.limit_tokens
+            record.source_refs_json = self._dump_source_refs(block.source_refs)
+            record.metadata_json = json.dumps(block.metadata, ensure_ascii=False)
+            record.deleted_at = block.deleted_at
+            record.deleted_by_event_id = block.deleted_by_event_id
+            record.updated_at = block.updated_at
+            return self._core_block_from_record(record)
+
+    def delete_core_memory_block(
+        self,
+        block_id: str,
+        source_refs: list[SourceRef],
+        actor: str,
+        reason: str,
+    ) -> CoreMemoryBlock | None:
+        with self.db() as db:
+            record = db.get(CoreMemoryBlockRecord, block_id)
+            if record is None:
+                return None
+            before = self._core_block_from_record(record)
+            event = MemoryHistoryEvent(
+                memory_id=before.id,
+                memory_type="core_block",
+                operation="delete",
+                actor=actor,  # type: ignore[arg-type]
+                reason=reason,
+                before=before.model_dump(mode="json"),
+                after=None,
+                source_refs=list(source_refs),
+            )
+            db.add(self._history_record_from_event(event))
+            record.deleted_at = event.created_at
+            record.deleted_by_event_id = event.id
+            record.updated_at = event.created_at
+            return self._core_block_from_record(record)
+
+    def append_core_memory_history(self, event: MemoryHistoryEvent) -> MemoryHistoryEvent:
+        with self.db() as db:
+            db.add(self._history_record_from_event(event))
+        return event
+
+    def list_core_memory_history(self, block_id: str) -> list[MemoryHistoryEvent]:
+        with self.db() as db:
+            stmt = (
+                select(CoreMemoryHistoryRecord)
+                .where(CoreMemoryHistoryRecord.memory_id == block_id)
+                .order_by(
+                    CoreMemoryHistoryRecord.created_at.asc(),
+                    CoreMemoryHistoryRecord.id.asc(),
+                )
+            )
+            records = list(db.scalars(stmt))
+        return [self._history_event_from_record(record) for record in records]
 
     def save_page(self, page: MemoryPage) -> MemoryPage:
         page_dir = self.pages_dir / page.session_id
@@ -708,6 +947,7 @@ class MemoryStore:
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)
         Base.metadata.create_all(self.engine)
+        self._stamp_alembic_head()
         if self.pages_dir.exists():
             for path in self.pages_dir.rglob("*.json"):
                 path.unlink()

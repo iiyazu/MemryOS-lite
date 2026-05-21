@@ -1,7 +1,12 @@
+# DEPRECATED: 使用 god_launcher.sh + god_loop_prompt.md 作为唯一入口
+# 此文件保留仅供参考，不要运行
 #!/usr/bin/env python3
 """Hermes Loop v2 — 轻量状态机。Python 处理机械状态，Codex 处理推理状态。"""
 import json, subprocess, sys, time
 from pathlib import Path
+
+# DEPRECATED: 唯一入口是 god_launcher.sh + god_loop_prompt.md
+print('hermes_loop.py is DEPRECATED. Use god_launcher.sh instead.'); sys.exit(1)
 from datetime import datetime, timezone
 
 PROJECT = Path("/home/iiyatu/projects/python/memoryOS")

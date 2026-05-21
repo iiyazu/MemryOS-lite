@@ -1,13 +1,13 @@
 {
-  "phase": "phase-2",
-  "phase_index": 2,
-  "phase_name": "Recall Memory Layer",
-  "target_state": "shadow-read",
-  "task_description": "从 blueprint.md 的 phase-2 段提取的任务。\n- Evolve `Episode` into `RecallMemoryEntry`.\n- Preserve raw source attribution.\n- Add role / temporal / session / neighbor-aware recall.\n- Move the old evidence-planner structured ranking, neighbor, budget, and drop diagnostics into the recall layer.\n- Keep the old `episodes` table for now.\n- Old `episode_*` benchmark fields continue to work as mapped diagnostics.\n- v1 default remains unchanged.\n- Recall entries can be backfilled from messages.\n- Recall search does not rely on benchmark case IDs.\n- Recall diagnostics can explain direct hit, neighbor, drop, dedupe, and rank.\n- LME/LoCoMo recall hit stays at or above the current smoke baseline.\n",
+  "phase": "phase-3",
+  "phase_index": 3,
+  "phase_name": "Core Memory Blocks",
+  "target_state": "shadow-write",
+  "task_description": "从 blueprint.md 的 phase-3 段提取的任务。\n- Add Letta-style core memory blocks.\n- Add core memory history.\n- Implement append / replace / update semantics.\n- Implement render format without making it the default legacy context.\n- Start with opt-in APIs or internal interfaces only.\n- No automatic source-less writes into core memory.\n- Every update requires source refs or explicit manual provenance.\n- Blocks can be created, read, updated, and deleted.\n- Update history is traceable.\n- Blocks have limit, label, description, value, and source refs.\n- Source-backed enforcement is tested.\n",
   "for_plan_agent": {
-    "goal": "完成 Recall Memory Layer 的所有任务。详细描述见 blueprint.md 的 phase-2 段。",
+    "goal": "完成 Core Memory Blocks 的所有任务。详细描述见 blueprint.md 的 phase-3 段。",
     "constraints": [
-      "目标兼容状态: shadow-read",
+      "目标兼容状态: shadow-write",
       "遵守 blueprint.md 中的兼容性要求",
       "遵守 CLAUDE.md 中的约定"
     ],
@@ -16,13 +16,16 @@
       "CLAUDE.md",
       "src/memoryos_lite/"
     ],
-    "design_notes": "从 blueprint.md 的 phase-2 段提取设计要点"
+    "design_notes": "从 blueprint.md 的 phase-3 段提取设计要点"
   },
   "for_review_agent": {
     "tests_must_pass": true,
     "regression_bar": "zero unintended regressions",
     "spec_checklist": [
-      "验收项从 blueprint 的 Acceptance 段提取"
+      "Blocks can be created, read, updated, and deleted.",
+      "Update history is traceable.",
+      "Blocks have limit, label, description, value, and source refs.",
+      "Source-backed enforcement is tested."
     ],
     "benchmark_commands": [
       "uv run pytest -q"

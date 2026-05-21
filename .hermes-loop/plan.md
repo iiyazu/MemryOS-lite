@@ -1,385 +1,489 @@
-# Recall Memory Layer Implementation Plan
+# Core Memory Blocks Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn the opt-in episode recall path into a Recall Memory Layer with structured diagnostics while keeping default `v1` and old benchmark fields compatible.
+**Goal:** Add durable shadow-write core memory blocks with traceable history, while keeping default `v1` behavior and the opt-in `v2` recall path unchanged.
 
-**Architecture:** Keep the existing `episodes` table as physical storage, adapt rows into `RecallMemoryEntry`, and evolve the current episode searcher into a diagnostic-rich recall searcher. `RecallPipeline` remains the `ContextPackage` compatibility boundary and maps recall-native metadata back to old `episode_*` report fields.
+**Architecture:** Keep `v3_contracts.py` as the contract layer, add SQLite persistence plus append-only history in `store.py`, and put the mutation semantics in a small internal `core_memory.py` service. The default legacy context path stays untouched; render support is explicit and opt-in only.
 
-**Tech Stack:** Python 3.11, Pydantic v2 contracts in `v3_contracts.py`, rank-bm25, pytest, existing SQLAlchemy-backed `MemoryStore`.
+**Tech Stack:** Python 3.11, Pydantic v2, SQLAlchemy, Alembic, pytest.
 
 ---
 
 ## File Structure
 
-- Modify: `src/memoryos_lite/retrieval/episode_searcher.py`
-  - Add recall-native hit diagnostics, neighbor expansion, dedupe, and a `RecallMemorySearcher` compatibility surface.
-- Modify: `src/memoryos_lite/retrieval/__init__.py`
-  - Export `RecallMemorySearcher` while keeping `EpisodeSearcher` and `EpisodeHit`.
-- Modify: `src/memoryos_lite/retrieval/recall_pipeline.py`
-  - Convert backfilled episodes into `RecallMemoryEntry`, use recall diagnostics, and emit recall-native plus legacy metadata.
-- Modify: `src/memoryos_lite/evals.py`
-  - Read recall-native metadata first and keep old `episode_*` fields as compatibility output.
-- Modify: `src/memoryos_lite/public_benchmarks.py`
-  - Keep public report compatibility and verify no report schema regression.
-- Modify: `tests/test_episode_retrieval.py`
-  - Add searcher tests for direct hit, neighbor expansion, dedupe, role/session diagnostics.
-- Modify: `tests/test_recall_pipeline.py`
-  - Add pipeline tests for backfill, recall metadata, budget drop diagnostics, and legacy mapping.
-- Modify: `tests/test_evals.py`
-  - Add eval mapping coverage for recall metadata to `episode_*` fields.
-- Modify: `tests/test_public_benchmarks.py`
-  - Keep public report coverage for `episode_source_hit_at_10` and mapped diagnostics.
+- Modify: `src/memoryos_lite/v3_contracts.py`
+  - Tighten `CoreMemoryUpdate` validation and add soft-delete fields to `CoreMemoryBlock`.
+- Modify: `src/memoryos_lite/store.py`
+  - Add core-memory SQLAlchemy records, CRUD helpers, history persistence, and Alembic head stamping.
+- Create: `src/memoryos_lite/core_memory.py`
+  - Own create / append / replace / update / delete semantics and deterministic render formatting.
+- Create: `alembic/versions/0005_add_core_memory.py`
+  - Add the new SQLite tables and downgrade path.
+- Modify: `tests/test_v3_contracts.py`
+  - Add contract regressions for replace validation and soft-delete defaults.
+- Create: `tests/test_core_memory_store.py`
+  - Cover persistence, history, soft delete, and migration stamping.
+- Create: `tests/test_core_memory_service.py`
+  - Cover provenance checks, append / replace / update semantics, token-limit enforcement, and renderer output.
+- Modify: `tests/test_engine.py`
+  - Prove `build_context()` still ignores core memory by default.
 
-## Task 1: Searcher Tests for Recall Diagnostics
+## Task 1: Tighten Core Contracts
 
 **Files:**
-- Modify: `tests/test_episode_retrieval.py`
+- Modify: `src/memoryos_lite/v3_contracts.py`
+- Modify: `tests/test_v3_contracts.py`
 
-- [ ] **Step 1: Add failing tests for recall hit diagnostics and neighbor expansion**
+- [ ] **Step 1: Write the failing tests**
 
-Append these tests to `tests/test_episode_retrieval.py`:
+Add these assertions to `tests/test_v3_contracts.py`:
 
 ```python
-from memoryos_lite.v3_contracts import RecallMemoryEntry, SourceRef
-
-
-def _recall_entry(
-    message_id: str,
-    text: str,
-    position: int,
-    role: Role = Role.USER,
-    session_id: str = "ses",
-    benchmark_session_id: str | None = None,
-    benchmark_date: str | None = None,
-) -> RecallMemoryEntry:
-    temporal_scope = {}
-    if benchmark_session_id is not None:
-        temporal_scope["benchmark_session_id"] = benchmark_session_id
-    if benchmark_date is not None:
-        temporal_scope["benchmark_date"] = benchmark_date
-    return RecallMemoryEntry(
-        id=f"rec_{message_id}",
-        session_id=session_id,
-        message_id=message_id,
-        role=role,
-        text=text,
-        index_text=f"[speaker={role.value}] {text}",
-        position=position,
-        source_message_ids=[message_id],
-        source_refs=[
-            SourceRef(
-                source_type="message",
-                source_id=message_id,
-                session_id=session_id,
-            )
-        ],
-        temporal_scope=temporal_scope,
+def test_core_memory_block_defaults_soft_delete_fields():
+    block = CoreMemoryBlock(
+        id="core_1",
+        label="profile",
+        description="Stable user facts",
+        value="Alice lives in Shanghai.",
+        limit_tokens=200,
+        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
     )
 
-
-def test_recall_searcher_returns_structured_direct_hit_diagnostics():
-    entries = [
-        _recall_entry("msg_1", "Alice likes coffee.", 1),
-        _recall_entry(
-            "msg_2",
-            "Bob moved to Shanghai.",
-            2,
-            benchmark_session_id="D2",
-            benchmark_date="2026-05-20",
-        ),
-    ]
-
-    hits = EpisodeSearcher().search(entries, "Where did Bob move?", top_k=1)
-
-    assert hits[0].episode.message_id == "msg_2"
-    assert hits[0].source == "recall_memory"
-    assert hits[0].rank_features["token_overlap"] > 0
-    assert {event.reason_code for event in hits[0].diagnostics} >= {
-        "direct_hit",
-        "rank",
-    }
+    assert block.deleted_at is None
+    assert block.deleted_by_event_id is None
 
 
-def test_recall_searcher_expands_neighbors_and_dedupes_message_ids():
-    entries = [
-        _recall_entry("msg_1", "Project kickoff notes.", 1),
-        _recall_entry("msg_2", "The deployment target is Osaka.", 2),
-        _recall_entry("msg_3", "The team confirmed the rollout window.", 3),
-    ]
-
-    hits = EpisodeSearcher().search(entries, "deployment target", top_k=3)
-
-    assert [hit.episode.message_id for hit in hits] == ["msg_2", "msg_1", "msg_3"]
-    assert len({hit.episode.message_id for hit in hits}) == 3
-    neighbor_hits = [
-        hit for hit in hits if any(event.reason_code == "neighbor" for event in hit.diagnostics)
-    ]
-    assert [hit.episode.message_id for hit in neighbor_hits] == ["msg_1", "msg_3"]
-    assert any(
-        event.reason_code == "dedupe"
-        for hit in hits
-        for event in hit.diagnostics
-    )
+def test_core_memory_replace_requires_old_value():
+    with pytest.raises(ValidationError):
+        CoreMemoryUpdate(
+            block_id="core_1",
+            operation="replace",
+            content="Alice lives in Suzhou.",
+            source_refs=[SourceRef(source_type="message", source_id="msg_2")],
+        )
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run the focused test to verify it fails**
 
 Run:
 
 ```bash
-uv run pytest tests/test_episode_retrieval.py -q
+uv run pytest tests/test_v3_contracts.py -q
 ```
 
-Expected: FAIL because `EpisodeHit` does not expose `diagnostics`,
-`rank_features`, or recall neighbor expansion yet.
+Expected: FAIL because `CoreMemoryBlock` does not yet expose the soft-delete fields and `CoreMemoryUpdate` still accepts `replace` without `old`.
 
-- [ ] **Step 3: Commit the failing test**
+- [ ] **Step 3: Write the minimal implementation**
+
+Patch `src/memoryos_lite/v3_contracts.py` with:
+
+```python
+class CoreMemoryBlock(BaseModel):
+    id: str
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    value: str = ""
+    limit_tokens: int = Field(gt=0)
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    deleted_at: datetime | None = None
+    deleted_by_event_id: str | None = None
+
+
+class CoreMemoryUpdate(BaseModel):
+    block_id: str = Field(min_length=1)
+    operation: Literal["append", "replace", "update", "delete"]
+    content: str
+    old: str | None = None
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    approval_state: ApprovalState | None = None
+
+    @model_validator(mode="after")
+    def require_source_or_approval(self) -> CoreMemoryUpdate:
+        if not self.source_refs:
+            if self.approval_state is None or self.approval_state.status != "approved":
+                raise ValueError(
+                    "core memory updates require source_refs or approved approval_state"
+                )
+        if self.operation == "replace" and not self.old:
+            raise ValueError("replace core memory updates require old")
+        return self
+```
+
+- [ ] **Step 4: Run the focused test to verify it passes**
+
+Run:
 
 ```bash
-git add tests/test_episode_retrieval.py
-git commit -m "test: define recall search diagnostics"
+uv run pytest tests/test_v3_contracts.py -q
 ```
 
-## Task 2: Implement RecallMemorySearcher With Compatibility Wrapper
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py
+git commit -m "test: tighten core memory contracts"
+```
+
+## Task 2: Add SQLite Persistence and History
 
 **Files:**
-- Modify: `src/memoryos_lite/retrieval/episode_searcher.py`
-- Modify: `src/memoryos_lite/retrieval/__init__.py`
+- Create: `alembic/versions/0005_add_core_memory.py`
+- Modify: `src/memoryos_lite/store.py`
+- Create: `tests/test_core_memory_store.py`
 
-- [ ] **Step 1: Add recall hit fields and diagnostics helpers**
+- [ ] **Step 1: Write the failing store tests**
 
-In `src/memoryos_lite/retrieval/episode_searcher.py`, replace the current
-`EpisodeHit` dataclass with:
-
-```python
-@dataclass(frozen=True)
-class EpisodeHit:
-    episode: Episode | RecallMemoryEntry
-    score: float
-    reason: str
-    source: str = "recall_memory"
-    diagnostics: tuple[DiagnosticEvent, ...] = ()
-    rank_features: dict[str, float] = field(default_factory=dict)
-    neighbor_of: str | None = None
-```
-
-Add these imports:
+Add these tests to `tests/test_core_memory_store.py`:
 
 ```python
-from dataclasses import dataclass, field
+from sqlalchemy import text
 
-from memoryos_lite.v3_contracts import DiagnosticEvent, RecallMemoryEntry, SourceRef
-```
+from memoryos_lite.config import Settings
+from memoryos_lite.store import MemoryStore
+from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
 
-Add this helper below `_content_tokens`:
 
-```python
-def _diagnostic(
-    entry: Episode | RecallMemoryEntry,
-    reason_code: str,
-    score: float | None,
-    included: bool,
-    metadata: dict[str, object] | None = None,
-) -> DiagnosticEvent:
-    return DiagnosticEvent(
-        layer="recall",
-        event_type="candidate",
-        item_id=entry.message_id,
-        reason_code=reason_code,
-        score=score,
-        included=included,
-        source_refs=[
-            SourceRef(
-                source_type="message",
-                source_id=source_id,
-                session_id=entry.session_id,
-            )
-            for source_id in entry.source_message_ids
-        ],
-        metadata=metadata or {},
+def _settings(tmp_path):
+    return Settings(
+        data_dir=tmp_path / "data",
+        sqlite_path=tmp_path / "memory.sqlite3",
     )
+
+
+def test_core_memory_store_round_trip_history_and_soft_delete(tmp_path):
+    store = MemoryStore(_settings(tmp_path))
+    store.init_db()
+
+    block = CoreMemoryBlock(
+        id="core_1",
+        label="profile",
+        description="Stable user facts",
+        value="Alice lives in Shanghai.",
+        limit_tokens=100,
+        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
+    )
+
+    created = store.create_core_memory_block(block)
+    assert created.id == "core_1"
+    assert store.get_core_memory_block("core_1").value == "Alice lives in Shanghai."
+
+    history = store.list_core_memory_history("core_1")
+    assert history[-1].operation == "add"
+
+    deleted = store.delete_core_memory_block(
+        "core_1",
+        source_refs=[SourceRef(source_type="message", source_id="msg_2")],
+        actor="agent",
+        reason="user requested removal",
+    )
+    assert deleted.deleted_at is not None
+    assert store.get_core_memory_block("core_1") is None
+    assert store.get_core_memory_block("core_1", include_deleted=True).deleted_at is not None
+    assert store.list_core_memory_history("core_1")[-1].operation == "delete"
+
+
+def test_init_db_stamps_new_core_memory_head(tmp_path):
+    store = MemoryStore(_settings(tmp_path))
+    store.init_db()
+    with store.db() as db:
+        version = db.scalar(text("select version_num from alembic_version limit 1"))
+    assert version == "0005_add_core_memory"
 ```
 
-- [ ] **Step 2: Implement `RecallMemorySearcher` and keep `EpisodeSearcher`**
+- [ ] **Step 2: Run the focused test to verify it fails**
 
-Replace the current `EpisodeSearcher` class with:
+Run:
+
+```bash
+uv run pytest tests/test_core_memory_store.py -q
+```
+
+Expected: FAIL because the new tables and store methods do not exist yet.
+
+- [ ] **Step 3: Write the minimal implementation**
+
+Add the record classes and helpers to `src/memoryos_lite/store.py`:
 
 ```python
-class RecallMemorySearcher:
-    def search(
-        self,
-        episodes: list[Episode | RecallMemoryEntry],
-        query: str,
-        top_k: int = 5,
-        analysis: QueryAnalysis | None = None,
-        neighbor_window: int = 1,
-    ) -> list[EpisodeHit]:
-        query_tokens = tokenize(query)
-        query_content_tokens = _content_tokens(query_tokens)
-        if not episodes or not query_content_tokens:
-            return []
+class CoreMemoryBlockRecord(Base):
+    __tablename__ = "core_memory_blocks"
 
-        corpus = [tokenize(episode.index_text) for episode in episodes]
-        bm25 = BM25Okapi(corpus)
-        scores = bm25.get_scores(query_tokens)
-        direct_hits: list[EpisodeHit] = []
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    limit_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    deleted_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
 
-        for episode, episode_tokens, score in zip(episodes, corpus, scores, strict=False):
-            token_overlap = len(query_content_tokens & _content_tokens(episode_tokens))
-            if token_overlap <= 0:
-                continue
-            adjusted = float(score) + token_overlap
-            diagnostics = [
-                _diagnostic(
-                    episode,
-                    "direct_hit",
-                    adjusted,
-                    True,
-                    {"token_overlap": token_overlap},
-                ),
-                _diagnostic(
-                    episode,
-                    "rank",
-                    adjusted,
-                    True,
-                    {"base_score": float(score), "token_overlap": token_overlap},
-                ),
-            ]
-            if (
-                analysis is not None
-                and analysis.kind == QueryKind.ASSISTANT_SOURCE
-                and episode.role == Role.ASSISTANT
-            ):
-                adjusted += 6.0
-                diagnostics.append(
-                    _diagnostic(episode, "role_match", adjusted, True, {"role": "assistant"})
-                )
-            if adjusted <= 0:
-                continue
-            direct_hits.append(
-                EpisodeHit(
-                    episode=episode,
-                    score=adjusted,
-                    reason=f"recall_bm25={adjusted:.4f} overlap={token_overlap}",
-                    diagnostics=tuple(diagnostics),
-                    rank_features={
-                        "bm25_score": float(score),
-                        "token_overlap": float(token_overlap),
-                        "adjusted_score": adjusted,
-                    },
-                )
-            )
 
-        ranked = sorted(
-            direct_hits,
-            key=lambda hit: (hit.score, -hit.episode.position),
-            reverse=True,
+class CoreMemoryHistoryRecord(Base):
+    __tablename__ = "core_memory_history"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    memory_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+```
+
+Add these `MemoryStore` methods with concrete behavior:
+
+- `create_core_memory_block(block)`: insert `CoreMemoryBlockRecord`, append an
+  `add` `MemoryHistoryEvent`, and return the block.
+- `get_core_memory_block(block_id, include_deleted=False)`: return `None` when
+  the record is missing or soft-deleted and `include_deleted` is false.
+- `list_core_memory_blocks(include_deleted=False)`: order by `created_at`, then
+  `label`, then `id`; hide soft-deleted records by default.
+- `update_core_memory_block(block)`: update value, metadata, source refs,
+  timestamps, and soft-delete fields for an existing block.
+- `delete_core_memory_block(block_id, source_refs, actor, reason)`: write a
+  `delete` history event, set `deleted_at` and `deleted_by_event_id`, and return
+  the deleted block.
+- `append_core_memory_history(event)`: insert `CoreMemoryHistoryRecord`.
+- `list_core_memory_history(block_id)`: return events ordered by `created_at`
+  and `id`.
+
+Update `MemoryStore.init_db()` so fresh DBs stamp `0005_add_core_memory` instead
+of `0004_add_episodes`.
+
+Implement the Alembic migration with `upgrade()` creating both tables and
+`downgrade()` dropping them in reverse order.
+
+- [ ] **Step 4: Run the focused test to verify it passes**
+
+Run:
+
+```bash
+uv run pytest tests/test_core_memory_store.py -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add alembic/versions/0005_add_core_memory.py src/memoryos_lite/store.py tests/test_core_memory_store.py
+git commit -m "feat: persist core memory blocks"
+```
+
+## Task 3: Add Core Memory Semantics and Rendering
+
+**Files:**
+- Create: `src/memoryos_lite/core_memory.py`
+- Create: `tests/test_core_memory_service.py`
+
+- [ ] **Step 1: Write the failing service tests**
+
+Add these tests to `tests/test_core_memory_service.py`:
+
+```python
+import pytest
+
+from memoryos_lite.config import Settings
+from memoryos_lite.core_memory import CoreMemoryService, render_core_memory_blocks
+from memoryos_lite.store import MemoryStore
+from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
+
+
+class FakeTokenizer:
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+
+def _service(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        sqlite_path=tmp_path / "memory.sqlite3",
+    )
+    store = MemoryStore(settings)
+    store.init_db()
+    return CoreMemoryService(store=store, tokenizer=FakeTokenizer())
+
+
+def test_core_memory_service_requires_source_backed_writes(tmp_path):
+    service = _service(tmp_path)
+
+    with pytest.raises(ValueError):
+        service.create_block(
+            label="profile",
+            description="Stable user facts",
+            value="Alice lives in Shanghai.",
+            limit_tokens=20,
+            source_refs=[],
+            actor="agent",
+            reason="seed profile",
         )
-        return self._with_neighbors(ranked, episodes, top_k, neighbor_window)
-
-    def _with_neighbors(
-        self,
-        direct_hits: list[EpisodeHit],
-        episodes: list[Episode | RecallMemoryEntry],
-        top_k: int,
-        neighbor_window: int,
-    ) -> list[EpisodeHit]:
-        by_position = {episode.position: episode for episode in episodes}
-        selected: list[EpisodeHit] = []
-        seen_message_ids: set[str] = set()
-        dedupe_events: list[DiagnosticEvent] = []
-
-        for hit in direct_hits:
-            if hit.episode.message_id not in seen_message_ids:
-                selected.append(hit)
-                seen_message_ids.add(hit.episode.message_id)
-            else:
-                dedupe_events.append(
-                    _diagnostic(hit.episode, "dedupe", hit.score, False, {"duplicate": True})
-                )
-            if len(selected) >= top_k:
-                break
-            for offset in range(1, neighbor_window + 1):
-                for position in (hit.episode.position - offset, hit.episode.position + offset):
-                    neighbor = by_position.get(position)
-                    if neighbor is None:
-                        continue
-                    if neighbor.message_id in seen_message_ids:
-                        dedupe_events.append(
-                            _diagnostic(
-                                neighbor,
-                                "dedupe",
-                                hit.score,
-                                False,
-                                {"neighbor_of": hit.episode.message_id},
-                            )
-                        )
-                        continue
-                    selected.append(
-                        EpisodeHit(
-                            episode=neighbor,
-                            score=max(0.0, hit.score - 0.01),
-                            reason=f"neighbor_of={hit.episode.message_id}",
-                            diagnostics=(
-                                _diagnostic(
-                                    neighbor,
-                                    "neighbor",
-                                    hit.score,
-                                    True,
-                                    {"neighbor_of": hit.episode.message_id},
-                                ),
-                            ),
-                            rank_features={"neighbor_of_rank": hit.score},
-                            neighbor_of=hit.episode.message_id,
-                        )
-                    )
-                    seen_message_ids.add(neighbor.message_id)
-                    if len(selected) >= top_k:
-                        break
-                if len(selected) >= top_k:
-                    break
-            if len(selected) >= top_k:
-                break
-
-        if dedupe_events and selected:
-            first = selected[0]
-            selected[0] = EpisodeHit(
-                episode=first.episode,
-                score=first.score,
-                reason=first.reason,
-                source=first.source,
-                diagnostics=first.diagnostics + tuple(dedupe_events),
-                rank_features=first.rank_features,
-                neighbor_of=first.neighbor_of,
-            )
-        return selected[:top_k]
 
 
-class EpisodeSearcher(RecallMemorySearcher):
-    pass
+def test_core_memory_service_append_replace_update_and_render(tmp_path):
+    service = _service(tmp_path)
+    ref = SourceRef(source_type="message", source_id="msg_1")
+    block = service.create_block(
+        label="profile",
+        description="Stable user facts",
+        value="Alice lives in Shanghai.",
+        limit_tokens=20,
+        source_refs=[ref],
+        actor="agent",
+        reason="seed profile",
+    )
+
+    appended = service.append_block(
+        block.id,
+        "Alice prefers rail travel.",
+        source_refs=[ref],
+        actor="agent",
+        reason="new fact",
+    )
+    replaced = service.replace_block(
+        block.id,
+        old="Shanghai",
+        content="Suzhou",
+        source_refs=[ref],
+        actor="agent",
+        reason="correction",
+    )
+    updated = service.update_block(
+        block.id,
+        "Alice lives in Suzhou.",
+        source_refs=[ref],
+        actor="agent",
+        reason="full rewrite",
+    )
+
+    assert "Alice prefers rail travel." in appended.value
+    assert replaced.value != block.value
+    assert updated.value == "Alice lives in Suzhou."
+    assert render_core_memory_blocks([updated]) == (
+        "[Core Memory]\n"
+        "- profile (20 tokens)\n"
+        "  Stable user facts\n"
+        "  Alice lives in Suzhou."
+    )
+
+
+def test_core_memory_service_rejects_over_limit_updates(tmp_path):
+    service = _service(tmp_path)
+    ref = SourceRef(source_type="message", source_id="msg_1")
+    block = service.create_block(
+        label="profile",
+        description="Stable user facts",
+        value="Alice",
+        limit_tokens=2,
+        source_refs=[ref],
+        actor="agent",
+        reason="seed profile",
+    )
+
+    with pytest.raises(ValueError):
+        service.append_block(
+            block.id,
+            "prefers rail travel",
+            source_refs=[ref],
+            actor="agent",
+            reason="overflow",
+        )
 ```
 
-- [ ] **Step 3: Export the new recall searcher**
+- [ ] **Step 2: Run the focused test to verify it fails**
 
-In `src/memoryos_lite/retrieval/__init__.py`, change the import to:
+Run:
+
+```bash
+uv run pytest tests/test_core_memory_service.py -q
+```
+
+Expected: FAIL because the service module and renderer do not exist yet.
+
+- [ ] **Step 3: Write the minimal implementation**
+
+Create `src/memoryos_lite/core_memory.py` with a service boundary like this:
 
 ```python
-from memoryos_lite.retrieval.episode_searcher import (
-    EpisodeHit,
-    EpisodeSearcher,
-    RecallMemorySearcher,
+from dataclasses import dataclass
+
+from memoryos_lite.store import MemoryStore
+from memoryos_lite.tokenizer import TokenEstimator
+from memoryos_lite.v3_contracts import (
+    ApprovalState,
+    CoreMemoryBlock,
+    MemoryHistoryEvent,
+    SourceRef,
+)
+
+
+def render_core_memory_blocks(blocks: list[CoreMemoryBlock]) -> str:
+    lines = ["[Core Memory]"]
+    for block in sorted(blocks, key=lambda b: (b.created_at, b.label, b.id)):
+        if block.deleted_at is not None:
+            continue
+        lines.append(f"- {block.label} ({block.limit_tokens} tokens)")
+        lines.append(f"  {block.description}")
+        lines.append(f"  {block.value}")
+    return "\n".join(lines)
+
+
+@dataclass
+class CoreMemoryService:
+    store: MemoryStore
+    tokenizer: TokenEstimator
+```
+
+Implement public methods named `create_block`, `append_block`, `replace_block`,
+`update_block`, and `delete_block`. Each method must require `actor` and
+`reason`, reject source-less writes unless an approved `ApprovalState` is
+provided, write a matching `MemoryHistoryEvent`, and return the resulting
+`CoreMemoryBlock`.
+
+Use these semantics inside the service:
+
+```python
+separator = "\n\n"
+next_value = block.value + (separator if block.value else "") + addition
+if self.tokenizer.count(next_value) > block.limit_tokens:
+    raise ValueError("core memory block exceeds limit_tokens")
+
+event = MemoryHistoryEvent(
+    memory_id=block.id,
+    memory_type="core_block",
+    operation="update",
+    actor=actor,
+    reason=reason,
+    before=block.model_dump(mode="json"),
+    after=updated_block.model_dump(mode="json"),
+    source_refs=source_refs,
 )
 ```
 
-Add `"RecallMemorySearcher"` to `__all__`.
+For `replace`, use the first exact match of `old` and fail if the substring does
+not exist. For `delete`, write a `delete` history event with `before` populated
+and `after=None`, then soft-delete the block through the store.
 
-- [ ] **Step 4: Run tests to verify searcher behavior**
+Honor approved manual provenance through the existing `ApprovalState` model and
+manual `SourceRef` values that include a real non-empty `approval_id`.
+
+- [ ] **Step 4: Run the focused test to verify it passes**
 
 Run:
 
 ```bash
-uv run pytest tests/test_episode_retrieval.py -q
+uv run pytest tests/test_core_memory_service.py -q
 ```
 
 Expected: PASS.
@@ -387,398 +491,68 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/memoryos_lite/retrieval/episode_searcher.py src/memoryos_lite/retrieval/__init__.py tests/test_episode_retrieval.py
-git commit -m "feat: add recall memory search diagnostics"
+git add src/memoryos_lite/core_memory.py tests/test_core_memory_service.py
+git commit -m "feat: add core memory mutation service"
 ```
 
-## Task 3: RecallPipeline Metadata and Budget Diagnostics
+## Task 4: Lock the Default Context Regression
 
 **Files:**
-- Modify: `tests/test_recall_pipeline.py`
-- Modify: `src/memoryos_lite/retrieval/recall_pipeline.py`
+- Modify: `tests/test_engine.py`
 
-- [ ] **Step 1: Add failing pipeline tests for recall-native metadata**
+- [ ] **Step 1: Add the regression test**
 
-Append to `tests/test_recall_pipeline.py`:
+Add a focused regression near the existing `build_context()` tests:
 
 ```python
-def test_recall_pipeline_backfills_recall_entries_and_maps_legacy_metadata(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-    store = create_store(settings)
-    store.reset()
-    msg = Message(
-        id="msg_osaka",
-        session_id="ses",
-        role=Role.USER,
-        content="The deployment target is Osaka.",
-        metadata={},
-        token_count=5,
-    )
-    store.add_message(msg)
+from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
 
-    pipeline = RecallPipeline(store=store, settings=settings, tokenizer=WordTokenizer())
-    package = pipeline.build_context(
-        session_id="ses",
-        task="What is the deployment target?",
-        budget=200,
+
+def test_build_context_ignores_core_memory_blocks(service):
+    session = service.create_session("core-memory-regression")
+    service.store.create_core_memory_block(
+        CoreMemoryBlock(
+            id="core_1",
+            label="profile",
+            description="Stable user facts",
+            value="Alice lives in Shanghai.",
+            limit_tokens=100,
+            source_refs=[SourceRef(source_type="message", source_id="msg_1")],
+        )
     )
 
-    assert package.retrieved_evidence
-    assert package.metadata["episode_backfilled"] == 1
-    assert package.metadata["recall_candidate_message_ids"] == ["msg_osaka"]
-    assert package.metadata["episode_candidate_message_ids"] == ["msg_osaka"]
-    assert package.metadata["recall_planned_message_ids"] == ["msg_osaka"]
-    assert package.metadata["planned_evidence_message_ids"] == ["msg_osaka"]
-    assert package.metadata["recall_indexed_source_ids"] == ["msg_osaka"]
-    assert package.metadata["indexed_source_ids"] == ["msg_osaka"]
-    assert any(
-        event["reason_code"] == "direct_hit"
-        for event in package.metadata["recall_diagnostics"]
-    )
+    context = service.build_context(session.id, "用户最终决定做什么？", budget=200)
 
-
-def test_recall_pipeline_records_budget_drop_diagnostics(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-    store = create_store(settings)
-    store.reset()
-    msg = Message(
-        id="msg_big",
-        session_id="ses",
-        role=Role.USER,
-        content=" ".join(["deployment"] * 20),
-        metadata={},
-        token_count=20,
-    )
-    store.add_message(msg)
-
-    pipeline = RecallPipeline(store=store, settings=settings, tokenizer=WordTokenizer())
-    package = pipeline.build_context(session_id="ses", task="deployment", budget=2)
-
-    assert package.retrieved_evidence == []
-    assert package.candidate_budget_dropped == 1
-    assert package.metadata["recall_budget_dropped"] == 1
-    assert package.metadata["budget_dropped_relevant"] == 1
-    assert any(
-        event["reason_code"] == "budget_drop"
-        for event in package.metadata["recall_diagnostics"]
-    )
+    assert all(not key.startswith("core_") for key in context.metadata)
+    assert "Alice lives in Shanghai." not in context.model_dump_json()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run the focused test to verify it fails**
 
 Run:
 
 ```bash
-uv run pytest tests/test_recall_pipeline.py -q
+uv run pytest tests/test_engine.py -q
 ```
 
-Expected: FAIL because `RecallPipeline` does not emit recall-native metadata or
-serialized recall diagnostics yet.
+Expected: FAIL until the regression is in place or the imports are added.
 
-- [ ] **Step 3: Adapt recall pipeline around `RecallMemoryEntry`**
+- [ ] **Step 3: Write the minimal implementation**
 
-In `src/memoryos_lite/retrieval/recall_pipeline.py`, update imports:
+Keep the engine unchanged. The only change should be the regression test that
+proves the current default path does not pick up core memory automatically.
 
-```python
-from memoryos_lite.retrieval.episode_searcher import EpisodeHit, RecallMemorySearcher
-from memoryos_lite.v3_contracts import DiagnosticEvent, episode_to_recall_entry
-```
-
-In `__init__`, replace:
-
-```python
-self.episode_searcher = EpisodeSearcher()
-```
-
-with:
-
-```python
-self.recall_searcher = RecallMemorySearcher()
-```
-
-Add helper methods to `RecallPipeline`:
-
-```python
-    def _serialize_diagnostics(self, hits: list[EpisodeHit]) -> list[dict[str, object]]:
-        diagnostics: list[dict[str, object]] = []
-        for hit in hits:
-            diagnostics.extend(event.model_dump(mode="json") for event in hit.diagnostics)
-        return diagnostics
-
-    def _budget_drop_event(self, hit: EpisodeHit, tokens: int) -> DiagnosticEvent:
-        return DiagnosticEvent(
-            layer="recall",
-            event_type="candidate",
-            item_id=hit.episode.message_id,
-            reason_code="budget_drop",
-            score=hit.score,
-            dropped=True,
-            budget_tokens=tokens,
-            metadata={"reason": "recall evidence exceeded remaining budget"},
-        )
-```
-
-Change the search setup in `build_context` to:
-
-```python
-        episodes = self.store.list_episodes(session_id)
-        recall_entries = [episode_to_recall_entry(episode) for episode in episodes]
-        analysis = self.query_analyzer.analyze(query)
-        hits = self.recall_searcher.search(
-            recall_entries,
-            query,
-            top_k=10,
-            analysis=analysis,
-        )
-```
-
-Replace candidate/index metadata construction with:
-
-```python
-        candidate_ids = [hit.episode.message_id for hit in hits]
-        indexed_source_ids = sorted(
-            {
-                source_id
-                for entry in recall_entries
-                for source_id in entry.source_message_ids
-            }
-        )
-        diagnostics = self._serialize_diagnostics(hits)
-```
-
-When the task exceeds budget, update metadata with both recall-native and
-legacy keys:
-
-```python
-                    "recall_candidate_message_ids": candidate_ids,
-                    "recall_planned_message_ids": [],
-                    "recall_indexed_source_ids": indexed_source_ids,
-                    "recall_diagnostics": diagnostics,
-                    "recall_budget_dropped": dropped,
-                    "episode_candidate_message_ids": candidate_ids,
-                    "planned_evidence_message_ids": [],
-                    "indexed_source_ids": indexed_source_ids,
-                    "budget_dropped_relevant": dropped,
-```
-
-Inside the evidence budget loop, append a budget-drop diagnostic when a hit is
-not selected:
-
-```python
-                diagnostics.append(
-                    self._budget_drop_event(hit, tokens).model_dump(mode="json")
-                )
-                dropped += 1
-                continue
-```
-
-For selected evidence metadata, keep legacy origin and add recall details:
-
-```python
-                    "origin": "episode",
-                    "memory_layer": "recall",
-                    "score": hit.score,
-                    "rank_features": hit.rank_features,
-                    "neighbor_of": hit.neighbor_of,
-```
-
-At the successful return path, update metadata with:
-
-```python
-                "recall_candidate_message_ids": candidate_ids,
-                "recall_planned_message_ids": planned_ids,
-                "recall_indexed_source_ids": indexed_source_ids,
-                "recall_diagnostics": diagnostics,
-                "recall_budget_dropped": dropped,
-                "episode_candidate_message_ids": candidate_ids,
-                "planned_evidence_message_ids": planned_ids,
-                "indexed_source_ids": indexed_source_ids,
-                "budget_dropped_relevant": dropped,
-```
-
-- [ ] **Step 4: Run recall pipeline tests**
+- [ ] **Step 4: Run the focused test to verify it passes**
 
 Run:
 
 ```bash
-uv run pytest tests/test_recall_pipeline.py tests/test_episode_retrieval.py -q
+uv run pytest tests/test_engine.py -q
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/memoryos_lite/retrieval/recall_pipeline.py tests/test_recall_pipeline.py
-git commit -m "feat: emit recall pipeline diagnostics"
-```
-
-## Task 4: Eval and Public Benchmark Compatibility Mapping
-
-**Files:**
-- Modify: `tests/test_evals.py`
-- Modify: `tests/test_public_benchmarks.py`
-- Modify: `src/memoryos_lite/evals.py`
-- Modify: `src/memoryos_lite/public_benchmarks.py`
-
-- [ ] **Step 1: Add failing eval mapping test**
-
-Append to `tests/test_evals.py`:
-
-```python
-from memoryos_lite.evals import _metadata_string_list_preferring
-
-
-def test_eval_metadata_prefers_recall_candidates_over_legacy_episode_keys():
-    metadata = {
-        "recall_candidate_message_ids": ["msg_recall"],
-        "episode_candidate_message_ids": ["msg_legacy"],
-        "recall_planned_message_ids": ["msg_planned"],
-        "planned_evidence_message_ids": ["msg_old_planned"],
-        "recall_indexed_source_ids": ["msg_indexed"],
-        "indexed_source_ids": ["msg_old_indexed"],
-    }
-
-    assert _metadata_string_list_preferring(
-        metadata,
-        "recall_candidate_message_ids",
-        "episode_candidate_message_ids",
-    ) == ["msg_recall"]
-    assert _metadata_string_list_preferring(
-        metadata,
-        "recall_planned_message_ids",
-        "planned_evidence_message_ids",
-    ) == ["msg_planned"]
-    assert _metadata_string_list_preferring(
-        metadata,
-        "recall_indexed_source_ids",
-        "indexed_source_ids",
-    ) == ["msg_indexed"]
-```
-
-Add this assertion to the existing public benchmark v2 diagnostics test
-`test_public_benchmark_reports_v2_recall_diagnostics` in
-`tests/test_public_benchmarks.py`:
-
-```python
-    assert report["episode_source_hit_at_10"] is True
-    assert report["episode_candidate_message_ids"]
-    assert report["planned_evidence_message_ids"]
-```
-
-- [ ] **Step 2: Run tests to verify current mapping gaps**
-
-Run:
-
-```bash
-uv run pytest tests/test_evals.py::test_eval_metadata_prefers_recall_candidates_over_legacy_episode_keys tests/test_public_benchmarks.py::test_public_benchmark_reports_v2_recall_diagnostics -q
-```
-
-Expected: the eval helper test fails first because
-`_metadata_string_list_preferring` does not exist yet.
-
-- [ ] **Step 3: Update eval mapping to prefer recall metadata**
-
-In `src/memoryos_lite/evals.py`, add this helper near `_metadata_string_list`:
-
-```python
-def _metadata_string_list_preferring(
-    metadata: dict[str, object],
-    preferred_key: str,
-    fallback_key: str,
-) -> list[str]:
-    preferred = _metadata_string_list(metadata, preferred_key)
-    return preferred or _metadata_string_list(metadata, fallback_key)
-```
-
-Inside the `memoryos_lite` baseline branch, replace the metadata reads for
-episode/planned/indexed IDs with:
-
-```python
-        indexed_source_ids = _metadata_string_list_preferring(
-            context.metadata,
-            "recall_indexed_source_ids",
-            "indexed_source_ids",
-        )
-        item_candidate_source_ids = _metadata_string_list(
-            context.metadata, "item_candidate_source_ids"
-        )
-        episode_candidate_message_ids = _metadata_string_list_preferring(
-            context.metadata,
-            "recall_candidate_message_ids",
-            "episode_candidate_message_ids",
-        )
-        planned_evidence_message_ids = _metadata_string_list_preferring(
-            context.metadata,
-            "recall_planned_message_ids",
-            "planned_evidence_message_ids",
-        )
-```
-
-Replace the budget-drop read with:
-
-```python
-            budget_dropped_relevant=(
-                _metadata_int(context.metadata, "recall_budget_dropped")
-                or _metadata_int(context.metadata, "budget_dropped_relevant")
-            ),
-```
-
-Keep assigning these values to the existing `BaselineOutput` fields
-`episode_candidate_message_ids`, `planned_evidence_message_ids`,
-`episode_source_hit_at_10`, and `planned_evidence_source_hit_at_5`.
-
-- [ ] **Step 4: Keep public benchmark schema stable**
-
-In `src/memoryos_lite/public_benchmarks.py`, leave
-`PublicBenchmarkResult.to_report()` field names unchanged. Add this guard near
-the `episode_source_hit_at_10` assignment in `_to_public_result`:
-
-```python
-        episode_source_hit_at_10=(
-            output.episode_source_hit_at_10
-            if output.episode_source_hit_at_10 is not None
-            else (
-                bool(set(output.episode_candidate_message_ids) & expected_source_set)
-                if expected_source_set
-                else None
-            )
-        ),
-```
-
-- [ ] **Step 5: Run eval and public benchmark tests**
-
-Run:
-
-```bash
-uv run pytest tests/test_evals.py tests/test_public_benchmarks.py -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/memoryos_lite/evals.py src/memoryos_lite/public_benchmarks.py tests/test_evals.py tests/test_public_benchmarks.py
-git commit -m "feat: map recall diagnostics to benchmark fields"
-```
-
-## Task 5: Regression Verification
-
-**Files:**
-- No source file changes.
-
-- [ ] **Step 1: Run focused recall tests**
-
-Run:
-
-```bash
-uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_public_benchmarks.py -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 2: Run full test suite**
+- [ ] **Step 5: Run the full verification sweep**
 
 Run:
 
@@ -786,26 +560,11 @@ Run:
 uv run pytest -q
 ```
 
-Expected: PASS. The regression bar from God is no unintended regressions and at
-least the recorded baseline of `311 passed`.
+Expected: full suite stays green with no default-context regression.
 
-- [ ] **Step 3: Run smoke benchmark commands when data is available**
-
-Run the local smoke command used by the project for LongMemEval and LoCoMo. If
-fixture paths are not configured locally, record the missing path and keep the
-pytest result as the executable acceptance evidence for this phase.
-
-Expected when benchmark data is available:
-
-- LongMemEval `episode_source_hit_at_10 >= 8/10`
-- LoCoMo `episode_source_hit_at_10 >= 5/10`
-- `source_not_indexed = 0/10` for both smoke reports
-
-- [ ] **Step 4: Commit verification evidence if files changed**
+- [ ] **Step 6: Commit**
 
 ```bash
-git status --short
+git add tests/test_engine.py
+git commit -m "test: protect default context from core memory"
 ```
-
-Expected: no uncommitted source changes after implementation commits, unless
-generated reports were intentionally retained for review.

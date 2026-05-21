@@ -1,169 +1,149 @@
-# Spec: Phase 2 - Recall Memory Layer
+# Spec: Phase 3 - Core Memory Blocks
 
 ## Goal
 
-Upgrade the current opt-in `v2` episode recall path into a real Recall Memory
-Layer while keeping default `v1` behavior unchanged.
+Add Letta-style core memory blocks with durable shadow-write persistence and
+traceable mutation history while keeping default `v1` behavior and the opt-in
+`v2` recall path unchanged.
 
-Target compatibility state: `shadow-read`.
+Target compatibility state: `shadow-write`.
 
-Phase 2 must preserve raw source attribution, support role / temporal / session
-/ neighbor-aware recall, and move structured rank, neighbor, budget, drop, and
-dedupe diagnostics into the recall layer. Existing `episode_*` benchmark fields
-remain available, but they become compatibility projections of recall
-diagnostics.
+Phase 3 must add a real core-memory persistence boundary, but it must not feed
+core memory into the default legacy context path yet.
 
 ## Source Inputs
 
-- `.hermes-loop/god_dispatch.json`: phase `phase-2`, target `shadow-read`.
-- `.hermes-loop/brainstorm.md`: recommends contract-first recall layer with an
-  explicit legacy adapter over the existing `episodes` table.
-- `.hermes-loop/blueprint.md`: phase-2 tasks and acceptance criteria.
-- Current implementation:
-  - `src/memoryos_lite/v3_contracts.py` already defines `RecallMemoryEntry`,
-    `DiagnosticEvent`, `LayerBudgetDecision`, and `episode_to_recall_entry`.
-  - `src/memoryos_lite/store.py` persists and backfills `episodes` from
-    `messages`.
-  - `src/memoryos_lite/retrieval/episode_searcher.py` currently performs BM25
-    episode search with a small role boost.
-  - `src/memoryos_lite/retrieval/recall_pipeline.py` currently returns episode
-    evidence and old metadata fields.
-  - `src/memoryos_lite/evals.py` and
-    `src/memoryos_lite/public_benchmarks.py` consume `episode_*` report fields.
+- `.hermes-loop/god_dispatch.json`: phase `phase-3`, target `shadow-write`.
+- `.hermes-loop/brainstorm.md`: recommends SQLite shadow-store + internal
+  core-memory service over contract-only or legacy page/item reuse.
+- `.hermes-loop/blueprint.md`: phase-3 tasks and acceptance criteria.
+- `src/memoryos_lite/v3_contracts.py`: already defines `CoreMemoryBlock`,
+  `CoreMemoryUpdate`, `MemoryHistoryEvent`, `SourceRef`, and `ApprovalState`.
+- `src/memoryos_lite/store.py`: current SQLite store, Alembic stamping, and
+  legacy page/item/episode persistence.
+- `src/memoryos_lite/engine.py`: default context builder must remain unchanged.
+- `tests/test_v3_contracts.py`: existing core-memory contract coverage.
 
 ## Non-Goals
 
-- Do not create a new `recall_memory_entries` table in phase 2.
-- Do not switch default recall from `v1` to `v2` or v3.
-- Do not implement Core Memory, Archival Memory, Context Composer, or Agentic
-  Kernel behavior.
-- Do not special-case LongMemEval or LoCoMo case IDs inside recall search.
-- Do not add Letta or Mem0 as runtime dependencies.
+- Do not change default `build_context()` behavior.
+- Do not wire core memory into `ContextBuilder` or `RecallPipeline`.
+- Do not add public API routes for core memory in this phase.
+- Do not add automatic source-less core-memory writes.
+- Do not invent a second public core-memory schema outside `v3_contracts.py`.
+- Do not merge core memory with archival memory or recall memory.
 
 ## Design
 
-### Recall Entry Boundary
+### Contract Boundary
 
-`Episode` remains the legacy physical storage row. `RecallMemoryEntry` is the
-logical recall unit. All recall-layer code should convert through
-`episode_to_recall_entry` rather than treating `Episode` as the final semantic
-model.
+`v3_contracts.py` stays the canonical contract layer. Phase 3 may tighten
+validators there, but it should not move the core-memory models into
+`schemas.py`.
 
-The conversion must preserve:
+The existing `CoreMemoryBlock` model is the persisted block shape. Phase 3 may
+extend it with soft-delete metadata (`deleted_at`, `deleted_by_event_id`) so the
+store can hide deleted blocks by default while preserving audit history.
 
-- `message_id` and `source_message_ids`
-- `role`
-- raw text and index text
-- session position
-- `benchmark_session_id` and `benchmark_date` as temporal/session metadata, not
-  as required ranking inputs
-- message-backed `SourceRef` provenance
+`CoreMemoryUpdate` remains the mutation contract for append / replace / update.
+Delete is better represented as a service/store operation with explicit reason
+and history fields than as a fake content update.
 
-Backfill stays deterministic: `MemoryStore.ensure_episodes_for_session()` reads
-messages ordered by `created_at` and `id`, writes missing episode rows, and the
-recall layer adapts those rows into `RecallMemoryEntry` values.
+### Persistence Boundary
 
-### Search and Ranking
+Add first-class SQLite records for:
 
-Introduce recall semantics around the existing episode searcher:
+- `core_memory_blocks`
+- `core_memory_history`
 
-- A `RecallMemorySearcher` ranks `RecallMemoryEntry` candidates.
-- The existing `EpisodeSearcher` import path remains as a compatibility wrapper
-  or alias.
-- Ranking uses BM25/token overlap as the base score.
-- Role-aware scoring keeps the current assistant-source boost when query
-  analysis identifies assistant-source intent.
-- Session-aware scoring may boost explicit session/date metadata, but search
-  must still work without benchmark-specific IDs.
-- Temporal scoring uses available date/order metadata as generic metadata.
-- Neighbor expansion may include adjacent same-session entries around direct
-  hits, bounded by `top_k` and deduped by message/source ID.
+The block record should persist:
 
-No ranking rule may require a benchmark case ID. Benchmark metadata can be one
-source of generic session/temporal metadata, but it cannot be the only path.
+- block id
+- label
+- description
+- value
+- limit tokens
+- source refs
+- metadata
+- created / updated timestamps
+- optional soft-delete metadata
 
-### Diagnostics
+The history record should persist:
 
-Recall diagnostics are structured `DiagnosticEvent` objects, not opaque reason
-strings. Each candidate or dropped item should explain at least one of:
+- history id
+- memory id
+- memory type `core_block`
+- operation
+- actor
+- reason
+- source refs
+- before snapshot
+- after snapshot
+- created timestamp
 
-- `direct_hit`
-- `neighbor`
-- `dedupe`
-- `rank`
-- `budget_drop`
-- `session_match`
-- `temporal_match`
-- `role_match`
+History is append-only. Every mutation writes one `MemoryHistoryEvent`.
 
-The recall layer should still provide compact human-readable `reason` strings
-for legacy `ContextEvidence`, but those strings are derived from structured
-diagnostics.
+### Mutation Semantics
 
-### Pipeline Output
+Implement a small internal core-memory service, for example
+`src/memoryos_lite/core_memory.py`, that owns behavior:
 
-`RecallPipeline.build_context()` continues returning `ContextPackage` so the
-engine and benchmark callers remain compatible.
+- create requires source refs or approved manual provenance.
+- append concatenates onto the current value with a stable separator.
+- update replaces the whole value.
+- replace requires `old`, verifies it exists in the current value, and replaces
+  the first exact match deterministically.
+- delete soft-deletes the block and keeps it out of default reads.
+- any mutation that would exceed `limit_tokens` is rejected instead of
+  truncated.
 
-The pipeline should:
+Manual provenance must use the existing approval machinery, not a weaker custom
+flag. The manual path must use `source_type="manual"` with a real non-empty
+`approval_id`.
 
-1. Ensure recall backfill for the session.
-2. Convert episodes to recall entries.
-3. Search recall entries.
-4. Apply budget selection.
-5. Emit `ContextEvidence` for selected entries.
-6. Emit structured recall diagnostics and legacy-mapped metadata.
+### Rendering
 
-Required metadata keys:
+Add an explicit renderer, such as `render_core_memory_blocks(blocks) -> str`,
+that formats blocks deterministically and is not called by default context
+building.
 
-- `recall_candidate_message_ids`: ranked direct/neighbor candidate source IDs.
-- `recall_planned_message_ids`: selected evidence source IDs after budget.
-- `recall_indexed_source_ids`: source IDs available in the recall index.
-- `recall_diagnostics`: serialized `DiagnosticEvent` values.
-- `recall_budget_dropped`: count of recall candidates dropped by budget.
-- `episode_candidate_message_ids`: compatibility mapping from
-  `recall_candidate_message_ids`.
-- `planned_evidence_message_ids`: compatibility mapping from
-  `recall_planned_message_ids`.
-- `indexed_source_ids`: compatibility mapping from `recall_indexed_source_ids`.
-- `budget_dropped_relevant`: compatibility mapping from `recall_budget_dropped`.
+Recommended output shape:
 
-### Benchmark Mapping
+```text
+[Core Memory]
+- <label> (<limit_tokens> tokens)
+  <description>
+  <value>
+```
 
-`evals.py` and `public_benchmarks.py` should treat old `episode_*` fields as
-report compatibility fields. Their source of truth is recall metadata when
-present, with old metadata keys as fallback during migration.
+Ordering should be deterministic: created time, then label, then id. Deleted
+blocks should be skipped by default.
 
-The public report must continue exposing:
+### Compatibility
 
-- `episode_source_hit_at_10`
-- `episode_candidate_message_ids`
-- `planned_evidence_source_hit_at_5`
-- `planned_evidence_message_ids`
-- `source_not_indexed`
-- `budget_dropped_relevant`
+`MemoryOSService.build_context()` stays as-is. The default legacy context path
+must not pick up core memory automatically. The new service and renderer are
+opt-in internal helpers for future composer work.
 
-The report may also expose recall-native fields later, but phase 2 does not
-require a public schema expansion.
+Fresh SQLite databases must be stamped to the new Alembic head that includes the
+core-memory migration.
 
-## Compatibility Rules
+## Error Handling
 
-- `MEMORYOS_RECALL_PIPELINE=v1` remains the default.
-- `MEMORYOS_RECALL_PIPELINE=v2` is the only path that reads the new recall-layer
-  semantics during phase 2.
-- The `episodes` table remains authoritative recall storage for this phase.
-- Existing `EpisodeSearcher` imports remain valid.
-- Existing benchmark JSON keys remain valid.
-- Existing source IDs remain raw message IDs.
+- Missing block ids should raise `LookupError`.
+- Invalid provenance or invalid mutation shape should raise `ValueError` or
+  `ValidationError` at the contract boundary.
+- Over-limit writes should raise `ValueError`.
+- Replace should fail if `old` is absent from the current value.
+- Deleted blocks should stay readable only through explicit `include_deleted`
+  access in the store.
 
 ## Acceptance Criteria
 
-- Recall entries can be backfilled from messages through the existing
-  `episodes` table and adapted to `RecallMemoryEntry`.
-- Recall search does not rely on benchmark case IDs.
-- Recall diagnostics explain direct hit, neighbor, drop, dedupe, and rank.
-- Old `episode_*` benchmark fields continue to work as mapped diagnostics.
-- `v1` default behavior remains unchanged.
+- Blocks can be created, read, updated, and deleted.
+- Update history is traceable in `core_memory_history`.
+- Blocks persist limit, label, description, value, and source refs.
+- Source-backed enforcement is tested.
+- Render format exists but is opt-in only.
+- Default `build_context()` output remains unchanged.
 - Full test suite remains green.
-- LongMemEval and LoCoMo recall hit stay at or above the smoke baseline recorded
-  in the blueprint: LongMemEval `8/10`, LoCoMo `5/10`.

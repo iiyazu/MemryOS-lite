@@ -1,100 +1,165 @@
-# Brainstorm: Phase 2 - Recall Memory Layer
+# PLAN_STORM Brainstorm — Phase 3 Core Memory Blocks
 
-## 现状判断
+## Inputs Read
 
-代码库里已经有一条 `v2` recall 路径，但它还只是 episode-first 的原型：
+- `.hermes-loop/god_dispatch.json`: phase-3 requires Letta-style core blocks, history, append / replace / update semantics, render format, opt-in/internal only, and source-backed enforcement.
+- `.hermes-loop/state.json`: current state is `PLAN_STORM`, current phase is `phase-3`.
+- `.hermes-loop/contracts/state_machine.json`: `PLAN_STORM` output is `.hermes-loop/brainstorm.md`; next state is `PLAN_DRAFT`.
+- `.hermes-loop/blueprint.md`: Phase 3 target state is `shadow-write`; legacy context must not become v3 by default.
+- `CLAUDE.md` / `AGENTS.md`: default recall path remains `v1`; v2 remains opt-in; SQLite is authoritative; filesystem outputs are debug mirrors.
+- `src/memoryos_lite/v3_contracts.py`: already defines `CoreMemoryBlock`, `CoreMemoryUpdate`, `MemoryHistoryEvent`, `SourceRef`, `ApprovalState`, and v3 future table names.
+- `src/memoryos_lite/store.py`: SQLite store currently has records and CRUD for sessions, messages, episodes, pages, items, patches, and traces; no core-memory tables or CRUD yet.
+- `src/memoryos_lite/engine.py`: service facade owns ingest/context/search flows; default context routing should remain untouched.
+- `tests/test_v3_contracts.py`: source-ref and core-update validation already exist at contract level; persistence and operation semantics are not yet covered.
 
-- `src/memoryos_lite/retrieval/recall_pipeline.py` 负责 episode 检索、预算截断和少量 metadata。
-- `src/memoryos_lite/retrieval/episode_searcher.py` 只有 BM25 + 简单 role boost。
-- `src/memoryos_lite/evals.py` 和 `src/memoryos_lite/public_benchmarks.py` 仍在外层拼装 `episode_*` / `planned_evidence_*` 指标。
-- `src/memoryos_lite/v3_contracts.py` 已经定义了 `RecallMemoryEntry`、`DiagnosticEvent`、`LayerBudgetDecision` 和旧表边界，说明 phase-2 应该是在这个语义上收敛，而不是再造一套新名词。
+## Current Shape
 
-这意味着 phase-2 的核心不是“再加一个检索器”，而是把现有 episode 语义升级成真正的 Recall Memory Layer，并把排名、邻居、预算、drop、dedupe 这些诊断收进 recall 层本身。
+Phase 1 already established v3 contracts, so Phase 3 should not invent a second core-memory schema in `schemas.py`. The missing layer is the shadow-write implementation boundary:
 
-## 方案 A: 继续在现有 episode pipeline 上加料
+- persistent core-memory blocks,
+- persistent history events,
+- operation semantics for create / append / replace / update / delete,
+- a renderer that can be called explicitly later by the v3 composer,
+- tests proving source-backed enforcement and traceability.
 
-做法：
+The safest phase boundary is internal/store-level APIs plus focused service helpers. Do not inject rendered core memory into `MemoryOSService.build_context()` yet.
 
-- 保持 `Episode` 和 `EpisodeSearcher` 作为主入口。
-- 在 `RecallPipeline` 里逐步加入 temporal / session / neighbor 权重。
-- 直接扩展 `metadata`，让评测层继续消费旧字段。
+## Option A — Contract-Only Expansion
 
-优点：
+Extend `v3_contracts.py` with stricter validators and helper functions, but avoid new SQLite tables in this phase.
 
-- 改动最小，最容易维持当前 smoke baseline。
-- 不需要马上动 store 或迁移边界。
+Expected implementation:
 
-缺点：
+- Add validators such as `CoreMemoryUpdate.operation == "replace"` requiring `old`.
+- Add pure helpers for append / replace / update and render formatting.
+- Keep all tests in `tests/test_v3_contracts.py`.
 
-- `Episode` 继续承担太多职责，语义会越来越像“RecallMemoryEntry 但还没改名”。
-- 结构化诊断仍散落在 eval / benchmark 层，后面迁移会更痛。
-- 邻居、去重、预算和 rank 的规则会被写成一堆局部补丁。
+Pros:
 
-适用场景：只追求最短路径修补现有 v2 原型，不适合 phase-2 的目标描述。
+- Very low regression risk.
+- Minimal surface area.
+- Fast to implement and review.
 
-## 方案 B: contract-first recall layer + 显式 adapter（推荐）
+Cons:
 
-做法：
+- Fails the phase acceptance that blocks can be created, read, updated, and deleted.
+- History would not be durable.
+- Does not achieve `shadow-write`; it remains contract-only.
 
-- 继续保留 `episodes` 表作为物理存储与回填来源。
-- 把 `Episode` 明确视为 legacy 输入，检索语义改用 `RecallMemoryEntry`。
-- 新增或细化回 recall 层内的组件职责：
-  - `RecallMemorySearcher`
-  - `RecallEvidencePlanner`
-  - `RecallBudgeter`
-  - `RecallDiagnostics`
-- `Episode -> RecallMemoryEntry` 只通过 adapter 转换，后续的 direct hit / neighbor / drop / dedupe / rank 都在 recall 层内输出结构化诊断。
-- `evals.py` / `public_benchmarks.py` 只做指标映射，不再决定 recall 语义。
+Verdict: reject. Useful as part of the implementation, but insufficient for Phase 3.
 
-优点：
+## Option B — Recommended: SQLite Shadow Store + Internal Core Service
 
-- 和 `v3_contracts.py` 的边界一致，phase 切分清楚。
-- 兼容 `v1` 默认路径，同时让 `v2` 真正成为 recall memory，而不是 episode wrapper。
-- 后续 phase 3/4 要引入 core / archival 时，diagnostics 和 source attribution 不用重做。
+Add first-class shadow-write persistence for core blocks and history, using the existing SQLite store pattern and v3 contract models.
 
-缺点：
+Expected implementation:
 
-- 文件会更多，adapter 也会更多。
-- 需要非常小心地保留旧 `episode_*` 指标映射，避免 benchmark 断层。
+- Add SQLAlchemy records in `src/memoryos_lite/store.py`:
+  - `CoreMemoryBlockRecord` for `core_memory_blocks`.
+  - `CoreMemoryHistoryRecord` for `core_memory_history`.
+- Add Alembic migration `0005_add_core_memory.py`, and stamp fresh local DBs to the new head only when creating a fresh DB.
+- Add store CRUD:
+  - `create_core_memory_block(block)`
+  - `get_core_memory_block(block_id)`
+  - `list_core_memory_blocks(session_id=None, include_deleted=False)`
+  - `update_core_memory_block(block)`
+  - `delete_core_memory_block(block_id, source_refs, actor, reason)`
+  - `append_core_memory_history(event)`
+  - `list_core_memory_history(block_id)`
+- Add a small internal module, for example `src/memoryos_lite/core_memory.py`, that owns semantics:
+  - create requires non-empty `source_refs` or explicit manual provenance via `SourceRef(source_type="manual", approval_id=...)`.
+  - append adds content to existing value with stable separator.
+  - replace requires `old`, verifies the old text exists, and replaces it.
+  - update sets the full block value to the supplied content when the caller has source refs or approved manual provenance.
+  - delete marks the block deleted or removes it while preserving history; soft delete is safer for audit.
+  - every mutation writes `MemoryHistoryEvent` with before / after snapshots.
+- Add render helper:
+  - explicit method such as `render_core_memory_blocks(blocks) -> str`.
+  - deterministic format, e.g. `[Core Memory]\n<label> (<limit>): <value>`.
+  - not called from default `build_context()`.
+- Add tests:
+  - store-level CRUD and history roundtrip.
+  - append / replace / update semantics.
+  - delete keeps traceable history.
+  - source-less create/update fails.
+  - render format is deterministic and opt-in.
+  - legacy `build_context()` output is unchanged unless an explicit future v3 hook calls the renderer.
 
-适用场景：当前 phase 的最佳匹配，也是最稳的长期路径。
+Pros:
 
-## 方案 C: 新建独立 recall 表，episodes 只做兼容层
+- Directly satisfies Phase 3 acceptance.
+- Keeps v1/v2 behavior stable because APIs are internal/opt-in.
+- Reuses existing `v3_contracts.py` models instead of duplicating schema.
+- Creates a durable foundation for Phase 5 promotion policy and Phase 6 composer.
+- Review can verify behavior with deterministic tests, no LLM required.
 
-做法：
+Cons:
 
-- 新建 `recall_memory_entries` 或等价表。
-- ingest 时双写，回填时从 messages 构建 recall entries。
-- `episodes` 逐步退化为兼容镜像或只读 legacy 输入。
+- Adds migration and store surface area.
+- Requires careful JSON serialization for `SourceRef` / history snapshots.
+- Soft-delete design must be explicit so deleted blocks do not render later.
 
-优点：
+Verdict: recommended. This is the smallest implementation that actually reaches `shadow-write`.
 
-- 语义最干净，未来删除 legacy 时成本低。
-- 结构上最接近最终 v3 目标。
+## Option C — Reuse Legacy MemoryPage / MemoryItem as Core Blocks
 
-缺点：
+Represent core memory through existing `MemoryPage(page_type=CORE_PROFILE)` and `MemoryItem` records, then add thin wrappers.
 
-- migration 和双写复杂度高。
-- phase-2 的风险预算不划算，容易把注意力从 recall 质量转移到数据搬运。
-- 对当前基线来说，收益不明显。
+Expected implementation:
 
-适用场景：更像 phase-4 或更后面的结构性重构，不适合现在动。
+- Create core blocks as `MemoryPage` or `MemoryItem`.
+- Use existing page/item CRUD and trace events for audit.
+- Render from `list_global_core_pages()` or page summaries.
 
-## 推荐结论
+Pros:
 
-选方案 B。
+- No migration needed.
+- Lower immediate implementation cost.
+- Existing retrieval/search code can see the data.
 
-原因很直接：当前代码已经有 recall 原型、bench 指标和 v3 contract 雏形，phase-2 最需要的是把“谁负责 recall 语义”说清楚。保持 `episodes` 作为回填和兼容输入，新增 `RecallMemoryEntry` 语义层，再把 neighbor / dedupe / budget / drop diagnostics 统一放进 recall 层，能同时满足：
+Cons:
 
-1. `shadow-read` 的兼容要求。
-2. `Episode -> RecallMemoryEntry` 的升级目标。
-3. 旧 `episode_*` 指标的继续输出。
-4. 后续 core / archival / composer / kernel 继续沿用同一套 provenance 结构。
+- Violates the v3 direction that Page/Item are legacy archival inputs, not new v3 targets.
+- Audit history would be ad hoc and incomplete.
+- Source refs are weaker because `MemoryItem` only stores source message IDs.
+- Raises risk that core pages accidentally leak into legacy context/retrieval.
+- Makes later archival/core separation harder.
 
-## 关键风险
+Verdict: reject. It saves time now but works against the blueprint.
 
-- 邻居扩展如果不和预算器联动，会把 recall hit 做高但上下文挤爆。
-- 回填必须按 session 内确定性顺序，不要依赖时间戳排序的偶然性。
-- diagnostics 必须结构化命名，不能再把原因编码塞进字符串里。
-- `benchmark_case_id` 只能是辅助字段，recall search 不能依赖它。
+## Recommendation
 
+Choose Option B.
+
+Design the Phase 3 plan around a narrow shadow-write slice:
+
+1. Strengthen v3 core-memory contracts only where needed for unambiguous semantics.
+2. Add durable SQLite tables and migration for core blocks and core history.
+3. Add store CRUD and a small internal core-memory service for operation semantics.
+4. Add deterministic render formatting, but keep it out of default context building.
+5. Prove source-backed enforcement and history traceability with focused tests.
+
+## Key Design Decisions for PLAN_DRAFT
+
+- Source-backed enforcement should live in both contracts and service/store entry points. Pydantic validation catches invalid `CoreMemoryUpdate`; service methods should also reject source-less block creation.
+- Manual provenance should use existing `SourceRef(source_type="manual", approval_id=...)` or an approved `ApprovalState`; do not invent a weaker `manual=True` flag.
+- History should use `MemoryHistoryEvent(memory_type="core_block")` for every create/update/delete. For create, use operation `add`; for append/update, use `update`; for replace, use `replace`; for delete, use `delete`.
+- Prefer soft delete with `deleted_at` / `deleted_by_event_id` metadata or columns so audit survives and render/list defaults can hide deleted blocks.
+- Keep `CoreMemoryBlock` in `v3_contracts.py` for this phase rather than moving it into `schemas.py`; `schemas.py` remains legacy/public API until v3 is promoted.
+- Add no automatic LLM extraction, promotion, or default composer integration in Phase 3. Those belong to later phases.
+
+## Risks
+
+- Migration stamping risk: fresh DB stamping must move to the new head without breaking existing Alembic upgrades.
+- Token-limit semantics: `limit_tokens` exists, but enforcing exact token budgets may require `TokenEstimator`. The implementation plan should either enforce via existing estimator or explicitly cap by estimated tokens in service tests.
+- Replace ambiguity: plan should require `old` for replace and fail if `old` is not found, avoiding silent full-block replacement.
+- Delete semantics: hard delete would satisfy CRUD but weaken traceability. Soft delete is better for this phase.
+- API exposure risk: adding FastAPI endpoints now may imply public behavior. Keep this internal unless the spec explicitly opts into API routes.
+
+## Acceptance Mapping
+
+- Blocks can be created, read, updated, and deleted: Option B store/service CRUD tests.
+- Update history is traceable: `core_memory_history` table plus `list_core_memory_history(block_id)` tests.
+- Blocks have limit, label, description, value, and source refs: `CoreMemoryBlockRecord` roundtrip tests.
+- Source-backed enforcement is tested: source-less create/update tests and manual provenance tests.
+- Render format exists without default legacy context: renderer unit test plus legacy `build_context()` regression test.

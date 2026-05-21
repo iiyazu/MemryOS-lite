@@ -1,18 +1,22 @@
-# Execute Self-Review: Phase 2 - Recall Memory Layer
+# Execute Self-Review: Phase 3 - Core Memory Blocks
 
 ## 小问题修复
-- 修正 `.hermes-loop/result.md` 中焦点测试数量：本轮复验为 `66 passed in 363.80s`，不是旧记录的 `65 passed`。
+- 修复 `src/memoryos_lite/store.py` 中两处超过 ruff 行长限制的代码。
+- 移除 `tests/test_core_memory_service.py` 中未使用的 `CoreMemoryBlock` import。
 
 ## 大问题标记
 - 无。
-- `EpisodeSearcher` 仍保留 legacy `episode_bm25` source label 与旧 import path。
-- v2 recall metadata 同时写入 recall-native keys 与 legacy compatibility keys。
-- public benchmark report 仍暴露旧字段名，未泄漏 `recall_*` 内部 metadata。
-- 默认 `v1` 行为未在本轮内审中发现被改动。
+
+## 内审结论
+- `result.md` 指向的 phase、文件列表、测试摘要与当前 phase-3 交付一致。
+- Core memory blocks 仍为 opt-in/internal surface，未接入默认 legacy context。
+- Source-backed enforcement、append / replace / update / delete、history、soft-delete 和 render 行为均有覆盖。
+- 未发现需要退回 `EXECUTE` 的阻塞问题。
 
 ## 复验
-- `uv run ruff check src/memoryos_lite/retrieval/episode_searcher.py src/memoryos_lite/retrieval/recall_pipeline.py src/memoryos_lite/evals.py tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_evals.py tests/test_public_benchmarks.py` -> passed。
-- `uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_evals.py tests/test_public_benchmarks.py -q` -> `66 passed in 363.80s`。
+- `uv run ruff check src/memoryos_lite/core_memory.py src/memoryos_lite/store.py src/memoryos_lite/v3_contracts.py tests/test_core_memory_store.py tests/test_core_memory_service.py tests/test_engine.py tests/test_v3_contracts.py alembic/versions/0005_add_core_memory.py` -> `All checks passed!`
+- `uv run pytest tests/test_v3_contracts.py tests/test_core_memory_store.py tests/test_core_memory_service.py tests/test_engine.py -q` -> `55 passed in 24.92s`
+- `uv run pytest -q` -> `337 passed, 1 warning in 396.42s`
 
 ## 结论
-PASS — 可提交 Review。
+PASS - 可提交 Review。

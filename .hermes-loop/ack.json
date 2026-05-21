@@ -1,26 +1,12 @@
 {
   "verdict": "ACK",
-  "phase": "phase-2",
-  "phase_name": "Recall Memory Layer",
-  "target_state": "shadow-read",
+  "phase": "phase-3",
+  "phase_name": "Core Memory Blocks",
+  "target_state": "shadow-write",
   "evidence": {
-    "tests_passed": 329,
+    "tests_passed": 337,
     "checks_passed": 6,
     "spec_checklist_all": true,
-    "benchmark_scores": {
-      "hard_eval": {
-        "accuracy": "1.00/1.00",
-        "source_accuracy": "1.00/1.00",
-        "cases": 16
-      },
-      "longmemeval_limit10_v2": {
-        "episode_source_hit_at_10": "8/10",
-        "planned_evidence_source_hit_at_5": "8/10"
-      },
-      "locomo_limit10_v2": {
-        "episode_source_hit_at_10": "5/10",
-        "planned_evidence_source_hit_at_5": "5/10"
-      }
-    }
+    "benchmark_scores": {}
   }
 }
