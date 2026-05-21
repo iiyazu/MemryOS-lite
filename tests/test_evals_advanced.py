@@ -36,13 +36,13 @@ class TestAdvancedCases:
 
 class TestCrossSessionCore:
     def test_list_global_core_pages_empty(self, tmp_path):
-        settings = Settings(data_dir=tmp_path / ".memoryos")
+        settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
         store = MemoryStore(settings=settings)
         store.init_db()
         assert store.list_global_core_pages() == []
 
     def test_list_global_core_pages_returns_core_profiles(self, tmp_path):
-        settings = Settings(data_dir=tmp_path / ".memoryos")
+        settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
         store = MemoryStore(settings=settings)
         store.init_db()
         s1 = store.create_session("session1")
@@ -79,7 +79,7 @@ class TestCrossSessionCore:
         assert {page.id for page in cores} == {"global_core_1", "global_core_2"}
 
     def test_build_context_with_global_core(self, tmp_path):
-        settings = Settings(data_dir=tmp_path / ".memoryos")
+        settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
         store = MemoryStore(settings=settings)
         store.init_db()
         service = MemoryOSService(settings=settings, store=store)
@@ -98,7 +98,7 @@ class TestCrossSessionCore:
         assert ctx.pinned_core == [summary]
 
     def test_memoryos_cross_session_eval_uses_global_core_sources(self, tmp_path):
-        settings = Settings(data_dir=tmp_path / ".memoryos")
+        settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
         store = MemoryStore(settings=settings)
         store.init_db()
         service = MemoryOSService(settings=settings, store=store)

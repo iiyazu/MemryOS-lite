@@ -16,6 +16,12 @@ FAILURE_MODES = [
     "page_source_overlap_at_k_zero",
     "item_source_overlap_at_k_zero",
     "evidence_filtered_out",
+    "retrieval_miss",
+    "context_missing_evidence",
+    "evidence_hit_answer_fail",
+    "unsupported_answer",
+    "supported_cited_answer",
+    "judge_questionable",
 ]
 
 
@@ -31,6 +37,10 @@ def classify_failure(result: PublicBenchmarkResult) -> str:
     6. item_source_overlap_at_k_zero — neither page nor item found target
     7. evidence_filtered_out — catch-all (found somewhere but filtered)
     """
+    if result.case_diagnostics:
+        failure_class = result.case_diagnostics.get("failure_class")
+        if isinstance(failure_class, str) and failure_class:
+            return failure_class
     if result.source_hit:
         return "pass"
     if result.source_not_indexed:

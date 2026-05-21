@@ -1,26 +1,82 @@
 {
-  "verdict": "ACK",
   "phase": "phase-2",
-  "phase_name": "Recall Memory Layer",
-  "target_state": "shadow-read",
-  "evidence": {
-    "tests_passed": 329,
-    "checks_passed": 6,
-    "spec_checklist_all": true,
-    "benchmark_scores": {
-      "hard_eval": {
-        "accuracy": "1.00/1.00",
-        "source_accuracy": "1.00/1.00",
-        "cases": 16
-      },
-      "longmemeval_limit10_v2": {
-        "episode_source_hit_at_10": "8/10",
-        "planned_evidence_source_hit_at_5": "8/10"
-      },
-      "locomo_limit10_v2": {
-        "episode_source_hit_at_10": "5/10",
-        "planned_evidence_source_hit_at_5": "5/10"
-      }
+  "ack_level": "usable",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-2/context_bundle.md",
+    "used_by": ["plan", "execute", "review"],
+    "superseded_sections": []
+  },
+  "implemented_chain": {
+    "ingest": "not_applicable",
+    "store": "not_applicable",
+    "retrieval": "verified",
+    "context_composer": "verified",
+    "answer_projection": "verified",
+    "kernel_loop": "verified",
+    "public_eval": "changed"
+  },
+  "real_path_wired": true,
+  "demo_only_or_stub_remaining": [],
+  "failing_tests_added_before_fix": [
+    "uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_separate_retrieval_miss_and_answer_fail tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_classifies_unsupported_answer_separately -q -> RED: missing case_diagnostics/public_case_diagnostics",
+    "uv run pytest tests/test_public_benchmarks.py::test_public_case_movement_from_comparison_report_pairs tests/test_public_benchmarks.py::test_public_case_movement_missing_baseline_is_not_anti_demo_evidence tests/test_public_benchmarks.py::test_public_benchmark_movement_status_uses_comparison_report tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_are_append_only tests/test_public_benchmarks.py::test_public_benchmark_partial_and_final_reports_have_diagnostic_schema_parity tests/test_public_benchmarks.py::test_public_benchmark_source_hit_is_not_retrieval_localization -q -> RED: missing movement loader/diagnostic report fields/comparison_report_paths",
+    "uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_reports_v3_context_diagnostics_by_default tests/test_public_benchmarks.py::test_public_benchmark_explicit_v1_fallback_has_no_v3_case_context tests/test_public_benchmarks.py::test_public_benchmark_kernel_trace_remains_default_off -q -> RED: default v3 diagnostics not routed and missing case_diagnostics"
+  ],
+  "verification_commands": [
+    "uv run pytest tests/test_public_benchmarks.py tests/test_agent_answer_eval.py tests/test_llm_judge.py -q -> 33 passed in reviewer rerun",
+    "uv run ruff check . -> All checks passed in reviewer rerun",
+    "uv run pytest -q -> 366 passed, 1 warning in reviewer rerun",
+    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge --comparison-report .memoryos/evals/phase0_v3_lme_5case_longmemeval.json -> .memoryos/evals/public_20260521_213550_longmemeval.json",
+    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge --comparison-report .memoryos/evals/phase0_v3_locomo_5case_locomo.json -> .memoryos/evals/public_20260521_214906_locomo.json"
+  ],
+  "case_level_eval": {
+    "longmemeval": {
+      "limit": 30,
+      "llm_answer": true,
+      "llm_judge": true,
+      "pass_fail": "18 pass / 12 fail",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "unchanged_pass": ["1e043500"],
+      "unchanged_fail": ["e47becba", "118b2229", "51a45a95", "58bf7951"],
+      "new_case_no_baseline_count": 25,
+      "retrieval_miss": ["58bf7951", "6ade9755", "75499fd8"],
+      "evidence_hit_answer_fail": [],
+      "context_missing_evidence": ["e47becba", "118b2229", "58ef2f1c", "5d3d2817", "7527f7e2", "94f70d80", "66f24dbb", "af8d2e46", "c8c3f81d", "8ebdbe50", "0862e8bf", "853b0a1d"],
+      "unsupported_answer": ["51a45a95", "1e043500", "c5e8278d", "6f9b354f", "f8c5f88b", "c960da58", "3b6f954b", "726462e0", "ad7109d1", "dccbc061", "6b168ec8", "21436231", "95bcc1c8", "a06e4cfe", "37d43f65"],
+      "judge_questionable": []
+    },
+    "locomo": {
+      "limit": 30,
+      "llm_answer": true,
+      "llm_judge": true,
+      "pass_fail": "7 pass / 23 fail",
+      "fail_to_pass": ["conv-26_qa_001"],
+      "pass_to_fail": [],
+      "unchanged_pass": [],
+      "unchanged_fail": ["conv-26_qa_002", "conv-26_qa_003", "conv-26_qa_004", "conv-26_qa_005"],
+      "new_case_no_baseline_count": 25,
+      "retrieval_miss": ["conv-26_qa_002", "conv-26_qa_003", "conv-26_qa_004", "conv-26_qa_005", "conv-26_qa_008", "conv-26_qa_011", "conv-26_qa_014", "conv-26_qa_019", "conv-26_qa_020", "conv-26_qa_025", "conv-26_qa_028"],
+      "evidence_hit_answer_fail": [],
+      "context_missing_evidence": ["conv-26_qa_009", "conv-26_qa_013", "conv-26_qa_015", "conv-26_qa_016", "conv-26_qa_021", "conv-26_qa_023", "conv-26_qa_024", "conv-26_qa_026", "conv-26_qa_029", "conv-26_qa_030"],
+      "unsupported_answer": ["conv-26_qa_001", "conv-26_qa_006", "conv-26_qa_007", "conv-26_qa_010", "conv-26_qa_012", "conv-26_qa_017", "conv-26_qa_018", "conv-26_qa_022", "conv-26_qa_027"],
+      "judge_questionable": []
     }
-  }
+  },
+  "review_verdict": {
+    "path": "work/phase-2/reviews/codex-review.md",
+    "overfitting_risk": "low",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false
+  },
+  "god_decision_notes": [
+    "ACK is for the Phase 2 diagnostic evidence harness only, not for benchmark quality improvement.",
+    "Passing rows can still carry source-grounding diagnostic classes; verdict/judge_status/failure_class remain separate.",
+    "LoCoMo remains weak at 7/30 and is explicitly recorded rather than hidden."
+  ],
+  "decision": "advance"
 }

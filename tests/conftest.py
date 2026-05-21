@@ -13,6 +13,7 @@ def service(tmp_path: Path) -> MemoryOSService:
         data_dir=tmp_path / ".memoryos",
         rot_safe_budget=12,
         recent_message_limit=2,
+        memoryos_memory_arch="v1",
     )
     store = create_store(settings)
     store.reset()

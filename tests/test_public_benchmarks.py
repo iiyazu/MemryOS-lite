@@ -7,6 +7,46 @@ from memoryos_lite.config import Settings
 from memoryos_lite.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
 
 
+def _write_single_locomo_case(
+    tmp_path,
+    *,
+    filename: str = "locomo_case.json",
+    sample_id: str = "sample_case",
+    text: str = "The marker is MemoryOS Lite.",
+    question: str = "What is the marker?",
+    answer: str = "MemoryOS Lite",
+    evidence: list[str] | None = None,
+):
+    data_path = tmp_path / filename
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": sample_id,
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": text,
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": question,
+                            "answer": answer,
+                            "evidence": evidence or ["D1:1"],
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return data_path
+
+
 def test_load_longmemeval_cases_maps_answer_sources(tmp_path):
     data_path = tmp_path / "longmemeval.json"
     data_path.write_text(
@@ -622,6 +662,382 @@ def test_public_benchmark_reports_v3_context_diagnostics(tmp_path):
     assert "planned_evidence_source_hit_at_5" in report
 
 
+def test_public_benchmark_case_diagnostics_separate_retrieval_miss_and_answer_fail(tmp_path):
+    data_path = tmp_path / "locomo_taxonomy.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "sample_taxonomy",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "The supported marker is MemoryOS Lite.",
+                            },
+                            {
+                                "speaker": "Bob",
+                                "dia_id": "D1:2",
+                                "text": "A distractor says the marker is ArchiveBox.",
+                            },
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What is the supported marker?",
+                            "answer": "NeverReturnedExpectedToken",
+                            "evidence": ["D1:1"],
+                        },
+                        {
+                            "question": "What is the absent marker?",
+                            "answer": "Not in memory",
+                            "evidence": ["D9:9"],
+                        },
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="phase2-taxonomy-red",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+    reports = {result.case_id: result.to_report() for result in results}
+
+    hit = reports["sample_taxonomy_qa_001"]["case_diagnostics"]
+    miss = reports["sample_taxonomy_qa_002"]["case_diagnostics"]
+
+    assert hit["retrieval_status"] == "evidence_retrieved"
+    assert hit["selected_context_status"] == "evidence_selected"
+    assert hit["rendered_context_status"] == "evidence_rendered"
+    assert reports["sample_taxonomy_qa_001"]["verdict"] == "fail"
+    assert hit["failure_class"] == "evidence_hit_answer_fail"
+    assert miss["failure_class"] == "retrieval_miss"
+    assert hit["failure_class"] != miss["failure_class"]
+
+
+def test_public_benchmark_case_diagnostics_classifies_unsupported_answer_separately():
+    from memoryos_lite.public_case_diagnostics import build_case_diagnostics
+
+    diagnostics = build_case_diagnostics(
+        benchmark="locomo",
+        baseline="memoryos_lite",
+        case_id="unsupported-demo",
+        memory_arch="v1",
+        answer="The answer is unsupported. [source:bad-id]",
+        answer_mode="llm",
+        verdict="fail",
+        reasoning="judge fail",
+        expected_source_ids=["good-id"],
+        retrieval_candidate_source_ids=["good-id"],
+        episode_candidate_message_ids=[],
+        planned_evidence_message_ids=[],
+        source_ids=["good-id"],
+        v3_context={},
+        v3_diagnostics=[],
+        kernel_trace_events=[],
+        baseline_verdict=None,
+        movement_baseline_source=None,
+    )
+
+    assert diagnostics["answer_support_status"] == "unsupported_answer"
+    assert diagnostics["failure_class"] == "unsupported_answer"
+
+
+def test_public_case_movement_from_comparison_report_pairs(tmp_path):
+    from memoryos_lite.public_case_movement import (
+        load_public_case_movement,
+        movement_status,
+    )
+
+    previous_report_path = tmp_path / "previous.json"
+    previous_report_path.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "case-pass-to-fail",
+                    "verdict": "pass",
+                },
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "case-fail-to-pass",
+                    "verdict": "fail",
+                },
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "case-unchanged-pass",
+                    "verdict": "pass",
+                },
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "case-unchanged-fail",
+                    "verdict": "fail",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    comparison = load_public_case_movement([previous_report_path])
+
+    assert comparison[("locomo", "memoryos_lite", "case-pass-to-fail")].verdict == "pass"
+    assert movement_status("pass", "fail") == "pass_to_fail"
+    assert movement_status("fail", "pass") == "fail_to_pass"
+    assert movement_status("pass", "pass") == "unchanged_pass"
+    assert movement_status("fail", "fail") == "unchanged_fail"
+    assert movement_status("error", "fail") == "unchanged_fail"
+
+
+def test_public_case_movement_missing_baseline_is_not_anti_demo_evidence():
+    from memoryos_lite.public_case_diagnostics import build_case_diagnostics
+
+    diagnostics = build_case_diagnostics(
+        benchmark="locomo",
+        baseline="memoryos_lite",
+        case_id="missing-baseline",
+        memory_arch="v3",
+        answer="MemoryOS Lite",
+        answer_mode="projected",
+        verdict="pass",
+        reasoning="exact substring match",
+        expected_source_ids=["D1:1"],
+        retrieval_candidate_source_ids=["D1:1"],
+        episode_candidate_message_ids=[],
+        planned_evidence_message_ids=[],
+        source_ids=["D1:1"],
+        v3_context={},
+        v3_diagnostics=[],
+        kernel_trace_events=[],
+        baseline_verdict=None,
+        movement_baseline_source=None,
+    )
+
+    assert diagnostics["movement_status"] == "new_case_no_baseline"
+    assert diagnostics["baseline_verdict"] is None
+    assert any("missing baseline" in note for note in diagnostics["diagnostic_notes"])
+
+
+def test_public_benchmark_movement_status_uses_comparison_report(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="case_move",
+        answer="NeverReturnedExpectedToken",
+    )
+    previous_report_path = tmp_path / "previous.json"
+    previous_report_path.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "case_move_qa_001",
+                    "verdict": "pass",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="phase2-movement-wiring",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+        comparison_report_paths=[previous_report_path],
+    )
+    report = results[0].to_report()
+
+    assert report["verdict"] == "fail"
+    assert report["movement_status"] == "pass_to_fail"
+    assert report["case_diagnostics"]["baseline_verdict"] == "pass"
+    assert report["case_diagnostics"]["movement_baseline_source"] == str(previous_report_path)
+
+
+def test_public_benchmark_case_diagnostics_are_append_only(tmp_path):
+    data_path = _write_single_locomo_case(tmp_path, sample_id="sample_append")
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="phase2-append-only",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+    report = results[0].to_report()
+    legacy_fields = {
+        "benchmark",
+        "baseline",
+        "case_id",
+        "answer",
+        "verdict",
+        "source_hit",
+        "source_hit_at_k",
+        "episode_candidate_message_ids",
+        "planned_evidence_message_ids",
+        "v3_diagnostics",
+        "kernel_trace_events",
+        "pass",
+    }
+
+    assert legacy_fields <= set(report)
+    assert "case_diagnostics" in report
+    assert report["failure_class"] == report["case_diagnostics"]["failure_class"]
+    assert report["source_hit"] in {True, False, None}
+    assert report["case_diagnostics"]["source_hit_semantics"] == "final_projection_source_overlap"
+
+
+def test_public_benchmark_partial_and_final_reports_have_diagnostic_schema_parity(tmp_path):
+    data_path = _write_single_locomo_case(tmp_path, sample_id="sample_schema")
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="phase2-partial-schema",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    partial_path = settings.data_dir / "evals" / "phase2-partial-schema_locomo.partial.json"
+    final_path = settings.data_dir / "evals" / "phase2-partial-schema_locomo.json"
+    partial_rows = json.loads(partial_path.read_text(encoding="utf-8"))
+    final_rows = json.loads(final_path.read_text(encoding="utf-8"))
+
+    mirror_fields = {
+        "case_diagnostics",
+        "failure_class",
+        "movement_status",
+        "answer_support_status",
+        "judge_status",
+    }
+    assert mirror_fields <= set(partial_rows[-1])
+    assert mirror_fields <= set(final_rows[-1])
+    assert set(partial_rows[-1]["case_diagnostics"]) == set(
+        final_rows[-1]["case_diagnostics"]
+    )
+    for field in mirror_fields - {"case_diagnostics"}:
+        assert partial_rows[-1][field] == partial_rows[-1]["case_diagnostics"][field]
+        assert final_rows[-1][field] == final_rows[-1]["case_diagnostics"][field]
+
+
+def test_public_benchmark_source_hit_is_not_retrieval_localization(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_source_semantics",
+        text="The source-hit semantics marker is MemoryOS Lite.",
+        question="What is the source-hit semantics marker?",
+        answer="NeverReturnedExpectedToken",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="phase2-source-hit-semantics",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+    report = results[0].to_report()
+
+    diagnostics = report["case_diagnostics"]
+    assert "retrieved_evidence_ids" in diagnostics
+    assert "selected_context_ids" in diagnostics
+    assert "rendered_evidence_ids" in diagnostics
+    assert diagnostics["retrieved_evidence_ids"] != []
+    assert report["source_hit"] is False or report["verdict"] == "fail"
+    assert diagnostics["failure_class"] != "retrieval_miss"
+
+
+def test_public_benchmark_reports_v3_context_diagnostics_by_default(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        filename="locomo_v3_default.json",
+        sample_id="sample_v3_default",
+        text="The default v3 recall marker is MemoryOS Lite.",
+        question="What is the default v3 recall marker?",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v3-default-diagnostics-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert report["memory_arch"] == "v3"
+    assert report["v3_diagnostics"]
+    assert report["case_diagnostics"]["memory_arch"] == "v3"
+
+
+def test_public_benchmark_explicit_v1_fallback_has_no_v3_case_context(tmp_path):
+    data_path = _write_single_locomo_case(tmp_path, sample_id="sample_v1")
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v1-fallback-diagnostics-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert report["memory_arch"] != "v3"
+    assert report["v3_diagnostics"] == []
+    assert report["case_diagnostics"]["memory_arch"] in {None, "v1"}
+
+
+def test_public_benchmark_kernel_trace_remains_default_off(tmp_path):
+    data_path = _write_single_locomo_case(tmp_path, sample_id="sample_kernel_default")
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-kernel-default-off-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert report["kernel_trace_events"] == []
+    assert report["case_diagnostics"]["kernel_trace_present"] is False
+
+
 def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
     data_path = tmp_path / "locomo_kernel.json"
     data_path.write_text(
@@ -679,3 +1095,12 @@ def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
         "tool_executed",
         "kernel_step_completed",
     ]
+    assert report["case_diagnostics"]["kernel_trace_present"] is True
+    assert report["case_diagnostics"]["failure_class"] in {
+        "supported_cited_answer",
+        "evidence_hit_answer_fail",
+        "unsupported_answer",
+        "judge_questionable",
+        "retrieval_miss",
+        "context_missing_evidence",
+    }

@@ -363,6 +363,10 @@ def eval_public(
         bool,
         Option("--llm-judge/--no-llm-judge", help="Score answers with the configured chat LLM"),
     ] = False,
+    comparison_report: Annotated[
+        list[str] | None,
+        Option("--comparison-report", help="Previous public JSON report for case movement"),
+    ] = None,
     isolated: bool = True,
 ) -> None:
     """Run LongMemEval or LoCoMo JSON through the local benchmark adapter."""
@@ -379,6 +383,7 @@ def eval_public(
         llm_answer=llm_answer,
         llm_judge=llm_judge,
         isolated=isolated,
+        comparison_report_paths=[Path(path) for path in comparison_report or []],
     )
     table = Table(*PUBLIC_TABLE_COLUMNS)
     for row in _public_table_rows(results):

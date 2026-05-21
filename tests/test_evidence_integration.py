@@ -19,6 +19,7 @@ def contextual_service(tmp_path: Path) -> MemoryOSService:
         recent_message_limit=1,
         memoryos_evidence_representation="deterministic_context",
         memoryos_evidence_candidate_top_k=10,
+        memoryos_memory_arch="v1",
     )
     store = create_store(settings)
     store.reset()
@@ -33,6 +34,7 @@ def legacy_service(tmp_path: Path) -> MemoryOSService:
         rot_safe_budget=12,
         recent_message_limit=1,
         memoryos_evidence_representation="legacy",
+        memoryos_memory_arch="v1",
     )
     store = create_store(settings)
     store.reset()
@@ -102,6 +104,7 @@ def test_contextual_fallback_to_legacy_when_no_candidates(tmp_path):
         recent_message_limit=1,
         memoryos_evidence_representation="deterministic_context",
         memoryos_evidence_direct_raw_fallback=True,
+        memoryos_memory_arch="v1",
     )
     store = create_store(settings)
     store.reset()

@@ -1,570 +1,749 @@
-# Core Memory Blocks Implementation Plan
+# phase: phase-2
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+# Phase 2 Evidence Harness Implementation Plan
 
-**Goal:** Add durable shadow-write core memory blocks with traceable history, while keeping default `v1` behavior and the opt-in `v2` recall path unchanged.
+> For agentic workers: REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
-**Architecture:** Keep `v3_contracts.py` as the contract layer, add SQLite persistence plus append-only history in `store.py`, and put the mutation semantics in a small internal `core_memory.py` service. The default legacy context path stays untouched; render support is explicit and opt-in only.
+**Goal:** Add a diagnostic-only, append-only case taxonomy to the real v3 public benchmark path for LongMemEval and LoCoMo.
 
-**Tech Stack:** Python 3.11, Pydantic v2, SQLAlchemy, Alembic, pytest.
+**Architecture:** Add a small taxonomy layer that consumes existing `PublicBenchmarkResult` ingredients, deterministic citation support from `agent_answer_eval`, v3 context diagnostics, and judge status. Wire its output into `PublicBenchmarkResult.to_report()` without removing legacy fields. Keep v3 default, explicit v1 fallback, and kernel opt-in verified by tests.
+
+**Tech Stack:** Python 3.11+, dataclasses/Pydantic-adjacent dict reports, pytest, ruff, existing `uv run memoryos eval public` CLI.
 
 ---
 
-## File Structure
+## Files
 
-- Modify: `src/memoryos_lite/v3_contracts.py`
-  - Tighten `CoreMemoryUpdate` validation and add soft-delete fields to `CoreMemoryBlock`.
-- Modify: `src/memoryos_lite/store.py`
-  - Add core-memory SQLAlchemy records, CRUD helpers, history persistence, and Alembic head stamping.
-- Create: `src/memoryos_lite/core_memory.py`
-  - Own create / append / replace / update / delete semantics and deterministic render formatting.
-- Create: `alembic/versions/0005_add_core_memory.py`
-  - Add the new SQLite tables and downgrade path.
-- Modify: `tests/test_v3_contracts.py`
-  - Add contract regressions for replace validation and soft-delete defaults.
-- Create: `tests/test_core_memory_store.py`
-  - Cover persistence, history, soft delete, and migration stamping.
-- Create: `tests/test_core_memory_service.py`
-  - Cover provenance checks, append / replace / update semantics, token-limit enforcement, and renderer output.
-- Modify: `tests/test_engine.py`
-  - Prove `build_context()` still ignores core memory by default.
+- Create: `src/memoryos_lite/public_case_diagnostics.py`
+  - Owns deterministic status enums, id extraction, failure-class precedence, and movement calculation.
+- Create: `src/memoryos_lite/public_case_movement.py`
+  - Loads previous public JSON reports and returns baseline verdicts keyed by `(benchmark, baseline, case_id)`.
+- Modify: `src/memoryos_lite/public_benchmarks.py`
+  - Add append-only fields to `PublicBenchmarkResult`.
+  - Call the taxonomy builder inside `_to_public_result`.
+  - Accept comparison report paths and pass baseline verdict/source into the taxonomy builder.
+  - Preserve partial/final JSON report compatibility.
+- Modify: `src/memoryos_lite/engine.py`
+  - Fix default v3 routing so `resolved_memory_arch == "v3"` is sufficient.
+  - Preserve explicit `memoryos_memory_arch="v1"` fallback.
+- Modify: `src/memoryos_lite/diagnostic_report.py`
+  - Prefer `case_diagnostics.failure_class` when present.
+  - Keep loading older JSON reports by ignoring unknown fields.
+- Modify: `src/memoryos_lite/cli.py`
+  - Keep existing `PUBLIC_TABLE_COLUMNS`.
+  - Add an explicit additive `--comparison-report PATH` option for `memoryos eval public`.
+  - Optionally add additive summary columns only after JSON compatibility tests pass.
+- Test: `tests/test_public_benchmarks.py`
+  - Primary RED tests for taxonomy wiring, compatibility, source-hit separation, v3 default, v1 fallback, and kernel opt-in.
+- Test: `tests/test_agent_answer_eval.py`
+  - Add focused answer-support tests only if `evaluate_agent_answer()` requires a small helper extension.
+- Test: `tests/test_llm_judge.py`
+  - Add judge-status classification fixture only if error/questionable handling needs direct judge parsing coverage.
 
-## Task 1: Tighten Core Contracts
+Do not edit quarantined control files: `.hermes-loop/blueprint.md`, `.hermes-loop/config.json`, `.hermes-loop/god_launcher.sh`, `.hermes-loop/god_loop_prompt.md`, `.hermes-loop/hermes_loop.py`, `.hermes-loop/hermes_reporter.py`, `AGENTS.md`, `CLAUDE.md`.
 
-**Files:**
-- Modify: `src/memoryos_lite/v3_contracts.py`
-- Modify: `tests/test_v3_contracts.py`
+## RED
 
-- [ ] **Step 1: Write the failing tests**
-
-Add these assertions to `tests/test_v3_contracts.py`:
-
-```python
-def test_core_memory_block_defaults_soft_delete_fields():
-    block = CoreMemoryBlock(
-        id="core_1",
-        label="profile",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=200,
-        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-    )
-
-    assert block.deleted_at is None
-    assert block.deleted_by_event_id is None
-
-
-def test_core_memory_replace_requires_old_value():
-    with pytest.raises(ValidationError):
-        CoreMemoryUpdate(
-            block_id="core_1",
-            operation="replace",
-            content="Alice lives in Suzhou.",
-            source_refs=[SourceRef(source_type="message", source_id="msg_2")],
-        )
-```
-
-- [ ] **Step 2: Run the focused test to verify it fails**
-
-Run:
-
-```bash
-uv run pytest tests/test_v3_contracts.py -q
-```
-
-Expected: FAIL because `CoreMemoryBlock` does not yet expose the soft-delete fields and `CoreMemoryUpdate` still accepts `replace` without `old`.
-
-- [ ] **Step 3: Write the minimal implementation**
-
-Patch `src/memoryos_lite/v3_contracts.py` with:
-
-```python
-class CoreMemoryBlock(BaseModel):
-    id: str
-    label: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    value: str = ""
-    limit_tokens: int = Field(gt=0)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-    deleted_at: datetime | None = None
-    deleted_by_event_id: str | None = None
-
-
-class CoreMemoryUpdate(BaseModel):
-    block_id: str = Field(min_length=1)
-    operation: Literal["append", "replace", "update", "delete"]
-    content: str
-    old: str | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_state: ApprovalState | None = None
-
-    @model_validator(mode="after")
-    def require_source_or_approval(self) -> CoreMemoryUpdate:
-        if not self.source_refs:
-            if self.approval_state is None or self.approval_state.status != "approved":
-                raise ValueError(
-                    "core memory updates require source_refs or approved approval_state"
-                )
-        if self.operation == "replace" and not self.old:
-            raise ValueError("replace core memory updates require old")
-        return self
-```
-
-- [ ] **Step 4: Run the focused test to verify it passes**
-
-Run:
-
-```bash
-uv run pytest tests/test_v3_contracts.py -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py
-git commit -m "test: tighten core memory contracts"
-```
-
-## Task 2: Add SQLite Persistence and History
+### Task 1: Add taxonomy RED tests that force evidence-hit answer failure
 
 **Files:**
-- Create: `alembic/versions/0005_add_core_memory.py`
-- Modify: `src/memoryos_lite/store.py`
-- Create: `tests/test_core_memory_store.py`
+- Modify: `tests/test_public_benchmarks.py`
 
-- [ ] **Step 1: Write the failing store tests**
+- [ ] Add `test_public_benchmark_case_diagnostics_separate_retrieval_miss_and_answer_fail`.
 
-Add these tests to `tests/test_core_memory_store.py`:
+Test shape:
 
 ```python
-from sqlalchemy import text
-
-from memoryos_lite.config import Settings
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
-
-
-def _settings(tmp_path):
-    return Settings(
-        data_dir=tmp_path / "data",
-        sqlite_path=tmp_path / "memory.sqlite3",
+def test_public_benchmark_case_diagnostics_separate_retrieval_miss_and_answer_fail(tmp_path):
+    data_path = tmp_path / "locomo_taxonomy.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "sample_taxonomy",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "The supported marker is MemoryOS Lite.",
+                            },
+                            {
+                                "speaker": "Bob",
+                                "dia_id": "D1:2",
+                                "text": "A distractor says the marker is ArchiveBox.",
+                            },
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What is the supported marker?",
+                            "answer": "NeverReturnedExpectedToken",
+                            "evidence": ["D1:1"],
+                        },
+                        {
+                            "question": "What is the absent marker?",
+                            "answer": "Not in memory",
+                            "evidence": ["D9:9"],
+                        },
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
     )
-
-
-def test_core_memory_store_round_trip_history_and_soft_delete(tmp_path):
-    store = MemoryStore(_settings(tmp_path))
-    store.init_db()
-
-    block = CoreMemoryBlock(
-        id="core_1",
-        label="profile",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=100,
-        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="phase2-taxonomy-red",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
     )
+    reports = {result.case_id: result.to_report() for result in results}
 
-    created = store.create_core_memory_block(block)
-    assert created.id == "core_1"
-    assert store.get_core_memory_block("core_1").value == "Alice lives in Shanghai."
+    hit = reports["sample_taxonomy_qa_001"]["case_diagnostics"]
+    miss = reports["sample_taxonomy_qa_002"]["case_diagnostics"]
 
-    history = store.list_core_memory_history("core_1")
-    assert history[-1].operation == "add"
-
-    deleted = store.delete_core_memory_block(
-        "core_1",
-        source_refs=[SourceRef(source_type="message", source_id="msg_2")],
-        actor="agent",
-        reason="user requested removal",
-    )
-    assert deleted.deleted_at is not None
-    assert store.get_core_memory_block("core_1") is None
-    assert store.get_core_memory_block("core_1", include_deleted=True).deleted_at is not None
-    assert store.list_core_memory_history("core_1")[-1].operation == "delete"
-
-
-def test_init_db_stamps_new_core_memory_head(tmp_path):
-    store = MemoryStore(_settings(tmp_path))
-    store.init_db()
-    with store.db() as db:
-        version = db.scalar(text("select version_num from alembic_version limit 1"))
-    assert version == "0005_add_core_memory"
+    assert hit["retrieval_status"] == "evidence_retrieved"
+    assert hit["selected_context_status"] == "evidence_selected"
+    assert hit["rendered_context_status"] == "evidence_rendered"
+    assert reports["sample_taxonomy_qa_001"]["verdict"] == "fail"
+    assert hit["failure_class"] == "evidence_hit_answer_fail"
+    assert miss["failure_class"] == "retrieval_miss"
+    assert hit["failure_class"] != miss["failure_class"]
 ```
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+Do not allow this test to pass with `supported_cited_answer`, `unsupported_answer`, or any generic non-retrieval failure for the evidence-hit case. If the fixture does not retrieve/select/render `D1:1`, adjust only the fixture wording or test helper setup; do not change retrieval ranking, prompts, or case-id logic.
 
-Run:
+- [ ] Add `test_public_benchmark_case_diagnostics_classifies_unsupported_answer_separately`.
 
-```bash
-uv run pytest tests/test_core_memory_store.py -q
-```
-
-Expected: FAIL because the new tables and store methods do not exist yet.
-
-- [ ] **Step 3: Write the minimal implementation**
-
-Add the record classes and helpers to `src/memoryos_lite/store.py`:
+Use a direct diagnostics-builder fixture after the builder exists, or a public-report fixture if answer support is already wired. Required assertions:
 
 ```python
-class CoreMemoryBlockRecord(Base):
-    __tablename__ = "core_memory_blocks"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    label: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    limit_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    deleted_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    deleted_by_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class CoreMemoryHistoryRecord(Base):
-    __tablename__ = "core_memory_history"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    memory_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    operation: Mapped[str] = mapped_column(String(32), nullable=False)
-    actor: Mapped[str] = mapped_column(String(16), nullable=False)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+diagnostics = build_case_diagnostics(
+    benchmark="locomo",
+    baseline="memoryos_lite",
+    case_id="unsupported-demo",
+    memory_arch="v1",
+    answer="The answer is unsupported. [source:bad-id]",
+    answer_mode="llm",
+    verdict="fail",
+    reasoning="judge fail",
+    expected_source_ids=["good-id"],
+    retrieval_candidate_source_ids=["good-id"],
+    episode_candidate_message_ids=[],
+    planned_evidence_message_ids=[],
+    source_ids=["good-id"],
+    v3_context={},
+    v3_diagnostics=[],
+    kernel_trace_events=[],
+    baseline_verdict=None,
+    movement_baseline_source=None,
+)
+assert diagnostics["answer_support_status"] == "unsupported_answer"
+assert diagnostics["failure_class"] == "unsupported_answer"
 ```
 
-Add these `MemoryStore` methods with concrete behavior:
-
-- `create_core_memory_block(block)`: insert `CoreMemoryBlockRecord`, append an
-  `add` `MemoryHistoryEvent`, and return the block.
-- `get_core_memory_block(block_id, include_deleted=False)`: return `None` when
-  the record is missing or soft-deleted and `include_deleted` is false.
-- `list_core_memory_blocks(include_deleted=False)`: order by `created_at`, then
-  `label`, then `id`; hide soft-deleted records by default.
-- `update_core_memory_block(block)`: update value, metadata, source refs,
-  timestamps, and soft-delete fields for an existing block.
-- `delete_core_memory_block(block_id, source_refs, actor, reason)`: write a
-  `delete` history event, set `deleted_at` and `deleted_by_event_id`, and return
-  the deleted block.
-- `append_core_memory_history(event)`: insert `CoreMemoryHistoryRecord`.
-- `list_core_memory_history(block_id)`: return events ordered by `created_at`
-  and `id`.
-
-Update `MemoryStore.init_db()` so fresh DBs stamp `0005_add_core_memory` instead
-of `0004_add_episodes`.
-
-Implement the Alembic migration with `upgrade()` creating both tables and
-`downgrade()` dropping them in reverse order.
-
-- [ ] **Step 4: Run the focused test to verify it passes**
-
-Run:
+- [ ] Run RED:
 
 ```bash
-uv run pytest tests/test_core_memory_store.py -q
+uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_separate_retrieval_miss_and_answer_fail tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_classifies_unsupported_answer_separately -q
 ```
 
-Expected: PASS.
+Expected: FAIL because `case_diagnostics` and the diagnostics builder are absent.
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add alembic/versions/0005_add_core_memory.py src/memoryos_lite/store.py tests/test_core_memory_store.py
-git commit -m "feat: persist core memory blocks"
-```
-
-## Task 3: Add Core Memory Semantics and Rendering
+### Task 2: Add movement, compatibility, partial-report, and source-hit RED tests
 
 **Files:**
-- Create: `src/memoryos_lite/core_memory.py`
-- Create: `tests/test_core_memory_service.py`
+- Modify: `tests/test_public_benchmarks.py`
 
-- [ ] **Step 1: Write the failing service tests**
+- [ ] Add `test_public_case_movement_from_comparison_report_pairs`.
 
-Add these tests to `tests/test_core_memory_service.py`:
+Use a temp previous public report file with four rows and a current run/report with matching keys. The test may call the movement loader directly before public-run wiring exists.
+
+Previous report fixture:
 
 ```python
-import pytest
-
-from memoryos_lite.config import Settings
-from memoryos_lite.core_memory import CoreMemoryService, render_core_memory_blocks
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
-
-
-class FakeTokenizer:
-    def count(self, text: str) -> int:
-        return len(text.split())
-
-
-def _service(tmp_path):
-    settings = Settings(
-        data_dir=tmp_path / "data",
-        sqlite_path=tmp_path / "memory.sqlite3",
-    )
-    store = MemoryStore(settings)
-    store.init_db()
-    return CoreMemoryService(store=store, tokenizer=FakeTokenizer())
-
-
-def test_core_memory_service_requires_source_backed_writes(tmp_path):
-    service = _service(tmp_path)
-
-    with pytest.raises(ValueError):
-        service.create_block(
-            label="profile",
-            description="Stable user facts",
-            value="Alice lives in Shanghai.",
-            limit_tokens=20,
-            source_refs=[],
-            actor="agent",
-            reason="seed profile",
-        )
-
-
-def test_core_memory_service_append_replace_update_and_render(tmp_path):
-    service = _service(tmp_path)
-    ref = SourceRef(source_type="message", source_id="msg_1")
-    block = service.create_block(
-        label="profile",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=20,
-        source_refs=[ref],
-        actor="agent",
-        reason="seed profile",
-    )
-
-    appended = service.append_block(
-        block.id,
-        "Alice prefers rail travel.",
-        source_refs=[ref],
-        actor="agent",
-        reason="new fact",
-    )
-    replaced = service.replace_block(
-        block.id,
-        old="Shanghai",
-        content="Suzhou",
-        source_refs=[ref],
-        actor="agent",
-        reason="correction",
-    )
-    updated = service.update_block(
-        block.id,
-        "Alice lives in Suzhou.",
-        source_refs=[ref],
-        actor="agent",
-        reason="full rewrite",
-    )
-
-    assert "Alice prefers rail travel." in appended.value
-    assert replaced.value != block.value
-    assert updated.value == "Alice lives in Suzhou."
-    assert render_core_memory_blocks([updated]) == (
-        "[Core Memory]\n"
-        "- profile (20 tokens)\n"
-        "  Stable user facts\n"
-        "  Alice lives in Suzhou."
-    )
-
-
-def test_core_memory_service_rejects_over_limit_updates(tmp_path):
-    service = _service(tmp_path)
-    ref = SourceRef(source_type="message", source_id="msg_1")
-    block = service.create_block(
-        label="profile",
-        description="Stable user facts",
-        value="Alice",
-        limit_tokens=2,
-        source_refs=[ref],
-        actor="agent",
-        reason="seed profile",
-    )
-
-    with pytest.raises(ValueError):
-        service.append_block(
-            block.id,
-            "prefers rail travel",
-            source_refs=[ref],
-            actor="agent",
-            reason="overflow",
-        )
+previous_rows = [
+    {"benchmark": "locomo", "baseline": "memoryos_lite", "case_id": "case-pass-to-fail", "verdict": "pass"},
+    {"benchmark": "locomo", "baseline": "memoryos_lite", "case_id": "case-fail-to-pass", "verdict": "fail"},
+    {"benchmark": "locomo", "baseline": "memoryos_lite", "case_id": "case-unchanged-pass", "verdict": "pass"},
+    {"benchmark": "locomo", "baseline": "memoryos_lite", "case_id": "case-unchanged-fail", "verdict": "fail"},
+]
 ```
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+Required assertions:
 
-Run:
+```python
+comparison = load_public_case_movement([previous_report_path])
+assert comparison[("locomo", "memoryos_lite", "case-pass-to-fail")].verdict == "pass"
+
+assert movement_status("pass", "fail") == "pass_to_fail"
+assert movement_status("fail", "pass") == "fail_to_pass"
+assert movement_status("pass", "pass") == "unchanged_pass"
+assert movement_status("fail", "fail") == "unchanged_fail"
+assert movement_status("error", "fail") == "unchanged_fail"
+```
+
+- [ ] Add `test_public_case_movement_missing_baseline_is_not_anti_demo_evidence`.
+
+Required assertions:
+
+```python
+diagnostics = build_case_diagnostics(
+    benchmark="locomo",
+    baseline="memoryos_lite",
+    case_id="missing-baseline",
+    memory_arch="v3",
+    answer="MemoryOS Lite",
+    answer_mode="projected",
+    verdict="pass",
+    reasoning="exact substring match",
+    expected_source_ids=["D1:1"],
+    retrieval_candidate_source_ids=["D1:1"],
+    episode_candidate_message_ids=[],
+    planned_evidence_message_ids=[],
+    source_ids=["D1:1"],
+    v3_context={},
+    v3_diagnostics=[],
+    kernel_trace_events=[],
+    baseline_verdict=None,
+    movement_baseline_source=None,
+)
+assert diagnostics["movement_status"] == "new_case_no_baseline"
+assert diagnostics["baseline_verdict"] is None
+assert any("missing baseline" in note for note in diagnostics["diagnostic_notes"])
+```
+
+This status may appear in JSON, but the review/ACK checklist must treat it as insufficient for pass-to-fail/fail-to-pass/unchanged movement evidence.
+
+- [ ] Add `test_public_benchmark_movement_status_uses_comparison_report`.
+
+Use a one-case public fixture whose current deterministic result is `fail`, and write a previous report row for the same `(benchmark, baseline, case_id)` with `verdict == "pass"`.
+
+Required assertions:
+
+```python
+results = run_public_benchmark(
+    settings,
+    benchmark="locomo",
+    data_path=data_path,
+    run_id="phase2-movement-wiring",
+    baselines=["memoryos_lite"],
+    llm_answer=False,
+    llm_judge=False,
+    comparison_report_paths=[previous_report_path],
+)
+report = results[0].to_report()
+assert report["verdict"] == "fail"
+assert report["movement_status"] == "pass_to_fail"
+assert report["case_diagnostics"]["baseline_verdict"] == "pass"
+assert report["case_diagnostics"]["movement_baseline_source"] == str(previous_report_path)
+```
+
+- [ ] Add `test_public_benchmark_case_diagnostics_are_append_only`.
+
+Required assertions:
+
+```python
+report = results[0].to_report()
+legacy_fields = {
+    "benchmark",
+    "baseline",
+    "case_id",
+    "answer",
+    "verdict",
+    "source_hit",
+    "source_hit_at_k",
+    "episode_candidate_message_ids",
+    "planned_evidence_message_ids",
+    "v3_diagnostics",
+    "kernel_trace_events",
+    "pass",
+}
+assert legacy_fields <= set(report)
+assert "case_diagnostics" in report
+assert report["failure_class"] == report["case_diagnostics"]["failure_class"]
+assert report["source_hit"] in {True, False, None}
+assert report["case_diagnostics"]["source_hit_semantics"] == "final_projection_source_overlap"
+```
+
+- [ ] Add `test_public_benchmark_partial_and_final_reports_have_diagnostic_schema_parity`.
+
+Run `run_public_benchmark(...)`, then read both files:
+
+```python
+partial_path = settings.data_dir / "evals" / "phase2-partial-schema_locomo.partial.json"
+final_path = settings.data_dir / "evals" / "phase2-partial-schema_locomo.json"
+partial_rows = json.loads(partial_path.read_text(encoding="utf-8"))
+final_rows = json.loads(final_path.read_text(encoding="utf-8"))
+
+mirror_fields = {"case_diagnostics", "failure_class", "movement_status", "answer_support_status", "judge_status"}
+assert mirror_fields <= set(partial_rows[-1])
+assert mirror_fields <= set(final_rows[-1])
+assert set(partial_rows[-1]["case_diagnostics"]) == set(final_rows[-1]["case_diagnostics"])
+for field in mirror_fields - {"case_diagnostics"}:
+    assert partial_rows[-1][field] == partial_rows[-1]["case_diagnostics"][field]
+    assert final_rows[-1][field] == final_rows[-1]["case_diagnostics"][field]
+```
+
+- [ ] Add `test_public_benchmark_source_hit_is_not_retrieval_localization`.
+
+Required assertions:
+
+```python
+diagnostics = report["case_diagnostics"]
+assert "retrieved_evidence_ids" in diagnostics
+assert "selected_context_ids" in diagnostics
+assert "rendered_evidence_ids" in diagnostics
+assert diagnostics["retrieved_evidence_ids"] != []
+assert report["source_hit"] is False or report["verdict"] == "fail"
+assert diagnostics["failure_class"] != "retrieval_miss"
+```
+
+Use a fixture where expected evidence is retrieved/rendered but the deterministic projected answer does not contain the expected answer. Do not change prompts or retrieval ranking to make the case pass.
+
+- [ ] Run RED:
 
 ```bash
-uv run pytest tests/test_core_memory_service.py -q
+uv run pytest tests/test_public_benchmarks.py::test_public_case_movement_from_comparison_report_pairs tests/test_public_benchmarks.py::test_public_case_movement_missing_baseline_is_not_anti_demo_evidence tests/test_public_benchmarks.py::test_public_benchmark_movement_status_uses_comparison_report tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_are_append_only tests/test_public_benchmarks.py::test_public_benchmark_partial_and_final_reports_have_diagnostic_schema_parity tests/test_public_benchmarks.py::test_public_benchmark_source_hit_is_not_retrieval_localization -q
 ```
 
-Expected: FAIL because the service module and renderer do not exist yet.
+Expected: FAIL because the movement loader and new diagnostics fields are absent.
 
-- [ ] **Step 3: Write the minimal implementation**
+### Task 3: Add v3 default, v1 fallback, and kernel opt-in tests
 
-Create `src/memoryos_lite/core_memory.py` with a service boundary like this:
+**Files:**
+- Modify: `tests/test_public_benchmarks.py`
+
+- [ ] Change or add `test_public_benchmark_reports_v3_context_diagnostics_by_default`.
+
+Use `Settings(data_dir=tmp_path / ".memoryos")` with no explicit `memoryos_memory_arch`. Required assertions:
+
+```python
+report = results[0].to_report()
+assert report["memory_arch"] == "v3"
+assert report["v3_diagnostics"]
+assert report["case_diagnostics"]["memory_arch"] == "v3"
+```
+
+- [ ] Add `test_public_benchmark_explicit_v1_fallback_has_no_v3_case_context`.
+
+Use `Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")`. Required assertions:
+
+```python
+report = results[0].to_report()
+assert report["memory_arch"] != "v3"
+assert report["v3_diagnostics"] == []
+assert report["case_diagnostics"]["memory_arch"] in {None, "v1"}
+```
+
+- [ ] Add `test_public_benchmark_kernel_trace_remains_default_off`.
+
+Use default settings. Required assertions:
+
+```python
+report = results[0].to_report()
+assert report["kernel_trace_events"] == []
+assert report["case_diagnostics"]["kernel_trace_present"] is False
+```
+
+- [ ] Keep existing explicit kernel test and extend it:
+
+```python
+assert report["kernel_trace_events"]
+assert report["case_diagnostics"]["kernel_trace_present"] is True
+assert report["case_diagnostics"]["failure_class"] in {
+    "supported_cited_answer",
+    "evidence_hit_answer_fail",
+    "unsupported_answer",
+    "judge_questionable",
+    "retrieval_miss",
+    "context_missing_evidence",
+}
+```
+
+- [ ] Run RED:
+
+```bash
+uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_reports_v3_context_diagnostics_by_default tests/test_public_benchmarks.py::test_public_benchmark_explicit_v1_fallback_has_no_v3_case_context tests/test_public_benchmarks.py::test_public_benchmark_kernel_trace_remains_default_off -q
+```
+
+Expected: at least the default-v3 test fails because `engine._should_route_to_v3_context()` currently requires `memoryos_memory_arch` in `model_fields_set`.
+
+## GREEN
+
+### Task 4: Create the movement and taxonomy modules
+
+**Files:**
+- Create: `src/memoryos_lite/public_case_movement.py`
+- Create: `src/memoryos_lite/public_case_diagnostics.py`
+
+- [ ] Add `src/memoryos_lite/public_case_movement.py` with this contract:
 
 ```python
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
 
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import (
-    ApprovalState,
-    CoreMemoryBlock,
-    MemoryHistoryEvent,
-    SourceRef,
-)
+@dataclass(frozen=True)
+class BaselineCaseVerdict:
+    benchmark: str
+    baseline: str
+    case_id: str
+    verdict: str
+    source: str
 
+MovementKey = tuple[str, str, str]
 
-def render_core_memory_blocks(blocks: list[CoreMemoryBlock]) -> str:
-    lines = ["[Core Memory]"]
-    for block in sorted(blocks, key=lambda b: (b.created_at, b.label, b.id)):
-        if block.deleted_at is not None:
-            continue
-        lines.append(f"- {block.label} ({block.limit_tokens} tokens)")
-        lines.append(f"  {block.description}")
-        lines.append(f"  {block.value}")
-    return "\n".join(lines)
+def load_public_case_movement(paths: Iterable[Path]) -> dict[MovementKey, BaselineCaseVerdict]:
+    ...
 
-
-@dataclass
-class CoreMemoryService:
-    store: MemoryStore
-    tokenizer: TokenEstimator
+def movement_status(baseline_verdict: str | None, current_verdict: str) -> str:
+    ...
 ```
 
-Implement public methods named `create_block`, `append_block`, `replace_block`,
-`update_block`, and `delete_block`. Each method must require `actor` and
-`reason`, reject source-less writes unless an approved `ApprovalState` is
-provided, write a matching `MemoryHistoryEvent`, and return the resulting
-`CoreMemoryBlock`.
+Rules:
 
-Use these semantics inside the service:
+- Read each path as the existing public JSON list format.
+- Accept legacy rows with `verdict` or boolean `pass`.
+- Normalize benchmark, baseline, and case id to strings; key by `(benchmark, baseline, case_id)`.
+- Only `pass`, `fail`, and `error` are valid verdict values. Raise `ValueError` for any other comparison verdict so bad baselines do not silently produce movement fields.
+- Later paths override earlier paths for the same key.
+- `movement_status(None, current)` returns `new_case_no_baseline`.
+- `movement_status("pass", "fail")` returns `pass_to_fail`.
+- `movement_status("fail", "pass")` and `movement_status("error", "pass")` return `fail_to_pass`.
+- matching `pass` returns `unchanged_pass`.
+- all other non-pass current statuses with previous `fail` or `error` return `unchanged_fail`.
+
+- [ ] Add a pure diagnostics builder function with this interface:
 
 ```python
-separator = "\n\n"
-next_value = block.value + (separator if block.value else "") + addition
-if self.tokenizer.count(next_value) > block.limit_tokens:
-    raise ValueError("core memory block exceeds limit_tokens")
-
-event = MemoryHistoryEvent(
-    memory_id=block.id,
-    memory_type="core_block",
-    operation="update",
-    actor=actor,
-    reason=reason,
-    before=block.model_dump(mode="json"),
-    after=updated_block.model_dump(mode="json"),
-    source_refs=source_refs,
-)
+def build_case_diagnostics(
+    *,
+    benchmark: str,
+    baseline: str,
+    case_id: str,
+    memory_arch: str | None,
+    answer: str,
+    answer_mode: str,
+    verdict: str,
+    reasoning: str,
+    expected_source_ids: list[str],
+    retrieval_candidate_source_ids: list[str],
+    episode_candidate_message_ids: list[str],
+    planned_evidence_message_ids: list[str],
+    source_ids: list[str],
+    v3_context: dict[str, object],
+    v3_diagnostics: list[dict[str, object]],
+    kernel_trace_events: list[str],
+    baseline_verdict: str | None = None,
+    movement_baseline_source: str | None = None,
+) -> dict[str, object]:
+    ...
 ```
 
-For `replace`, use the first exact match of `old` and fail if the substring does
-not exist. For `delete`, write a `delete` history event with `before` populated
-and `after=None`, then soft-delete the block through the store.
+- [ ] Derive ids deterministically:
+  - `retrieved_evidence_ids`: de-duplicated union of `retrieval_candidate_source_ids`, `episode_candidate_message_ids`, and `planned_evidence_message_ids`.
+  - `selected_context_ids`: source ids from included v3 diagnostics and v3 context items; fall back to `retrieved_evidence_ids` for v1/v2 where selected ids are not separately represented.
+  - `rendered_evidence_ids`: de-duplicated `source_ids` because `BaselineOutput.sources` is what projected answers and LLM answers receive.
+  - `cited_source_ids` and `unsupported_citation_ids`: from `memoryos_lite.agent_answer_eval.evaluate_agent_answer(answer, rendered_evidence_ids)`.
 
-Honor approved manual provenance through the existing `ApprovalState` model and
-manual `SourceRef` values that include a real non-empty `approval_id`.
+- [ ] Implement the status and `failure_class` precedence exactly as specified in `spec.md`.
+- [ ] Treat `answer_mode == "projected"` with expected evidence rendered and `verdict == "fail"` as `evidence_hit_answer_fail`, not `unsupported_answer`, when there are no unsupported citation ids. `unsupported_answer` is reserved for unsupported content/citations/refusal failures, not every projected answer miss.
 
-- [ ] **Step 4: Run the focused test to verify it passes**
+- [ ] Implement movement status by calling `movement_status(baseline_verdict, verdict)` from `public_case_movement.py`.
+- [ ] Include `baseline_verdict` and `movement_baseline_source` in `case_diagnostics`.
+- [ ] When `baseline_verdict is None`, add a note like `missing baseline comparison for locomo/memoryos_lite/sample_taxonomy_qa_001`; this note is required so missing baseline data cannot masquerade as anti-demo movement evidence.
 
-Run:
+- [ ] Run focused tests:
 
 ```bash
-uv run pytest tests/test_core_memory_service.py -q
+uv run pytest tests/test_public_benchmarks.py::test_public_case_movement_from_comparison_report_pairs tests/test_public_benchmarks.py::test_public_case_movement_missing_baseline_is_not_anti_demo_evidence tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_classifies_unsupported_answer_separately -q
 ```
 
-Expected: PASS.
+Expected: PASS for direct movement/taxonomy tests; public benchmark wiring tests still fail until Task 5.
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/memoryos_lite/core_memory.py tests/test_core_memory_service.py
-git commit -m "feat: add core memory mutation service"
-```
-
-## Task 4: Lock the Default Context Regression
+### Task 5: Wire diagnostics into public benchmark reports
 
 **Files:**
-- Modify: `tests/test_engine.py`
+- Modify: `src/memoryos_lite/public_benchmarks.py`
 
-- [ ] **Step 1: Add the regression test**
-
-Add a focused regression near the existing `build_context()` tests:
+- [ ] Import `build_case_diagnostics`.
+- [ ] Import `load_public_case_movement`; import movement types only if they are used in annotations.
+- [ ] Add fields to `PublicBenchmarkResult`:
 
 ```python
-from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
-
-
-def test_build_context_ignores_core_memory_blocks(service):
-    session = service.create_session("core-memory-regression")
-    service.store.create_core_memory_block(
-        CoreMemoryBlock(
-            id="core_1",
-            label="profile",
-            description="Stable user facts",
-            value="Alice lives in Shanghai.",
-            limit_tokens=100,
-            source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-        )
-    )
-
-    context = service.build_context(session.id, "用户最终决定做什么？", budget=200)
-
-    assert all(not key.startswith("core_") for key in context.metadata)
-    assert "Alice lives in Shanghai." not in context.model_dump_json()
+case_diagnostics: dict[str, Any] = field(default_factory=dict)
+failure_class: str = "unknown"
+movement_status: str = "new_case_no_baseline"
+answer_support_status: str = "unknown"
+judge_status: str = "unknown"
 ```
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+- [ ] Extend `run_public_benchmark` with an explicit comparison input:
 
-Run:
-
-```bash
-uv run pytest tests/test_engine.py -q
+```python
+def run_public_benchmark(
+    settings: Settings,
+    benchmark: str,
+    data_path: Path,
+    run_id: str,
+    baselines: list[str],
+    limit: int | None = None,
+    llm_answer: bool = False,
+    llm_judge: bool = False,
+    isolated: bool = True,
+    comparison_report_paths: list[Path] | None = None,
+) -> list[PublicBenchmarkResult]:
+    comparison = load_public_case_movement(comparison_report_paths or [])
+    ...
 ```
 
-Expected: FAIL until the regression is in place or the imports are added.
+- [ ] For each result, lookup baseline comparison before `_to_public_result`:
 
-- [ ] **Step 3: Write the minimal implementation**
+```python
+comparison_key = (public_case.benchmark, baseline, public_case.case.case_id)
+baseline_case = comparison.get(comparison_key)
+baseline_verdict = baseline_case.verdict if baseline_case is not None else None
+movement_baseline_source = baseline_case.source if baseline_case is not None else None
+```
 
-Keep the engine unchanged. The only change should be the regression test that
-proves the current default path does not pick up core memory automatically.
-
-- [ ] **Step 4: Run the focused test to verify it passes**
-
-Run:
+- [ ] Extend `_to_public_result(...)` with `baseline_verdict: str | None` and `movement_baseline_source: str | None` parameters.
+- [ ] In `_to_public_result`, build diagnostics after current overlap/session calculations and before returning `PublicBenchmarkResult`.
+- [ ] Populate the mirror fields from the diagnostics object.
+- [ ] Do not remove or rename existing fields.
+- [ ] Run:
 
 ```bash
-uv run pytest tests/test_engine.py -q
+uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_separate_retrieval_miss_and_answer_fail tests/test_public_benchmarks.py::test_public_benchmark_movement_status_uses_comparison_report tests/test_public_benchmarks.py::test_public_benchmark_case_diagnostics_are_append_only tests/test_public_benchmarks.py::test_public_benchmark_partial_and_final_reports_have_diagnostic_schema_parity tests/test_public_benchmarks.py::test_public_benchmark_source_hit_is_not_retrieval_localization -q
+```
+
+Expected: PASS except for any v3 default-route test still blocked by engine routing.
+
+### Task 6: Fix real v3 default routing while preserving v1 fallback
+
+**Files:**
+- Modify: `src/memoryos_lite/engine.py`
+
+- [ ] Change `_should_route_to_v3_context()` to route whenever `self.settings.resolved_memory_arch == "v3"`.
+- [ ] Keep the existing `resolved_memory_arch != "v3"` guard for v1 fallback.
+- [ ] Do not enable kernel behavior in this method.
+- [ ] Run:
+
+```bash
+uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_reports_v3_context_diagnostics_by_default tests/test_public_benchmarks.py::test_public_benchmark_explicit_v1_fallback_has_no_v3_case_context -q
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the full verification sweep**
+### Task 7: Preserve kernel opt-in diagnostics
 
-Run:
+**Files:**
+- Modify only if tests fail: `src/memoryos_lite/public_case_diagnostics.py`, `src/memoryos_lite/public_benchmarks.py`
+
+- [ ] Ensure default reports keep `kernel_trace_events == []`.
+- [ ] Ensure `case_diagnostics.kernel_trace_present` mirrors `bool(kernel_trace_events)`.
+- [ ] Ensure `failure_class` never becomes pass because kernel trace exists.
+- [ ] Run:
+
+```bash
+uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_kernel_trace_remains_default_off tests/test_public_benchmarks.py::test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled -q
+```
+
+Expected: PASS.
+
+### Task 8: Update diagnostic report loading and breakdown
+
+**Files:**
+- Modify: `src/memoryos_lite/diagnostic_report.py`
+- Modify: `src/memoryos_lite/cli.py`
+
+- [ ] Update `classify_failure(result)` to return `result.case_diagnostics["failure_class"]` when present.
+- [ ] Keep the old source-hit-based fallback for reports without `case_diagnostics`.
+- [ ] Keep `load_results()` filtering unknown fields through `PublicBenchmarkResult.__dataclass_fields__`.
+- [ ] Add `comparison_report: Annotated[list[str] | None, Option("--comparison-report", help="Previous public JSON report used for case movement status")] = None` to `eval_public`.
+- [ ] Pass `comparison_report_paths=[Path(path) for path in comparison_report or []]` into `run_public_benchmark`.
+- [ ] Do not require comparison reports for normal public evals; missing data must flow to `new_case_no_baseline`.
+- [ ] If CLI table columns change, add only additive columns and keep all current `PUBLIC_TABLE_COLUMNS` names rendering.
+- [ ] Run:
+
+```bash
+uv run pytest tests/test_public_benchmarks.py::test_cli_public_helpers_import_without_agent_answer_eval tests/test_public_benchmarks.py::test_public_case_movement_from_comparison_report_pairs -q
+```
+
+Expected: PASS.
+
+## REFACTOR
+
+### Task 9: Tighten names and docs inside code
+
+**Files:**
+- Modify: `src/memoryos_lite/public_case_diagnostics.py`
+- Modify: `src/memoryos_lite/public_benchmarks.py`
+
+- [ ] Keep status string constants in one module.
+- [ ] Add one short code comment only where `source_hit` is intentionally separated from retrieval evidence ids.
+- [ ] Remove duplicate id-normalization logic.
+- [ ] Keep benchmark-specific logic out of the taxonomy builder. Inputs are ids and verdicts, not hardcoded LongMemEval or LoCoMo case ids.
+- [ ] Run focused regression:
+
+```bash
+uv run pytest tests/test_public_benchmarks.py tests/test_agent_answer_eval.py tests/test_llm_judge.py -q
+```
+
+Expected: PASS.
+
+## Smoke
+
+### Task 10: Full local smoke
+
+- [ ] Run:
 
 ```bash
 uv run pytest -q
 ```
 
-Expected: full suite stays green with no default-context regression.
+Expected: all tests pass.
 
-- [ ] **Step 6: Commit**
+- [ ] Run:
 
 ```bash
-git add tests/test_engine.py
-git commit -m "test: protect default context from core memory"
+uv run ruff check .
 ```
+
+Expected: no lint errors.
+
+If either command fails, do not proceed to milestone eval. Fix the failing focused area first.
+
+## Milestone Eval
+
+### Task 11: Run public benchmark milestone commands
+
+- [ ] Run LongMemEval full-chain v3 milestone:
+
+```bash
+MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public \
+  --benchmark longmemeval \
+  --data-path benchmarks/longmemeval/longmemeval.json \
+  --baseline memoryos_lite \
+  --limit 30 \
+  --llm-answer \
+  --llm-judge \
+  --comparison-report .memoryos/evals/phase0_v3_lme_5case_longmemeval.json
+```
+
+- [ ] Run LoCoMo full-chain v3 milestone:
+
+```bash
+MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public \
+  --benchmark locomo \
+  --data-path benchmarks/locomo/locomo10.json \
+  --baseline memoryos_lite \
+  --limit 30 \
+  --llm-answer \
+  --llm-judge \
+  --comparison-report .memoryos/evals/phase0_v3_locomo_5case_locomo.json
+```
+
+These Phase 0 comparison reports provide executable baseline verdicts for the known smoke rows only. Any limit-30 row absent from the comparison report must be listed as `new_case_no_baseline` and cannot be counted as movement evidence. If either comparison report is missing, record the exact missing path and run without `--comparison-report`; the phase may still produce diagnostics, but it cannot claim the anti-demo movement requirement is satisfied.
+
+- [ ] If provider/model/data access blocks full-chain answer or judge, record the exact command, exit/error text, missing variable, and whether fallback no-LLM smoke was run. Fallback commands:
+
+```bash
+MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public \
+  --benchmark longmemeval \
+  --data-path benchmarks/longmemeval/longmemeval.json \
+  --baseline memoryos_lite \
+  --limit 30 \
+  --comparison-report .memoryos/evals/phase0_v3_lme_5case_longmemeval.json \
+  --no-llm-answer \
+  --no-llm-judge
+```
+
+```bash
+MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public \
+  --benchmark locomo \
+  --data-path benchmarks/locomo/locomo10.json \
+  --baseline memoryos_lite \
+  --limit 30 \
+  --comparison-report .memoryos/evals/phase0_v3_locomo_5case_locomo.json \
+  --no-llm-answer \
+  --no-llm-judge
+```
+
+Fallback-only evidence does not satisfy the mandatory full-chain milestone.
+
+Primary full-chain report rows must have `case_diagnostics.answer_mode == "llm"` and `case_diagnostics.judge_status != "not_run"`. If any primary row lacks those values, reject the milestone evidence unless the result artifact records the exact provider/data blocker that prevented LLM answer or judge execution.
+
+### Task 12: Produce case-level analysis from generated JSON
+
+The execute lane may write phase-local result artifacts later, but this planning lane must not write them.
+
+Required analysis sections for each benchmark:
+
+- `pass_rate` and total cases.
+- `retrieval_miss` case ids.
+- `context_missing_evidence` case ids.
+- `evidence_hit_answer_fail` case ids.
+- `unsupported_answer` case ids.
+- `supported_cited_answer` case ids.
+- `judge_questionable` case ids.
+- `fail_to_pass` case ids.
+- `pass_to_fail` case ids.
+- `unchanged_pass` case ids.
+- `unchanged_fail` case ids.
+- `new_case_no_baseline` case ids, with a note that these do not satisfy movement evidence.
+- `movement_baseline_source` coverage: count rows with a non-null source and list missing comparison keys.
+- `answer_mode` coverage: count `case_diagnostics.answer_mode` values per benchmark and list any rows that are not `llm` in primary full-chain reports.
+- `judge_status` coverage: count `case_diagnostics.judge_status` values per benchmark and list any primary full-chain rows with `judge_status == "not_run"`.
+- Representative `expected_source_ids`, `retrieved_evidence_ids`, `selected_context_ids`, `rendered_evidence_ids`, and `cited_source_ids`.
+
+The later `result.md` and ACK gating must read `case_diagnostics.answer_mode` and `case_diagnostics.judge_status` from the generated JSON reports. Deterministic fallback rows with `answer_mode == "projected"` or `judge_status == "not_run"` must be labeled fallback-only and cannot satisfy the full-chain milestone.
+
+Known Phase 0 smoke labels may be used as comparison evidence in analysis, not as runtime classification rules:
+
+```text
+LongMemEval pass: 1e043500
+LongMemEval retrieval miss: 58bf7951
+LongMemEval evidence-hit answer failures: e47becba, 118b2229, 51a45a95
+LoCoMo evidence-hit answer failure: conv-26_qa_001
+LoCoMo retrieval/scope misses: conv-26_qa_002, conv-26_qa_003, conv-26_qa_004, conv-26_qa_005
+```
+
+## Review
+
+### Task 13: Review gates before ACK
+
+Reject the phase as partial or demo-only if any of these are true:
+
+- Diagnostics are only markdown and are not wired into `run_public_benchmark`.
+- Public JSON lacks per-case `case_diagnostics`.
+- `retrieval_miss` and `evidence_hit_answer_fail` can collapse into one status.
+- `source_hit` is used as proof of retrieval localization.
+- LongMemEval and LoCoMo are combined without separate case-level lists.
+- Pass-to-fail regressions are hidden behind aggregate pass rate.
+- Movement fields are all `new_case_no_baseline` or are produced without an executable comparison report source.
+- Missing baseline rows are counted as satisfying pass-to-fail/fail-to-pass/unchanged movement evidence.
+- Full-chain LLM judge milestone is skipped without an exact blocker.
+- Primary full-chain milestone report rows do not have `case_diagnostics.answer_mode == "llm"` or have `case_diagnostics.judge_status == "not_run"`, unless an exact provider/data blocker is recorded.
+- `result.md` or ACK evidence does not report answer-mode coverage and judge-status coverage separately for LongMemEval and LoCoMo.
+- Any retrieval ranking, answer prompt, archive scope, kernel tool, or case-id hack is introduced.
+- `MEMORYOS_AGENT_KERNEL=v1` becomes default or changes answer classification.
+- Explicit v1 fallback breaks.
+- Quarantined control files are edited.
+
+### Task 14: Final verification command set
+
+Run before requesting review:
+
+```bash
+uv run pytest tests/test_public_benchmarks.py tests/test_agent_answer_eval.py tests/test_llm_judge.py -q
+uv run pytest -q
+uv run ruff check .
+```
+
+Expected: all pass.

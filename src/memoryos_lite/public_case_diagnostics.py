@@ -1,0 +1,217 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+from memoryos_lite.agent_answer_eval import evaluate_agent_answer
+from memoryos_lite.public_case_movement import movement_status
+
+
+def build_case_diagnostics(
+    *,
+    benchmark: str,
+    baseline: str,
+    case_id: str,
+    memory_arch: str | None,
+    answer: str,
+    answer_mode: str,
+    verdict: str,
+    reasoning: str,
+    expected_source_ids: list[str],
+    retrieval_candidate_source_ids: list[str],
+    episode_candidate_message_ids: list[str],
+    planned_evidence_message_ids: list[str],
+    source_ids: list[str],
+    v3_context: dict[str, object],
+    v3_diagnostics: list[dict[str, object]],
+    kernel_trace_events: list[str],
+    baseline_verdict: str | None = None,
+    movement_baseline_source: str | None = None,
+) -> dict[str, object]:
+    expected_ids = _dedupe(expected_source_ids)
+    retrieved_ids = _dedupe(
+        [
+            *retrieval_candidate_source_ids,
+            *episode_candidate_message_ids,
+            *planned_evidence_message_ids,
+        ]
+    )
+    selected_ids = _selected_context_ids(
+        memory_arch=memory_arch,
+        v3_context=v3_context,
+        v3_diagnostics=v3_diagnostics,
+        fallback_ids=retrieved_ids,
+    )
+    rendered_ids = _dedupe(source_ids)
+    answer_eval = evaluate_agent_answer(answer, rendered_ids)
+
+    retrieval_status = _overlap_status(expected_ids, retrieved_ids, "evidence_retrieved")
+    selected_context_status = _overlap_status(expected_ids, selected_ids, "evidence_selected")
+    rendered_context_status = _overlap_status(expected_ids, rendered_ids, "evidence_rendered")
+    answer_support_status = _answer_support_status(
+        answer_mode=answer_mode,
+        verdict=verdict,
+        rendered_has_expected=bool(set(expected_ids) & set(rendered_ids)),
+        unsupported=answer_eval.unsupported_answer,
+        unsupported_citation_ids=answer_eval.unsupported_citation_ids,
+        cited_source_ids=answer_eval.cited_source_ids,
+    )
+    judge_status = _judge_status(verdict, reasoning)
+    failure_class = _failure_class(
+        verdict=verdict,
+        retrieval_status=retrieval_status,
+        selected_context_status=selected_context_status,
+        rendered_context_status=rendered_context_status,
+        answer_support_status=answer_support_status,
+        judge_status=judge_status,
+    )
+    movement = movement_status(baseline_verdict, verdict)
+    notes: list[str] = []
+    if baseline_verdict is None:
+        notes.append(f"missing baseline comparison for {benchmark}/{baseline}/{case_id}")
+
+    return {
+        "benchmark": benchmark,
+        "baseline": baseline,
+        "case_id": case_id,
+        "memory_arch": memory_arch,
+        "answer_mode": answer_mode,
+        "verdict": verdict,
+        "reasoning": reasoning,
+        "expected_source_ids": expected_ids,
+        "retrieved_evidence_ids": retrieved_ids,
+        "selected_context_ids": selected_ids,
+        "rendered_evidence_ids": rendered_ids,
+        "cited_source_ids": answer_eval.cited_source_ids,
+        "unsupported_citation_ids": answer_eval.unsupported_citation_ids,
+        "retrieval_status": retrieval_status,
+        "selected_context_status": selected_context_status,
+        "rendered_context_status": rendered_context_status,
+        "answer_support_status": answer_support_status,
+        "judge_status": judge_status,
+        "failure_class": failure_class,
+        "movement_status": movement,
+        "baseline_verdict": baseline_verdict,
+        "movement_baseline_source": movement_baseline_source,
+        "kernel_trace_present": bool(kernel_trace_events),
+        "source_hit_semantics": "final_projection_source_overlap",
+        "diagnostic_notes": notes,
+    }
+
+
+def _overlap_status(expected_ids: list[str], candidate_ids: list[str], hit_status: str) -> str:
+    if not expected_ids:
+        return "no_expected_evidence"
+    return hit_status if set(expected_ids) & set(candidate_ids) else "evidence_missing"
+
+
+def _answer_support_status(
+    *,
+    answer_mode: str,
+    verdict: str,
+    rendered_has_expected: bool,
+    unsupported: bool,
+    unsupported_citation_ids: list[str],
+    cited_source_ids: list[str],
+) -> str:
+    if unsupported and (answer_mode == "llm" or unsupported_citation_ids):
+        return "unsupported_answer"
+    if verdict == "pass" and (not cited_source_ids or not unsupported):
+        return "supported_cited_answer"
+    if answer_mode == "projected" and rendered_has_expected and verdict == "fail":
+        return "answer_failed_with_rendered_evidence"
+    if unsupported:
+        return "unsupported_answer"
+    return "answer_not_supported_by_judge"
+
+
+def _judge_status(verdict: str, reasoning: str) -> str:
+    if not reasoning or reasoning == "exact substring match":
+        return "not_run"
+    normalized = reasoning.lower()
+    if verdict == "error" or "judge_error:" in normalized:
+        return "judge_questionable"
+    return "judge_pass" if verdict == "pass" else "judge_fail"
+
+
+def _failure_class(
+    *,
+    verdict: str,
+    retrieval_status: str,
+    selected_context_status: str,
+    rendered_context_status: str,
+    answer_support_status: str,
+    judge_status: str,
+) -> str:
+    if judge_status == "judge_questionable":
+        return "judge_questionable"
+    if retrieval_status != "evidence_retrieved":
+        return "retrieval_miss"
+    if (
+        selected_context_status != "evidence_selected"
+        or rendered_context_status != "evidence_rendered"
+    ):
+        return "context_missing_evidence"
+    if answer_support_status == "unsupported_answer":
+        return "unsupported_answer"
+    if verdict == "pass":
+        return "supported_cited_answer"
+    return "evidence_hit_answer_fail"
+
+
+def _selected_context_ids(
+    *,
+    memory_arch: str | None,
+    v3_context: dict[str, object],
+    v3_diagnostics: list[dict[str, object]],
+    fallback_ids: list[str],
+) -> list[str]:
+    ids: list[str] = []
+    for item in v3_diagnostics:
+        ids.extend(_strings_from_mapping(item, ("source_id", "source_message_id", "item_id")))
+        for key in ("source_ids", "source_message_ids", "source_message_id_chain"):
+            ids.extend(_strings_from_value(item.get(key)))
+    ids.extend(_ids_from_v3_context(v3_context))
+    if memory_arch != "v3" and not ids:
+        return fallback_ids
+    return _dedupe(ids)
+
+
+def _ids_from_v3_context(v3_context: dict[str, object]) -> list[str]:
+    items = v3_context.get("items") if isinstance(v3_context, dict) else None
+    if not isinstance(items, list):
+        return []
+    ids: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ids.extend(_strings_from_mapping(item, ("item_id", "source_id", "source_message_id")))
+        for key in ("source_ids", "source_message_ids"):
+            ids.extend(_strings_from_value(item.get(key)))
+    return ids
+
+
+def _strings_from_mapping(item: dict[str, object], keys: Iterable[str]) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    return values
+
+
+def _strings_from_value(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    return []
+
+
+def _dedupe(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result

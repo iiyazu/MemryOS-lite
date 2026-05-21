@@ -1,22 +1,29 @@
-# Execute Self-Review: Phase 3 - Core Memory Blocks
+# phase: phase-2
 
-## 小问题修复
-- 修复 `src/memoryos_lite/store.py` 中两处超过 ruff 行长限制的代码。
-- 移除 `tests/test_core_memory_service.py` 中未使用的 `CoreMemoryBlock` import。
+# Execute Self-Review
 
-## 大问题标记
-- 无。
+## 1. Did implementation follow the approved Phase 2 plan?
 
-## 内审结论
-- `result.md` 指向的 phase、文件列表、测试摘要与当前 phase-3 交付一致。
-- Core memory blocks 仍为 opt-in/internal surface，未接入默认 legacy context。
-- Source-backed enforcement、append / replace / update / delete、history、soft-delete 和 render 行为均有覆盖。
-- 未发现需要退回 `EXECUTE` 的阻塞问题。
+Yes. The implementation added a diagnostic-only public benchmark evidence harness, wired it into the real `run_public_benchmark()` path, added movement loading from comparison reports, preserved append-only JSON compatibility, exposed CLI `--comparison-report`, fixed default v3 routing, and kept explicit v1 fallback and kernel opt-in.
 
-## 复验
-- `uv run ruff check src/memoryos_lite/core_memory.py src/memoryos_lite/store.py src/memoryos_lite/v3_contracts.py tests/test_core_memory_store.py tests/test_core_memory_service.py tests/test_engine.py tests/test_v3_contracts.py alembic/versions/0005_add_core_memory.py` -> `All checks passed!`
-- `uv run pytest tests/test_v3_contracts.py tests/test_core_memory_store.py tests/test_core_memory_service.py tests/test_engine.py -q` -> `55 passed in 24.92s`
-- `uv run pytest -q` -> `337 passed, 1 warning in 396.42s`
+## 2. Was strict TDD followed?
 
-## 结论
-PASS - 可提交 Review。
+Yes. RED tests were added before production changes. Focused RED commands failed for the expected reasons: missing `case_diagnostics`, missing diagnostics and movement modules, missing `comparison_report_paths`, and default v3 routing not active. Minimal GREEN code was then added and the focused tests were rerun.
+
+## 3. Were regressions or case-level failures hidden?
+
+No. Reports now expose per-case `failure_class`, `movement_status`, evidence id chains, answer support status, and judge status. LongMemEval and LoCoMo were analyzed separately. Missing baseline rows are explicitly marked `new_case_no_baseline` with diagnostic notes and are not counted as movement evidence.
+
+## 4. Were non-goals avoided?
+
+Yes. No retrieval optimization, answer prompt tuning, archive/scope behavior, kernel tool expansion, case-id hack, expected-answer leak, or default kernel enablement was added. The v3 kernel remains opt-in with `MEMORYOS_AGENT_KERNEL=v1`.
+
+## 5. Is the phase ready for review?
+
+Yes, with the documented limitation that this is diagnostic-only and source-cited answer behavior remains a future phase. Verification evidence:
+
+- `uv run pytest tests/test_public_benchmarks.py tests/test_agent_answer_eval.py tests/test_llm_judge.py -q` -> `33 passed`
+- `uv run pytest -q` -> `366 passed, 1 warning`
+- `uv run ruff check .` -> `All checks passed!`
+- LongMemEval full-chain limit 30 with LLM answer/judge -> exit 0, report `.memoryos/evals/public_20260521_213550_longmemeval.json`
+- LoCoMo full-chain limit 30 with LLM answer/judge -> exit 0, report `.memoryos/evals/public_20260521_214906_locomo.json`

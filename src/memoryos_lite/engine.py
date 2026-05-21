@@ -2105,9 +2105,7 @@ class MemoryOSService:
         return package
 
     def _should_route_to_v3_context(self) -> bool:
-        if self.settings.resolved_memory_arch != "v3":
-            return False
-        return "memoryos_memory_arch" in self.settings.model_fields_set
+        return self.settings.resolved_memory_arch == "v3"
 
     def _context_package_from_v3(self, v3_package: ContextPackageV3) -> ContextPackage:
         package = ContextPackage(

@@ -15,6 +15,8 @@ from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import BaselineOutput, _expand_baselines, _run_baseline
 from memoryos_lite.llm_judge import LLMJudge
+from memoryos_lite.public_case_diagnostics import build_case_diagnostics
+from memoryos_lite.public_case_movement import load_public_case_movement
 from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
@@ -107,6 +109,11 @@ class PublicBenchmarkResult:
     v3_budget_decisions: list[dict[str, Any]] = field(default_factory=list)
     v3_diagnostics: list[dict[str, Any]] = field(default_factory=list)
     kernel_trace_events: list[str] = field(default_factory=list)
+    case_diagnostics: dict[str, Any] = field(default_factory=dict)
+    failure_class: str = "unknown"
+    movement_status: str = "new_case_no_baseline"
+    answer_support_status: str = "unknown"
+    judge_status: str = "unknown"
 
     def to_report(self) -> dict[str, object]:
         data = asdict(self)
@@ -140,8 +147,10 @@ def run_public_benchmark(
     llm_answer: bool = False,
     llm_judge: bool = False,
     isolated: bool = True,
+    comparison_report_paths: list[Path] | None = None,
 ) -> list[PublicBenchmarkResult]:
     public_cases = load_public_benchmark_cases(benchmark, data_path, limit=limit)
+    comparison = load_public_case_movement(comparison_report_paths or [])
     answerer = PublicAnswerer(settings) if llm_answer else None
     judge = LLMJudge(settings) if llm_judge else None
     eval_root = settings.memoryos_eval_data_dir or settings.data_dir / "eval_runs"
@@ -233,6 +242,8 @@ def run_public_benchmark(
             item_metrics = _extract_item_metrics(
                 store, actual_session_id, public_case.expected_source_ids
             )
+            comparison_key = (public_case.benchmark, baseline, public_case.case.case_id)
+            baseline_case = comparison.get(comparison_key)
             results.append(
                 _to_public_result(
                     public_case,
@@ -247,6 +258,12 @@ def run_public_benchmark(
                     output,
                     latency_ms,
                     item_metrics,
+                    baseline_verdict=(
+                        baseline_case.verdict if baseline_case is not None else None
+                    ),
+                    movement_baseline_source=(
+                        baseline_case.source if baseline_case is not None else None
+                    ),
                 )
             )
         # Collect source mapping before store resets for next case
@@ -538,6 +555,8 @@ def _to_public_result(
     output: BaselineOutput,
     latency_ms: int,
     item_metrics: dict[str, Any] | None = None,
+    baseline_verdict: str | None = None,
+    movement_baseline_source: str | None = None,
 ) -> PublicBenchmarkResult:
     source_set = set(source_ids)
     expected_source_set = set(public_case.expected_source_ids)
@@ -582,6 +601,26 @@ def _to_public_result(
         page_id
         for page_id, page_source_ids in output.dropped_page_source_ids.items()
         if set(page_source_ids) & expected_source_set
+    )
+    case_diagnostics = build_case_diagnostics(
+        benchmark=public_case.benchmark,
+        baseline=baseline,
+        case_id=public_case.case.case_id,
+        memory_arch=output.memory_arch,
+        answer=answer,
+        answer_mode=answer_mode,
+        verdict=verdict,
+        reasoning=reasoning,
+        expected_source_ids=public_case.expected_source_ids,
+        retrieval_candidate_source_ids=output.retrieval_candidate_source_ids,
+        episode_candidate_message_ids=output.episode_candidate_message_ids,
+        planned_evidence_message_ids=output.planned_evidence_message_ids,
+        source_ids=source_ids,
+        v3_context=output.v3_context,
+        v3_diagnostics=output.v3_diagnostics,
+        kernel_trace_events=output.kernel_trace_events,
+        baseline_verdict=baseline_verdict,
+        movement_baseline_source=movement_baseline_source,
     )
     return PublicBenchmarkResult(
         benchmark=public_case.benchmark,
@@ -679,6 +718,11 @@ def _to_public_result(
         v3_budget_decisions=output.v3_budget_decisions,
         v3_diagnostics=output.v3_diagnostics,
         kernel_trace_events=output.kernel_trace_events,
+        case_diagnostics=case_diagnostics,
+        failure_class=str(case_diagnostics["failure_class"]),
+        movement_status=str(case_diagnostics["movement_status"]),
+        answer_support_status=str(case_diagnostics["answer_support_status"]),
+        judge_status=str(case_diagnostics["judge_status"]),
     )
 
 

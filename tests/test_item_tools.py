@@ -19,6 +19,7 @@ def svc(tmp_path: Path) -> MemoryOSService:
         rot_safe_budget=12,
         recent_message_limit=2,
         memoryos_item_extraction=True,
+        memoryos_memory_arch="v1",
     )
     store = create_store(settings)
     store.reset()
@@ -33,6 +34,7 @@ def disabled_svc(tmp_path: Path) -> MemoryOSService:
         rot_safe_budget=12,
         recent_message_limit=2,
         memoryos_item_extraction=False,
+        memoryos_memory_arch="v1",
     )
     store = create_store(settings)
     store.reset()

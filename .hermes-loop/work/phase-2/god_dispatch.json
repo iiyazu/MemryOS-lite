@@ -1,0 +1,122 @@
+{
+  "phase": "phase-2",
+  "state": "GOD_DISPATCH",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-2/context_bundle.md",
+    "summary": "Phase 2 builds the evidence harness and failure taxonomy for the real v3/public benchmark path, using Phase 1 contracts and preserving LongMemEval/LoCoMo separation."
+  },
+  "real_chain_components_affected": {
+    "ingest": "not_applicable",
+    "store": "not_applicable",
+    "retrieval": "diagnostic_only",
+    "context_composer": "diagnostic_only",
+    "answer_projection": "diagnostic_only",
+    "kernel_loop": "diagnostic_only",
+    "public_eval": "changed"
+  },
+  "objective": "Make public benchmark reports classify each failure as retrieval, evidence, context rendering, answer projection, judge, or kernel-trace related before any optimization.",
+  "scope": [
+    "Read work/phase-2/context_bundle.md before any other phase-local artifact.",
+    "Discard old phase-2 artifacts from the obsolete Recall/Core-Memory chain.",
+    "Add RED tests proving retrieval_miss and evidence_hit_answer_fail cannot be conflated.",
+    "Expose retrieved evidence ids, selected context ids, rendered answer-context evidence ids, projected answer citations or unsupported status, judge status, and kernel trace events where missing.",
+    "Preserve legacy public report compatibility.",
+    "Keep LongMemEval and LoCoMo case-level analysis separate.",
+    "Keep source_hit labeled as final projection/source overlap, not pure evidence localization."
+  ],
+  "non_goals": [
+    "No retrieval optimization beyond diagnostics needed for taxonomy.",
+    "No answer prompt tuning or answer-quality optimization.",
+    "No archive attachment/scope behavior change unless missing diagnostics block taxonomy.",
+    "No core-memory mutation expansion.",
+    "No kernel tool expansion.",
+    "No Letta runtime dependency.",
+    "No MEMORYOS_AGENT_KERNEL default enablement."
+  ],
+  "stale_artifacts_discarded": [
+    "work/phase-2/ack.json",
+    "work/phase-2/brainstorm.md",
+    "work/phase-2/spec.md",
+    "work/phase-2/plan.md",
+    "work/phase-2/plan_final.md",
+    "work/phase-2/result.md",
+    "work/phase-2/execute_review.md"
+  ],
+  "read_first_files": [
+    ".hermes-loop/work/phase-2/context_bundle.md",
+    ".hermes-loop/blueprint.md",
+    ".hermes-loop/state.json",
+    ".hermes-loop/work/phase-1/letta_gap_matrix.md",
+    ".hermes-loop/work/phase-1/plan_final.md",
+    ".hermes-loop/work/phase-1/reflect_phase-1.md",
+    ".hermes-loop/work/phase-1/control_workspace_quarantine.md",
+    ".hermes-loop/work/phase-0/baseline_case_matrix.md",
+    "src/memoryos_lite/config.py",
+    "src/memoryos_lite/engine.py",
+    "src/memoryos_lite/schemas.py",
+    "src/memoryos_lite/evals.py",
+    "src/memoryos_lite/evals_advanced.py",
+    "src/memoryos_lite/public_benchmarks.py",
+    "src/memoryos_lite/agent_answer_eval.py",
+    "src/memoryos_lite/llm_judge.py",
+    "src/memoryos_lite/context_composer.py",
+    "src/memoryos_lite/agent_kernel.py",
+    "src/memoryos_lite/retrieval/query_analyzer.py",
+    "src/memoryos_lite/retrieval/episode_searcher.py",
+    "src/memoryos_lite/retrieval/recall_pipeline.py",
+    "src/memoryos_lite/retrieval/archival_searcher.py",
+    "tests/test_public_benchmarks.py",
+    "tests/test_agent_answer_eval.py",
+    "tests/test_llm_judge.py",
+    "tests/test_context_composer.py",
+    "tests/test_agent_kernel.py",
+    "tests/test_evals.py"
+  ],
+  "red_evidence": {
+    "longmemeval": {
+      "pass": ["1e043500"],
+      "retrieval_miss": ["58bf7951"],
+      "evidence_hit_answer_fail": ["e47becba", "118b2229", "51a45a95"]
+    },
+    "locomo": {
+      "evidence_hit_answer_fail": ["conv-26_qa_001"],
+      "retrieval_miss": ["conv-26_qa_002", "conv-26_qa_003", "conv-26_qa_004", "conv-26_qa_005"]
+    }
+  },
+  "failing_tests_required_before_implementation": [
+    "A public benchmark report test that fails if retrieval_miss and evidence_hit_answer_fail collapse into one status.",
+    "A compatibility test proving old public report consumers still receive legacy fields.",
+    "A diagnostics test proving source_hit is separate from retrieved/selected/rendered evidence ids.",
+    "A kernel trace test proving default reports do not enable kernel traces unless MEMORYOS_AGENT_KERNEL=v1."
+  ],
+  "smoke_commands": [
+    "uv run pytest tests/test_public_benchmarks.py tests/test_agent_answer_eval.py tests/test_llm_judge.py -q",
+    "uv run pytest -q",
+    "uv run ruff check ."
+  ],
+  "milestone_eval_commands": [
+    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 30",
+    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 30"
+  ],
+  "usable_ack_checklist": [
+    "Diagnostics are wired into the real v3/public benchmark path.",
+    "Tests prove retrieval miss and evidence-hit-answer-fail are distinguishable.",
+    "Legacy public report compatibility is preserved.",
+    "30-case LongMemEval and LoCoMo full-chain LLM judge runs complete, or exact provider/data blocker is recorded.",
+    "Case-level analysis lists fail-to-pass, pass-to-fail, unchanged fail, retrieval miss, evidence-hit-answer-fail, context missing evidence, answer unsupported or overconfident, and judge questionable separately.",
+    "source_hit remains final projection/source overlap and is not treated as pure evidence localization.",
+    "v1 fallback, v3 default, and kernel opt-in remain intact.",
+    "No benchmark improvement is claimed from diagnostics alone."
+  ],
+  "review_focus": [
+    "Reject aggregate-only reporting.",
+    "Reject hidden LoCoMo failures or LongMemEval-only prioritization.",
+    "Reject source_hit/evidence localization conflation.",
+    "Check report compatibility and no case-id hacks.",
+    "Check missing RED tests before implementation.",
+    "Check context bundle usage and phase binding.",
+    "Check v1 fallback, v3 default, and kernel opt-in."
+  ],
+  "decision_after_dispatch": "start_phase2_plan_and_execute_chain"
+}

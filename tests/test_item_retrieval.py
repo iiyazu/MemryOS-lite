@@ -29,6 +29,7 @@ def item_service(tmp_path: Path) -> MemoryOSService:
         rot_safe_budget=12,
         recent_message_limit=2,
         memoryos_item_extraction=True,
+        memoryos_memory_arch="v1",
     )
     store = create_store(settings)
     store.reset()
@@ -43,6 +44,7 @@ def no_item_service(tmp_path: Path) -> MemoryOSService:
         rot_safe_budget=12,
         recent_message_limit=2,
         memoryos_item_extraction=False,
+        memoryos_memory_arch="v1",
     )
     store = create_store(settings)
     store.reset()
@@ -344,6 +346,7 @@ def test_without_items_target_source_not_in_evidence(tmp_path):
         rot_safe_budget=12,
         recent_message_limit=2,
         memoryos_item_extraction=False,
+        memoryos_memory_arch="v1",
     )
     store_a = create_store(settings_no_items)
     store_a.reset()
@@ -379,6 +382,7 @@ def test_without_items_target_source_not_in_evidence(tmp_path):
         rot_safe_budget=12,
         recent_message_limit=2,
         memoryos_item_extraction=True,
+        memoryos_memory_arch="v1",
     )
     store_b = create_store(settings_items)
     store_b.reset()
