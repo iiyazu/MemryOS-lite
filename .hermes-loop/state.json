@@ -1,20 +1,20 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 1,
+  "current_phase_idx": 2,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-1",
+    "phase": "phase-2",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-2",
+    "phase": "phase-3",
     "state": "PLAN_STORM"
   },
   "research_lane": {
     "phases": [
-      "phase-3"
+      "phase-4"
     ]
   },
   "review_lane": {
@@ -67,7 +67,7 @@
       "id": "phase-1",
       "name": "Memory v3 Contracts",
       "target_state": "legacy-stable",
-      "status": "in_progress",
+      "status": "completed",
       "state_history": [
         {
           "completed_at": "2026-05-20T19:00:00+00:00",
@@ -78,6 +78,25 @@
             "benchmark_scores": {}
           },
           "commit": "2eae118"
+        },
+        {
+          "completed_at": "2026-05-22T04:21:05+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "context_bundle": "work/phase-1/context_bundle.md",
+            "checks_passed": 6,
+            "case_level_eval": {
+              "longmemeval": "unchanged Phase 0 projected no-LLM smoke: 1/5",
+              "locomo": "unchanged Phase 0 projected no-LLM smoke: 0/5"
+            },
+            "review": "work/phase-1/reviews/codex-review-rerun.md",
+            "reflection": "work/phase-1/reflect_phase-1.md",
+            "no_behavior_changes": true,
+            "no_blueprint_adjustment": true,
+            "kernel_default_unchanged": true,
+            "dirty_active_control_files_quarantined": true
+          },
+          "commit": null
         }
       ]
     },
@@ -85,7 +104,7 @@
       "id": "phase-2",
       "name": "Recall Memory Layer",
       "target_state": "shadow-read",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": [
         {
           "completed_at": "2026-05-20T19:00:00+00:00",
@@ -247,5 +266,5 @@
       ]
     }
   ],
-  "last_updated": "2026-05-22T03:08:42+08:00"
+  "last_updated": "2026-05-22T04:21:05+08:00"
 }

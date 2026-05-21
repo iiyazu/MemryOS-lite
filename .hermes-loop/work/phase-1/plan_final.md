@@ -1,570 +1,166 @@
-# Core Memory Blocks Implementation Plan
+# phase: phase-1
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+# Final Contract Plan - Phase 1 Letta Gap Matrix And Contract Decisions
 
-**Goal:** Add durable shadow-write core memory blocks with traceable history, while keeping default `v1` behavior and the opt-in `v2` recall path unchanged.
+Status: APPROVED for phase-1 contract completion.
 
-**Architecture:** Keep `v3_contracts.py` as the contract layer, add SQLite persistence plus append-only history in `store.py`, and put the mutation semantics in a small internal `core_memory.py` service. The default legacy context path stays untouched; render support is explicit and opt-in only.
+This is the final plan-lane contract for Phase 1. It is not an implementation plan for Phase 3, does not direct Phase 1 code/test/docs/benchmark/state/blueprint edits, and does not claim benchmark improvement. It converts the Letta comparison and MemoryOS Phase 0 diagnostics into MemoryOS-native contracts that later phases can turn into RED tests and implementation work.
 
-**Tech Stack:** Python 3.11, Pydantic v2, SQLAlchemy, Alembic, pytest.
+## Active Goal
 
----
+Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.
 
-## File Structure
+## Source Of Truth
 
-- Modify: `src/memoryos_lite/v3_contracts.py`
-  - Tighten `CoreMemoryUpdate` validation and add soft-delete fields to `CoreMemoryBlock`.
-- Modify: `src/memoryos_lite/store.py`
-  - Add core-memory SQLAlchemy records, CRUD helpers, history persistence, and Alembic head stamping.
-- Create: `src/memoryos_lite/core_memory.py`
-  - Own create / append / replace / update / delete semantics and deterministic render formatting.
-- Create: `alembic/versions/0005_add_core_memory.py`
-  - Add the new SQLite tables and downgrade path.
-- Modify: `tests/test_v3_contracts.py`
-  - Add contract regressions for replace validation and soft-delete defaults.
-- Create: `tests/test_core_memory_store.py`
-  - Cover persistence, history, soft delete, and migration stamping.
-- Create: `tests/test_core_memory_service.py`
-  - Cover provenance checks, append / replace / update semantics, token-limit enforcement, and renderer output.
-- Modify: `tests/test_engine.py`
-  - Prove `build_context()` still ignores core memory by default.
+- `context_bundle.md` defines Phase 1 as contract and evidence planning only.
+- `god_dispatch.json` binds the phase to LongMemEval/LoCoMo separation, no Letta runtime, explicit v1 fallback, v3 default verification, and kernel opt-in.
+- `research.md` supplies the Letta/MemoryOS observations and separates sampled LongMemEval answer-use pressure from sampled LoCoMo retrieval/scope pressure.
+- `letta_gap_matrix.md` is the execute-lane matrix of MemoryOS current behavior, Letta reference behavior, gaps, benchmark impact, priorities, proposed contracts, and future RED anchors.
+- `brainstorm.md`, `spec.md`, and `plan.md` provide the approved split-P0 contract route.
 
-## Task 1: Tighten Core Contracts
+## Approved Route
 
-**Files:**
-- Modify: `src/memoryos_lite/v3_contracts.py`
-- Modify: `tests/test_v3_contracts.py`
+Use the split P0 contract route by observed failure mode:
 
-- [ ] **Step 1: Write the failing tests**
-
-Add these assertions to `tests/test_v3_contracts.py`:
-
-```python
-def test_core_memory_block_defaults_soft_delete_fields():
-    block = CoreMemoryBlock(
-        id="core_1",
-        label="profile",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=200,
-        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-    )
-
-    assert block.deleted_at is None
-    assert block.deleted_by_event_id is None
-
-
-def test_core_memory_replace_requires_old_value():
-    with pytest.raises(ValidationError):
-        CoreMemoryUpdate(
-            block_id="core_1",
-            operation="replace",
-            content="Alice lives in Suzhou.",
-            source_refs=[SourceRef(source_type="message", source_id="msg_2")],
-        )
+```text
+default v3 route and public case taxonomy
+  -> LoCoMo archive scope and passage-role contracts
+  -> LongMemEval answer citation and unsupported-answer contracts
+  -> rendered evidence survival diagnostics
+  -> P1 core-memory/kernel/accounting extensions only after P0 RED tests exist
 ```
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+This route borrows Letta semantics selectively: bounded core blocks, archive attachment/scope, passage role and source auditability, selected evidence citation, component accounting, and traceable tool mutation. It rejects a broad Letta port and rejects Letta as a runtime dependency.
 
-Run:
+## P0 Contracts For Later Phases
+
+### 1. Default v3 Route And v1 Fallback
+
+The real service/public benchmark path must emit v3 diagnostics by default without requiring callers to set `MEMORYOS_MEMORY_ARCH=v3`.
+
+Explicit `MEMORYOS_MEMORY_ARCH=v1` must remain a working fallback and must not masquerade as v3 composer output.
+
+The v3 kernel remains off unless `MEMORYOS_AGENT_KERNEL=v1` is explicitly set.
+
+Future RED anchors:
+
+- `tests/test_public_benchmarks.py::test_default_public_eval_emits_v3_diagnostics_without_memory_arch_env`
+- `tests/test_public_benchmarks.py::test_explicit_v1_public_eval_preserves_v1_fallback`
+
+### 2. Public Case-Level Taxonomy
+
+Public benchmark output must keep case-level status visible and must not let aggregate score movement hide regressions.
+
+Required status vocabulary:
+
+- `retrieval_miss`
+- `evidence_hit_answer_fail`
+- `unsupported_answer`
+- `supported_cited_answer`
+- `pass` where applicable
+
+`source_hit` remains final projection/source overlap, not pure evidence localization.
+
+Future RED anchors:
+
+- `tests/test_public_benchmarks.py::test_case_level_taxonomy_separates_retrieval_miss_from_answer_fail`
+- `tests/test_public_benchmarks.py::test_source_hit_is_reported_as_projection_overlap_not_evidence_localization`
+- Phase 0 case anchors across LongMemEval and LoCoMo.
+
+### 3. Archive Attachment Scope
+
+v3 archival retrieval must derive eligible archive scope from session, agent, project, or source attachments when scoped archives exist.
+
+Silent global archival retrieval is not acceptable once attached archive records exist. If no eligible scope exists, diagnostics must state whether retrieval was skipped, explicit global fallback was allowed, or no archive scope was available.
+
+Future RED anchors:
+
+- `tests/test_context_composer.py::test_archival_layer_uses_attached_archive_scope_before_global_matches`
+- `tests/test_archival_searcher.py::test_archival_search_requires_explicit_global_fallback_when_scope_exists`
+- LoCoMo retrieval/scope anchors: `conv-26_qa_002`, `conv-26_qa_003`, `conv-26_qa_004`, `conv-26_qa_005`.
+
+### 4. Passage Source-Vs-Agent Role
+
+Every benchmark-eligible v3 passage must declare whether it is source-backed evidence or agent-written archival memory.
+
+Agent-written memory may assist retrieval, but it cannot satisfy source-grounded benchmark evidence unless it carries source refs to the original source/message. Mixed or ambiguous source/agent passage role must be rejected or diagnosed before public evidence metrics consume it.
+
+Future RED anchors:
+
+- `tests/test_v3_contracts.py::test_archival_passage_requires_unambiguous_benchmark_evidence_role`
+- public diagnostic test separating source-backed evidence from agent-written memory.
+- LoCoMo retrieval/scope anchors and LongMemEval `51a45a95` as a source-overlap-not-enough guard.
+
+### 5. Answer Citation And Unsupported Behavior
+
+A supported public answer must cite selected evidence ids and source ids.
+
+Empty, missing, or insufficient selected evidence must produce an explicit unsupported/refusal artifact instead of uncited content.
+
+`source_hit=true` is not proof of answer support.
+
+Future RED anchors:
+
+- `tests/test_public_benchmarks.py::test_answer_artifact_requires_selected_evidence_citations_for_supported_answer`
+- `tests/test_public_benchmarks.py::test_empty_or_insufficient_selected_evidence_is_unsupported`
+- LongMemEval evidence-hit-answer-fail anchors: `e47becba`, `118b2229`, `51a45a95`.
+- LoCoMo evidence-hit-answer-fail anchor: `conv-26_qa_001`.
+- Retrieval-miss guards: `58bf7951`, `conv-26_qa_002`, `conv-26_qa_003`, `conv-26_qa_004`, `conv-26_qa_005`.
+
+### 6. Rendered Evidence Survival
+
+Future answer artifacts must expose whether selected evidence ids survived into the rendered answer prompt/context component used by the answerer.
+
+Diagnostics must distinguish selected context items from rendered answer-prompt evidence and must list included and dropped selected evidence ids with reasons.
+
+Future RED anchors:
+
+- `tests/test_context_composer.py::test_rendered_answer_context_reports_selected_evidence_ids_included_and_dropped`
+- public benchmark report test proving rendered evidence inclusion is emitted per case.
+- LongMemEval `e47becba`, `118b2229`, `51a45a95`.
+- LoCoMo `conv-26_qa_001`.
+
+## P1 Reservations
+
+These are approved as later reservations, not P0 gates and not Phase 1 implementation work:
+
+- Core-memory write policy: add explicit read-only or write-policy semantics before kernel core-memory mutation expands; source-backed or approved provenance remains mandatory.
+- Rendered component accounting: extend current v3 layer budget diagnostics with rendered component token estimates after P0 evidence-survival exists.
+- Opt-in kernel/tool result expansion: keep kernel tooling opt-in; future v3 memory mutation through tools must emit trace events, approval state, source refs, and tool result diagnostics; legacy v1 page/item tools must not be presented as v3 source-backed kernel tools.
+
+## Benchmark Binding
+
+LongMemEval must remain separated from LoCoMo:
+
+- LongMemEval evidence-hit-answer-fail: `e47becba`, `118b2229`, `51a45a95`.
+- LongMemEval retrieval miss: `58bf7951`.
+- LongMemEval stable pass: `1e043500`.
+- LoCoMo evidence-hit-answer-fail: `conv-26_qa_001`.
+- LoCoMo retrieval/scope misses: `conv-26_qa_002`, `conv-26_qa_003`, `conv-26_qa_004`, `conv-26_qa_005`.
+
+Answer/citation work must not reclassify retrieval misses as solved until evidence is recovered. Retrieval/scope work must not claim benchmark usability unless answer-use and citation failures remain visible at case level.
+
+## Constraints
+
+- No Letta runtime dependency, imports, schema inheritance, manager reuse, service reuse, database provider reuse, or agent runtime reuse.
+- No benchmark case-id rules, expected-answer leaks, or dataset-specific string hacks.
+- No default kernel enablement.
+- No removal of v1 fallback.
+- No aggregate-only benchmark claims.
+- No prompt-only architecture claims unless selected-evidence citation and case-level support diagnostics prove the answer path used the evidence.
+- No Phase 1 edits to `src/`, `tests/`, `docs/`, `alembic/`, benchmark data, `.hermes-loop/state.json`, `.hermes-loop/blueprint.md`, or commits.
+
+## Phase 1 Verification
+
+Required checks for the plan-lane files:
 
 ```bash
-uv run pytest tests/test_v3_contracts.py -q
+python -m json.tool .hermes-loop/work/phase-1/god_dispatch.json
+test "$(sed -n '1p' .hermes-loop/work/phase-1/context_bundle.md)" = "# phase: phase-1"
+test "$(sed -n '1p' .hermes-loop/work/phase-1/plan_review.md)" = "# phase: phase-1"
+test "$(sed -n '1p' .hermes-loop/work/phase-1/plan_final.md)" = "# phase: phase-1"
+rg -n "source_hit|LoCoMo|LongMemEval|MEMORYOS_AGENT_KERNEL|Letta|contract" .hermes-loop/work/phase-1/plan_review.md .hermes-loop/work/phase-1/plan_final.md
+git diff -- .hermes-loop/work/phase-1/plan_review.md .hermes-loop/work/phase-1/plan_final.md
 ```
 
-Expected: FAIL because `CoreMemoryBlock` does not yet expose the soft-delete fields and `CoreMemoryUpdate` still accepts `replace` without `old`.
-
-- [ ] **Step 3: Write the minimal implementation**
-
-Patch `src/memoryos_lite/v3_contracts.py` with:
-
-```python
-class CoreMemoryBlock(BaseModel):
-    id: str
-    label: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    value: str = ""
-    limit_tokens: int = Field(gt=0)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-    deleted_at: datetime | None = None
-    deleted_by_event_id: str | None = None
-
-
-class CoreMemoryUpdate(BaseModel):
-    block_id: str = Field(min_length=1)
-    operation: Literal["append", "replace", "update", "delete"]
-    content: str
-    old: str | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_state: ApprovalState | None = None
-
-    @model_validator(mode="after")
-    def require_source_or_approval(self) -> CoreMemoryUpdate:
-        if not self.source_refs:
-            if self.approval_state is None or self.approval_state.status != "approved":
-                raise ValueError(
-                    "core memory updates require source_refs or approved approval_state"
-                )
-        if self.operation == "replace" and not self.old:
-            raise ValueError("replace core memory updates require old")
-        return self
-```
-
-- [ ] **Step 4: Run the focused test to verify it passes**
-
-Run:
-
-```bash
-uv run pytest tests/test_v3_contracts.py -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py
-git commit -m "test: tighten core memory contracts"
-```
-
-## Task 2: Add SQLite Persistence and History
-
-**Files:**
-- Create: `alembic/versions/0005_add_core_memory.py`
-- Modify: `src/memoryos_lite/store.py`
-- Create: `tests/test_core_memory_store.py`
-
-- [ ] **Step 1: Write the failing store tests**
-
-Add these tests to `tests/test_core_memory_store.py`:
-
-```python
-from sqlalchemy import text
-
-from memoryos_lite.config import Settings
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
-
-
-def _settings(tmp_path):
-    return Settings(
-        data_dir=tmp_path / "data",
-        sqlite_path=tmp_path / "memory.sqlite3",
-    )
-
-
-def test_core_memory_store_round_trip_history_and_soft_delete(tmp_path):
-    store = MemoryStore(_settings(tmp_path))
-    store.init_db()
-
-    block = CoreMemoryBlock(
-        id="core_1",
-        label="profile",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=100,
-        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-    )
-
-    created = store.create_core_memory_block(block)
-    assert created.id == "core_1"
-    assert store.get_core_memory_block("core_1").value == "Alice lives in Shanghai."
-
-    history = store.list_core_memory_history("core_1")
-    assert history[-1].operation == "add"
-
-    deleted = store.delete_core_memory_block(
-        "core_1",
-        source_refs=[SourceRef(source_type="message", source_id="msg_2")],
-        actor="agent",
-        reason="user requested removal",
-    )
-    assert deleted.deleted_at is not None
-    assert store.get_core_memory_block("core_1") is None
-    assert store.get_core_memory_block("core_1", include_deleted=True).deleted_at is not None
-    assert store.list_core_memory_history("core_1")[-1].operation == "delete"
-
-
-def test_init_db_stamps_new_core_memory_head(tmp_path):
-    store = MemoryStore(_settings(tmp_path))
-    store.init_db()
-    with store.db() as db:
-        version = db.scalar(text("select version_num from alembic_version limit 1"))
-    assert version == "0005_add_core_memory"
-```
-
-- [ ] **Step 2: Run the focused test to verify it fails**
-
-Run:
-
-```bash
-uv run pytest tests/test_core_memory_store.py -q
-```
-
-Expected: FAIL because the new tables and store methods do not exist yet.
-
-- [ ] **Step 3: Write the minimal implementation**
-
-Add the record classes and helpers to `src/memoryos_lite/store.py`:
-
-```python
-class CoreMemoryBlockRecord(Base):
-    __tablename__ = "core_memory_blocks"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    label: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    limit_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    deleted_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    deleted_by_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class CoreMemoryHistoryRecord(Base):
-    __tablename__ = "core_memory_history"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    memory_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    operation: Mapped[str] = mapped_column(String(32), nullable=False)
-    actor: Mapped[str] = mapped_column(String(16), nullable=False)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-```
-
-Add these `MemoryStore` methods with concrete behavior:
-
-- `create_core_memory_block(block)`: insert `CoreMemoryBlockRecord`, append an
-  `add` `MemoryHistoryEvent`, and return the block.
-- `get_core_memory_block(block_id, include_deleted=False)`: return `None` when
-  the record is missing or soft-deleted and `include_deleted` is false.
-- `list_core_memory_blocks(include_deleted=False)`: order by `created_at`, then
-  `label`, then `id`; hide soft-deleted records by default.
-- `update_core_memory_block(block)`: update value, metadata, source refs,
-  timestamps, and soft-delete fields for an existing block.
-- `delete_core_memory_block(block_id, source_refs, actor, reason)`: write a
-  `delete` history event, set `deleted_at` and `deleted_by_event_id`, and return
-  the deleted block.
-- `append_core_memory_history(event)`: insert `CoreMemoryHistoryRecord`.
-- `list_core_memory_history(block_id)`: return events ordered by `created_at`
-  and `id`.
-
-Update `MemoryStore.init_db()` so fresh DBs stamp `0005_add_core_memory` instead
-of `0004_add_episodes`.
-
-Implement the Alembic migration with `upgrade()` creating both tables and
-`downgrade()` dropping them in reverse order.
-
-- [ ] **Step 4: Run the focused test to verify it passes**
-
-Run:
-
-```bash
-uv run pytest tests/test_core_memory_store.py -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add alembic/versions/0005_add_core_memory.py src/memoryos_lite/store.py tests/test_core_memory_store.py
-git commit -m "feat: persist core memory blocks"
-```
-
-## Task 3: Add Core Memory Semantics and Rendering
-
-**Files:**
-- Create: `src/memoryos_lite/core_memory.py`
-- Create: `tests/test_core_memory_service.py`
-
-- [ ] **Step 1: Write the failing service tests**
-
-Add these tests to `tests/test_core_memory_service.py`:
-
-```python
-import pytest
-
-from memoryos_lite.config import Settings
-from memoryos_lite.core_memory import CoreMemoryService, render_core_memory_blocks
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
-
-
-class FakeTokenizer:
-    def count(self, text: str) -> int:
-        return len(text.split())
-
-
-def _service(tmp_path):
-    settings = Settings(
-        data_dir=tmp_path / "data",
-        sqlite_path=tmp_path / "memory.sqlite3",
-    )
-    store = MemoryStore(settings)
-    store.init_db()
-    return CoreMemoryService(store=store, tokenizer=FakeTokenizer())
-
-
-def test_core_memory_service_requires_source_backed_writes(tmp_path):
-    service = _service(tmp_path)
-
-    with pytest.raises(ValueError):
-        service.create_block(
-            label="profile",
-            description="Stable user facts",
-            value="Alice lives in Shanghai.",
-            limit_tokens=20,
-            source_refs=[],
-            actor="agent",
-            reason="seed profile",
-        )
-
-
-def test_core_memory_service_append_replace_update_and_render(tmp_path):
-    service = _service(tmp_path)
-    ref = SourceRef(source_type="message", source_id="msg_1")
-    block = service.create_block(
-        label="profile",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=20,
-        source_refs=[ref],
-        actor="agent",
-        reason="seed profile",
-    )
-
-    appended = service.append_block(
-        block.id,
-        "Alice prefers rail travel.",
-        source_refs=[ref],
-        actor="agent",
-        reason="new fact",
-    )
-    replaced = service.replace_block(
-        block.id,
-        old="Shanghai",
-        content="Suzhou",
-        source_refs=[ref],
-        actor="agent",
-        reason="correction",
-    )
-    updated = service.update_block(
-        block.id,
-        "Alice lives in Suzhou.",
-        source_refs=[ref],
-        actor="agent",
-        reason="full rewrite",
-    )
-
-    assert "Alice prefers rail travel." in appended.value
-    assert replaced.value != block.value
-    assert updated.value == "Alice lives in Suzhou."
-    assert render_core_memory_blocks([updated]) == (
-        "[Core Memory]\n"
-        "- profile (20 tokens)\n"
-        "  Stable user facts\n"
-        "  Alice lives in Suzhou."
-    )
-
-
-def test_core_memory_service_rejects_over_limit_updates(tmp_path):
-    service = _service(tmp_path)
-    ref = SourceRef(source_type="message", source_id="msg_1")
-    block = service.create_block(
-        label="profile",
-        description="Stable user facts",
-        value="Alice",
-        limit_tokens=2,
-        source_refs=[ref],
-        actor="agent",
-        reason="seed profile",
-    )
-
-    with pytest.raises(ValueError):
-        service.append_block(
-            block.id,
-            "prefers rail travel",
-            source_refs=[ref],
-            actor="agent",
-            reason="overflow",
-        )
-```
-
-- [ ] **Step 2: Run the focused test to verify it fails**
-
-Run:
-
-```bash
-uv run pytest tests/test_core_memory_service.py -q
-```
-
-Expected: FAIL because the service module and renderer do not exist yet.
-
-- [ ] **Step 3: Write the minimal implementation**
-
-Create `src/memoryos_lite/core_memory.py` with a service boundary like this:
-
-```python
-from dataclasses import dataclass
-
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import (
-    ApprovalState,
-    CoreMemoryBlock,
-    MemoryHistoryEvent,
-    SourceRef,
-)
-
-
-def render_core_memory_blocks(blocks: list[CoreMemoryBlock]) -> str:
-    lines = ["[Core Memory]"]
-    for block in sorted(blocks, key=lambda b: (b.created_at, b.label, b.id)):
-        if block.deleted_at is not None:
-            continue
-        lines.append(f"- {block.label} ({block.limit_tokens} tokens)")
-        lines.append(f"  {block.description}")
-        lines.append(f"  {block.value}")
-    return "\n".join(lines)
-
-
-@dataclass
-class CoreMemoryService:
-    store: MemoryStore
-    tokenizer: TokenEstimator
-```
-
-Implement public methods named `create_block`, `append_block`, `replace_block`,
-`update_block`, and `delete_block`. Each method must require `actor` and
-`reason`, reject source-less writes unless an approved `ApprovalState` is
-provided, write a matching `MemoryHistoryEvent`, and return the resulting
-`CoreMemoryBlock`.
-
-Use these semantics inside the service:
-
-```python
-separator = "\n\n"
-next_value = block.value + (separator if block.value else "") + addition
-if self.tokenizer.count(next_value) > block.limit_tokens:
-    raise ValueError("core memory block exceeds limit_tokens")
-
-event = MemoryHistoryEvent(
-    memory_id=block.id,
-    memory_type="core_block",
-    operation="update",
-    actor=actor,
-    reason=reason,
-    before=block.model_dump(mode="json"),
-    after=updated_block.model_dump(mode="json"),
-    source_refs=source_refs,
-)
-```
-
-For `replace`, use the first exact match of `old` and fail if the substring does
-not exist. For `delete`, write a `delete` history event with `before` populated
-and `after=None`, then soft-delete the block through the store.
-
-Honor approved manual provenance through the existing `ApprovalState` model and
-manual `SourceRef` values that include a real non-empty `approval_id`.
-
-- [ ] **Step 4: Run the focused test to verify it passes**
-
-Run:
-
-```bash
-uv run pytest tests/test_core_memory_service.py -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/memoryos_lite/core_memory.py tests/test_core_memory_service.py
-git commit -m "feat: add core memory mutation service"
-```
-
-## Task 4: Lock the Default Context Regression
-
-**Files:**
-- Modify: `tests/test_engine.py`
-
-- [ ] **Step 1: Add the regression test**
-
-Add a focused regression near the existing `build_context()` tests:
-
-```python
-from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
-
-
-def test_build_context_ignores_core_memory_blocks(service):
-    session = service.create_session("core-memory-regression")
-    service.store.create_core_memory_block(
-        CoreMemoryBlock(
-            id="core_1",
-            label="profile",
-            description="Stable user facts",
-            value="Alice lives in Shanghai.",
-            limit_tokens=100,
-            source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-        )
-    )
-
-    context = service.build_context(session.id, "用户最终决定做什么？", budget=200)
-
-    assert all(not key.startswith("core_") for key in context.metadata)
-    assert "Alice lives in Shanghai." not in context.model_dump_json()
-```
-
-- [ ] **Step 2: Run the focused test to verify it fails**
-
-Run:
-
-```bash
-uv run pytest tests/test_engine.py -q
-```
-
-Expected: FAIL until the regression is in place or the imports are added.
-
-- [ ] **Step 3: Write the minimal implementation**
-
-Keep the engine unchanged. The only change should be the regression test that
-proves the current default path does not pick up core memory automatically.
-
-- [ ] **Step 4: Run the focused test to verify it passes**
-
-Run:
-
-```bash
-uv run pytest tests/test_engine.py -q
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Run the full verification sweep**
-
-Run:
-
-```bash
-uv run pytest -q
-```
-
-Expected: full suite stays green with no default-context regression.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add tests/test_engine.py
-git commit -m "test: protect default context from core memory"
-```
+Expected result: both plan-lane self-review files are phase-bound, the review is PASS, the final plan is contract-first, and only `plan_review.md` plus `plan_final.md` are written by this self-review lane.

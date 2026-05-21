@@ -1,149 +1,124 @@
-# Spec: Phase 3 - Core Memory Blocks
+# phase: phase-1
 
-## Goal
+# Spec - Phase 1 Letta Gap Contracts
 
-Add Letta-style core memory blocks with durable shadow-write persistence and
-traceable mutation history while keeping default `v1` behavior and the opt-in
-`v2` recall path unchanged.
+## Active Goal
 
-Target compatibility state: `shadow-write`.
+Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.
 
-Phase 3 must add a real core-memory persistence boundary, but it must not feed
-core memory into the default legacy context path yet.
+## Inputs And Citations
 
-## Source Inputs
+- Context bundle citation: `.hermes-loop/work/phase-1/context_bundle.md` defines Phase 1 as contract and evidence planning only. It requires Letta comparison output to become MemoryOS-specific benchmark-impact contracts, consumes the Phase 0 case taxonomy, forbids code/test/docs/benchmark/state/blueprint behavior changes, and keeps Letta as a reference only.
+- Dispatch citation: `.hermes-loop/work/phase-1/god_dispatch.json` binds this phase to `phase-1`, requires LongMemEval and LoCoMo impacts to stay separate, and requires every high-priority gap to map to a future failing test or Phase 0 benchmark case anchor.
+- Research citation: `.hermes-loop/work/phase-1/research.md` identifies LongMemEval sampled pressure as mostly evidence-hit answer failure and LoCoMo sampled pressure as mostly retrieval/scope failure.
+- Matrix citation: `.hermes-loop/work/phase-1/letta_gap_matrix.md` is the execute-lane source of truth for the P0/P1 priorities and explicitly preserves no-Letta-runtime, v1 fallback, v3 default, kernel opt-in, and conservative `source_hit` interpretation.
+- Brainstorm citation: `.hermes-loop/work/phase-1/brainstorm.md` chooses the split P0 contract route by failure mode instead of a broad Letta subsystem port.
 
-- `.hermes-loop/god_dispatch.json`: phase `phase-3`, target `shadow-write`.
-- `.hermes-loop/brainstorm.md`: recommends SQLite shadow-store + internal
-  core-memory service over contract-only or legacy page/item reuse.
-- `.hermes-loop/blueprint.md`: phase-3 tasks and acceptance criteria.
-- `src/memoryos_lite/v3_contracts.py`: already defines `CoreMemoryBlock`,
-  `CoreMemoryUpdate`, `MemoryHistoryEvent`, `SourceRef`, and `ApprovalState`.
-- `src/memoryos_lite/store.py`: current SQLite store, Alembic stamping, and
-  legacy page/item/episode persistence.
-- `src/memoryos_lite/engine.py`: default context builder must remain unchanged.
-- `tests/test_v3_contracts.py`: existing core-memory contract coverage.
+## Chosen Route
 
-## Non-Goals
-
-- Do not change default `build_context()` behavior.
-- Do not wire core memory into `ContextBuilder` or `RecallPipeline`.
-- Do not add public API routes for core memory in this phase.
-- Do not add automatic source-less core-memory writes.
-- Do not invent a second public core-memory schema outside `v3_contracts.py`.
-- Do not merge core memory with archival memory or recall memory.
-
-## Design
-
-### Contract Boundary
-
-`v3_contracts.py` stays the canonical contract layer. Phase 3 may tighten
-validators there, but it should not move the core-memory models into
-`schemas.py`.
-
-The existing `CoreMemoryBlock` model is the persisted block shape. Phase 3 may
-extend it with soft-delete metadata (`deleted_at`, `deleted_by_event_id`) so the
-store can hide deleted blocks by default while preserving audit history.
-
-`CoreMemoryUpdate` remains the mutation contract for append / replace / update.
-Delete is better represented as a service/store operation with explicit reason
-and history fields than as a fake content update.
-
-### Persistence Boundary
-
-Add first-class SQLite records for:
-
-- `core_memory_blocks`
-- `core_memory_history`
-
-The block record should persist:
-
-- block id
-- label
-- description
-- value
-- limit tokens
-- source refs
-- metadata
-- created / updated timestamps
-- optional soft-delete metadata
-
-The history record should persist:
-
-- history id
-- memory id
-- memory type `core_block`
-- operation
-- actor
-- reason
-- source refs
-- before snapshot
-- after snapshot
-- created timestamp
-
-History is append-only. Every mutation writes one `MemoryHistoryEvent`.
-
-### Mutation Semantics
-
-Implement a small internal core-memory service, for example
-`src/memoryos_lite/core_memory.py`, that owns behavior:
-
-- create requires source refs or approved manual provenance.
-- append concatenates onto the current value with a stable separator.
-- update replaces the whole value.
-- replace requires `old`, verifies it exists in the current value, and replaces
-  the first exact match deterministically.
-- delete soft-deletes the block and keeps it out of default reads.
-- any mutation that would exceed `limit_tokens` is rejected instead of
-  truncated.
-
-Manual provenance must use the existing approval machinery, not a weaker custom
-flag. The manual path must use `source_type="manual"` with a real non-empty
-`approval_id`.
-
-### Rendering
-
-Add an explicit renderer, such as `render_core_memory_blocks(blocks) -> str`,
-that formats blocks deterministically and is not called by default context
-building.
-
-Recommended output shape:
+Use the split P0 contract route by observed failure mode:
 
 ```text
-[Core Memory]
-- <label> (<limit_tokens> tokens)
-  <description>
-  <value>
+default v3 route and public case taxonomy
+  -> LoCoMo archive scope and passage-role contracts
+  -> LongMemEval answer citation and unsupported-answer contracts
+  -> rendered evidence survival diagnostics
+  -> P1 core-memory/kernel/accounting extensions only after P0 RED tests exist
 ```
 
-Ordering should be deterministic: created time, then label, then id. Deleted
-blocks should be skipped by default.
+This route adopts Letta semantics selectively: scoped archive attachment, passage role/source auditability, selected evidence citation, rendered component accounting, and traceable tool mutation. It rejects a broad Letta runtime port.
 
-### Compatibility
+## P0 Contracts
 
-`MemoryOSService.build_context()` stays as-is. The default legacy context path
-must not pick up core memory automatically. The new service and renderer are
-opt-in internal helpers for future composer work.
+1. Default v3 route and v1 fallback:
+   - The real service/public benchmark path must emit v3 diagnostics by default without requiring callers to set `MEMORYOS_MEMORY_ARCH=v3`.
+   - Explicit `MEMORYOS_MEMORY_ARCH=v1` must still route through the v1 fallback and must not emit v3-only composer diagnostics as if it were v3.
+   - The v3 kernel remains off unless `MEMORYOS_AGENT_KERNEL=v1` is explicitly set.
 
-Fresh SQLite databases must be stamped to the new Alembic head that includes the
-core-memory migration.
+2. Public taxonomy:
+   - Public benchmark output must keep case-level taxonomy visible.
+   - Required case statuses are `retrieval_miss`, `evidence_hit_answer_fail`, `unsupported_answer`, `supported_cited_answer`, and `pass` where applicable.
+   - Aggregate score movement must not hide per-case regressions.
 
-## Error Handling
+3. Archive attachment scope:
+   - v3 archival retrieval must derive eligible archive scope from session, agent, project, or source attachments when scoped archives exist.
+   - Silent global archival retrieval is not acceptable once attached archive records exist.
+   - If no eligible scope exists, diagnostics must state whether retrieval was skipped, explicit global fallback was allowed, or no archive scope was available.
 
-- Missing block ids should raise `LookupError`.
-- Invalid provenance or invalid mutation shape should raise `ValueError` or
-  `ValidationError` at the contract boundary.
-- Over-limit writes should raise `ValueError`.
-- Replace should fail if `old` is absent from the current value.
-- Deleted blocks should stay readable only through explicit `include_deleted`
-  access in the store.
+4. Passage source-vs-agent role:
+   - Every benchmark-eligible v3 passage must declare whether it is source-backed evidence or agent-written archival memory.
+   - Agent-written memory may assist retrieval, but it cannot satisfy source-grounded benchmark evidence unless it carries source refs to the original source/message.
+   - Mixed or ambiguous source/agent passage role must be rejected or diagnosed before public evidence metrics consume it.
 
-## Acceptance Criteria
+5. Answer citation and unsupported behavior:
+   - A supported public answer must cite selected evidence ids and source ids.
+   - Empty, missing, or insufficient selected evidence must produce an explicit unsupported/refusal answer artifact instead of uncited content.
+   - `source_hit=true` is not enough to prove answer support.
 
-- Blocks can be created, read, updated, and deleted.
-- Update history is traceable in `core_memory_history`.
-- Blocks persist limit, label, description, value, and source refs.
-- Source-backed enforcement is tested.
-- Render format exists but is opt-in only.
-- Default `build_context()` output remains unchanged.
-- Full test suite remains green.
+6. Rendered evidence survival:
+   - Future answer artifacts must expose whether selected evidence ids survived into the rendered answer prompt/context component that the answerer used.
+   - Diagnostics must distinguish selected context items from rendered answer-prompt evidence.
+
+7. Public benchmark diagnostics:
+   - Reports must preserve retrieval evidence metrics, final projection/source-overlap metrics, answer support/citation status, v3 rendered evidence inclusion, and kernel trace presence as separate fields.
+   - `source_hit` must be labeled and interpreted as final projection/source overlap, not pure evidence localization.
+
+## P1 Contracts
+
+1. Core-memory write policy:
+   - Before any kernel core-memory mutation is expanded, core blocks need explicit read-only or write-policy semantics.
+   - Source-backed or approved provenance remains mandatory.
+
+2. Rendered component accounting:
+   - Existing layer budget diagnostics should be extended with rendered component token estimates after the P0 evidence-survival contract exists.
+   - This should extend, not replace, current v3 layer budget decisions.
+
+3. Opt-in kernel/tool result expansion:
+   - Kernel tooling remains opt-in.
+   - Any future v3 memory mutation through tools must emit trace events, approval state when required, source refs, and tool result diagnostics.
+   - Legacy v1 page/item tools must not be presented as v3 source-backed kernel tools.
+
+## Benchmark Anchors
+
+LongMemEval anchors:
+
+- Evidence-hit answer failures: `e47becba`, `118b2229`, `51a45a95`.
+- Retrieval miss: `58bf7951`.
+- Stable pass: `1e043500`.
+- Contract implication: answer/citation and rendered evidence survival work must not reclassify `58bf7951` as solved until evidence is recovered.
+
+LoCoMo anchors:
+
+- Evidence-hit answer failure: `conv-26_qa_001`.
+- Retrieval misses: `conv-26_qa_002`, `conv-26_qa_003`, `conv-26_qa_004`, `conv-26_qa_005`.
+- Contract implication: archive scope and passage-role work must treat `conv-26_qa_002` through `conv-26_qa_005` as retrieval/scope guards, not answer-projection guards.
+
+## Non-Runtime Letta Rule
+
+Letta is a reference design only. Phase 1 and later MemoryOS implementation phases must not import Letta schemas, managers, services, agent runtime, database providers, or tool executors as runtime dependencies. The acceptable output is MemoryOS-native contracts and tests inspired by Letta semantics.
+
+## Source Hit Interpretation
+
+`source_hit` is a final projection/source-overlap signal. It is not pure evidence localization and must not be used alone to claim retrieval success, answer support, or evidence use. Future diagnostics must continue to inspect episode evidence, planned evidence, selected v3 context evidence, rendered evidence inclusion, answer citation/support status, and case-level movement separately.
+
+## Architecture Constraints
+
+- `MEMORYOS_MEMORY_ARCH=v1` remains the explicit fallback.
+- v3 remains the intended default memory architecture and must be verified through the real service/public benchmark path.
+- `MEMORYOS_AGENT_KERNEL=v1` remains opt-in. Kernel trace presence is not answer-quality evidence.
+- SQLite remains the current authoritative store; filesystem outputs remain debug/eval artifacts.
+- Phase 1 does not edit `src/`, `tests/`, `docs/`, `alembic/`, benchmark data, `.hermes-loop/state.json`, or `.hermes-loop/blueprint.md`.
+
+## Anti-Demo Acceptance Criteria
+
+Phase 1 is acceptable only if:
+
+- `spec.md` and `plan.md` are phase-bound with `# phase: phase-1`.
+- The chosen route is contract-first and MemoryOS-native.
+- Every P0 contract maps to a future RED test shape or concrete Phase 0 case anchor in `plan.md`.
+- LongMemEval and LoCoMo anchors remain separated.
+- No broad "port Letta" task remains.
+- No runtime Letta dependency is proposed.
+- `source_hit` is interpreted conservatively.
+- v1 fallback, v3 default verification, and kernel opt-in constraints remain explicit.
+- No code, test, active docs, benchmark data, state, blueprint, or commit action is part of Phase 1.

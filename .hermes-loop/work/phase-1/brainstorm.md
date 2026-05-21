@@ -1,165 +1,193 @@
-# PLAN_STORM Brainstorm — Phase 3 Core Memory Blocks
+# phase: phase-1
 
-## Inputs Read
+# PLAN_STORM Brainstorm - Letta Gap Matrix To Testable Contracts
 
-- `.hermes-loop/god_dispatch.json`: phase-3 requires Letta-style core blocks, history, append / replace / update semantics, render format, opt-in/internal only, and source-backed enforcement.
-- `.hermes-loop/state.json`: current state is `PLAN_STORM`, current phase is `phase-3`.
-- `.hermes-loop/contracts/state_machine.json`: `PLAN_STORM` output is `.hermes-loop/brainstorm.md`; next state is `PLAN_DRAFT`.
-- `.hermes-loop/blueprint.md`: Phase 3 target state is `shadow-write`; legacy context must not become v3 by default.
-- `CLAUDE.md` / `AGENTS.md`: default recall path remains `v1`; v2 remains opt-in; SQLite is authoritative; filesystem outputs are debug mirrors.
-- `src/memoryos_lite/v3_contracts.py`: already defines `CoreMemoryBlock`, `CoreMemoryUpdate`, `MemoryHistoryEvent`, `SourceRef`, `ApprovalState`, and v3 future table names.
-- `src/memoryos_lite/store.py`: SQLite store currently has records and CRUD for sessions, messages, episodes, pages, items, patches, and traces; no core-memory tables or CRUD yet.
-- `src/memoryos_lite/engine.py`: service facade owns ingest/context/search flows; default context routing should remain untouched.
-- `tests/test_v3_contracts.py`: source-ref and core-update validation already exist at contract level; persistence and operation semantics are not yet covered.
+## Active Goal
 
-## Current Shape
+Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.
 
-Phase 1 already established v3 contracts, so Phase 3 should not invent a second core-memory schema in `schemas.py`. The missing layer is the shadow-write implementation boundary:
+## Inputs Consumed
 
-- persistent core-memory blocks,
-- persistent history events,
-- operation semantics for create / append / replace / update / delete,
-- a renderer that can be called explicitly later by the v3 composer,
-- tests proving source-backed enforcement and traceability.
+- Context bundle citation: `.hermes-loop/work/phase-1/context_bundle.md` defines Phase 1 as contract and evidence planning only, requires the Letta comparison to become MemoryOS-specific benchmark-impact contracts, and forbids `src/`, `tests/`, docs, benchmark data, state, blueprint, or runtime behavior changes in this phase.
+- Dispatch citation: `.hermes-loop/work/phase-1/god_dispatch.json` requires `PLAN_STORM` to keep LongMemEval and LoCoMo impacts separate, map high-priority gaps to future failing tests or Phase 0 cases, and preserve no-Letta-runtime, v1 fallback, v3 default, and kernel opt-in constraints.
+- Research citation: `.hermes-loop/work/phase-1/research.md` separates LongMemEval evidence-hit-answer-fail pressure from LoCoMo retrieval/scope pressure and warns against treating `source_hit` as pure evidence localization.
+- Matrix citation: `.hermes-loop/work/phase-1/letta_gap_matrix.md` identifies P0 contracts for archive attachment/scope, passage source-vs-agent role, answer citation/unsupported behavior, default v3 routing verification, and case-level public benchmark diagnostics.
 
-The safest phase boundary is internal/store-level APIs plus focused service helpers. Do not inject rendered core memory into `MemoryOSService.build_context()` yet.
+This file replaces stale Phase 3 core-memory brainstorm content. It is a plan-lane contract brainstorm only; it does not implement or change behavior.
 
-## Option A — Contract-Only Expansion
+## Route Options
 
-Extend `v3_contracts.py` with stricter validators and helper functions, but avoid new SQLite tables in this phase.
+### Option A - Answer-First Contract Route
 
-Expected implementation:
+Order future contracts around the LongMemEval evidence-hit-answer-fail cases first:
 
-- Add validators such as `CoreMemoryUpdate.operation == "replace"` requiring `old`.
-- Add pure helpers for append / replace / update and render formatting.
-- Keep all tests in `tests/test_v3_contracts.py`.
+1. Define a benchmark answer object with final answer, cited selected evidence ids, cited source ids, unsupported/refusal status, and failure taxonomy.
+2. Add rendered prompt/component accounting only enough to prove selected evidence reached the final answer prompt.
+3. Use `e47becba`, `118b2229`, `51a45a95`, and `conv-26_qa_001` as future RED anchors.
+4. Defer archive attachment/scope and passage-role invariants until after answer evidence survives into public output.
 
-Pros:
+Tradeoffs:
 
-- Very low regression risk.
-- Minimal surface area.
-- Fast to implement and review.
+- Strongest direct fit for LongMemEval sampled failures because three of five failures already had evidence but missed the answer.
+- Produces a clean anti-demo guard: retrieval success cannot be claimed unless cited selected evidence supports the answer.
+- Too weak for LoCoMo because four sampled failures are retrieval misses. It risks improving LongMemEval diagnostics while leaving LoCoMo scope failures under-specified.
+- Could tempt prompt-only fixes unless the contract explicitly binds answers to selected evidence ids and unsupported/refusal states.
 
-Cons:
+Verdict: useful but incomplete. It should be part of the route, not the whole ordering.
 
-- Fails the phase acceptance that blocks can be created, read, updated, and deleted.
-- History would not be durable.
-- Does not achieve `shadow-write`; it remains contract-only.
+### Option B - Recommended: Split P0 Contract Route By Failure Mode
 
-Verdict: reject. Useful as part of the implementation, but insufficient for Phase 3.
+Order future contracts by benchmark failure mode, not by Letta subsystem order:
 
-## Option B — Recommended: SQLite Shadow Store + Internal Core Service
+1. Lock the public evaluation taxonomy and v3 route contract first:
+   - default service/public benchmark path must expose v3 diagnostics without explicit `MEMORYOS_MEMORY_ARCH=v3`;
+   - explicit `MEMORYOS_MEMORY_ARCH=v1` must preserve the fallback path;
+   - `source_hit` remains final projection/source overlap, not pure evidence localization;
+   - reports keep case-level `retrieval_miss`, `evidence_hit_answer_fail`, `unsupported_answer`, and `supported_cited_answer`.
+2. Add LoCoMo retrieval/scope contracts:
+   - v3 archival retrieval derives eligible archive scope from session/agent/project/source attachments or emits a diagnostic reason for no scope/global fallback;
+   - benchmark-eligible passages declare a source-vs-agent role, and agent-written memory cannot satisfy source-grounded evidence without source refs.
+3. Add LongMemEval answer-use contracts:
+   - supported answers must cite selected evidence ids and source ids;
+   - empty or unsupported selected evidence must produce unsupported/refusal output rather than uncited content;
+   - selected evidence inclusion must survive into rendered answer artifacts.
+4. Defer P1 work until P0 contracts are RED-tested:
+   - read-only/write-policy core-memory mutation semantics;
+   - rendered component token accounting beyond selected evidence inclusion;
+   - opt-in kernel tool-result expansion and core-memory tools.
 
-Add first-class shadow-write persistence for core blocks and history, using the existing SQLite store pattern and v3 contract models.
+Tradeoffs:
 
-Expected implementation:
+- Directly follows the matrix P0 priorities while preserving benchmark-specific diagnosis.
+- Avoids hiding LoCoMo retrieval misses behind LongMemEval answer work.
+- Avoids hiding LongMemEval answer failures behind retrieval/source-overlap work.
+- Produces future tests that can fail before implementation without relying on Letta runtime or expected-answer hacks.
+- Requires discipline in later phases because it spans public benchmark reports, v3 routing, archival retrieval, passage contracts, and answer artifacts.
 
-- Add SQLAlchemy records in `src/memoryos_lite/store.py`:
-  - `CoreMemoryBlockRecord` for `core_memory_blocks`.
-  - `CoreMemoryHistoryRecord` for `core_memory_history`.
-- Add Alembic migration `0005_add_core_memory.py`, and stamp fresh local DBs to the new head only when creating a fresh DB.
-- Add store CRUD:
-  - `create_core_memory_block(block)`
-  - `get_core_memory_block(block_id)`
-  - `list_core_memory_blocks(session_id=None, include_deleted=False)`
-  - `update_core_memory_block(block)`
-  - `delete_core_memory_block(block_id, source_refs, actor, reason)`
-  - `append_core_memory_history(event)`
-  - `list_core_memory_history(block_id)`
-- Add a small internal module, for example `src/memoryos_lite/core_memory.py`, that owns semantics:
-  - create requires non-empty `source_refs` or explicit manual provenance via `SourceRef(source_type="manual", approval_id=...)`.
-  - append adds content to existing value with stable separator.
-  - replace requires `old`, verifies the old text exists, and replaces it.
-  - update sets the full block value to the supplied content when the caller has source refs or approved manual provenance.
-  - delete marks the block deleted or removes it while preserving history; soft delete is safer for audit.
-  - every mutation writes `MemoryHistoryEvent` with before / after snapshots.
-- Add render helper:
-  - explicit method such as `render_core_memory_blocks(blocks) -> str`.
-  - deterministic format, e.g. `[Core Memory]\n<label> (<limit>): <value>`.
-  - not called from default `build_context()`.
-- Add tests:
-  - store-level CRUD and history roundtrip.
-  - append / replace / update semantics.
-  - delete keeps traceable history.
-  - source-less create/update fails.
-  - render format is deterministic and opt-in.
-  - legacy `build_context()` output is unchanged unless an explicit future v3 hook calls the renderer.
+Verdict: recommended. This is the best route for turning the Letta gap matrix into future testable MemoryOS contracts without demo-only phase completion.
 
-Pros:
+### Option C - Letta Subsystem Order Route
 
-- Directly satisfies Phase 3 acceptance.
-- Keeps v1/v2 behavior stable because APIs are internal/opt-in.
-- Reuses existing `v3_contracts.py` models instead of duplicating schema.
-- Creates a durable foundation for Phase 5 promotion policy and Phase 6 composer.
-- Review can verify behavior with deterministic tests, no LLM required.
+Order future contracts to mirror Letta architecture:
 
-Cons:
+1. Core memory block/write-policy contract.
+2. Archive and passage managers/scope contract.
+3. Context component accounting contract.
+4. Tool execution and kernel trace contract.
+5. Public answer/citation contract.
 
-- Adds migration and store surface area.
-- Requires careful JSON serialization for `SourceRef` / history snapshots.
-- Soft-delete design must be explicit so deleted blocks do not render later.
+Tradeoffs:
 
-Verdict: recommended. This is the smallest implementation that actually reaches `shadow-write`.
+- Easy to explain as a Letta-style architecture map.
+- Gives each subsystem a clean local contract.
+- Misaligned with Phase 0 evidence: kernel/core-memory work is not the main sampled public-benchmark bottleneck.
+- Risks broad "port Letta" planning and plan-only artifacts before benchmark-critical answer/retrieval contracts are nailed down.
+- Could defer public case-level diagnostics too late, allowing aggregate or trace-only progress to look usable.
 
-## Option C — Reuse Legacy MemoryPage / MemoryItem as Core Blocks
+Verdict: reject as primary ordering. Use Letta semantics as references inside MemoryOS contracts, not as the phase order.
 
-Represent core memory through existing `MemoryPage(page_type=CORE_PROFILE)` and `MemoryItem` records, then add thin wrappers.
+## Chosen Route
 
-Expected implementation:
+Choose Option B: split P0 contracts by observed failure mode and keep public case-level taxonomy as the guardrail.
 
-- Create core blocks as `MemoryPage` or `MemoryItem`.
-- Use existing page/item CRUD and trace events for audit.
-- Render from `list_global_core_pages()` or page summaries.
+The future contract chain should be:
 
-Pros:
+```text
+v3 route and case taxonomy contract
+  -> LoCoMo archive scope and passage-role contracts
+  -> LongMemEval answer citation and unsupported-answer contracts
+  -> rendered evidence survival/accounting contracts
+  -> opt-in kernel/tool mutation contracts only after benchmark evidence contracts hold
+```
 
-- No migration needed.
-- Lower immediate implementation cost.
-- Existing retrieval/search code can see the data.
+This route treats Letta as a design reference, not a dependency. MemoryOS should adopt the useful semantics: scoped archive attachment, passage role/source auditability, selected evidence citation, component accounting, and traceable tool mutation. It should not import Letta services, managers, schemas, or runtime.
 
-Cons:
+## Future Contract Set
 
-- Violates the v3 direction that Page/Item are legacy archival inputs, not new v3 targets.
-- Audit history would be ad hoc and incomplete.
-- Source refs are weaker because `MemoryItem` only stores source message IDs.
-- Raises risk that core pages accidentally leak into legacy context/retrieval.
-- Makes later archival/core separation harder.
+P0 contracts to draft next:
 
-Verdict: reject. It saves time now but works against the blueprint.
+- Default v3 routing: default settings through service/public benchmark must produce v3 diagnostics; explicit `MEMORYOS_MEMORY_ARCH=v1` must keep v1 fallback behavior.
+- Case-level diagnostics: public output must preserve retrieval miss versus evidence-hit answer fail versus unsupported answer versus supported cited answer.
+- Archive scope: archival retrieval must use attachment-derived eligible archives or report why no scope was available; silent global retrieval is not acceptable once scoped archives exist.
+- Passage role: benchmark evidence must distinguish source-backed passages from agent-written archival memory; agent summaries cannot count as source evidence without source refs.
+- Answer citation: supported answers must cite selected evidence ids and source ids; unsupported or empty evidence must be explicit.
 
-## Recommendation
+P1 contracts to hold until after P0 RED tests exist:
 
-Choose Option B.
+- Rendered component accounting: selected evidence ids must be visible in the final rendered answer-prompt component map, with token estimates later.
+- Core-memory write policy: read-only/write-policy semantics should gate any future kernel core-memory mutation.
+- Kernel/tool result: kernel remains opt-in, emits trace/tool result/source-ref diagnostics, and does not become benchmark success evidence by trace presence alone.
 
-Design the Phase 3 plan around a narrow shadow-write slice:
+## LongMemEval Impact
 
-1. Strengthen v3 core-memory contracts only where needed for unambiguous semantics.
-2. Add durable SQLite tables and migration for core blocks and core history.
-3. Add store CRUD and a small internal core-memory service for operation semantics.
-4. Add deterministic render formatting, but keep it out of default context building.
-5. Prove source-backed enforcement and history traceability with focused tests.
+LongMemEval Phase 0 smoke pressure is mainly answer-use, not retrieval:
 
-## Key Design Decisions for PLAN_DRAFT
+- Evidence-hit answer failures: `e47becba`, `118b2229`, `51a45a95`.
+- Retrieval miss: `58bf7951`.
+- Pass: `1e043500`.
 
-- Source-backed enforcement should live in both contracts and service/store entry points. Pydantic validation catches invalid `CoreMemoryUpdate`; service methods should also reject source-less block creation.
-- Manual provenance should use existing `SourceRef(source_type="manual", approval_id=...)` or an approved `ApprovalState`; do not invent a weaker `manual=True` flag.
-- History should use `MemoryHistoryEvent(memory_type="core_block")` for every create/update/delete. For create, use operation `add`; for append/update, use `update`; for replace, use `replace`; for delete, use `delete`.
-- Prefer soft delete with `deleted_at` / `deleted_by_event_id` metadata or columns so audit survives and render/list defaults can hide deleted blocks.
-- Keep `CoreMemoryBlock` in `v3_contracts.py` for this phase rather than moving it into `schemas.py`; `schemas.py` remains legacy/public API until v3 is promoted.
-- Add no automatic LLM extraction, promotion, or default composer integration in Phase 3. Those belong to later phases.
+For LongMemEval, future RED tests should prove that selected evidence reaches the final answer artifact and that supported answers cite the selected evidence ids/source ids that justify the answer. `58bf7951` must remain classified as retrieval miss until evidence is actually recovered; answer-citation work must not hide it.
+
+Expected contract value:
+
+- prevents "retrieval succeeded" from being counted as answer success;
+- exposes evidence-hit-answer-fail cases at case level;
+- forces unsupported/refusal behavior when selected evidence is absent or insufficient;
+- reduces risk that `source_hit` is misread as evidence localization.
+
+## LoCoMo Impact
+
+LoCoMo Phase 0 smoke pressure is mainly retrieval and scope:
+
+- Evidence-hit answer failure: `conv-26_qa_001`.
+- Retrieval misses: `conv-26_qa_002`, `conv-26_qa_003`, `conv-26_qa_004`, `conv-26_qa_005`.
+
+For LoCoMo, future RED tests should focus first on scoped archival eligibility and passage/source-role auditability. A synthetic two-archive fixture should fail when an unattached archive with a stronger lexical match is selected. Public benchmark diagnostics should continue to show which LoCoMo cases lack planned/episode evidence instead of burying them under answer-only work.
+
+Expected contract value:
+
+- prevents global archival top-k pollution;
+- separates absent source evidence from answer projection failure;
+- keeps `conv-26_qa_001` as an answer-use guard while treating `conv-26_qa_002` through `conv-26_qa_005` as retrieval/scope guards;
+- makes future LoCoMo movement attributable to retrieval/scope changes rather than aggregate score drift.
+
+## Constraints To Preserve
+
+- v1 fallback remains available with `MEMORYOS_MEMORY_ARCH=v1`; no contract may remove or silently bypass it.
+- v3 remains the intended default memory architecture, but future tests must verify the real service/public benchmark path instead of relying only on settings documentation.
+- The v3 kernel remains opt-in with `MEMORYOS_AGENT_KERNEL=v1`; kernel trace presence is not answer-quality evidence.
+- Letta is a reference design only. No runtime dependency, import path, database dependency, manager reuse, or schema inheritance from Letta should be introduced.
+- No benchmark case-id hacks, expected-answer leaks, or dataset-specific string rules.
+- No Phase 1 code, test, docs, benchmark data, state, or blueprint edits.
+
+## What Would Count As Demo-Only Or Plan-Only
+
+- Reporting only aggregate benchmark score movement while hiding per-case regressions.
+- Calling `source_hit` evidence localization without checking planned/episode evidence, selected evidence ids, and final answer support.
+- Claiming progress from a prompt wording change when the answer artifact has no cited selected evidence ids.
+- Treating a kernel trace sequence as benchmark usability while final answers still fail.
+- Leaving "port Letta" as an open-ended task instead of naming MemoryOS contracts and future RED anchors.
+- Writing plans that do not identify the failing tests, synthetic fixtures, or Phase 0 case anchors that would prove the contract.
+- Allowing silent global archival search after archive attachments exist.
+- Counting agent-written summaries as source-grounded evidence without source refs.
 
 ## Risks
 
-- Migration stamping risk: fresh DB stamping must move to the new head without breaking existing Alembic upgrades.
-- Token-limit semantics: `limit_tokens` exists, but enforcing exact token budgets may require `TokenEstimator`. The implementation plan should either enforce via existing estimator or explicitly cap by estimated tokens in service tests.
-- Replace ambiguity: plan should require `old` for replace and fail if `old` is not found, avoiding silent full-block replacement.
-- Delete semantics: hard delete would satisfy CRUD but weaken traceability. Soft delete is better for this phase.
-- API exposure risk: adding FastAPI endpoints now may imply public behavior. Keep this internal unless the spec explicitly opts into API routes.
+- Default-route ambiguity: if the public benchmark path does not actually exercise v3 by default, later benchmark claims can be invalid even with good contracts.
+- Scope overreach: trying to adopt Letta's full AgentV3/tool runtime would dilute the immediate benchmark contracts and violate the no-runtime-dependency constraint.
+- Benchmark conflation: LongMemEval answer failures and LoCoMo retrieval misses require different contracts; one aggregate priority can hide the other.
+- Citation formalism risk: answers could mechanically cite ids without the cited evidence supporting the claim; future tests need both cited ids and expected fact/support checks.
+- Diagnostic drift: adding new fields without preserving existing taxonomy can make regressions harder to compare with Phase 0.
+- Kernel temptation: expanding tools before evidence contracts hold can create visible traces without improving benchmark usability.
 
-## Acceptance Mapping
+## PLAN_DRAFT Direction
 
-- Blocks can be created, read, updated, and deleted: Option B store/service CRUD tests.
-- Update history is traceable: `core_memory_history` table plus `list_core_memory_history(block_id)` tests.
-- Blocks have limit, label, description, value, and source refs: `CoreMemoryBlockRecord` roundtrip tests.
-- Source-backed enforcement is tested: source-less create/update tests and manual provenance tests.
-- Render format exists without default legacy context: renderer unit test plus legacy `build_context()` regression test.
+The next plan-lane artifact should draft contracts in this order:
+
+1. Public benchmark taxonomy and default v3/v1 fallback route verification.
+2. Archive attachment scope and passage-role invariants, with LoCoMo retrieval-miss anchors.
+3. Answer citation and unsupported-answer schema, with LongMemEval evidence-hit-answer-fail anchors and `conv-26_qa_001`.
+4. Rendered evidence survival diagnostics as the bridge from context selection to answer artifacts.
+5. P1 reservations for core-memory write policy and opt-in kernel tool results, explicitly excluded from P0 benchmark-usability claims.
+
+Acceptance for the next artifact: every P0 contract must name its future failing test shape or benchmark case anchor, and every benchmark impact must remain split between LongMemEval and LoCoMo.
