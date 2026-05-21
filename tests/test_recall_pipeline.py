@@ -35,7 +35,15 @@ def test_recall_pipeline_returns_episode_evidence(tmp_path):
     assert package.retrieved_evidence
     assert package.retrieved_evidence[0].message_id == "msg_bob"
     assert package.retrieved_evidence[0].metadata["origin"] == "episode"
+    assert package.metadata["recall_candidate_message_ids"] == ["msg_bob"]
     assert package.metadata["episode_candidate_message_ids"] == ["msg_bob"]
+    assert package.metadata["recall_planned_message_ids"] == ["msg_bob"]
+    assert package.metadata["planned_evidence_message_ids"] == ["msg_bob"]
+    assert package.metadata["recall_indexed_source_ids"] == ["msg_bob"]
+    assert package.metadata["indexed_source_ids"] == ["msg_bob"]
+    assert package.metadata["recall_budget_dropped"] == 0
+    assert package.metadata["budget_dropped_relevant"] == 0
+    assert package.metadata["recall_diagnostics"]
 
 
 def test_recall_pipeline_truncates_when_task_exceeds_budget(tmp_path):
@@ -66,8 +74,15 @@ def test_recall_pipeline_truncates_when_task_exceeds_budget(tmp_path):
     assert package.task_truncated is True
     assert package.estimated_tokens == 4
     assert package.retrieved_evidence == []
+    assert package.metadata["recall_candidate_message_ids"] == ["msg_bob"]
     assert package.metadata["episode_candidate_message_ids"] == ["msg_bob"]
+    assert package.metadata["recall_planned_message_ids"] == []
     assert package.metadata["planned_evidence_message_ids"] == []
+    assert package.metadata["recall_indexed_source_ids"] == ["msg_bob"]
+    assert package.metadata["indexed_source_ids"] == ["msg_bob"]
+    assert package.metadata["recall_budget_dropped"] == 1
+    assert package.metadata["budget_dropped_relevant"] == 1
+    assert package.metadata["recall_diagnostics"]
 
 
 def test_recall_pipeline_tracks_dropped_evidence_when_evidence_exceeds_budget(tmp_path):
@@ -98,9 +113,13 @@ def test_recall_pipeline_tracks_dropped_evidence_when_evidence_exceeds_budget(tm
     assert package.task_truncated is False
     assert package.retrieved_evidence == []
     assert package.candidate_budget_dropped == 1
+    assert package.metadata["recall_budget_dropped"] == 1
     assert package.metadata["budget_dropped_relevant"] == 1
+    assert package.metadata["recall_candidate_message_ids"] == ["msg_bob"]
     assert package.metadata["episode_candidate_message_ids"] == ["msg_bob"]
+    assert package.metadata["recall_planned_message_ids"] == []
     assert package.metadata["planned_evidence_message_ids"] == []
+    assert package.metadata["recall_diagnostics"]
 
 
 def test_service_build_context_uses_v2_when_opted_in(tmp_path):

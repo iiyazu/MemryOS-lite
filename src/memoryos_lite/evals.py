@@ -658,15 +658,23 @@ def _run_baseline(
             for evidence in context.retrieved_evidence[:candidate_top_k]
             if evidence.page_id is not None
         )
-        indexed_source_ids = _metadata_string_list(context.metadata, "indexed_source_ids")
+        indexed_source_ids = _metadata_string_list_prefer(
+            context.metadata,
+            primary_key="recall_indexed_source_ids",
+            fallback_key="indexed_source_ids",
+        )
         item_candidate_source_ids = _metadata_string_list(
             context.metadata, "item_candidate_source_ids"
         )
-        episode_candidate_message_ids = _metadata_string_list(
-            context.metadata, "episode_candidate_message_ids"
+        episode_candidate_message_ids = _metadata_string_list_prefer(
+            context.metadata,
+            primary_key="recall_candidate_message_ids",
+            fallback_key="episode_candidate_message_ids",
         )
-        planned_evidence_message_ids = _metadata_string_list(
-            context.metadata, "planned_evidence_message_ids"
+        planned_evidence_message_ids = _metadata_string_list_prefer(
+            context.metadata,
+            primary_key="recall_planned_message_ids",
+            fallback_key="planned_evidence_message_ids",
         )
         all_item_indexed_source_ids = _dedupe_source_ids(
             source_id
@@ -679,7 +687,10 @@ def _run_baseline(
         episode_candidate_set = set(episode_candidate_message_ids[:10])
         planned_evidence_set = set(planned_evidence_message_ids[:5])
         indexed_source_set = set(indexed_source_ids) | set(all_item_indexed_source_ids)
-        has_v2_index_diagnostics = "indexed_source_ids" in context.metadata
+        has_v2_index_diagnostics = (
+            "recall_indexed_source_ids" in context.metadata
+            or "indexed_source_ids" in context.metadata
+        )
         item_source_hit_at_10 = (
             bool(required_source_set & item_candidate_set) if required_source_set else None
         )
@@ -721,7 +732,11 @@ def _run_baseline(
             item_source_hit_at_10=item_source_hit_at_10,
             episode_source_hit_at_10=episode_source_hit_at_10,
             planned_evidence_source_hit_at_5=planned_evidence_source_hit_at_5,
-            budget_dropped_relevant=_metadata_int(context.metadata, "budget_dropped_relevant"),
+            budget_dropped_relevant=_metadata_int_prefer(
+                context.metadata,
+                primary_key="recall_budget_dropped",
+                fallback_key="budget_dropped_relevant",
+            ),
             source_not_indexed=source_not_indexed,
             indexed_source_ids=indexed_source_ids,
             item_candidate_source_ids=item_candidate_source_ids,
@@ -904,9 +919,37 @@ def _metadata_string_list(metadata: dict[str, object], key: str) -> list[str]:
     return _dedupe_source_ids(item for item in value if isinstance(item, str))
 
 
+def _metadata_string_list_prefer(
+    metadata: dict[str, object],
+    *,
+    primary_key: str,
+    fallback_key: str,
+) -> list[str]:
+    if primary_key in metadata:
+        value = metadata.get(primary_key)
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return _dedupe_source_ids(item for item in value if isinstance(item, str))
+        return []
+    return _metadata_string_list(metadata, fallback_key)
+
+
 def _metadata_int(metadata: dict[str, object], key: str) -> int:
     value = metadata.get(key)
     return value if isinstance(value, int) else 0
+
+
+def _metadata_int_prefer(
+    metadata: dict[str, object],
+    *,
+    primary_key: str,
+    fallback_key: str,
+) -> int:
+    if primary_key in metadata:
+        value = metadata.get(primary_key)
+        return value if isinstance(value, int) else 0
+    return _metadata_int(metadata, fallback_key)
 
 
 def _case_required_source_ids(case: EvalCase) -> list[str]:

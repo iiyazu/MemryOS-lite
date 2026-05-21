@@ -1,21 +1,18 @@
-# Execute Self-Review: Phase 1 - Memory v3 Contracts
+# Execute Self-Review: Phase 2 - Recall Memory Layer
 
 ## 小问题修复
-- 修复 `src/memoryos_lite/v3_contracts.py` 中超出 `ruff` 行宽限制的长行。
-- 修复 `tests/test_v3_contracts.py` 的 import 排序和长行。
-- 更新 `result.md`，记录 lint 复验和本轮内审补充。
+- 修正 `.hermes-loop/result.md` 中焦点测试数量：本轮复验为 `66 passed in 363.80s`，不是旧记录的 `65 passed`。
 
 ## 大问题标记
-- 无。新增 v3 contract module 保持 standalone，未改默认 runtime path。
-- 无新增 phase-1 migration；`alembic/versions/` 仍只有 `0001` 到 `0004`。
-- Core memory update 仍强制要求 `source_refs` 或已批准的 `ApprovalState`。
-- Kernel tool policy/approval/trace/protocol contracts 已覆盖。
-- Page/Item 仅作为 legacy adapter input，未作为 v3 archival target。
+- 无。
+- `EpisodeSearcher` 仍保留 legacy `episode_bm25` source label 与旧 import path。
+- v2 recall metadata 同时写入 recall-native keys 与 legacy compatibility keys。
+- public benchmark report 仍暴露旧字段名，未泄漏 `recall_*` 内部 metadata。
+- 默认 `v1` 行为未在本轮内审中发现被改动。
 
 ## 复验
-- `uv run ruff check src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py` -> passed。
-- `uv run pytest tests/test_v3_contracts.py -q` -> `13 passed`。
-- `uv run pytest -q` -> `324 passed, 1 warning in 315.89s`。
+- `uv run ruff check src/memoryos_lite/retrieval/episode_searcher.py src/memoryos_lite/retrieval/recall_pipeline.py src/memoryos_lite/evals.py tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_evals.py tests/test_public_benchmarks.py` -> passed。
+- `uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_evals.py tests/test_public_benchmarks.py -q` -> `66 passed in 363.80s`。
 
 ## 结论
 PASS — 可提交 Review。

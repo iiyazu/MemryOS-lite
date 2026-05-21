@@ -11,6 +11,7 @@ from memoryos_lite.evals import (
     EvidenceItem,
     _baseline_from_evidence,
     _materialize_messages,
+    _metadata_string_list_prefer,
     _needs_multi_evidence,
     _project_evidence_text,
     _run_baseline,
@@ -728,3 +729,16 @@ def test_marker_ablation_cases_do_not_use_evidence_boost_markers():
             case.question + "\n" + "\n".join(message.content for message in case.conversation)
         )
         assert not any(marker in case_text for marker in marker_words)
+
+
+def test_metadata_string_list_prefers_recall_keys_over_legacy_keys():
+    metadata = {
+        "recall_candidate_message_ids": ["recall_a", "recall_b"],
+        "episode_candidate_message_ids": ["legacy_a"],
+    }
+
+    assert _metadata_string_list_prefer(
+        metadata,
+        primary_key="recall_candidate_message_ids",
+        fallback_key="episode_candidate_message_ids",
+    ) == ["recall_a", "recall_b"]

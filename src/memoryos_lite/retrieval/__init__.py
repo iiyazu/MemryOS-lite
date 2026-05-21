@@ -7,7 +7,11 @@ from memoryos_lite.retrieval.base import (
     cosine_similarity,
     reciprocal_rank_fusion,
 )
-from memoryos_lite.retrieval.episode_searcher import EpisodeHit, EpisodeSearcher
+from memoryos_lite.retrieval.episode_searcher import (
+    EpisodeHit,
+    EpisodeSearcher,
+    RecallMemorySearcher,
+)
 from memoryos_lite.retrieval.lexical import LexicalSearcher, tokenize
 from memoryos_lite.retrieval.query_analyzer import (
     QueryAnalysis,
@@ -52,6 +56,7 @@ __all__ = [
     "QueryRewriter",
     "SearchHit",
     "Searcher",
+    "RecallMemorySearcher",
     "cosine_similarity",
     "reciprocal_rank_fusion",
     "tokenize",

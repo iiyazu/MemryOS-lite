@@ -1,6 +1,6 @@
 {
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 2,
+  "current_phase_idx": 3,
   "iter_count": 0,
   "max_review_iterations": 3,
   "started_at": "2026-05-20T00:00:00Z",
@@ -43,8 +43,33 @@
       "id": "phase-2",
       "name": "Recall Memory Layer",
       "target_state": "shadow-read",
-      "status": "pending",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-21T14:53:06+08:00",
+          "ack_evidence": {
+            "tests_passed": 329,
+            "checks_passed": 6,
+            "spec_checklist_all": true,
+            "benchmark_scores": {
+              "hard_eval": {
+                "accuracy": "1.00/1.00",
+                "source_accuracy": "1.00/1.00",
+                "cases": 16
+              },
+              "longmemeval_limit10_v2": {
+                "episode_source_hit_at_10": "8/10",
+                "planned_evidence_source_hit_at_5": "8/10"
+              },
+              "locomo_limit10_v2": {
+                "episode_source_hit_at_10": "5/10",
+                "planned_evidence_source_hit_at_5": "5/10"
+              }
+            }
+          },
+          "reflect_file": "reflect_phase-2.md"
+        }
+      ]
     },
     {
       "id": "phase-3",
@@ -89,5 +114,5 @@
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-21T12:47:53+08:00"
+  "last_updated": "2026-05-21T14:53:06+08:00"
 }

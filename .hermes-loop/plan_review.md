@@ -1,12 +1,22 @@
-# Plan Self-Review — Phase 1
+# PLAN_SELF_REVIEW
 
-Verdict: PASS
+## Verdict: FAIL on first pass, then repaired to PASS
 
-Fixed during review:
-- `IdentityScope` no longer rejects empty construction; persistence boundary is handled by `ensure_persisted_identity_scope`.
-- Source-less core memory updates now require an approved `ApprovalState`, not just an arbitrary approval id.
-- Kernel contract ordering no longer forces Task 2 to depend on Task 4 for approval state definitions.
+### Issues found
 
-Result:
-- `spec.md` and `plan.md` are aligned on phase-1 contract scope.
-- Ready to advance to `EXECUTE`.
+1. The draft plan changed `EpisodeHit.source` to `recall_memory` without preserving the legacy `EpisodeSearcher` compatibility surface. That would break the existing `tests/test_episode_retrieval.py` expectation that `EpisodeSearcher().search(...).source == "episode_bm25"`.
+2. The draft plan asked execute-time workers to create git commits. That conflicts with the current state machine, where commit/archival happens in `GOD_ADVANCE` after ACK, not during `EXECUTE`.
+3. The eval mapping draft used truthiness fallback for `recall_budget_dropped`. That would mis-handle a valid `0` recall value and fall back to the legacy field incorrectly.
+4. The draft did not explicitly cover budget-drop diagnostics for the branch where task tokens already exceed budget.
+
+### Repair applied
+
+- Keep `RecallMemorySearcher` as the new recall-native surface.
+- Preserve `EpisodeSearcher` as a legacy wrapper with the old `episode_bm25` source label.
+- Remove all commit steps from the execution plan.
+- Use key-presence-aware metadata preference helpers for recall-vs-legacy fields.
+- Emit recall budget-drop diagnostics in both evidence overflow and task-truncation paths.
+
+### Result
+
+The revised plan is compatible with the current repo tests, the state machine, and the phase-2 acceptance criteria.

@@ -1,1260 +1,811 @@
-# Memory v3 Contracts Implementation Plan
+# Recall Memory Layer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add Memory v3 contract definitions and adapter boundaries while keeping legacy behavior unchanged.
+**Goal:** Turn the opt-in episode recall path into a Recall Memory Layer with structured diagnostics while keeping default `v1` and old benchmark fields compatible.
 
-**Architecture:** Create a standalone `memoryos_lite.v3_contracts` module containing Pydantic contracts, Protocol interfaces, table-boundary constants, and legacy adapter helpers. Existing runtime paths continue importing and using legacy `schemas.py`, `store.py`, and retrieval modules until later opt-in phases.
+**Architecture:** Keep the existing `episodes` table as physical storage, adapt rows into `RecallMemoryEntry`, and evolve the current episode searcher into a diagnostic-rich recall searcher. `RecallPipeline` remains the `ContextPackage` compatibility boundary and maps recall-native metadata back to old `episode_*` report fields.
 
-**Tech Stack:** Python 3.11, Pydantic v2, pytest, SQLAlchemy-backed legacy store.
+**Tech Stack:** Python 3.11, Pydantic v2 contracts in `v3_contracts.py`, rank-bm25, pytest, existing SQLAlchemy-backed `MemoryStore`.
 
 ---
 
 ## File Structure
 
-- Create: `src/memoryos_lite/v3_contracts.py`
-  - Owns all phase-1 v3 contract models, enums, protocol interfaces, table-boundary constants, and adapter helpers.
-- Create: `tests/test_v3_contracts.py`
-  - Verifies shared formats, source-backed core-memory rules, table boundaries, legacy adapters, and kernel policy/approval contracts.
-- Modify: no runtime modules in phase 1.
-  - Do not modify `src/memoryos_lite/engine.py`, `src/memoryos_lite/cli.py`, `src/memoryos_lite/api/app.py`, or default recall configuration.
+- Modify: `src/memoryos_lite/retrieval/episode_searcher.py`
+  - Add recall-native hit diagnostics, neighbor expansion, dedupe, and a `RecallMemorySearcher` compatibility surface.
+- Modify: `src/memoryos_lite/retrieval/__init__.py`
+  - Export `RecallMemorySearcher` while keeping `EpisodeSearcher` and `EpisodeHit`.
+- Modify: `src/memoryos_lite/retrieval/recall_pipeline.py`
+  - Convert backfilled episodes into `RecallMemoryEntry`, use recall diagnostics, and emit recall-native plus legacy metadata.
+- Modify: `src/memoryos_lite/evals.py`
+  - Read recall-native metadata first and keep old `episode_*` fields as compatibility output.
+- Modify: `src/memoryos_lite/public_benchmarks.py`
+  - Keep public report compatibility and verify no report schema regression.
+- Modify: `tests/test_episode_retrieval.py`
+  - Add searcher tests for direct hit, neighbor expansion, dedupe, role/session diagnostics.
+- Modify: `tests/test_recall_pipeline.py`
+  - Add pipeline tests for backfill, recall metadata, budget drop diagnostics, and legacy mapping.
+- Modify: `tests/test_evals.py`
+  - Add eval mapping coverage for recall metadata to `episode_*` fields.
+- Modify: `tests/test_public_benchmarks.py`
+  - Keep public report coverage for `episode_source_hit_at_10` and mapped diagnostics.
 
-## Task 1: Shared Provenance and Diagnostic Contracts
+## Task 1: Searcher Tests for Recall Diagnostics
 
 **Files:**
-- Create: `tests/test_v3_contracts.py`
-- Create: `src/memoryos_lite/v3_contracts.py`
+- Modify: `tests/test_episode_retrieval.py`
 
-- [ ] **Step 1: Write failing tests for shared formats**
+- [ ] **Step 1: Add failing tests for recall hit diagnostics and neighbor expansion**
 
-Add this initial test file:
+Append these tests to `tests/test_episode_retrieval.py`:
 
 ```python
-import pytest
-from pydantic import ValidationError
-
-from memoryos_lite.v3_contracts import (
-    DiagnosticEvent,
-    IdentityScope,
-    LayerBudgetDecision,
-    MemoryHistoryEvent,
-    ensure_persisted_identity_scope,
-    SourceRef,
-    SourceSpan,
-)
+from memoryos_lite.v3_contracts import RecallMemoryEntry, SourceRef
 
 
-def test_source_ref_requires_non_empty_source_id_and_valid_span():
-    ref = SourceRef(
-        source_type="message",
-        source_id="msg_1",
-        span=SourceSpan(start=3, end=9),
-        quote="source",
-        confidence=0.75,
+def _recall_entry(
+    message_id: str,
+    text: str,
+    position: int,
+    role: Role = Role.USER,
+    session_id: str = "ses",
+    benchmark_session_id: str | None = None,
+    benchmark_date: str | None = None,
+) -> RecallMemoryEntry:
+    temporal_scope = {}
+    if benchmark_session_id is not None:
+        temporal_scope["benchmark_session_id"] = benchmark_session_id
+    if benchmark_date is not None:
+        temporal_scope["benchmark_date"] = benchmark_date
+    return RecallMemoryEntry(
+        id=f"rec_{message_id}",
+        session_id=session_id,
+        message_id=message_id,
+        role=role,
+        text=text,
+        index_text=f"[speaker={role.value}] {text}",
+        position=position,
+        source_message_ids=[message_id],
+        source_refs=[
+            SourceRef(
+                source_type="message",
+                source_id=message_id,
+                session_id=session_id,
+            )
+        ],
+        temporal_scope=temporal_scope,
     )
 
-    assert ref.source_id == "msg_1"
-    assert ref.span.start == 3
-    assert ref.confidence == 0.75
 
-    with pytest.raises(ValidationError):
-        SourceRef(source_type="message", source_id="")
+def test_recall_searcher_returns_structured_direct_hit_diagnostics():
+    entries = [
+        _recall_entry("msg_1", "Alice likes coffee.", 1),
+        _recall_entry(
+            "msg_2",
+            "Bob moved to Shanghai.",
+            2,
+            benchmark_session_id="D2",
+            benchmark_date="2026-05-20",
+        ),
+    ]
 
-    with pytest.raises(ValidationError):
-        SourceRef(
-            source_type="message",
-            source_id="msg_1",
-            span=SourceSpan(start=10, end=4),
-        )
+    hits = EpisodeSearcher().search(entries, "Where did Bob move?", top_k=1)
 
-    manual_ref = SourceRef(
-        source_type="manual",
-        source_id="policy_1",
-        approval_id="appr_1",
+    assert hits[0].episode.message_id == "msg_2"
+    assert hits[0].source == "recall_memory"
+    assert hits[0].rank_features["token_overlap"] > 0
+    assert {event.reason_code for event in hits[0].diagnostics} >= {
+        "direct_hit",
+        "rank",
+    }
+
+
+def test_recall_searcher_expands_neighbors_and_dedupes_message_ids():
+    entries = [
+        _recall_entry("msg_1", "Project kickoff notes.", 1),
+        _recall_entry("msg_2", "The deployment target is Osaka.", 2),
+        _recall_entry("msg_3", "The team confirmed the rollout window.", 3),
+    ]
+
+    hits = EpisodeSearcher().search(entries, "deployment target", top_k=3)
+
+    assert [hit.episode.message_id for hit in hits] == ["msg_2", "msg_1", "msg_3"]
+    assert len({hit.episode.message_id for hit in hits}) == 3
+    neighbor_hits = [
+        hit for hit in hits if any(event.reason_code == "neighbor" for event in hit.diagnostics)
+    ]
+    assert [hit.episode.message_id for hit in neighbor_hits] == ["msg_1", "msg_3"]
+    assert any(
+        event.reason_code == "dedupe"
+        for hit in hits
+        for event in hit.diagnostics
     )
-    assert manual_ref.approval_id == "appr_1"
+```
 
-    with pytest.raises(ValidationError):
-        SourceRef(source_type="manual", source_id="policy_2")
+- [ ] **Step 2: Run tests to verify they fail**
 
+Run:
 
-def test_identity_scope_allows_ephemeral_values_but_persisted_scope_is_guarded():
-    empty_scope = IdentityScope()
-    scope = IdentityScope(user_id="user_1", session_id="ses_1", tags=["project"])
+```bash
+uv run pytest tests/test_episode_retrieval.py -q
+```
 
-    assert empty_scope.tags == []
-    assert scope.user_id == "user_1"
-    assert scope.tags == ["project"]
+Expected: FAIL because `EpisodeHit` does not expose `diagnostics`,
+`rank_features`, or recall neighbor expansion yet.
 
-    with pytest.raises(ValueError):
-        ensure_persisted_identity_scope(empty_scope)
+- [ ] **Step 3: Commit the failing test**
 
-    assert ensure_persisted_identity_scope(scope) is scope
+```bash
+git add tests/test_episode_retrieval.py
+git commit -m "test: define recall search diagnostics"
+```
 
+## Task 2: Implement RecallMemorySearcher With Compatibility Wrapper
 
-def test_history_diagnostics_and_budget_decisions_share_source_refs():
-    ref = SourceRef(source_type="message", source_id="msg_1", session_id="ses_1")
-    history = MemoryHistoryEvent(
-        memory_id="mem_1",
-        memory_type="core_block",
-        operation="replace",
-        actor="agent",
-        reason="newer user correction",
-        before={"value": "old"},
-        after={"value": "new"},
-        source_refs=[ref],
-    )
-    diagnostic = DiagnosticEvent(
+**Files:**
+- Modify: `src/memoryos_lite/retrieval/episode_searcher.py`
+- Modify: `src/memoryos_lite/retrieval/__init__.py`
+
+- [ ] **Step 1: Add recall hit fields and diagnostics helpers**
+
+In `src/memoryos_lite/retrieval/episode_searcher.py`, replace the current
+`EpisodeHit` dataclass with:
+
+```python
+@dataclass(frozen=True)
+class EpisodeHit:
+    episode: Episode | RecallMemoryEntry
+    score: float
+    reason: str
+    source: str = "recall_memory"
+    diagnostics: tuple[DiagnosticEvent, ...] = ()
+    rank_features: dict[str, float] = field(default_factory=dict)
+    neighbor_of: str | None = None
+```
+
+Add these imports:
+
+```python
+from dataclasses import dataclass, field
+
+from memoryos_lite.v3_contracts import DiagnosticEvent, RecallMemoryEntry, SourceRef
+```
+
+Add this helper below `_content_tokens`:
+
+```python
+def _diagnostic(
+    entry: Episode | RecallMemoryEntry,
+    reason_code: str,
+    score: float | None,
+    included: bool,
+    metadata: dict[str, object] | None = None,
+) -> DiagnosticEvent:
+    return DiagnosticEvent(
         layer="recall",
-        event_type="rank",
-        item_id="rec_1",
-        reason_code="bm25_overlap",
-        score=3.5,
-        included=True,
-        source_refs=[ref],
+        event_type="candidate",
+        item_id=entry.message_id,
+        reason_code=reason_code,
+        score=score,
+        included=included,
+        source_refs=[
+            SourceRef(
+                source_type="message",
+                source_id=source_id,
+                session_id=entry.session_id,
+            )
+            for source_id in entry.source_message_ids
+        ],
+        metadata=metadata or {},
     )
-    decision = LayerBudgetDecision(
-        layer="archival",
-        requested_tokens=1200,
-        allocated_tokens=400,
-        used_tokens=376,
-        dropped_item_ids=["passage_2"],
-        reason_code="budget_limit",
-    )
-
-    assert history.source_refs == [ref]
-    assert diagnostic.layer == "recall"
-    assert decision.dropped_item_ids == ["passage_2"]
-
-    with pytest.raises(ValidationError):
-        MemoryHistoryEvent(
-            memory_id="mem_2",
-            memory_type="archival_memory",
-            operation="replace",
-            actor="agent",
-            reason="bad replace",
-            after={"value": "new"},
-            source_refs=[ref],
-        )
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Implement `RecallMemorySearcher` and keep `EpisodeSearcher`**
 
-Run:
-
-```bash
-uv run pytest tests/test_v3_contracts.py -v
-```
-
-Expected: FAIL with `ModuleNotFoundError: No module named 'memoryos_lite.v3_contracts'`.
-
-- [ ] **Step 3: Write minimal shared contracts**
-
-Create `src/memoryos_lite/v3_contracts.py`:
+Replace the current `EpisodeSearcher` class with:
 
 ```python
-from __future__ import annotations
+class RecallMemorySearcher:
+    def search(
+        self,
+        episodes: list[Episode | RecallMemoryEntry],
+        query: str,
+        top_k: int = 5,
+        analysis: QueryAnalysis | None = None,
+        neighbor_window: int = 1,
+    ) -> list[EpisodeHit]:
+        query_tokens = tokenize(query)
+        query_content_tokens = _content_tokens(query_tokens)
+        if not episodes or not query_content_tokens:
+            return []
 
-from datetime import datetime
-from enum import StrEnum
-from typing import Any, Literal, Protocol
+        corpus = [tokenize(episode.index_text) for episode in episodes]
+        bm25 = BM25Okapi(corpus)
+        scores = bm25.get_scores(query_tokens)
+        direct_hits: list[EpisodeHit] = []
 
-from pydantic import BaseModel, Field, model_validator
+        for episode, episode_tokens, score in zip(episodes, corpus, scores, strict=False):
+            token_overlap = len(query_content_tokens & _content_tokens(episode_tokens))
+            if token_overlap <= 0:
+                continue
+            adjusted = float(score) + token_overlap
+            diagnostics = [
+                _diagnostic(
+                    episode,
+                    "direct_hit",
+                    adjusted,
+                    True,
+                    {"token_overlap": token_overlap},
+                ),
+                _diagnostic(
+                    episode,
+                    "rank",
+                    adjusted,
+                    True,
+                    {"base_score": float(score), "token_overlap": token_overlap},
+                ),
+            ]
+            if (
+                analysis is not None
+                and analysis.kind == QueryKind.ASSISTANT_SOURCE
+                and episode.role == Role.ASSISTANT
+            ):
+                adjusted += 6.0
+                diagnostics.append(
+                    _diagnostic(episode, "role_match", adjusted, True, {"role": "assistant"})
+                )
+            if adjusted <= 0:
+                continue
+            direct_hits.append(
+                EpisodeHit(
+                    episode=episode,
+                    score=adjusted,
+                    reason=f"recall_bm25={adjusted:.4f} overlap={token_overlap}",
+                    diagnostics=tuple(diagnostics),
+                    rank_features={
+                        "bm25_score": float(score),
+                        "token_overlap": float(token_overlap),
+                        "adjusted_score": adjusted,
+                    },
+                )
+            )
 
-from memoryos_lite.schemas import Episode, MemoryItem, MemoryPage, Message, Role, new_id, utc_now
+        ranked = sorted(
+            direct_hits,
+            key=lambda hit: (hit.score, -hit.episode.position),
+            reverse=True,
+        )
+        return self._with_neighbors(ranked, episodes, top_k, neighbor_window)
+
+    def _with_neighbors(
+        self,
+        direct_hits: list[EpisodeHit],
+        episodes: list[Episode | RecallMemoryEntry],
+        top_k: int,
+        neighbor_window: int,
+    ) -> list[EpisodeHit]:
+        by_position = {episode.position: episode for episode in episodes}
+        selected: list[EpisodeHit] = []
+        seen_message_ids: set[str] = set()
+        dedupe_events: list[DiagnosticEvent] = []
+
+        for hit in direct_hits:
+            if hit.episode.message_id not in seen_message_ids:
+                selected.append(hit)
+                seen_message_ids.add(hit.episode.message_id)
+            else:
+                dedupe_events.append(
+                    _diagnostic(hit.episode, "dedupe", hit.score, False, {"duplicate": True})
+                )
+            if len(selected) >= top_k:
+                break
+            for offset in range(1, neighbor_window + 1):
+                for position in (hit.episode.position - offset, hit.episode.position + offset):
+                    neighbor = by_position.get(position)
+                    if neighbor is None:
+                        continue
+                    if neighbor.message_id in seen_message_ids:
+                        dedupe_events.append(
+                            _diagnostic(
+                                neighbor,
+                                "dedupe",
+                                hit.score,
+                                False,
+                                {"neighbor_of": hit.episode.message_id},
+                            )
+                        )
+                        continue
+                    selected.append(
+                        EpisodeHit(
+                            episode=neighbor,
+                            score=max(0.0, hit.score - 0.01),
+                            reason=f"neighbor_of={hit.episode.message_id}",
+                            diagnostics=(
+                                _diagnostic(
+                                    neighbor,
+                                    "neighbor",
+                                    hit.score,
+                                    True,
+                                    {"neighbor_of": hit.episode.message_id},
+                                ),
+                            ),
+                            rank_features={"neighbor_of_rank": hit.score},
+                            neighbor_of=hit.episode.message_id,
+                        )
+                    )
+                    seen_message_ids.add(neighbor.message_id)
+                    if len(selected) >= top_k:
+                        break
+                if len(selected) >= top_k:
+                    break
+            if len(selected) >= top_k:
+                break
+
+        if dedupe_events and selected:
+            first = selected[0]
+            selected[0] = EpisodeHit(
+                episode=first.episode,
+                score=first.score,
+                reason=first.reason,
+                source=first.source,
+                diagnostics=first.diagnostics + tuple(dedupe_events),
+                rank_features=first.rank_features,
+                neighbor_of=first.neighbor_of,
+            )
+        return selected[:top_k]
 
 
-class SourceType(StrEnum):
-    MESSAGE = "message"
-    EPISODE = "episode"
-    DOCUMENT = "document"
-    PASSAGE = "passage"
-    MEMORY = "memory"
-    CORE_BLOCK = "core_block"
-    TOOL_CALL = "tool_call"
-    APPROVAL = "approval"
-    MANUAL = "manual"
-
-
-class SourceSpan(BaseModel):
-    start: int = Field(ge=0)
-    end: int = Field(ge=0)
-
-    @model_validator(mode="after")
-    def validate_order(self) -> "SourceSpan":
-        if self.start > self.end:
-            raise ValueError("SourceSpan.start must be less than or equal to end")
-        return self
-
-
-class IdentityScope(BaseModel):
-    user_id: str | None = None
-    agent_id: str | None = None
-    run_id: str | None = None
-    session_id: str | None = None
-    project_id: str | None = None
-    archive_id: str | None = None
-    tags: list[str] = Field(default_factory=list)
-
-
-def ensure_persisted_identity_scope(scope: IdentityScope | None) -> IdentityScope | None:
-    if scope is None:
-        return None
-    if not any(
-        [
-            scope.user_id,
-            scope.agent_id,
-            scope.run_id,
-            scope.session_id,
-            scope.project_id,
-            scope.archive_id,
-        ]
-    ):
-        raise ValueError("persisted identity scopes require at least one identity boundary")
-    return scope
-
-
-class SourceRef(BaseModel):
-    source_type: SourceType
-    source_id: str = Field(min_length=1)
-    session_id: str | None = None
-    identity_scope: IdentityScope | None = None
-    span: SourceSpan | None = None
-    quote: str | None = None
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
-    approval_id: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_manual_source(self) -> "SourceRef":
-        if self.source_type == SourceType.MANUAL and not self.approval_id:
-            raise ValueError("manual source refs require approval_id")
-        return self
-
-
-MemoryType = Literal[
-    "recall",
-    "archival_document",
-    "archival_passage",
-    "archival_memory",
-    "core_block",
-]
-HistoryOperation = Literal[
-    "add",
-    "update",
-    "replace",
-    "delete",
-    "promote",
-    "demote",
-    "attach",
-    "detach",
-]
-
-
-class MemoryHistoryEvent(BaseModel):
-    id: str = Field(default_factory=lambda: new_id("hist"))
-    memory_id: str = Field(min_length=1)
-    memory_type: MemoryType
-    operation: HistoryOperation
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    actor: Literal["system", "user", "agent", "tool"]
-    reason: str = Field(min_length=1)
-    before: dict[str, Any] | None = None
-    after: dict[str, Any] | None = None
-    created_at: datetime = Field(default_factory=utc_now)
-
-    @model_validator(mode="after")
-    def validate_operation_payload(self) -> "MemoryHistoryEvent":
-        if self.operation != "delete" and self.after is None:
-            raise ValueError("non-delete memory history events require after")
-        if self.operation == "replace" and self.before is None:
-            raise ValueError("replace memory history events require before")
-        return self
-
-
-class DiagnosticEvent(BaseModel):
-    layer: Literal["message_log", "recall", "archival", "core", "composer", "kernel"]
-    event_type: str = Field(min_length=1)
-    item_id: str | None = None
-    reason_code: str = Field(min_length=1)
-    score: float | None = None
-    included: bool = False
-    dropped: bool = False
-    budget_tokens: int | None = Field(default=None, ge=0)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class LayerBudgetDecision(BaseModel):
-    layer: Literal["task", "core", "recall", "archival", "recent", "fallback"]
-    requested_tokens: int = Field(ge=0)
-    allocated_tokens: int = Field(ge=0)
-    used_tokens: int = Field(ge=0)
-    dropped_item_ids: list[str] = Field(default_factory=list)
-    reason_code: str = Field(min_length=1)
+class EpisodeSearcher(RecallMemorySearcher):
+    pass
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 3: Export the new recall searcher**
+
+In `src/memoryos_lite/retrieval/__init__.py`, change the import to:
+
+```python
+from memoryos_lite.retrieval.episode_searcher import (
+    EpisodeHit,
+    EpisodeSearcher,
+    RecallMemorySearcher,
+)
+```
+
+Add `"RecallMemorySearcher"` to `__all__`.
+
+- [ ] **Step 4: Run tests to verify searcher behavior**
 
 Run:
 
 ```bash
-uv run pytest tests/test_v3_contracts.py -v
+uv run pytest tests/test_episode_retrieval.py -q
 ```
 
-Expected: PASS for the three tests in Task 1.
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py
-git commit -m "feat: add memory v3 shared contracts"
+git add src/memoryos_lite/retrieval/episode_searcher.py src/memoryos_lite/retrieval/__init__.py tests/test_episode_retrieval.py
+git commit -m "feat: add recall memory search diagnostics"
 ```
 
-## Task 2: Memory Layer Contracts and Source-Backed Core Updates
+## Task 3: RecallPipeline Metadata and Budget Diagnostics
 
 **Files:**
-- Modify: `tests/test_v3_contracts.py`
-- Modify: `src/memoryos_lite/v3_contracts.py`
+- Modify: `tests/test_recall_pipeline.py`
+- Modify: `src/memoryos_lite/retrieval/recall_pipeline.py`
 
-- [ ] **Step 1: Write failing tests for memory layer contracts**
+- [ ] **Step 1: Add failing pipeline tests for recall-native metadata**
 
-Append to `tests/test_v3_contracts.py`:
+Append to `tests/test_recall_pipeline.py`:
 
 ```python
-from memoryos_lite.schemas import Episode, MemoryItem, MemoryItemType, MemoryPage, Message, PageType, Role
-from memoryos_lite.v3_contracts import (
-    ArchivalDocument,
-    ArchivalMemory,
-    ArchivalPassage,
-    ApprovalState,
-    ContextComposerRequest,
-    ContextLayerItem,
-    ContextPackageV3,
-    CoreMemoryBlock,
-    CoreMemoryUpdate,
-    MessageLogEntry,
-    RecallMemoryEntry,
-    message_to_log_entry,
-    page_to_archival_document,
-    episode_to_recall_entry,
-    item_to_archival_memory,
-    item_to_archival_passage,
-)
-
-
-def test_legacy_message_and_episode_adapt_to_v3_layer_contracts():
-    message = Message(
-        id="msg_1",
-        session_id="ses_1",
+def test_recall_pipeline_backfills_recall_entries_and_maps_legacy_metadata(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    msg = Message(
+        id="msg_osaka",
+        session_id="ses",
         role=Role.USER,
-        content="Alice moved to Shanghai.",
+        content="The deployment target is Osaka.",
+        metadata={},
         token_count=5,
     )
-    episode = Episode(
-        id="epi_1",
-        session_id="ses_1",
-        message_id="msg_1",
+    store.add_message(msg)
+
+    pipeline = RecallPipeline(store=store, settings=settings, tokenizer=WordTokenizer())
+    package = pipeline.build_context(
+        session_id="ses",
+        task="What is the deployment target?",
+        budget=200,
+    )
+
+    assert package.retrieved_evidence
+    assert package.metadata["episode_backfilled"] == 1
+    assert package.metadata["recall_candidate_message_ids"] == ["msg_osaka"]
+    assert package.metadata["episode_candidate_message_ids"] == ["msg_osaka"]
+    assert package.metadata["recall_planned_message_ids"] == ["msg_osaka"]
+    assert package.metadata["planned_evidence_message_ids"] == ["msg_osaka"]
+    assert package.metadata["recall_indexed_source_ids"] == ["msg_osaka"]
+    assert package.metadata["indexed_source_ids"] == ["msg_osaka"]
+    assert any(
+        event["reason_code"] == "direct_hit"
+        for event in package.metadata["recall_diagnostics"]
+    )
+
+
+def test_recall_pipeline_records_budget_drop_diagnostics(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    msg = Message(
+        id="msg_big",
+        session_id="ses",
         role=Role.USER,
-        text="Alice moved to Shanghai.",
-        index_text="[speaker=user] Alice moved to Shanghai.",
-        position=1,
-        source_message_ids=["msg_1"],
+        content=" ".join(["deployment"] * 20),
+        metadata={},
+        token_count=20,
     )
+    store.add_message(msg)
 
-    log_entry = message_to_log_entry(message)
-    recall_entry = episode_to_recall_entry(episode)
+    pipeline = RecallPipeline(store=store, settings=settings, tokenizer=WordTokenizer())
+    package = pipeline.build_context(session_id="ses", task="deployment", budget=2)
 
-    assert isinstance(log_entry, MessageLogEntry)
-    assert log_entry.source_refs[0].source_id == "msg_1"
-    assert isinstance(recall_entry, RecallMemoryEntry)
-    assert recall_entry.source_message_ids == ["msg_1"]
-    assert recall_entry.source_refs[0].source_type == "message"
-
-
-def test_page_and_item_are_legacy_inputs_not_archival_targets():
-    page = MemoryPage(
-        id="page_1",
-        session_id="ses_1",
-        page_type=PageType.SOURCE_SUMMARY,
-        title="Trip summary",
-        summary="Alice discussed Shanghai.",
-        source_message_ids=["msg_1"],
+    assert package.retrieved_evidence == []
+    assert package.candidate_budget_dropped == 1
+    assert package.metadata["recall_budget_dropped"] == 1
+    assert package.metadata["budget_dropped_relevant"] == 1
+    assert any(
+        event["reason_code"] == "budget_drop"
+        for event in package.metadata["recall_diagnostics"]
     )
-    item = MemoryItem(
-        id="item_1",
-        page_id="page_1",
-        session_id="ses_1",
-        item_type=MemoryItemType.PROFILE,
-        content="Alice lives in Shanghai.",
-        source_message_ids=["msg_1"],
-    )
+```
 
-    document = page_to_archival_document(page)
-    memory = item_to_archival_memory(item)
-    passage = item_to_archival_passage(item, document_id=document.id)
+- [ ] **Step 2: Run tests to verify they fail**
 
-    assert isinstance(document, ArchivalDocument)
-    assert document.legacy_page_id == "page_1"
-    assert isinstance(memory, ArchivalMemory)
-    assert memory.legacy_item_id == "item_1"
-    assert isinstance(passage, ArchivalPassage)
-    assert passage.document_id == document.id
-    assert passage.legacy_item_id == "item_1"
-    assert document.id.startswith("adoc_")
-    assert memory.id.startswith("amem_")
-    assert passage.id.startswith("apsg_")
+Run:
+
+```bash
+uv run pytest tests/test_recall_pipeline.py -q
+```
+
+Expected: FAIL because `RecallPipeline` does not emit recall-native metadata or
+serialized recall diagnostics yet.
+
+- [ ] **Step 3: Adapt recall pipeline around `RecallMemoryEntry`**
+
+In `src/memoryos_lite/retrieval/recall_pipeline.py`, update imports:
+
+```python
+from memoryos_lite.retrieval.episode_searcher import EpisodeHit, RecallMemorySearcher
+from memoryos_lite.v3_contracts import DiagnosticEvent, episode_to_recall_entry
+```
+
+In `__init__`, replace:
+
+```python
+self.episode_searcher = EpisodeSearcher()
+```
+
+with:
+
+```python
+self.recall_searcher = RecallMemorySearcher()
+```
+
+Add helper methods to `RecallPipeline`:
+
+```python
+    def _serialize_diagnostics(self, hits: list[EpisodeHit]) -> list[dict[str, object]]:
+        diagnostics: list[dict[str, object]] = []
+        for hit in hits:
+            diagnostics.extend(event.model_dump(mode="json") for event in hit.diagnostics)
+        return diagnostics
+
+    def _budget_drop_event(self, hit: EpisodeHit, tokens: int) -> DiagnosticEvent:
+        return DiagnosticEvent(
+            layer="recall",
+            event_type="candidate",
+            item_id=hit.episode.message_id,
+            reason_code="budget_drop",
+            score=hit.score,
+            dropped=True,
+            budget_tokens=tokens,
+            metadata={"reason": "recall evidence exceeded remaining budget"},
+        )
+```
+
+Change the search setup in `build_context` to:
+
+```python
+        episodes = self.store.list_episodes(session_id)
+        recall_entries = [episode_to_recall_entry(episode) for episode in episodes]
+        analysis = self.query_analyzer.analyze(query)
+        hits = self.recall_searcher.search(
+            recall_entries,
+            query,
+            top_k=10,
+            analysis=analysis,
+        )
+```
+
+Replace candidate/index metadata construction with:
+
+```python
+        candidate_ids = [hit.episode.message_id for hit in hits]
+        indexed_source_ids = sorted(
+            {
+                source_id
+                for entry in recall_entries
+                for source_id in entry.source_message_ids
+            }
+        )
+        diagnostics = self._serialize_diagnostics(hits)
+```
+
+When the task exceeds budget, update metadata with both recall-native and
+legacy keys:
+
+```python
+                    "recall_candidate_message_ids": candidate_ids,
+                    "recall_planned_message_ids": [],
+                    "recall_indexed_source_ids": indexed_source_ids,
+                    "recall_diagnostics": diagnostics,
+                    "recall_budget_dropped": dropped,
+                    "episode_candidate_message_ids": candidate_ids,
+                    "planned_evidence_message_ids": [],
+                    "indexed_source_ids": indexed_source_ids,
+                    "budget_dropped_relevant": dropped,
+```
+
+Inside the evidence budget loop, append a budget-drop diagnostic when a hit is
+not selected:
+
+```python
+                diagnostics.append(
+                    self._budget_drop_event(hit, tokens).model_dump(mode="json")
+                )
+                dropped += 1
+                continue
+```
+
+For selected evidence metadata, keep legacy origin and add recall details:
+
+```python
+                    "origin": "episode",
+                    "memory_layer": "recall",
+                    "score": hit.score,
+                    "rank_features": hit.rank_features,
+                    "neighbor_of": hit.neighbor_of,
+```
+
+At the successful return path, update metadata with:
+
+```python
+                "recall_candidate_message_ids": candidate_ids,
+                "recall_planned_message_ids": planned_ids,
+                "recall_indexed_source_ids": indexed_source_ids,
+                "recall_diagnostics": diagnostics,
+                "recall_budget_dropped": dropped,
+                "episode_candidate_message_ids": candidate_ids,
+                "planned_evidence_message_ids": planned_ids,
+                "indexed_source_ids": indexed_source_ids,
+                "budget_dropped_relevant": dropped,
+```
+
+- [ ] **Step 4: Run recall pipeline tests**
+
+Run:
+
+```bash
+uv run pytest tests/test_recall_pipeline.py tests/test_episode_retrieval.py -q
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/memoryos_lite/retrieval/recall_pipeline.py tests/test_recall_pipeline.py
+git commit -m "feat: emit recall pipeline diagnostics"
+```
+
+## Task 4: Eval and Public Benchmark Compatibility Mapping
+
+**Files:**
+- Modify: `tests/test_evals.py`
+- Modify: `tests/test_public_benchmarks.py`
+- Modify: `src/memoryos_lite/evals.py`
+- Modify: `src/memoryos_lite/public_benchmarks.py`
+
+- [ ] **Step 1: Add failing eval mapping test**
+
+Append to `tests/test_evals.py`:
+
+```python
+from memoryos_lite.evals import _metadata_string_list_preferring
 
 
-def test_core_memory_update_requires_source_refs_or_approval():
-    block = CoreMemoryBlock(
-        id="core_1",
-        label="human",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=200,
-        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-    )
+def test_eval_metadata_prefers_recall_candidates_over_legacy_episode_keys():
+    metadata = {
+        "recall_candidate_message_ids": ["msg_recall"],
+        "episode_candidate_message_ids": ["msg_legacy"],
+        "recall_planned_message_ids": ["msg_planned"],
+        "planned_evidence_message_ids": ["msg_old_planned"],
+        "recall_indexed_source_ids": ["msg_indexed"],
+        "indexed_source_ids": ["msg_old_indexed"],
+    }
 
-    update = CoreMemoryUpdate(
-        block_id=block.id,
-        operation="append",
-        content="Alice prefers rail travel.",
-        source_refs=[SourceRef(source_type="message", source_id="msg_2")],
-    )
+    assert _metadata_string_list_preferring(
+        metadata,
+        "recall_candidate_message_ids",
+        "episode_candidate_message_ids",
+    ) == ["msg_recall"]
+    assert _metadata_string_list_preferring(
+        metadata,
+        "recall_planned_message_ids",
+        "planned_evidence_message_ids",
+    ) == ["msg_planned"]
+    assert _metadata_string_list_preferring(
+        metadata,
+        "recall_indexed_source_ids",
+        "indexed_source_ids",
+    ) == ["msg_indexed"]
+```
 
-    assert update.source_refs[0].source_id == "msg_2"
+Add this assertion to the existing public benchmark v2 diagnostics test
+`test_public_benchmark_reports_v2_recall_diagnostics` in
+`tests/test_public_benchmarks.py`:
 
-    with pytest.raises(ValidationError):
-        CoreMemoryUpdate(block_id=block.id, operation="append", content="source-less")
+```python
+    assert report["episode_source_hit_at_10"] is True
+    assert report["episode_candidate_message_ids"]
+    assert report["planned_evidence_message_ids"]
+```
 
-    approved_state = ApprovalState(
-        id="appr_1",
-        session_id="ses_1",
-        tool_name="memory_core_append",
-        requested_action={"block": "human", "content": "manually approved"},
-        status="approved",
-        requested_by="agent",
-        approved_by="user",
-        resolved_at=block.created_at,
-    )
-    approved = CoreMemoryUpdate(
-        block_id=block.id,
-        operation="append",
-        content="manually approved",
-        approval_state=approved_state,
-    )
-    assert approved.approval_state is approved_state
+- [ ] **Step 2: Run tests to verify current mapping gaps**
 
-    with pytest.raises(ValidationError):
-        CoreMemoryUpdate(
-            block_id=block.id,
-            operation="append",
-            content="pending approval cannot write",
-            approval_state=ApprovalState(
-                id="appr_2",
-                session_id="ses_1",
-                tool_name="memory_core_append",
-                requested_action={"block": "human", "content": "pending"},
-                status="pending",
-                requested_by="agent",
+Run:
+
+```bash
+uv run pytest tests/test_evals.py::test_eval_metadata_prefers_recall_candidates_over_legacy_episode_keys tests/test_public_benchmarks.py::test_public_benchmark_reports_v2_recall_diagnostics -q
+```
+
+Expected: the eval helper test fails first because
+`_metadata_string_list_preferring` does not exist yet.
+
+- [ ] **Step 3: Update eval mapping to prefer recall metadata**
+
+In `src/memoryos_lite/evals.py`, add this helper near `_metadata_string_list`:
+
+```python
+def _metadata_string_list_preferring(
+    metadata: dict[str, object],
+    preferred_key: str,
+    fallback_key: str,
+) -> list[str]:
+    preferred = _metadata_string_list(metadata, preferred_key)
+    return preferred or _metadata_string_list(metadata, fallback_key)
+```
+
+Inside the `memoryos_lite` baseline branch, replace the metadata reads for
+episode/planned/indexed IDs with:
+
+```python
+        indexed_source_ids = _metadata_string_list_preferring(
+            context.metadata,
+            "recall_indexed_source_ids",
+            "indexed_source_ids",
+        )
+        item_candidate_source_ids = _metadata_string_list(
+            context.metadata, "item_candidate_source_ids"
+        )
+        episode_candidate_message_ids = _metadata_string_list_preferring(
+            context.metadata,
+            "recall_candidate_message_ids",
+            "episode_candidate_message_ids",
+        )
+        planned_evidence_message_ids = _metadata_string_list_preferring(
+            context.metadata,
+            "recall_planned_message_ids",
+            "planned_evidence_message_ids",
+        )
+```
+
+Replace the budget-drop read with:
+
+```python
+            budget_dropped_relevant=(
+                _metadata_int(context.metadata, "recall_budget_dropped")
+                or _metadata_int(context.metadata, "budget_dropped_relevant")
             ),
-        )
+```
 
+Keep assigning these values to the existing `BaselineOutput` fields
+`episode_candidate_message_ids`, `planned_evidence_message_ids`,
+`episode_source_hit_at_10`, and `planned_evidence_source_hit_at_5`.
 
-def test_context_package_v3_groups_layer_items_and_budget_decisions():
-    package = ContextPackageV3(
-        session_id="ses_1",
-        task="answer the user",
-        items=[
-            ContextLayerItem(
-                layer="core",
-                item_id="core_1",
-                text="Alice lives in Shanghai.",
-                estimated_tokens=5,
-                source_refs=[SourceRef(source_type="core_block", source_id="core_1")],
+- [ ] **Step 4: Keep public benchmark schema stable**
+
+In `src/memoryos_lite/public_benchmarks.py`, leave
+`PublicBenchmarkResult.to_report()` field names unchanged. Add this guard near
+the `episode_source_hit_at_10` assignment in `_to_public_result`:
+
+```python
+        episode_source_hit_at_10=(
+            output.episode_source_hit_at_10
+            if output.episode_source_hit_at_10 is not None
+            else (
+                bool(set(output.episode_candidate_message_ids) & expected_source_set)
+                if expected_source_set
+                else None
             )
-        ],
-        budget_decisions=[
-            LayerBudgetDecision(
-                layer="core",
-                requested_tokens=200,
-                allocated_tokens=100,
-                used_tokens=5,
-                reason_code="always_in_context",
-            )
-        ],
-    )
-    request = ContextComposerRequest(session_id="ses_1", task="answer the user", budget=1000)
-
-    assert package.items[0].layer == "core"
-    assert request.budget == 1000
+        ),
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 5: Run eval and public benchmark tests**
 
 Run:
 
 ```bash
-uv run pytest tests/test_v3_contracts.py -v
+uv run pytest tests/test_evals.py tests/test_public_benchmarks.py -q
 ```
 
-Expected: FAIL with import errors for the new memory layer, core approval, and adapter contracts.
+Expected: PASS.
 
-- [ ] **Step 3: Add memory layer contracts and adapters**
-
-Append these definitions to `src/memoryos_lite/v3_contracts.py`:
-
-```python
-class MessageLogEntry(BaseModel):
-    id: str
-    session_id: str
-    role: Role
-    content: str
-    created_at: datetime
-    token_count: int = 0
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-
-
-class RecallMemoryEntry(BaseModel):
-    id: str
-    session_id: str
-    message_id: str
-    role: Role
-    text: str
-    index_text: str
-    position: int
-    source_message_ids: list[str] = Field(default_factory=list)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    temporal_scope: dict[str, Any] = Field(default_factory=dict)
-    rank_features: dict[str, Any] = Field(default_factory=dict)
-    diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class ArchivalDocument(BaseModel):
-    id: str
-    archive_id: str | None = None
-    title: str
-    text: str
-    version: int = 1
-    tags: list[str] = Field(default_factory=list)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    legacy_page_id: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class ArchivalPassage(BaseModel):
-    id: str
-    document_id: str | None = None
-    archive_id: str | None = None
-    text: str
-    citation: SourceSpan | None = None
-    tags: list[str] = Field(default_factory=list)
-    score: float | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    legacy_item_id: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ArchivalMemory(BaseModel):
-    id: str
-    memory_type: Literal["fact", "preference", "event", "procedure", "knowledge"]
-    content: str
-    identity_scope: IdentityScope | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    history: list[MemoryHistoryEvent] = Field(default_factory=list)
-    entity_links: list[str] = Field(default_factory=list)
-    legacy_item_id: str | None = None
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class CoreMemoryBlock(BaseModel):
-    id: str
-    label: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    value: str = ""
-    limit_tokens: int = Field(gt=0)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-
-
-ApprovalStatus = Literal["pending", "approved", "rejected", "expired", "cancelled"]
-
-
-class ApprovalState(BaseModel):
-    id: str
-    session_id: str
-    tool_name: str
-    requested_action: dict[str, Any]
-    status: ApprovalStatus
-    requested_by: str
-    approved_by: str | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=utc_now)
-    resolved_at: datetime | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_resolution(self) -> "ApprovalState":
-        if self.status == "approved" and (not self.approved_by or self.resolved_at is None):
-            raise ValueError("approved approval states require approved_by and resolved_at")
-        if self.status in {"rejected", "expired", "cancelled"} and self.resolved_at is None:
-            raise ValueError("resolved non-approved approval states require resolved_at")
-        return self
-
-
-class CoreMemoryUpdate(BaseModel):
-    block_id: str = Field(min_length=1)
-    operation: Literal["append", "replace", "update", "delete"]
-    content: str
-    old: str | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_state: ApprovalState | None = None
-
-    @model_validator(mode="after")
-    def require_source_or_approval(self) -> "CoreMemoryUpdate":
-        if not self.source_refs:
-            if self.approval_state is None or self.approval_state.status != "approved":
-                raise ValueError("core memory updates require source_refs or approved approval_state")
-        return self
-
-
-class ContextLayerItem(BaseModel):
-    layer: Literal["task", "core", "recall", "archival", "recent", "fallback"]
-    item_id: str
-    text: str
-    estimated_tokens: int = Field(ge=0)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ContextComposerRequest(BaseModel):
-    session_id: str
-    task: str
-    budget: int = Field(gt=0)
-    retrieval_query: str | None = None
-    identity_scope: IdentityScope | None = None
-    include_layers: list[str] = Field(default_factory=list)
-
-
-class ContextPackageV3(BaseModel):
-    session_id: str
-    task: str
-    items: list[ContextLayerItem] = Field(default_factory=list)
-    budget_decisions: list[LayerBudgetDecision] = Field(default_factory=list)
-    diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ContextComposer(Protocol):
-    def build(self, request: ContextComposerRequest) -> ContextPackageV3: ...
-
-
-def message_to_log_entry(message: Message) -> MessageLogEntry:
-    return MessageLogEntry(
-        id=message.id,
-        session_id=message.session_id,
-        role=message.role,
-        content=message.content,
-        created_at=message.created_at,
-        token_count=message.token_count,
-        metadata=message.metadata,
-        source_refs=[SourceRef(source_type=SourceType.MESSAGE, source_id=message.id, session_id=message.session_id)],
-    )
-
-
-def episode_to_recall_entry(episode: Episode) -> RecallMemoryEntry:
-    return RecallMemoryEntry(
-        id=episode.id,
-        session_id=episode.session_id,
-        message_id=episode.message_id,
-        role=episode.role,
-        text=episode.text,
-        index_text=episode.index_text,
-        position=episode.position,
-        source_message_ids=episode.source_message_ids,
-        source_refs=[
-            SourceRef(source_type=SourceType.MESSAGE, source_id=source_id, session_id=episode.session_id)
-            for source_id in episode.source_message_ids
-        ],
-        temporal_scope={
-            key: value
-            for key, value in {
-                "benchmark_session_id": episode.benchmark_session_id,
-                "benchmark_date": episode.benchmark_date,
-            }.items()
-            if value is not None
-        },
-        created_at=episode.created_at,
-    )
-
-
-def page_to_archival_document(page: MemoryPage) -> ArchivalDocument:
-    return ArchivalDocument(
-        id=f"adoc_{page.id}",
-        title=page.title,
-        text=page.summary,
-        version=page.version,
-        source_refs=[
-            SourceRef(source_type=SourceType.MESSAGE, source_id=source_id, session_id=page.session_id)
-            for source_id in page.source_message_ids
-        ],
-        legacy_page_id=page.id,
-        metadata={"legacy_page_type": page.page_type.value},
-        created_at=page.created_at,
-    )
-
-
-def item_to_archival_memory(item: MemoryItem) -> ArchivalMemory:
-    type_map = {
-        "profile": "fact",
-        "event": "event",
-        "knowledge": "knowledge",
-        "behavior": "procedure",
-    }
-    return ArchivalMemory(
-        id=f"amem_{item.id}",
-        memory_type=type_map.get(item.item_type.value, "knowledge"),
-        content=item.content,
-        source_refs=[
-            SourceRef(source_type=SourceType.MESSAGE, source_id=source_id, session_id=item.session_id)
-            for source_id in item.source_message_ids
-        ],
-        legacy_item_id=item.id,
-        created_at=item.created_at,
-    )
-
-
-def item_to_archival_passage(
-    item: MemoryItem,
-    document_id: str | None = None,
-) -> ArchivalPassage:
-    return ArchivalPassage(
-        id=f"apsg_{item.id}",
-        document_id=document_id,
-        text=item.content,
-        source_refs=[
-            SourceRef(source_type=SourceType.MESSAGE, source_id=source_id, session_id=item.session_id)
-            for source_id in item.source_message_ids
-        ],
-        legacy_item_id=item.id,
-        metadata={"legacy_page_id": item.page_id, "legacy_item_type": item.item_type.value},
-    )
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run:
+- [ ] **Step 6: Commit**
 
 ```bash
-uv run pytest tests/test_v3_contracts.py -v
+git add src/memoryos_lite/evals.py src/memoryos_lite/public_benchmarks.py tests/test_evals.py tests/test_public_benchmarks.py
+git commit -m "feat: map recall diagnostics to benchmark fields"
 ```
 
-Expected: PASS for Task 1 and Task 2 tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py
-git commit -m "feat: define memory v3 layer contracts"
-```
-
-## Task 3: Persistence Boundary and Adapter Manifest
+## Task 5: Regression Verification
 
 **Files:**
-- Modify: `tests/test_v3_contracts.py`
-- Modify: `src/memoryos_lite/v3_contracts.py`
+- No source file changes.
 
-- [ ] **Step 1: Write failing tests for table boundaries**
-
-Append to `tests/test_v3_contracts.py`:
-
-```python
-from memoryos_lite.v3_contracts import (
-    REQUIRED_V3_ADAPTERS,
-    V3_FUTURE_TABLES,
-    V3_KEEP_TABLES,
-    V3_NO_NEW_TARGETS,
-)
-
-
-def test_v3_table_boundary_keeps_legacy_tables_and_defers_recall_split():
-    assert V3_KEEP_TABLES == {
-        "sessions",
-        "messages",
-        "episodes",
-        "memory_pages",
-        "memory_items",
-        "memory_patches",
-        "trace_events",
-        "alembic_version",
-    }
-    assert "recall_memory_entries" not in V3_FUTURE_TABLES
-    assert "archival_documents" in V3_FUTURE_TABLES
-    assert "kernel_traces" in V3_FUTURE_TABLES
-
-
-def test_page_and_item_are_declared_legacy_adapter_inputs_only():
-    assert V3_NO_NEW_TARGETS == {"MemoryPage", "MemoryItem"}
-    assert REQUIRED_V3_ADAPTERS["MemoryPage"] == "ArchivalDocument migration input"
-    assert REQUIRED_V3_ADAPTERS["MemoryItem"] == "ArchivalMemory or ArchivalPassage adapter"
-```
-
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 1: Run focused recall tests**
 
 Run:
 
 ```bash
-uv run pytest tests/test_v3_contracts.py -v
+uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_public_benchmarks.py -q
 ```
 
-Expected: FAIL with import errors for `V3_KEEP_TABLES`, `V3_FUTURE_TABLES`, `V3_NO_NEW_TARGETS`, and `REQUIRED_V3_ADAPTERS`.
+Expected: PASS.
 
-- [ ] **Step 3: Add boundary constants**
-
-Append to `src/memoryos_lite/v3_contracts.py`:
-
-```python
-V3_KEEP_TABLES: set[str] = {
-    "sessions",
-    "messages",
-    "episodes",
-    "memory_pages",
-    "memory_items",
-    "memory_patches",
-    "trace_events",
-    "alembic_version",
-}
-
-V3_FUTURE_TABLES: set[str] = {
-    "archival_documents",
-    "archival_passages",
-    "archival_memories",
-    "archival_memory_history",
-    "core_memory_blocks",
-    "core_memory_history",
-    "tool_policy_rules",
-    "approval_states",
-    "kernel_traces",
-}
-
-V3_NO_NEW_TARGETS: set[str] = {"MemoryPage", "MemoryItem"}
-
-REQUIRED_V3_ADAPTERS: dict[str, str] = {
-    "Message": "MessageLogEntry adapter",
-    "Episode": "RecallMemoryEntry adapter over episodes table",
-    "MemoryPage": "ArchivalDocument migration input",
-    "MemoryItem": "ArchivalMemory or ArchivalPassage adapter",
-    "ContextPackage": "ContextPackageV3 compatibility payload",
-    "agent_graph": "Agentic kernel request/result adapter",
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 2: Run full test suite**
 
 Run:
 
 ```bash
-uv run pytest tests/test_v3_contracts.py -v
-```
-
-Expected: PASS for all table-boundary tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py
-git commit -m "feat: declare memory v3 persistence boundaries"
-```
-
-## Task 4: Kernel Policy, Approval, Trace, and Protocol Contracts
-
-**Files:**
-- Modify: `tests/test_v3_contracts.py`
-- Modify: `src/memoryos_lite/v3_contracts.py`
-
-- [ ] **Step 1: Write failing tests for kernel contracts**
-
-Append to `tests/test_v3_contracts.py`:
-
-```python
-from memoryos_lite.v3_contracts import (
-    ApprovalState,
-    KernelTraceEvent,
-    ToolPolicyDecision,
-    ToolPolicyRule,
-)
-
-
-def test_tool_policy_decision_never_allows_unknown_tool_implicitly():
-    rule = ToolPolicyRule(
-        id="rule_1",
-        tool_name="memory_core_append",
-        effect="require_approval",
-        reason="core memory mutation",
-        priority=10,
-        source_refs=[SourceRef(source_type="manual", source_id="policy")],
-    )
-    decision = ToolPolicyDecision(
-        tool_name="memory_core_append",
-        effect="require_approval",
-        matched_rule_ids=[rule.id],
-        requires_approval=True,
-        reason=rule.reason,
-    )
-
-    assert decision.effect == "require_approval"
-    assert decision.requires_approval is True
-
-    with pytest.raises(ValidationError):
-        ToolPolicyDecision(
-            tool_name="unknown_tool",
-            effect="allow",
-            matched_rule_ids=[],
-            requires_approval=False,
-            reason="implicit allow is forbidden",
-        )
-
-
-def test_approval_state_requires_resolution_metadata_when_approved():
-    pending = ApprovalState(
-        id="appr_1",
-        session_id="ses_1",
-        tool_name="memory_core_append",
-        requested_action={"block": "human", "content": "Alice likes rail."},
-        status="pending",
-        requested_by="agent",
-    )
-    approved = ApprovalState(
-        id="appr_1",
-        session_id="ses_1",
-        tool_name="memory_core_append",
-        requested_action={"block": "human", "content": "Alice likes rail."},
-        status="approved",
-        requested_by="agent",
-        approved_by="user",
-        resolved_at=pending.created_at,
-    )
-
-    assert pending.status == "pending"
-    assert approved.approved_by == "user"
-
-    with pytest.raises(ValidationError):
-        ApprovalState(
-            id="appr_2",
-            session_id="ses_1",
-            tool_name="memory_core_append",
-            requested_action={"block": "human"},
-            status="approved",
-            requested_by="agent",
-        )
-
-
-def test_kernel_trace_events_are_ordered_and_replayable():
-    event = KernelTraceEvent(
-        step_id="step_1",
-        session_id="ses_1",
-        sequence=1,
-        event_type="tool_policy_decision",
-        payload={"tool_name": "memory_core_append", "effect": "require_approval"},
-        source_refs=[SourceRef(source_type="approval", source_id="appr_1")],
-        approval_id="appr_1",
-    )
-
-    assert event.sequence == 1
-    assert event.payload["effect"] == "require_approval"
-
-    with pytest.raises(ValidationError):
-        KernelTraceEvent(
-            step_id="step_1",
-            session_id="ses_1",
-            sequence=0,
-            event_type="bad",
-            payload={},
-        )
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
-
-```bash
-uv run pytest tests/test_v3_contracts.py -v
-```
-
-Expected: FAIL with import errors for the tool-policy, kernel-trace, and protocol models.
-
-- [ ] **Step 3: Add kernel contracts and protocols**
-
-`ApprovalState` was introduced in Task 2 because source-less core-memory writes
-must link to an approved approval contract. This task adds the remaining kernel
-policy, trace, and protocol contracts, and keeps the ApprovalState tests in the
-same kernel section for review clarity.
-
-Append to `src/memoryos_lite/v3_contracts.py`:
-
-```python
-ToolPolicyEffect = Literal["allow", "deny", "require_approval"]
-
-
-class ToolPolicyRule(BaseModel):
-    id: str
-    tool_name: str
-    scope: IdentityScope | None = None
-    effect: ToolPolicyEffect
-    reason: str = Field(min_length=1)
-    priority: int = 0
-    source_refs: list[SourceRef] = Field(default_factory=list)
-
-
-class ToolPolicyDecision(BaseModel):
-    tool_name: str
-    effect: ToolPolicyEffect
-    matched_rule_ids: list[str] = Field(default_factory=list)
-    requires_approval: bool = False
-    reason: str = Field(min_length=1)
-    diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def forbid_implicit_allow(self) -> "ToolPolicyDecision":
-        if self.effect == "allow" and not self.matched_rule_ids:
-            raise ValueError("allow decisions require an explicit matched rule")
-        if self.effect == "require_approval" and not self.requires_approval:
-            raise ValueError("require_approval decisions must set requires_approval")
-        return self
-
-
-class KernelTraceEvent(BaseModel):
-    id: str = Field(default_factory=lambda: new_id("ktrace"))
-    step_id: str
-    session_id: str
-    sequence: int = Field(gt=0)
-    event_type: str = Field(min_length=1)
-    payload: dict[str, Any]
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_id: str | None = None
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class AgentStepRequest(BaseModel):
-    session_id: str
-    input_messages: list[MessageLogEntry] = Field(default_factory=list)
-    context: ContextPackageV3
-    identity_scope: IdentityScope | None = None
-
-
-class AgentStepResult(BaseModel):
-    session_id: str
-    step_id: str
-    messages: list[MessageLogEntry] = Field(default_factory=list)
-    trace: list[KernelTraceEvent] = Field(default_factory=list)
-    continuation: str
-
-
-class ToolExecutionRequest(BaseModel):
-    session_id: str
-    tool_name: str
-    arguments: dict[str, Any]
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_id: str | None = None
-
-
-class ToolExecutionResult(BaseModel):
-    tool_name: str
-    ok: bool
-    result: dict[str, Any] = Field(default_factory=dict)
-    error: str | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-
-
-class ContinuationDecision(BaseModel):
-    action: Literal["continue", "stop", "pause", "compact", "escalate"]
-    reason: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class AgentStepRunner(Protocol):
-    def run_step(self, request: AgentStepRequest) -> AgentStepResult: ...
-
-
-class ToolPolicyEngine(Protocol):
-    def decide(self, request: ToolExecutionRequest) -> ToolPolicyDecision: ...
-
-
-class ApprovalGate(Protocol):
-    def request_or_resume(self, request: ToolExecutionRequest) -> ApprovalState: ...
-
-
-class ToolExecutionManager(Protocol):
-    def execute(self, request: ToolExecutionRequest) -> ToolExecutionResult: ...
-
-
-class ContinuationController(Protocol):
-    def decide(self, result: AgentStepResult) -> ContinuationDecision: ...
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run:
-
-```bash
-uv run pytest tests/test_v3_contracts.py -v
-```
-
-Expected: PASS for all v3 contract tests.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py
-git commit -m "feat: define memory v3 kernel contracts"
-```
-
-## Task 5: Contract Export Hygiene and Regression Guard
-
-**Files:**
-- Modify: `src/memoryos_lite/v3_contracts.py`
-- Modify: `tests/test_v3_contracts.py`
-
-- [ ] **Step 1: Write failing tests for public exports and legacy stability**
-
-Append to `tests/test_v3_contracts.py`:
-
-```python
-import memoryos_lite.v3_contracts as contracts
-
-
-def test_v3_contract_module_exports_expected_public_names():
-    expected = {
-        "SourceRef",
-        "IdentityScope",
-        "MemoryHistoryEvent",
-        "DiagnosticEvent",
-        "MessageLogEntry",
-        "RecallMemoryEntry",
-        "ArchivalDocument",
-        "ArchivalPassage",
-        "ArchivalMemory",
-        "CoreMemoryBlock",
-        "CoreMemoryUpdate",
-        "ContextComposer",
-        "AgentStepRunner",
-        "ToolPolicyEngine",
-        "ApprovalGate",
-        "ToolExecutionManager",
-        "ContinuationController",
-        "ensure_persisted_identity_scope",
-        "V3_KEEP_TABLES",
-        "V3_FUTURE_TABLES",
-        "REQUIRED_V3_ADAPTERS",
-    }
-
-    assert expected.issubset(set(contracts.__all__))
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
-
-```bash
-uv run pytest tests/test_v3_contracts.py::test_v3_contract_module_exports_expected_public_names -v
-```
-
-Expected: FAIL with `AttributeError: module 'memoryos_lite.v3_contracts' has no attribute '__all__'`.
-
-- [ ] **Step 3: Add explicit `__all__`**
-
-Append to `src/memoryos_lite/v3_contracts.py`:
-
-```python
-__all__ = [
-    "AgentStepRequest",
-    "AgentStepResult",
-    "AgentStepRunner",
-    "ApprovalGate",
-    "ApprovalState",
-    "ArchivalDocument",
-    "ArchivalMemory",
-    "ArchivalPassage",
-    "ContextComposer",
-    "ContextComposerRequest",
-    "ContextLayerItem",
-    "ContextPackageV3",
-    "ContinuationController",
-    "ContinuationDecision",
-    "CoreMemoryBlock",
-    "CoreMemoryUpdate",
-    "DiagnosticEvent",
-    "IdentityScope",
-    "KernelTraceEvent",
-    "LayerBudgetDecision",
-    "MemoryHistoryEvent",
-    "MessageLogEntry",
-    "REQUIRED_V3_ADAPTERS",
-    "RecallMemoryEntry",
-    "SourceRef",
-    "SourceSpan",
-    "ensure_persisted_identity_scope",
-    "ToolExecutionManager",
-    "ToolExecutionRequest",
-    "ToolExecutionResult",
-    "ToolPolicyDecision",
-    "ToolPolicyEngine",
-    "ToolPolicyRule",
-    "V3_FUTURE_TABLES",
-    "V3_KEEP_TABLES",
-    "V3_NO_NEW_TARGETS",
-    "episode_to_recall_entry",
-    "item_to_archival_memory",
-    "item_to_archival_passage",
-    "message_to_log_entry",
-    "page_to_archival_document",
-]
-```
-
-- [ ] **Step 4: Run targeted and full verification**
-
-Run:
-
-```bash
-uv run pytest tests/test_v3_contracts.py -v
 uv run pytest -q
 ```
 
-Expected:
+Expected: PASS. The regression bar from God is no unintended regressions and at
+least the recorded baseline of `311 passed`.
 
-- `tests/test_v3_contracts.py`: PASS.
-- Full suite: PASS, with no legacy runtime behavior changes.
+- [ ] **Step 3: Run smoke benchmark commands when data is available**
 
-- [ ] **Step 5: Commit**
+Run the local smoke command used by the project for LongMemEval and LoCoMo. If
+fixture paths are not configured locally, record the missing path and keep the
+pytest result as the executable acceptance evidence for this phase.
+
+Expected when benchmark data is available:
+
+- LongMemEval `episode_source_hit_at_10 >= 8/10`
+- LoCoMo `episode_source_hit_at_10 >= 5/10`
+- `source_not_indexed = 0/10` for both smoke reports
+
+- [ ] **Step 4: Commit verification evidence if files changed**
 
 ```bash
-git add src/memoryos_lite/v3_contracts.py tests/test_v3_contracts.py
-git commit -m "test: guard memory v3 contract exports"
+git status --short
 ```
 
-## Final Verification
-
-- [ ] Run `uv run pytest -q`.
-- [ ] Confirm no phase-1 migrations were added under `alembic/versions/`.
-- [ ] Confirm no default runtime modules were modified:
-
-```bash
-git diff --name-only HEAD~5..HEAD | sort
-```
-
-Expected changed files:
-
-```text
-src/memoryos_lite/v3_contracts.py
-tests/test_v3_contracts.py
-```
-
-- [ ] Write `.hermes-loop/result.md` during EXECUTE with changed files, test results,
-  and any implementation deviations.
+Expected: no uncommitted source changes after implementation commits, unless
+generated reports were intentionally retained for review.

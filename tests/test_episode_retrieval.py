@@ -1,6 +1,28 @@
-from memoryos_lite.retrieval.episode_searcher import EpisodeSearcher
+from memoryos_lite.retrieval.episode_searcher import EpisodeSearcher, RecallMemorySearcher
 from memoryos_lite.retrieval.query_analyzer import QueryAnalyzer, QueryKind
 from memoryos_lite.schemas import Episode, Role
+from memoryos_lite.v3_contracts import RecallMemoryEntry
+
+
+def _recall_entry(
+    message_id: str,
+    text: str,
+    position: int,
+    role: Role = Role.USER,
+    session_id: str = "ses",
+    entry_id: str | None = None,
+) -> RecallMemoryEntry:
+    return RecallMemoryEntry(
+        id=entry_id or f"rec_{message_id}",
+        session_id=session_id,
+        message_id=message_id,
+        role=role,
+        text=text,
+        index_text=f"[speaker={role.value}] {text}",
+        position=position,
+        source_message_ids=[message_id],
+        temporal_scope={},
+    )
 
 
 def test_retrieval_package_imports_without_optional_providers():
@@ -78,3 +100,76 @@ def test_episode_searcher_returns_empty_for_stopword_only_overlap():
     hits = EpisodeSearcher().search(episodes, "to the and", top_k=1)
 
     assert hits == []
+
+
+def test_recall_searcher_returns_structured_direct_hit_diagnostics():
+    entries = [
+        _recall_entry("msg_1", "Alice likes coffee.", 1),
+        _recall_entry("msg_2", "Bob moved to Shanghai.", 2),
+    ]
+
+    hits = RecallMemorySearcher().search(entries, "Where did Bob move?", top_k=1)
+
+    assert hits[0].episode.message_id == "msg_2"
+    assert hits[0].source == "recall_memory"
+    assert hits[0].rank_features["token_overlap"] > 0
+    assert {event.reason_code for event in hits[0].diagnostics} >= {
+        "direct_hit",
+        "rank",
+    }
+
+
+def test_recall_searcher_expands_neighbors_and_dedupes_message_ids():
+    entries = [
+        _recall_entry("msg_1", "Project kickoff notes.", 1),
+        _recall_entry("msg_2", "The deployment target is Osaka.", 2),
+        _recall_entry("msg_3", "The team confirmed the rollout window.", 3),
+        _recall_entry("msg_2", "The deployment status is Osaka.", 4, entry_id="rec_msg_2_dup"),
+    ]
+
+    hits = RecallMemorySearcher().search(entries, "deployment target", top_k=4)
+
+    assert [hit.episode.message_id for hit in hits] == ["msg_2", "msg_1", "msg_3"]
+    assert len({hit.episode.message_id for hit in hits}) == 3
+    neighbor_hits = [
+        hit for hit in hits if any(event.reason_code == "neighbor" for event in hit.diagnostics)
+    ]
+    assert [hit.episode.message_id for hit in neighbor_hits] == ["msg_1", "msg_3"]
+    assert any(
+        event.reason_code == "dedupe"
+        for hit in hits
+        for event in hit.diagnostics
+    )
+
+
+def test_recall_searcher_prioritizes_direct_hits_before_neighbors():
+    entries = [
+        _recall_entry("msg_1", "Unrelated setup.", 1),
+        _recall_entry("msg_2", "Alpha target detail.", 2),
+        _recall_entry("msg_3", "Unrelated bridge.", 3),
+        _recall_entry("msg_4", "Beta target detail.", 4),
+        _recall_entry("msg_5", "Gamma target detail.", 5),
+    ]
+
+    hits = RecallMemorySearcher().search(entries, "target detail", top_k=2)
+
+    assert [hit.episode.message_id for hit in hits] == ["msg_2", "msg_4"]
+    assert all(hit.neighbor_of is None for hit in hits)
+
+
+def test_recall_searcher_boosts_assistant_source_queries():
+    entries = [
+        _recall_entry("msg_1", "I suggest using MemoryOS Lite.", 1, role=Role.ASSISTANT),
+        _recall_entry("msg_2", "I like MemoryOS Lite.", 2, role=Role.USER),
+    ]
+
+    query = "What MemoryOS Lite did you recommend last time?"
+    hits = RecallMemorySearcher().search(
+        entries,
+        query,
+        top_k=1,
+        analysis=QueryAnalyzer().analyze(query),
+    )
+
+    assert hits[0].episode.message_id == "msg_1"
+    assert hits[0].rank_features["role_boost"] > 0

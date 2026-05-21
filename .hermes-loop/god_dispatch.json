@@ -1,13 +1,13 @@
 {
-  "phase": "phase-1",
-  "phase_index": 1,
-  "phase_name": "Memory v3 Contracts",
-  "target_state": "legacy-stable",
-  "task_description": "从 blueprint.md 的 phase-1 段提取的任务。\n- Define the v3 data contracts.\n- Specify interfaces for the five memory layers:\n- Message Log\n- Recall Memory\n- Archival Memory\n- Core Memory\n- Context Composer\n- Specify the execution-kernel contracts:\n- `AgentStepRunner`\n- `ToolPolicyEngine`\n- `ApprovalGate`\n- `ToolExecutionManager`\n- `ContinuationController`\n- Define unified formats for `source_refs`, `identity_scope`, `memory_history`, `diagnostics`, `tool_policy`, `approval_state`, and `kernel_trace`.\n- The spec clearly states what tables are kept, what tables are added, and what adapters are required.\n- Core memory must be source-backed.\n- Kernel tool policy and approval state must be specified before implementation.\n- No ambiguity remains about Page/Item as the new archive target.\n",
+  "phase": "phase-2",
+  "phase_index": 2,
+  "phase_name": "Recall Memory Layer",
+  "target_state": "shadow-read",
+  "task_description": "从 blueprint.md 的 phase-2 段提取的任务。\n- Evolve `Episode` into `RecallMemoryEntry`.\n- Preserve raw source attribution.\n- Add role / temporal / session / neighbor-aware recall.\n- Move the old evidence-planner structured ranking, neighbor, budget, and drop diagnostics into the recall layer.\n- Keep the old `episodes` table for now.\n- Old `episode_*` benchmark fields continue to work as mapped diagnostics.\n- v1 default remains unchanged.\n- Recall entries can be backfilled from messages.\n- Recall search does not rely on benchmark case IDs.\n- Recall diagnostics can explain direct hit, neighbor, drop, dedupe, and rank.\n- LME/LoCoMo recall hit stays at or above the current smoke baseline.\n",
   "for_plan_agent": {
-    "goal": "完成 Memory v3 Contracts 的所有任务。详细描述见 blueprint.md 的 phase-1 段。",
+    "goal": "完成 Recall Memory Layer 的所有任务。详细描述见 blueprint.md 的 phase-2 段。",
     "constraints": [
-      "目标兼容状态: legacy-stable",
+      "目标兼容状态: shadow-read",
       "遵守 blueprint.md 中的兼容性要求",
       "遵守 CLAUDE.md 中的约定"
     ],
@@ -16,7 +16,7 @@
       "CLAUDE.md",
       "src/memoryos_lite/"
     ],
-    "design_notes": "从 blueprint.md 的 phase-1 段提取设计要点"
+    "design_notes": "从 blueprint.md 的 phase-2 段提取设计要点"
   },
   "for_review_agent": {
     "tests_must_pass": true,

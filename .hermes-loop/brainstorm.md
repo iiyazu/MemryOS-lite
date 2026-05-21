@@ -1,116 +1,100 @@
-# Brainstorm: Phase 1 — Memory v3 Contracts
+# Brainstorm: Phase 2 - Recall Memory Layer
 
-## 任务边界
+## 现状判断
 
-Phase 1 是 `legacy-stable` 合同阶段：定义 Memory v3 的数据契约、接口、表边界和适配边界，不改默认运行路径。当前代码仍以 `messages`、`episodes`、`memory_pages`、`memory_items`、`memory_patches`、`trace_events` 为核心，`v1` 是默认召回路径，`v2` episode recall 是 opt-in。
+代码库里已经有一条 `v2` recall 路径，但它还只是 episode-first 的原型：
 
-Phase 1 必须解决的歧义：
+- `src/memoryos_lite/retrieval/recall_pipeline.py` 负责 episode 检索、预算截断和少量 metadata。
+- `src/memoryos_lite/retrieval/episode_searcher.py` 只有 BM25 + 简单 role boost。
+- `src/memoryos_lite/evals.py` 和 `src/memoryos_lite/public_benchmarks.py` 仍在外层拼装 `episode_*` / `planned_evidence_*` 指标。
+- `src/memoryos_lite/v3_contracts.py` 已经定义了 `RecallMemoryEntry`、`DiagnosticEvent`、`LayerBudgetDecision` 和旧表边界，说明 phase-2 应该是在这个语义上收敛，而不是再造一套新名词。
 
-- `Page/Item` 不能继续作为新 archival target，只能是 legacy migration input 或 adapter。
-- Core memory 必须 source-backed，不能自动写入无来源事实。
-- Kernel 的 `tool_policy` 和 `approval_state` 必须在实现前定义清楚。
-- `source_refs`、`identity_scope`、`memory_history`、`diagnostics`、`kernel_trace` 必须统一，避免各层各写一套 metadata。
+这意味着 phase-2 的核心不是“再加一个检索器”，而是把现有 episode 语义升级成真正的 Recall Memory Layer，并把排名、邻居、预算、drop、dedupe 这些诊断收进 recall 层本身。
 
-## 方案 A：兼容优先的最小覆盖
+## 方案 A: 继续在现有 episode pipeline 上加料
 
-把 v3 合同定义为现有 schema 的别名和轻量扩展：
+做法：
 
-- `Message` 保持为 Message Log。
-- `Episode` 直接映射为 `RecallMemoryEntry`。
-- `MemoryPage` 暂时映射为 `ArchivalDocument`。
-- `MemoryItem` 暂时映射为 `ArchivalPassage` / `ArchivalMemory`。
-- `trace_events` 扩展为 kernel trace 的承载。
+- 保持 `Episode` 和 `EpisodeSearcher` 作为主入口。
+- 在 `RecallPipeline` 里逐步加入 temporal / session / neighbor 权重。
+- 直接扩展 `metadata`，让评测层继续消费旧字段。
 
 优点：
 
-- 最快，几乎不改变现有 mental model。
-- Phase 2/3 可以少写迁移适配代码。
-- 风险低，较容易保持测试和 eval 绿。
+- 改动最小，最容易维持当前 smoke baseline。
+- 不需要马上动 store 或迁移边界。
 
 缺点：
 
-- 继续保留 Page/Item 的角色混杂，违背 blueprint 对新 archive target 的要求。
-- Core memory 与 legacy core page 容易混淆。
-- Kernel approval state 没有天然 durable owner，后续会补丁化。
+- `Episode` 继续承担太多职责，语义会越来越像“RecallMemoryEntry 但还没改名”。
+- 结构化诊断仍散落在 eval / benchmark 层，后面迁移会更痛。
+- 邻居、去重、预算和 rank 的规则会被写成一堆局部补丁。
 
-适用场景：如果目标只是快速生成低风险 spec。当前 phase 的验收项要求更强，不推荐作为主方案。
+适用场景：只追求最短路径修补现有 v2 原型，不适合 phase-2 的目标描述。
 
-## 方案 B：合同模块 + 显式 legacy adapter（推荐）
+## 方案 B: contract-first recall layer + 显式 adapter（推荐）
 
-定义独立 v3 合同层，legacy 表只通过 adapter 进入 v3 语义：
+做法：
 
-- Keep tables: `sessions`、`messages`、`episodes`、`memory_pages`、`memory_items`、`memory_patches`、`trace_events` 保持可读，不改默认语义。
-- New target tables: `recall_memory_entries` 或 `episodes` adapter view、`archival_documents`、`archival_passages`、`archival_memories`、`archival_memory_history`、`core_memory_blocks`、`core_memory_history`、`tool_policy_rules`、`approval_states`、`kernel_traces`。
-- Required adapters:
-  - `Episode` -> `RecallMemoryEntry`
-  - `MemoryPage` -> `ArchivalDocument` migration input only
-  - `MemoryItem` -> `ArchivalPassage` or `ArchivalMemory` based on type/source
-  - `ContextBuilder` / `RecallPipeline` -> future `ContextComposer` contract
-  - `agent_graph` demo -> future kernel package contract
-
-合同中优先定义 Pydantic-style shapes 和 Protocol-style interfaces，再让后续 phase 决定具体实现文件。这样 Phase 1 可以精确说明接口，而不触碰默认路径。
+- 继续保留 `episodes` 表作为物理存储与回填来源。
+- 把 `Episode` 明确视为 legacy 输入，检索语义改用 `RecallMemoryEntry`。
+- 新增或细化回 recall 层内的组件职责：
+  - `RecallMemorySearcher`
+  - `RecallEvidencePlanner`
+  - `RecallBudgeter`
+  - `RecallDiagnostics`
+- `Episode -> RecallMemoryEntry` 只通过 adapter 转换，后续的 direct hit / neighbor / drop / dedupe / rank 都在 recall 层内输出结构化诊断。
+- `evals.py` / `public_benchmarks.py` 只做指标映射，不再决定 recall 语义。
 
 优点：
 
-- 明确 Page/Item 不再是新 archive target。
-- 支持分 phase 实施：Recall、Core、Archival、Composer、Kernel 都能各自落地。
-- `source_refs` 和 `identity_scope` 可成为跨层公共类型，避免 metadata 漂移。
-- `approval_state` 和 `kernel_trace` 可先定义 durable model，避免后续 kernel 实现反复返工。
+- 和 `v3_contracts.py` 的边界一致，phase 切分清楚。
+- 兼容 `v1` 默认路径，同时让 `v2` 真正成为 recall memory，而不是 episode wrapper。
+- 后续 phase 3/4 要引入 core / archival 时，diagnostics 和 source attribution 不用重做。
 
 缺点：
 
-- spec 和 plan 会更长。
-- Phase 2/3 需要多写 adapter 测试。
-- 需要非常清楚地声明哪些表是保留、哪些表是新增、哪些只是 adapter。
+- 文件会更多，adapter 也会更多。
+- 需要非常小心地保留旧 `episode_*` 指标映射，避免 benchmark 断层。
 
-适用场景：当前 blueprint 的最佳匹配。它既保持 `legacy-stable`，又能给后续 phase 提供干净边界。
+适用场景：当前 phase 的最佳匹配，也是最稳的长期路径。
 
-## 方案 C：新 v3 schema 一次性完整切分
+## 方案 C: 新建独立 recall 表，episodes 只做兼容层
 
-直接把合同写成最终 v3 目标形态，并要求后续 phase 按新表推进：
+做法：
 
-- `message_log`
-- `recall_memory_entries`
-- `archival_documents`
-- `archival_passages`
-- `archival_memories`
-- `core_memory_blocks`
-- `context_composer_diagnostics`
-- `tool_policy_rules`
-- `approval_states`
-- `kernel_traces`
-
-旧表全部只作为 migration source，不再参与新合同命名。
+- 新建 `recall_memory_entries` 或等价表。
+- ingest 时双写，回填时从 messages 构建 recall entries。
+- `episodes` 逐步退化为兼容镜像或只读 legacy 输入。
 
 优点：
 
-- 语义最干净，最接近长期目标。
-- 后续删除 legacy 时成本较低。
-- 最容易表达 layered memory + agentic kernel 的完整架构。
+- 语义最干净，未来删除 legacy 时成本低。
+- 结构上最接近最终 v3 目标。
 
 缺点：
 
-- 容易超出 `legacy-stable` 阶段的实际风险预算。
-- `episodes` 当前已经支撑 v2 benchmark diagnostics，完全切离会让 Phase 2 需要大量兼容映射。
-- spec 可能过度理想化，执行计划更难 bite-sized。
+- migration 和双写复杂度高。
+- phase-2 的风险预算不划算，容易把注意力从 recall 质量转移到数据搬运。
+- 对当前基线来说，收益不明显。
 
-适用场景：适合作为远期目标参考，不适合作为 Phase 1 主方案。
+适用场景：更像 phase-4 或更后面的结构性重构，不适合现在动。
 
-## 推荐方案
+## 推荐结论
 
-采用方案 B：合同模块 + 显式 legacy adapter。
+选方案 B。
 
-Phase 1 的 spec 应按以下结构起草：
+原因很直接：当前代码已经有 recall 原型、bench 指标和 v3 contract 雏形，phase-2 最需要的是把“谁负责 recall 语义”说清楚。保持 `episodes` 作为回填和兼容输入，新增 `RecallMemoryEntry` 语义层，再把 neighbor / dedupe / budget / drop diagnostics 统一放进 recall 层，能同时满足：
 
-1. 公共合同：`SourceRef`、`IdentityScope`、`MemoryHistoryEvent`、`DiagnosticEvent`、`LayerBudgetDecision`。
-2. 五层 memory 接口：Message Log、Recall Memory、Archival Memory、Core Memory、Context Composer。
-3. Kernel 接口：`AgentStepRunner`、`ToolPolicyEngine`、`ApprovalGate`、`ToolExecutionManager`、`ContinuationController`。
-4. 表边界：明确 keep/add/adapter，不把 Page/Item 命名为新目标。
-5. 兼容策略：默认 `v1` 不变，`v2` diagnostics 保留映射，v3 后续用 opt-in flag。
+1. `shadow-read` 的兼容要求。
+2. `Episode -> RecallMemoryEntry` 的升级目标。
+3. 旧 `episode_*` 指标的继续输出。
+4. 后续 core / archival / composer / kernel 继续沿用同一套 provenance 结构。
 
 ## 关键风险
 
-- `MemoryItem` 同时像 passage 和 lifecycle memory，必须在 adapter 规则里按用途拆分。
-- `trace_events` 现在是通用事件表；kernel trace 如果复用它，必须规定事件 payload schema，否则审计不可 replay。
-- Core memory update API 必须要求 `source_refs` 或 explicit approval，否则会违反 source-backed 硬规则。
-- `diagnostics` 必须分层命名，避免旧 `episode_*` 指标和新 recall/composer 指标混在一起。
+- 邻居扩展如果不和预算器联动，会把 recall hit 做高但上下文挤爆。
+- 回填必须按 session 内确定性顺序，不要依赖时间戳排序的偶然性。
+- diagnostics 必须结构化命名，不能再把原因编码塞进字符串里。
+- `benchmark_case_id` 只能是辅助字段，recall search 不能依赖它。
+

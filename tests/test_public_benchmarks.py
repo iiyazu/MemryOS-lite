@@ -556,6 +556,8 @@ def test_public_benchmark_reports_v2_recall_diagnostics(tmp_path):
     report = results[0].to_report()
     assert report["episode_candidate_message_ids"]
     assert "planned_evidence_message_ids" in report
+    assert "recall_candidate_message_ids" not in report
+    assert "recall_planned_message_ids" not in report
     assert "item_source_hit_at_10" in report
     assert report["episode_source_hit_at_10"] is True
     assert report["planned_evidence_source_hit_at_5"] is True

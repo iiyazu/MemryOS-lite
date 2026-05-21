@@ -1,434 +1,169 @@
-# Spec: Phase 1 — Memory v3 Contracts
+# Spec: Phase 2 - Recall Memory Layer
 
 ## Goal
 
-Define Memory v3 contracts without changing the default runtime path. This phase
-creates the precise vocabulary, data shapes, persistence boundaries, adapter
-rules, and kernel control-plane contracts needed by later phases.
+Upgrade the current opt-in `v2` episode recall path into a real Recall Memory
+Layer while keeping default `v1` behavior unchanged.
 
-Target compatibility state: `legacy-stable`.
+Target compatibility state: `shadow-read`.
 
-No phase-1 work may switch recall, context building, memory mutation, CLI, API,
-or benchmark behavior to v3 by default.
+Phase 2 must preserve raw source attribution, support role / temporal / session
+/ neighbor-aware recall, and move structured rank, neighbor, budget, drop, and
+dedupe diagnostics into the recall layer. Existing `episode_*` benchmark fields
+remain available, but they become compatibility projections of recall
+diagnostics.
 
 ## Source Inputs
 
-- `.hermes-loop/blueprint.md`: phase-1 task and acceptance criteria.
-- `.hermes-loop/brainstorm.md`: recommends "contract module + explicit legacy adapter".
-- `.hermes-loop/god_dispatch.json`: phase `phase-1`, target `legacy-stable`.
-- Existing code baseline:
-  - `src/memoryos_lite/schemas.py` contains legacy `Message`, `Episode`,
-    `MemoryPage`, `MemoryItem`, `MemoryPatch`, `ContextPackage`, and `TraceEvent`.
-  - `src/memoryos_lite/store.py` persists `sessions`, `messages`, `episodes`,
-    `memory_pages`, `memory_items`, `memory_patches`, and `trace_events`.
-  - `src/memoryos_lite/retrieval/recall_pipeline.py` is the current opt-in v2
-    episode recall path.
-  - `src/memoryos_lite/agent_graph.py` is the existing agent demo, not the v3
-    kernel contract.
+- `.hermes-loop/god_dispatch.json`: phase `phase-2`, target `shadow-read`.
+- `.hermes-loop/brainstorm.md`: recommends contract-first recall layer with an
+  explicit legacy adapter over the existing `episodes` table.
+- `.hermes-loop/blueprint.md`: phase-2 tasks and acceptance criteria.
+- Current implementation:
+  - `src/memoryos_lite/v3_contracts.py` already defines `RecallMemoryEntry`,
+    `DiagnosticEvent`, `LayerBudgetDecision`, and `episode_to_recall_entry`.
+  - `src/memoryos_lite/store.py` persists and backfills `episodes` from
+    `messages`.
+  - `src/memoryos_lite/retrieval/episode_searcher.py` currently performs BM25
+    episode search with a small role boost.
+  - `src/memoryos_lite/retrieval/recall_pipeline.py` currently returns episode
+    evidence and old metadata fields.
+  - `src/memoryos_lite/evals.py` and
+    `src/memoryos_lite/public_benchmarks.py` consume `episode_*` report fields.
 
 ## Non-Goals
 
-- Do not add database migrations in phase 1.
-- Do not write to new v3 tables in phase 1.
-- Do not change `MemoryOSService`, CLI, API, benchmark defaults, or `v1` recall.
-- Do not treat `MemoryPage` or `MemoryItem` as final v3 archival targets.
+- Do not create a new `recall_memory_entries` table in phase 2.
+- Do not switch default recall from `v1` to `v2` or v3.
+- Do not implement Core Memory, Archival Memory, Context Composer, or Agentic
+  Kernel behavior.
+- Do not special-case LongMemEval or LoCoMo case IDs inside recall search.
 - Do not add Letta or Mem0 as runtime dependencies.
 
-## Contract Module
+## Design
 
-Phase 1 should introduce a standalone contract module:
+### Recall Entry Boundary
 
-```text
-src/memoryos_lite/v3_contracts.py
-tests/test_v3_contracts.py
-```
+`Episode` remains the legacy physical storage row. `RecallMemoryEntry` is the
+logical recall unit. All recall-layer code should convert through
+`episode_to_recall_entry` rather than treating `Episode` as the final semantic
+model.
 
-This module is allowed to import legacy schemas for adapter helpers, but legacy
-runtime modules should not import it until later phases opt in.
+The conversion must preserve:
 
-The module must expose Pydantic data contracts and `Protocol` interfaces only.
-Concrete storage/search/composer/kernel implementations belong to later phases.
-
-## Unified Common Formats
-
-### `SourceRef`
-
-`SourceRef` is the common provenance unit for recall, archival, core, diagnostics,
-approval, and kernel trace data.
-
-Required fields:
-
-- `source_type`: one of `message`, `episode`, `document`, `passage`, `memory`,
-  `core_block`, `tool_call`, `approval`, `manual`.
-- `source_id`: stable identifier in the source system.
-- `session_id`: optional session boundary.
-- `identity_scope`: optional `IdentityScope`.
-- `span`: optional `{start, end}` character range for document/message citations.
-- `quote`: optional short source excerpt.
-- `confidence`: float in `[0.0, 1.0]`, default `1.0`.
-- `approval_id`: optional approval identifier for manual provenance.
-- `metadata`: JSON object for source-specific details.
-
-Validation:
-
-- `source_id` must be non-empty.
-- `span.start <= span.end` when `span` exists.
-- `manual` source refs are valid only when `approval_id` is set.
-
-### `IdentityScope`
-
-`IdentityScope` scopes memories and policy decisions.
-
-Fields:
-
-- `user_id`
-- `agent_id`
-- `run_id`
-- `session_id`
-- `project_id`
-- `archive_id`
-- `tags`
-
-All fields are optional, but at least one of `user_id`, `agent_id`, `run_id`,
-`session_id`, `project_id`, or `archive_id` must be set for persisted v3 memory.
-
-### `MemoryHistoryEvent`
-
-Unified lifecycle event for recall, archival, and core memory.
-
-Fields:
-
-- `id`
-- `memory_id`
-- `memory_type`: `recall`, `archival_document`, `archival_passage`,
-  `archival_memory`, `core_block`.
-- `operation`: `add`, `update`, `replace`, `delete`, `promote`, `demote`,
-  `attach`, `detach`.
-- `source_refs`
-- `actor`: `system`, `user`, `agent`, `tool`.
-- `reason`
-- `before`
-- `after`
-- `created_at`
-
-Validation:
-
-- `operation != "delete"` requires `after`.
-- `replace` requires both `before` and `after`.
-- All automatic core-memory writes require at least one `source_refs` entry.
-
-### `DiagnosticEvent`
-
-Layer-scoped diagnostics for explainable recall, archival retrieval, core usage,
-context packing, and kernel decisions.
-
-Fields:
-
-- `layer`: `message_log`, `recall`, `archival`, `core`, `composer`, `kernel`.
-- `event_type`
-- `item_id`
-- `reason_code`
-- `score`
-- `included`
-- `dropped`
-- `budget_tokens`
-- `source_refs`
-- `metadata`
-
-Existing `episode_*` benchmark fields remain valid as recall diagnostics, not as
-separate global concepts.
-
-### `LayerBudgetDecision`
-
-Budget diagnostics emitted by the future `ContextComposer`.
-
-Fields:
-
-- `layer`
-- `requested_tokens`
-- `allocated_tokens`
-- `used_tokens`
-- `dropped_item_ids`
-- `reason_code`
-
-## Five Memory Layer Contracts
-
-### Message Log
-
-Contract name: `MessageLogEntry`.
-
-Responsibilities:
-
-- Preserve raw messages as audit ledger.
-- Reference existing `messages` rows.
-- Never summarize, overwrite, or mutate source text.
-
-Fields:
-
-- `id`
-- `session_id`
+- `message_id` and `source_message_ids`
 - `role`
-- `content`
-- `created_at`
-- `token_count`
-- `metadata`
-- `source_refs`
-
-Adapter:
-
-- `Message` -> `MessageLogEntry`.
-
-### Recall Memory
-
-Contract name: `RecallMemoryEntry`.
-
-Responsibilities:
-
-- Formalize the current `Episode` as searchable raw-history recall.
-- Preserve `source_message_ids`.
-- Carry rank and benchmark metadata without making benchmark IDs required.
-
-Fields:
-
-- `id`
-- `session_id`
-- `message_id`
-- `role`
-- `text`
-- `index_text`
-- `position`
-- `source_refs`
-- `source_message_ids`
-- `temporal_scope`
-- `rank_features`
-- `diagnostics`
-- `created_at`
-
-Adapter:
-
-- `Episode` -> `RecallMemoryEntry`.
-- The physical `episodes` table stays during phase 2 unless God later approves a
-  new `recall_memory_entries` table.
-
-### Archival Memory
-
-Final v3 archival targets are:
-
-- `ArchivalDocument`
-- `ArchivalPassage`
-- `ArchivalMemory`
-
-`MemoryPage` and `MemoryItem` are not final v3 targets.
-
-`ArchivalDocument`:
-
-- Explicit imported docs, long summaries, sleep/consolidation outputs, project
-  docs, decisions, and conversation compression.
-- Carries document-level source refs, version, tags, and citation metadata.
-
-`ArchivalPassage`:
-
-- Retrieval unit derived from documents or archival memories.
-- Carries `document_id`, passage text, passage-level citation span, rank score,
-  archive/source/file filters, tags, scope, and source refs.
-
-`ArchivalMemory`:
-
-- Mem0-like durable facts, preferences, events, procedural rules, and entity
-  links.
-- Supports add/search/update/delete lifecycle and memory history.
-
-Adapters:
-
-- `MemoryPage` -> `ArchivalDocument` as migration input only.
-- `MemoryItem` -> `ArchivalMemory` when it represents a fact/preference/event/rule.
-- `MemoryItem` -> `ArchivalPassage` only when it is used as a retrieval chunk
-  derived from a document/page.
-
-### Core Memory
-
-Contract names:
-
-- `CoreMemoryBlock`
-- `CoreMemoryUpdate`
-
-Responsibilities:
-
-- Represent bounded, always-in-context blocks such as `human`, `persona`,
-  `project`, `preferences`, `task_state`, and `constraints`.
-- Keep every update source-backed or explicitly approved.
-- Emit history for append, replace, update, and delete.
-
-Required invariant:
-
-Automatic writes to core memory must include at least one `SourceRef`. A manual
-or source-less write is valid only when linked to an approved `ApprovalState`.
-
-Update APIs:
-
-```text
-core_memory_append(block, content, source_refs)
-core_memory_replace(block, old, new, source_refs)
-core_memory_update(block, patch, source_refs)
-```
-
-### Context Composer
-
-Contract names:
-
-- `ContextComposer`
-- `ContextComposerRequest`
-- `ContextPackageV3`
-- `ContextLayerItem`
-
-Responsibilities:
-
-- Assemble task, core memory, high-confidence recall evidence, archival passages,
-  recent messages, and fallback documents.
-- Allocate token budget by layer.
-- Emit diagnostics for inclusion, drop, dedupe, and budget decisions.
-- Return a payload that can be adapted to the existing `ContextPackage`.
-
-Suggested layer order:
-
-```text
-task
-core memory
-high-confidence recall evidence
-archival passages
-recent messages
-fallback documents
-```
-
-## Agentic Kernel Contracts
-
-The kernel is a control plane, not a memory layer.
-
-### `ToolPolicyRule`
-
-Fields:
-
-- `id`
-- `tool_name`
-- `scope`
-- `effect`: `allow`, `deny`, `require_approval`
-- `reason`
-- `priority`
-- `source_refs`
-
-### `ToolPolicyDecision`
-
-Fields:
-
-- `tool_name`
-- `effect`
-- `matched_rule_ids`
-- `requires_approval`
-- `reason`
-- `diagnostics`
-
-Default rule:
-
-- Unknown tools must resolve to `require_approval` or `deny`, never implicit
-  `allow`.
-
-### `ApprovalState`
-
-Fields:
-
-- `id`
-- `session_id`
-- `tool_name`
-- `requested_action`
-- `status`: `pending`, `approved`, `rejected`, `expired`, `cancelled`
-- `requested_by`
-- `approved_by`
-- `source_refs`
-- `created_at`
-- `resolved_at`
-- `metadata`
-
-Rules:
-
-- `approved` requires `approved_by` and `resolved_at`.
-- `rejected`, `expired`, and `cancelled` require `resolved_at`.
-- Pending approvals block conflicting normal turns until resolved.
-
-### `KernelTraceEvent`
-
-Fields:
-
-- `id`
-- `step_id`
-- `session_id`
-- `sequence`
-- `event_type`
-- `payload`
-- `source_refs`
-- `approval_id`
-- `created_at`
-
-Trace events must be replayable in sequence. Legacy `trace_events` may mirror
-kernel events, but `kernel_traces` is the future durable owner.
-
-### Kernel Protocols
-
-- `AgentStepRunner.run_step(request) -> AgentStepResult`
-- `ToolPolicyEngine.decide(request) -> ToolPolicyDecision`
-- `ApprovalGate.request_or_resume(request) -> ApprovalState`
-- `ToolExecutionManager.execute(request) -> ToolExecutionResult`
-- `ContinuationController.decide(result) -> ContinuationDecision`
-
-## Persistence Boundary
-
-### Tables Kept
-
-Existing legacy tables remain readable and keep current semantics:
-
-- `sessions`
-- `messages`
-- `episodes`
-- `memory_pages`
-- `memory_items`
-- `memory_patches`
-- `trace_events`
-- `alembic_version`
-
-### Tables Added Later
-
-Phase 1 defines, but does not create, these future v3 tables:
-
-- `archival_documents`
-- `archival_passages`
-- `archival_memories`
-- `archival_memory_history`
-- `core_memory_blocks`
-- `core_memory_history`
-- `tool_policy_rules`
-- `approval_states`
-- `kernel_traces`
-
-`recall_memory_entries` is deferred. The phase-2 default physical owner remains
-`episodes` plus an adapter unless God approves a split table.
-
-### Required Adapters
-
-- `Message` -> `MessageLogEntry`
-- `Episode` -> `RecallMemoryEntry`
-- `MemoryPage` -> `ArchivalDocument` migration input
-- `MemoryItem` -> `ArchivalMemory`
-- `MemoryItem` -> `ArchivalPassage`
-- legacy `ContextPackage` -> `ContextPackageV3` compatibility payload
-- `agent_graph` demo state -> future kernel request/result contracts
+- raw text and index text
+- session position
+- `benchmark_session_id` and `benchmark_date` as temporal/session metadata, not
+  as required ranking inputs
+- message-backed `SourceRef` provenance
+
+Backfill stays deterministic: `MemoryStore.ensure_episodes_for_session()` reads
+messages ordered by `created_at` and `id`, writes missing episode rows, and the
+recall layer adapts those rows into `RecallMemoryEntry` values.
+
+### Search and Ranking
+
+Introduce recall semantics around the existing episode searcher:
+
+- A `RecallMemorySearcher` ranks `RecallMemoryEntry` candidates.
+- The existing `EpisodeSearcher` import path remains as a compatibility wrapper
+  or alias.
+- Ranking uses BM25/token overlap as the base score.
+- Role-aware scoring keeps the current assistant-source boost when query
+  analysis identifies assistant-source intent.
+- Session-aware scoring may boost explicit session/date metadata, but search
+  must still work without benchmark-specific IDs.
+- Temporal scoring uses available date/order metadata as generic metadata.
+- Neighbor expansion may include adjacent same-session entries around direct
+  hits, bounded by `top_k` and deduped by message/source ID.
+
+No ranking rule may require a benchmark case ID. Benchmark metadata can be one
+source of generic session/temporal metadata, but it cannot be the only path.
+
+### Diagnostics
+
+Recall diagnostics are structured `DiagnosticEvent` objects, not opaque reason
+strings. Each candidate or dropped item should explain at least one of:
+
+- `direct_hit`
+- `neighbor`
+- `dedupe`
+- `rank`
+- `budget_drop`
+- `session_match`
+- `temporal_match`
+- `role_match`
+
+The recall layer should still provide compact human-readable `reason` strings
+for legacy `ContextEvidence`, but those strings are derived from structured
+diagnostics.
+
+### Pipeline Output
+
+`RecallPipeline.build_context()` continues returning `ContextPackage` so the
+engine and benchmark callers remain compatible.
+
+The pipeline should:
+
+1. Ensure recall backfill for the session.
+2. Convert episodes to recall entries.
+3. Search recall entries.
+4. Apply budget selection.
+5. Emit `ContextEvidence` for selected entries.
+6. Emit structured recall diagnostics and legacy-mapped metadata.
+
+Required metadata keys:
+
+- `recall_candidate_message_ids`: ranked direct/neighbor candidate source IDs.
+- `recall_planned_message_ids`: selected evidence source IDs after budget.
+- `recall_indexed_source_ids`: source IDs available in the recall index.
+- `recall_diagnostics`: serialized `DiagnosticEvent` values.
+- `recall_budget_dropped`: count of recall candidates dropped by budget.
+- `episode_candidate_message_ids`: compatibility mapping from
+  `recall_candidate_message_ids`.
+- `planned_evidence_message_ids`: compatibility mapping from
+  `recall_planned_message_ids`.
+- `indexed_source_ids`: compatibility mapping from `recall_indexed_source_ids`.
+- `budget_dropped_relevant`: compatibility mapping from `recall_budget_dropped`.
+
+### Benchmark Mapping
+
+`evals.py` and `public_benchmarks.py` should treat old `episode_*` fields as
+report compatibility fields. Their source of truth is recall metadata when
+present, with old metadata keys as fallback during migration.
+
+The public report must continue exposing:
+
+- `episode_source_hit_at_10`
+- `episode_candidate_message_ids`
+- `planned_evidence_source_hit_at_5`
+- `planned_evidence_message_ids`
+- `source_not_indexed`
+- `budget_dropped_relevant`
+
+The report may also expose recall-native fields later, but phase 2 does not
+require a public schema expansion.
+
+## Compatibility Rules
+
+- `MEMORYOS_RECALL_PIPELINE=v1` remains the default.
+- `MEMORYOS_RECALL_PIPELINE=v2` is the only path that reads the new recall-layer
+  semantics during phase 2.
+- The `episodes` table remains authoritative recall storage for this phase.
+- Existing `EpisodeSearcher` imports remain valid.
+- Existing benchmark JSON keys remain valid.
+- Existing source IDs remain raw message IDs.
 
 ## Acceptance Criteria
 
-- `spec.md` states kept tables, future v3 tables, and required adapters.
-- `plan.md` decomposes implementation into bite-sized TDD tasks with exact files,
-  commands, and expected outcomes.
-- Core memory contract requires source refs or approved manual provenance.
-- Kernel `tool_policy` and `approval_state` are specified before implementation.
-- Page/Item ambiguity is removed: they are legacy migration inputs/adapters only,
-  never new archival targets.
-- Full implementation plan preserves `legacy-stable` by adding contracts without
-  changing default runtime behavior.
+- Recall entries can be backfilled from messages through the existing
+  `episodes` table and adapted to `RecallMemoryEntry`.
+- Recall search does not rely on benchmark case IDs.
+- Recall diagnostics explain direct hit, neighbor, drop, dedupe, and rank.
+- Old `episode_*` benchmark fields continue to work as mapped diagnostics.
+- `v1` default behavior remains unchanged.
+- Full test suite remains green.
+- LongMemEval and LoCoMo recall hit stay at or above the smoke baseline recorded
+  in the blueprint: LongMemEval `8/10`, LoCoMo `5/10`.
