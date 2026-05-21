@@ -9,7 +9,7 @@ LOOP = PROJECT / ".hermes-loop"
 STATE_FILE = LOOP / "state.json"
 
 MAX_ITER = 50
-CODEX_TIMEOUT = 1200  # 20 min
+CODEX_TIMEOUT = 10800  # 20 min
 
 def _read_state():
     return json.loads(STATE_FILE.read_text())
@@ -23,9 +23,19 @@ def _phase(state):
     phases = state.get("phases", [])
     return phases[idx] if idx < len(phases) else None
 
-def _codex(short_prompt, workdir=PROJECT):
+def _codex(short_prompt, workdir=PROJECT, state_name=""):
     """Minimal Codex call — methodology in prompts/*.md, Codex reads them."""
-    full = f"""你是 Hermes Loop 的代理节点。工作目录: {PROJECT}
+    full = f"""你是 Hermes Loop 的自治代理节点。工作目录:
+
+⚠️ 自治模式: 没有用户交互。直接产出文件，不要等待批准。
+   跳过所有 "ask user" / "wait for approval" / "user reviews" 步骤。
+   你被注入的 superpowers skill 中的交互步骤一律跳过，直接产出最终结果。 {PROJECT}
+
+## ⚠️ 心跳规则 (必须遵守)
+每 5-10 分钟，在 .hermes-loop/heartbeat.log 末尾追加一行:
+  格式: {state_name} alive{{N}} {{timestamp}}
+  示例: PLAN_STORM alive03 2026-05-21T10:30:00
+  从 alive01 开始，每次递增。这是你活着的唯一证明。不写心跳 = 被认为已死。
 
 ## 核心规则
 1. 先读 .hermes-loop/prompts/ 下你的角色 prompt (god.md / plan_agent.md / execute_agent.md / review_agent.md)
@@ -39,13 +49,40 @@ def _codex(short_prompt, workdir=PROJECT):
 重要: 每次完成状态后必须更新 state.json 的 current_state。
 不要做任务外的事。不要闲聊。
 """
+    # Start heartbeat writer in background
+    import threading, datetime as _dt
+    hb_file = LOOP / "heartbeat.log"
+    stop_hb = threading.Event()
+    def _write_hb():
+        n = 0
+        while not stop_hb.is_set():
+            n += 1
+            ts = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            hb_file.write_text((hb_file.read_text() if hb_file.exists() else "") + f"{state_name} alive{n:02d} {ts}\n")
+            stop_hb.wait(30)
+    hb_thread = threading.Thread(target=_write_hb, daemon=True)
+    hb_thread.start()
+
     try:
         result = subprocess.run(
             ["codex", "exec", "--yolo", full],
-            cwd=str(workdir), capture_output=True, text=True, timeout=CODEX_TIMEOUT
+            cwd=str(workdir), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, timeout=CODEX_TIMEOUT
         )
+        # Tee to log file for real-time observation
+        log_path = LOOP / "codex_output.log"
+        with open(log_path, "a") as lf:
+            lf.write(f"\n=== {state_name} {__import__('datetime').datetime.now().isoformat()} ===\n")
+            for line in result.stdout.split("\n"):
+                lf.write(line + "\n")
+        result.stdout = result.stdout  # already captured
         ok = result.returncode == 0
         tail = (result.stdout or "")[-2000:]
+        stop_hb.set()
+        # Also write full output to log
+        log_path = LOOP / "codex_output.log"
+        with open(log_path, "a") as lf:
+            lf.write(f"\n=== exit={result.returncode} ===\n")
         return ok, tail
     except subprocess.TimeoutExpired:
         return False, "TIMEOUT"
@@ -140,100 +177,136 @@ def do_ack(state):
 
 # ── Codex handlers ───────────────────────────────────────────
 
+def _codex(short_prompt, state_name, workdir=PROJECT):
+    full = f"""你是 Hermes Loop 的自治代理节点。工作目录:
+
+⚠️ 自治模式: 没有用户交互。直接产出文件，不要等待批准。
+   跳过所有 "ask user" / "wait for approval" / "user reviews" 步骤。
+   你被注入的 superpowers skill 中的交互步骤一律跳过，直接产出最终结果。 {PROJECT}
+
+## 心跳规则 (必须遵守)
+每 5-10 分钟，在 .hermes-loop/heartbeat.log 末尾追加一行:
+  格式: {state_name} alive{{N}} {{timestamp}}
+  示例: PLAN_STORM alive03 2026-05-21T10:30:00
+  从 alive01 开始，每次递增。这是你活着的唯一证明。
+
+## 核心规则
+1. 读 .hermes-loop/prompts/ 下你的角色 prompt
+2. 读 .hermes-loop/state.json
+3. 读 .hermes-loop/contracts/state_machine.json
+4. 执行下述任务，产出文件到 .hermes-loop/
+5. 完成后更新 state.json 的 current_state
+
+{short_prompt}
+
+重要: 每次完成状态后必须更新 state.json。不做任务外的事。
+"""
+    import threading, datetime as _dt, io
+
+    # Start heartbeat writer in background
+    hb_file = LOOP / "heartbeat.log"
+    stop_hb = threading.Event()
+    def _write_hb():
+        n = 0
+        while not stop_hb.is_set():
+            n += 1
+            ts = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            hb_file.write_text((hb_file.read_text() if hb_file.exists() else "") + f"{state_name} alive{n:02d} {ts}\n")
+            stop_hb.wait(30)
+    hb_thread = threading.Thread(target=_write_hb, daemon=True)
+    hb_thread.start()
+
+    # Start Codex with real-time log
+    log_path = LOOP / "codex_output.log"
+    with open(log_path, "a") as lf:
+        lf.write(f"\n=== {state_name} {_dt.datetime.now().isoformat()} ===\n")
+
+    try:
+        proc = subprocess.Popen(
+            ["codex", "exec", "--yolo", full],
+            cwd=str(workdir), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1
+        )
+        output_lines = []
+        for line in iter(proc.stdout.readline, ""):
+            output_lines.append(line)
+            with open(log_path, "a") as lf:
+                lf.write(line)
+        proc.wait(timeout=CODEX_TIMEOUT)
+        ok = proc.returncode == 0
+        tail = "".join(output_lines[-100:]) if output_lines else ""
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        ok = False
+        tail = "TIMEOUT"
+        with open(log_path, "a") as lf:
+            lf.write(f"\n=== TIMEOUT after {CODEX_TIMEOUT}s ===\n")
+    except Exception as e:
+        ok = False
+        tail = str(e)
+
+    with open(log_path, "a") as lf:
+        lf.write(f"=== exit={proc.returncode if 'proc' in dir() else '?'} ===\n")
+
+    stop_hb.set()
+    return ok, tail
+
 def do_plan_storm(state):
-    pid = _phase(state)["id"]
-    return _codex(f"""## 执行 PLAN_STORM
-
-读 .hermes-loop/god_dispatch.json。这是当前要设计的 phase。读相关项目代码了解现状。
-
-启动 brainstorming (你内部的多方案对比):
-- 探讨 2-3 种实现方案
-- 对比优劣
-- 给出推荐方案
-
-输出到 .hermes-loop/brainstorm.md
-
-然后更新 state.json: current_state = "PLAN_DRAFT"
-""")
+    return _codex("""## 执行 PLAN_STORM
+读 god_dispatch.json，读项目代码。brainstorming 2-3 种方案 → brainstorm.md。
+然后 state.json: current_state = "PLAN_DRAFT"
+""", "PLAN_STORM")
 
 def do_plan_draft(state):
-    return _codex(f"""## 执行 PLAN_DRAFT
-
-读 .hermes-loop/brainstorm.md 和 .hermes-loop/god_dispatch.json。
-
-1. 写 spec.md — 设计文档
-2. 写 plan.md — 实现步骤 (bite-sized, 精确文件路径, TDD 形式)
-
-然后更新 state.json: current_state = "PLAN_SELF_REVIEW"
-""")
+    return _codex("""## 执行 PLAN_DRAFT
+读 brainstorm.md + god_dispatch.json。写 spec.md + plan.md (bite-sized, TDD)。
+然后 state.json: current_state = "PLAN_SELF_REVIEW"
+""", "PLAN_DRAFT")
 
 def do_plan_self_review(state):
-    return _codex(f"""## 执行 PLAN_SELF_REVIEW
-
-审查 spec.md 和 plan.md。对照 god_dispatch.json 的 God 要求。
-如果 PASS → 定稿为 plan_final.md → state.json: current_state = "EXECUTE"
-如果 FAIL → 迭代修改 (max 3), 超限 → current_state = "GOD_ADJUST"
-""")
+    return _codex("""## 执行 PLAN_SELF_REVIEW
+审查 spec.md+plan.md。PASS → plan_final.md → state: EXECUTE。
+FAIL → 迭代(max 3), 超限 → GOD_ADJUST
+""", "PLAN_SELF_REVIEW")
 
 def do_execute(state):
-    return _codex(f"""## 执行 EXECUTE
-
-读 .hermes-loop/plan_final.md。每个 task 严格 TDD:
-1. RED: 写测试 → uv run pytest 确认 FAIL
-2. GREEN: 写最小实现 → uv run pytest 确认 PASS  
-3. REFACTOR: 清理
-4. 全量: uv run pytest -q 确认无回归
-
-汇总到 result.md。然后 state.json: current_state = "EXECUTE_SELF_REVIEW"
-""")
+    return _codex("""## 执行 EXECUTE
+读 plan_final.md。TDD: RED→GREEN→REFACTOR。uv run pytest -q 全量确认。
+汇总到 result.md → state: EXECUTE_SELF_REVIEW
+""", "EXECUTE")
 
 def do_execute_self_review(state):
-    return _codex(f"""## 执行 EXECUTE_SELF_REVIEW
-
-内审 result.md 的代码改动。修小问题。大问题记录到 execute_review.md。
-然后 state.json: current_state = "REVIEW"
-""")
+    return _codex("""## 执行 EXECUTE_SELF_REVIEW
+内审 result.md。修小问题。大问题 → execute_review.md。
+state: REVIEW
+""", "EXECUTE_SELF_REVIEW")
 
 def do_review(state):
     phase = _phase(state)
     return _codex(f"""## 执行 REVIEW (phase: {phase['id']})
-
-读 god_dispatch.json.for_review_agent (验收指标), result.md, execute_review.md, git diff。
-
-审查并决策:
-- ALL PASS → ack.json → state.json: current_state = "ACK"
-- FAIL (iter < 3) → review_verdict.json (FAIL) → state.json: current_state = "EXECUTE"
-- iter >= 3 → escalate.json → state.json: current_state = "GOD_ADJUST"
-""")
+读 god_dispatch.for_review_agent + result.md + execute_review.md + git diff。
+ALL PASS → ack.json → state: ACK
+FAIL(iter<3) → review_verdict.json → state: EXECUTE
+iter>=3 → escalate.json → state: GOD_ADJUST
+""", "REVIEW")
 
 def do_god_advance(state):
     phase = _phase(state)
     idx = state["current_phase_idx"]
     return _codex(f"""## 执行 GOD_ADVANCE
-
 读 ack.json。
-
-Step 1: git commit:
-```bash
-git -C {PROJECT} add -A
-git -C {PROJECT} commit -m "[{phase['id']}] ACK: {phase['name']} — checkpoint"
-```
-
-Step 2: 反思 — 这个 phase 完成后，剩余蓝图需要调整吗？输出到 reflect_{phase['id']}.md
-
-Step 3: 如果需要调整，更新 blueprint.md
-
-Step 4: 推进 — 标记 phase completed。当前 phase_idx={idx}, 总共 {len(state['phases'])} phases。
-有下一 phase → state.json: current_phase_idx += 1, current_state = "GOD_DISPATCH"
-没有 → state.json: current_state = "DONE"
-""")
+1. git commit: git add -A && git commit -m "[{phase['id']}] ACK: {phase['name']}"
+2. 反思 → reflect_{phase['id']}.md
+3. 如需调整 → 更新 blueprint.md
+4. 推进: idx={idx}/{len(state['phases'])} → GOD_DISPATCH or DONE
+""", "GOD_ADVANCE")
 
 def do_god_adjust(state):
-    return _codex(f"""## 执行 GOD_ADJUST
+    return _codex("""## 执行 GOD_ADJUST
+读 escalate.json。分析根因 → 拆分/放宽/重设/放弃。
+更新 blueprint.md + state.json → GOD_DISPATCH
+""", "GOD_ADJUST")
 
-读 escalate.json。分析根因，决策 (拆分/放宽/重设/放弃)。
-更新 blueprint.md + state.json。然后 current_state = "GOD_DISPATCH"
-""")
 
 
 HANDLERS = {
@@ -261,7 +334,7 @@ def main():
         cs = state.get("current_state", "")
 
         if cs == "DONE":
-            print(f"\n🏁 DONE at iter {i+1}")
+            print(f"\n\U0001F3C1 DONE at iter {i+1}")
             break
 
         handler_type, handler = HANDLERS.get(cs, (None, None))
@@ -271,7 +344,7 @@ def main():
 
         phase = _phase(state)
         pid = phase["id"] if phase else "?"
-        print(f"\n── Iter {i+1} | {cs} | {pid} ({handler_type}) ──")
+        print(f"\n-- Iter {i+1} | {cs} | {pid} ({handler_type}) --")
 
         if handler_type == "py":
             ok = handler(state)
@@ -282,13 +355,13 @@ def main():
                 print(f"  tail: {out[-500:]}")
 
         if not ok:
-            print(f"[HALT] State {cs} failed. Check .hermes-loop/")
+            print(f"[HALT] State {cs} failed.")
             sys.exit(1)
 
         time.sleep(3)
 
     else:
-        print(f"\n⚠️  Max iter {MAX_ITER}")
+        print(f"\n\u26a0\ufe0f  Max iter {MAX_ITER}")
 
     print("\nDone.")
 

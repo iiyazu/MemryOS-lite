@@ -1,6 +1,6 @@
 {
-  "current_state": "GOD_ADVANCE",
-  "current_phase_idx": 0,
+  "current_state": "GOD_DISPATCH",
+  "current_phase_idx": 2,
   "iter_count": 0,
   "max_review_iterations": 3,
   "started_at": "2026-05-20T00:00:00Z",
@@ -9,15 +9,35 @@
       "id": "phase-0",
       "name": "Baseline Freeze + Architecture Decision",
       "target_state": "legacy-stable",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-20T19:00:49.063913+00:00",
+          "ack_evidence": {
+            "tests_passed": 311,
+            "checks_passed": 5
+          },
+          "reflect_file": "reflect_phase-0.md"
+        }
+      ]
     },
     {
       "id": "phase-1",
       "name": "Memory v3 Contracts",
       "target_state": "legacy-stable",
-      "status": "pending",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-21T12:47:53+08:00",
+          "ack_evidence": {
+            "tests_passed": 324,
+            "checks_passed": 4,
+            "spec_checklist_all": true,
+            "benchmark_scores": {}
+          },
+          "reflect_file": "reflect_phase-1.md"
+        }
+      ]
     },
     {
       "id": "phase-2",
@@ -69,5 +89,5 @@
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-20T19:00:19.579671+00:00"
+  "last_updated": "2026-05-21T12:47:53+08:00"
 }

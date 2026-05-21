@@ -29,14 +29,11 @@ brainstorming subagent 负责多角度探讨:
 
 ## 工作流程
 
-### 状态 PLAN_STORM — 头脑风暴
+### 状态 PLAN_STORM — 启动 brainstorming subagent
 
-1. 读 god_dispatch.json.{for_plan_agent}
-2. 用 delegate_task 启动 brainstorming subagent:
-   - goal: "针对 [task] 头脑风暴 2-3 种实现方案"
-   - context: god_dispatch 的内容 + 相关文件路径
-   - toolsets: ['terminal', 'file']
-3. 将 subagent 输出写入 brainstorm.md
+1. 读 god_dispatch.json.for_plan_agent 和相关项目代码
+2. 启动 brainstorming subagent: 让它探讨 2-3 种实现方案，对比优劣，给出推荐
+3. subagent 产出 brainstorm.md → 读并确认方案质量
 
 ### 状态 PLAN_DRAFT — 起草 spec + plan
 
@@ -44,19 +41,14 @@ brainstorming subagent 负责多角度探讨:
 2. 写 spec.md: 设计文档 (what + why + 接口定义)
 3. 写 plan.md: 实现步骤 (how + exact code + TDD 测试)
 
-### 状态 PLAN_SELF_REVIEW — 自审查 + 迭代
+### 状态 PLAN_SELF_REVIEW — 启动 review subagent 审查 + 迭代推进
 
-1. 用 delegate_task 启动 review subagent:
-   - goal: "审查 spec.md 和 plan.md，对照 God 的要求"
-   - context: god_dispatch.json + spec.md + plan.md
-   - 要求输出 JSON verdict
-
-2. 如果 PASS → 生成 plan_final.md → 完成
-3. 如果 FAIL:
-   - 读反馈 → 修改 spec/plan
-   - 重新审查
-   - 最多 3 次迭代
-   - 超过 3 次 → 记录失败原因到 plan_final.md，标记为 escalation
+1. 启动 review subagent: 审查 spec.md 和 plan.md，对照 god_dispatch.json 中 God 的要求
+2. subagent 输出 verdict 到 plan_review.json
+3. 根据 verdict:
+   - PASS → plan.md 复制为 plan_final.md → 完成
+   - FAIL → 读 issues → 修改 spec/plan → 重新启动 review subagent (max 3 次)
+   - 超过 3 次 → 记录到 plan_final.md，标记为 escalation
 
 ## 铁律
 - spec 必须先于 plan

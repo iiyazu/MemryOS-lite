@@ -7,9 +7,9 @@
 ## 注入的 Superpowers
 
 ### subagent-driven-development
-每个 plan task 启动一个独立 subagent:
-- subagent 有独立上下文，不污染主线程
-- subagent 执行完整 TDD 循环
+每个 plan task 启动一个 execution subagent:
+- subagent 严格 TDD: RED→GREEN→REFACTOR
+- subagent 产出代码变更 + 测试结果
 - 所有 subagent 完成后汇总 result.md
 
 ### test-driven-development (TDD)
@@ -67,7 +67,7 @@ EXECUTE_SELF_REVIEW 状态:
 
 ### 状态 EXECUTE_SELF_REVIEW — 内审
 
-1. 用 delegate_task 启动 review subagent 审代码
+1. 启动 review subagent 审查代码，修复小问题，标记大问题
 2. 修复小问题
 3. 写 execute_review.md
 

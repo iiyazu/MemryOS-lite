@@ -1,44 +1,32 @@
 {
-  "phase": "phase-0",
-  "phase_index": 0,
-  "phase_name": "Baseline Freeze + Architecture Decision",
+  "phase": "phase-1",
+  "phase_index": 1,
+  "phase_name": "Memory v3 Contracts",
   "target_state": "legacy-stable",
-  "task_description": "冻结当前 legacy 基线，记录旧 evidence-planner A-H 拆分已被 Memory v3 蓝图取代，定义哪些部分保留为 adapter/reference，产出旧到新术语对照表。不改任何实现代码。",
+  "task_description": "从 blueprint.md 的 phase-1 段提取的任务。\n- Define the v3 data contracts.\n- Specify interfaces for the five memory layers:\n- Message Log\n- Recall Memory\n- Archival Memory\n- Core Memory\n- Context Composer\n- Specify the execution-kernel contracts:\n- `AgentStepRunner`\n- `ToolPolicyEngine`\n- `ApprovalGate`\n- `ToolExecutionManager`\n- `ContinuationController`\n- Define unified formats for `source_refs`, `identity_scope`, `memory_history`, `diagnostics`, `tool_policy`, `approval_state`, and `kernel_trace`.\n- The spec clearly states what tables are kept, what tables are added, and what adapters are required.\n- Core memory must be source-backed.\n- Kernel tool policy and approval state must be specified before implementation.\n- No ambiguity remains about Page/Item as the new archive target.\n",
   "for_plan_agent": {
-    "goal": "产出 Memory-v3 架构设计文档 + 基线冻结 + 术语对照表。不改代码。",
+    "goal": "完成 Memory v3 Contracts 的所有任务。详细描述见 blueprint.md 的 phase-1 段。",
     "constraints": [
-      "不修改任何 Python 源代码",
-      "不修改数据库 schema",
-      "不运行 eval",
-      "本次只产出文档和基线快照",
-      "确保后续 phase 不再以旧 A-H evidence-planner 为顶层目标"
+      "目标兼容状态: legacy-stable",
+      "遵守 blueprint.md 中的兼容性要求",
+      "遵守 CLAUDE.md 中的约定"
     ],
     "relevant_files": [
       ".hermes-loop/blueprint.md",
-      ".hermes-loop/state.json",
       "CLAUDE.md",
-      "README.md",
-      "src/memoryos_lite/schemas.py",
-      "src/memoryos_lite/store.py",
-      "src/memoryos_lite/engine.py",
-      "src/memoryos_lite/retrieval/recall_pipeline.py"
+      "src/memoryos_lite/"
     ],
-    "design_notes": "Phase 0 是纯文档和基线阶段。需要产出: (1) 架构设计文档 docs/memory-v3-architecture.md — 描述五层架构 (Message Log / Recall / Archival / Core / Context Composer) 和 Agentic Kernel; (2) 基线快照 — 运行 uv run pytest -q 和 uv run memoryos eval run --case-set hard --baseline memoryos_lite 记录结果; (3) 术语对照表 docs/memory-v3-glossary.md — Episode→RecallMemoryEntry, Page→ArchivalDocument 等映射"
+    "design_notes": "从 blueprint.md 的 phase-1 段提取设计要点"
   },
   "for_review_agent": {
     "tests_must_pass": true,
-    "regression_bar": "pytest 必须 311 passed，hard eval 必须 1.00/1.00。任何回归必须记录而不是修复(Phase 0 不改代码)。",
+    "regression_bar": "zero unintended regressions",
     "spec_checklist": [
-      "docs/memory-v3-architecture.md 存在并描述 5 层架构 + Agentic Kernel",
-      "docs/memory-v3-glossary.md 存在并列出旧→新术语映射",
-      "基线测试结果记录在文档中 (pytest + hard eval)",
-      "未修改任何 .py 文件",
-      "文档明确声明旧 A-H evidence-planner 拆分已废弃"
+      "验收项从 blueprint 的 Acceptance 段提取"
     ],
     "benchmark_commands": [
-      "uv run pytest -q",
-      "uv run memoryos eval run --case-set hard --baseline memoryos_lite"
+      "uv run pytest -q"
     ],
-    "benchmark_pass_threshold": "311 passed + hard eval == 1.00/1.00"
+    "benchmark_pass_threshold": "311 passed, hard eval 1.00/1.00"
   }
 }
