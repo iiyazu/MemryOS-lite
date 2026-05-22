@@ -1959,7 +1959,8 @@ def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
 
     report = results[0].to_report()
     assert report["memory_arch"] == "v3"
-    assert report["kernel_trace_events"] == [
+    kernel_trace_events = report["kernel_trace_events"]
+    assert [event["event_type"] for event in kernel_trace_events] == [
         "kernel_step_started",
         "tool_policy_decision",
         "approval_pending",
@@ -1970,6 +1971,46 @@ def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
         "tool_executed",
         "kernel_step_completed",
     ]
+    for event in kernel_trace_events:
+        assert event["step_id"].startswith("step_")
+        assert isinstance(event["session_id"], str)
+        assert event["session_id"]
+        assert isinstance(event["sequence"], int)
+        assert isinstance(event["payload"], dict)
+    assert len({event["session_id"] for event in kernel_trace_events}) == 1
+
+    pending_event = next(
+        event
+        for event in kernel_trace_events
+        if event["event_type"] == "approval_pending"
+    )
+    approval_id = pending_event["approval_id"]
+    assert approval_id.startswith("approval_")
+    assert pending_event["payload"]["approval_id"] == approval_id
+    assert pending_event["payload"]["tool_name"] == "archive_write"
+    assert pending_event["payload"]["requested_action"]["source"] == (
+        "public_benchmark_kernel_probe"
+    )
+
+    granted_event = next(
+        event
+        for event in kernel_trace_events
+        if event["event_type"] == "approval_granted"
+    )
+    assert granted_event["approval_id"] == approval_id
+    assert granted_event["payload"]["approved_action"]["content"].startswith(
+        "Benchmark question reviewed:"
+    )
+
+    executed_event = next(
+        event for event in kernel_trace_events if event["event_type"] == "tool_executed"
+    )
+    assert executed_event["approval_id"] == approval_id
+    assert executed_event["payload"]["approval_id"] == approval_id
+    assert executed_event["payload"]["tool_name"] == "archive_write"
+    assert executed_event["payload"]["ok"] is True
+    assert executed_event["payload"]["result"]["memory_id"].startswith("amem_")
+    assert executed_event["payload"]["result"]["archive_id"] == executed_event["session_id"]
     assert report["case_diagnostics"]["kernel_trace_present"] is True
     assert report["case_diagnostics"]["failure_class"] in {
         "supported_cited_answer",

@@ -1,3 +1,5 @@
+from sqlalchemy import text
+
 from memoryos_lite.agent_kernel import (
     ApprovalGateV1,
     SimpleAgentStepRunner,
@@ -5,13 +7,81 @@ from memoryos_lite.agent_kernel import (
     SimpleToolPolicyEngine,
 )
 from memoryos_lite.config import Settings
+from memoryos_lite.context_composer import V3ContextComposer
+from memoryos_lite.schemas import Role
 from memoryos_lite.store import create_store
 from memoryos_lite.v3_contracts import (
     AgentStepRequest,
+    ContextComposerRequest,
     ContextPackageV3,
+    SourceRef,
+    SourceType,
     ToolExecutionRequest,
     ToolPolicyRule,
 )
+
+
+def _request() -> AgentStepRequest:
+    return AgentStepRequest(
+        session_id="ses_1",
+        input_messages=[],
+        context=ContextPackageV3(session_id="ses_1", task="demo"),
+    )
+
+
+def _source_ref() -> SourceRef:
+    return SourceRef(
+        source_type=SourceType.MESSAGE,
+        source_id="msg_1",
+        session_id="ses_1",
+    )
+
+
+def _archive_request(
+    *,
+    content: str = "approved archival fact",
+    approval_id: str | None = None,
+    session_id: str = "ses_1",
+    tool_name: str = "archive_write",
+) -> ToolExecutionRequest:
+    return ToolExecutionRequest(
+        session_id=session_id,
+        tool_name=tool_name,
+        arguments={"content": content, "memory_type": "fact"},
+        source_refs=[_source_ref()],
+        approval_id=approval_id,
+    )
+
+
+def _approval_runner(store):
+    return SimpleAgentStepRunner(
+        store=store,
+        tool_policy_engine=SimpleToolPolicyEngine(
+            rules=[
+                ToolPolicyRule(
+                    id="rule_1",
+                    tool_name="archive_write",
+                    effect="require_approval",
+                    reason="approval required",
+                )
+            ]
+        ),
+        approval_gate=ApprovalGateV1(),
+        tool_execution_manager=SimpleToolExecutionManager(store=store),
+    )
+
+
+def _archival_memory_count(store) -> int:
+    with store.db() as db:
+        return int(db.scalar(text("select count(*) from archival_memories")))
+
+
+def _trace_payloads(store, session_id: str, event_type: str) -> list[dict]:
+    return [
+        trace.payload
+        for trace in store.list_traces(session_id)
+        if trace.event_type == event_type
+    ]
 
 
 def test_kernel_persists_trace_and_stops_without_tool_requests(tmp_path):
@@ -33,6 +103,71 @@ def test_kernel_persists_trace_and_stops_without_tool_requests(tmp_path):
         "kernel_step_completed",
     ]
     assert result.trace[0].event_type == "kernel_step_started"
+
+
+def test_kernel_denies_archive_write_without_execution_or_memory_write(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    runner = SimpleAgentStepRunner(
+        store=store,
+        tool_policy_engine=SimpleToolPolicyEngine(
+            rules=[
+                ToolPolicyRule(
+                    id="deny_archive_write",
+                    tool_name="archive_write",
+                    effect="deny",
+                    reason="not allowed in this test",
+                )
+            ]
+        ),
+        tool_execution_manager=SimpleToolExecutionManager(store=store),
+    )
+
+    result = runner.run_step(
+        _request(),
+        tool_requests=[_archive_request(content="must not be written")],
+    )
+
+    event_types = [event.event_type for event in result.trace]
+    assert result.continuation == "stop"
+    assert "tool_policy_decision" in event_types
+    assert "tool_denied" in event_types
+    assert "tool_executed" not in event_types
+    denied = next(event for event in result.trace if event.event_type == "tool_denied")
+    assert denied.payload["tool_name"] == "archive_write"
+    assert denied.payload["ok"] is False
+    assert denied.payload["error"] == "not allowed in this test"
+    assert store.list_messages("ses_1") == []
+    assert _archival_memory_count(store) == 0
+
+
+def test_kernel_denies_unknown_tool_as_result_without_executor_call(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    runner = SimpleAgentStepRunner(
+        store=store,
+        tool_execution_manager=SimpleToolExecutionManager(store=store),
+    )
+
+    result = runner.run_step(
+        _request(),
+        tool_requests=[
+            ToolExecutionRequest(
+                session_id="ses_1",
+                tool_name="unknown_tool",
+                arguments={"content": "ignored"},
+            )
+        ],
+    )
+
+    event_types = [event.event_type for event in result.trace]
+    assert "tool_denied" in event_types
+    assert "tool_executed" not in event_types
+    denied = next(event for event in result.trace if event.event_type == "tool_denied")
+    assert "no matching tool policy rule" in denied.payload["error"]
+    assert store.list_messages("ses_1") == []
 
 
 def test_kernel_pauses_when_tool_requires_approval(tmp_path):
@@ -76,59 +211,151 @@ def test_kernel_pauses_when_tool_requires_approval(tmp_path):
     ]
 
 
-def test_kernel_resumes_approval_and_executes_archive_write(tmp_path):
+def test_kernel_replays_persisted_approval_after_cold_boundary_once(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
     store = create_store(settings)
     store.reset()
-    runner = SimpleAgentStepRunner(
-        store=store,
-        tool_policy_engine=SimpleToolPolicyEngine(
-            rules=[
-                ToolPolicyRule(
-                    id="rule_1",
-                    tool_name="archive_write",
-                    effect="require_approval",
-                    reason="approval required",
-                )
-            ]
-        ),
-        approval_gate=ApprovalGateV1(),
-        tool_execution_manager=SimpleToolExecutionManager(store=store),
-    )
-    request = AgentStepRequest(
-        session_id="ses_1",
-        input_messages=[],
-        context=ContextPackageV3(session_id="ses_1", task="demo"),
-    )
-    first = runner.run_step(
-        request,
-        tool_requests=[
-            ToolExecutionRequest(
-                session_id="ses_1",
-                tool_name="archive_write",
-                arguments={"content": "approved archival fact", "memory_type": "fact"},
-            )
-        ],
-    )
+    first = _approval_runner(store).run_step(_request(), tool_requests=[_archive_request()])
     approval_id = next(
         event.approval_id for event in first.trace if event.event_type == "approval_pending"
     )
+    assert approval_id is not None
 
-    resumed = runner.run_step(
-        request,
-        tool_requests=[
-            ToolExecutionRequest(
-                session_id="ses_1",
-                tool_name="archive_write",
-                arguments={"content": "approved archival fact", "memory_type": "fact"},
-                approval_id=approval_id,
-            )
-        ],
+    reopened = create_store(settings)
+    pending_payloads = _trace_payloads(reopened, "ses_1", "approval_pending")
+    assert len(pending_payloads) == 1
+    pending = pending_payloads[0]
+    assert pending["approval_id"] == approval_id
+    assert pending["payload"]["status"] == "pending"
+    assert pending["payload"]["session_id"] == "ses_1"
+    assert pending["payload"]["tool_name"] == "archive_write"
+    assert pending["payload"]["requested_action"]["content"] == "approved archival fact"
+    assert pending["payload"]["source_refs"][0]["source_id"] == "msg_1"
+    assert pending["payload"]["metadata"]["policy_reason"] == "approval required"
+    assert _archival_memory_count(reopened) == 0
+    assert reopened.list_messages("ses_1") == []
+
+    resumed = _approval_runner(reopened).run_step(
+        _request(),
+        tool_requests=[_archive_request(approval_id=approval_id)],
     )
 
     assert resumed.continuation == "stop"
+    granted = next(event for event in resumed.trace if event.event_type == "approval_granted")
+    assert granted.approval_id == approval_id
+    assert granted.payload["approval_id"] == approval_id
+    assert granted.payload["session_id"] == "ses_1"
+    assert granted.payload["tool_name"] == "archive_write"
+    assert granted.payload["approved_action"]["content"] == "approved archival fact"
     executed = next(event for event in resumed.trace if event.event_type == "tool_executed")
+    assert executed.approval_id == approval_id
+    assert executed.payload["approval_id"] == approval_id
+    assert executed.payload["ok"] is True
     memory_id = executed.payload["result"]["memory_id"]
-    history = store.list_archival_memory_history(memory_id)
+    assert len(resumed.messages) == 1
+    assert resumed.messages[0].role == Role.TOOL
+    assert resumed.messages[0].metadata["tool_name"] == "archive_write"
+    assert resumed.messages[0].metadata["approval_id"] == approval_id
+    tool_messages = [msg for msg in reopened.list_messages("ses_1") if msg.role == Role.TOOL]
+    assert len(tool_messages) == 1
+    assert _archival_memory_count(reopened) == 1
+    history = reopened.list_archival_memory_history(memory_id)
     assert history[0].after["content"] == "approved archival fact"
     assert history[0].source_refs[0].approval_id == approval_id
+
+    second_store = create_store(settings)
+    replayed = _approval_runner(second_store).run_step(
+        _request(),
+        tool_requests=[_archive_request(approval_id=approval_id)],
+    )
+    event_types = [event.event_type for event in replayed.trace]
+    assert "tool_replay_skipped" in event_types
+    skipped = next(event for event in replayed.trace if event.event_type == "tool_replay_skipped")
+    assert skipped.payload["approval_id"] == approval_id
+    assert skipped.payload["reason"] == "approval already executed"
+    assert len([event for event in replayed.trace if event.event_type == "tool_executed"]) == 0
+    assert _archival_memory_count(second_store) == 1
+    assert len([msg for msg in second_store.list_messages("ses_1") if msg.role == Role.TOOL]) == 1
+
+
+def test_kernel_rejects_unknown_or_mismatched_approval_replay_without_side_effects(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    first = _approval_runner(store).run_step(_request(), tool_requests=[_archive_request()])
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    assert approval_id is not None
+
+    invalid_requests = [
+        _archive_request(approval_id="approval_missing"),
+        _archive_request(approval_id=approval_id, session_id="ses_2"),
+        _archive_request(approval_id=approval_id, tool_name="unknown_tool"),
+        _archive_request(approval_id=approval_id, content="tampered archival fact"),
+    ]
+
+    for tool_request in invalid_requests:
+        reopened = create_store(settings)
+        result = _approval_runner(reopened).run_step(
+            _request().model_copy(update={"session_id": tool_request.session_id}),
+            tool_requests=[tool_request],
+        )
+        event_types = [event.event_type for event in result.trace]
+        assert "approval_replay_denied" in event_types or "approval_replay_error" in event_types
+        denial = next(
+            event
+            for event in result.trace
+            if event.event_type in {"approval_replay_denied", "approval_replay_error"}
+        )
+        assert denial.payload["approval_id"] == tool_request.approval_id
+        assert denial.payload["session_id"] == tool_request.session_id
+        assert denial.payload["tool_name"] == tool_request.tool_name
+        assert denial.payload["reason"]
+        assert "approval_granted" not in event_types
+        assert "tool_executed" not in event_types
+        assert _archival_memory_count(reopened) == 0
+        assert [msg for msg in reopened.list_messages("ses_1") if msg.role == Role.TOOL] == []
+        assert [msg for msg in reopened.list_messages("ses_2") if msg.role == Role.TOOL] == []
+
+
+def test_kernel_tool_result_message_is_visible_to_later_v3_context(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    first = _approval_runner(store).run_step(_request(), tool_requests=[_archive_request()])
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    assert approval_id is not None
+
+    reopened = create_store(settings)
+    resumed = _approval_runner(reopened).run_step(
+        _request(),
+        tool_requests=[_archive_request(approval_id=approval_id)],
+    )
+    memory_id = next(
+        event.payload["result"]["memory_id"]
+        for event in resumed.trace
+        if event.event_type == "tool_executed"
+    )
+    package = V3ContextComposer(store=reopened, settings=settings).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="approved archival fact",
+            budget=120,
+        )
+    )
+
+    recent_tool_items = [
+        item
+        for item in package.items
+        if item.layer == "recent" and item.metadata.get("role") == "tool"
+    ]
+    assert recent_tool_items
+    assert "archive_write" in recent_tool_items[0].text
+    assert (
+        memory_id in recent_tool_items[0].text
+        or recent_tool_items[0].metadata.get("memory_id") == memory_id
+    )
+    assert package.metadata["memory_arch"] == "v3"

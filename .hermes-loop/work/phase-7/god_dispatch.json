@@ -1,0 +1,133 @@
+{
+  "phase": "phase-7",
+  "phase_binding": "phase-7",
+  "state": "GOD_DISPATCH",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-7/context_bundle.md",
+    "sha256": "983c970d18495e535e591838175c559cc6420e7ff1fe440acef94a6fa282df05",
+    "summary": "Phase 7 is narrowed to opt-in v3 kernel/tool durability: denied tool non-execution, approval pause/resume replayability, tool result trace/context visibility, and public benchmark kernel trace smoke without changing v3 default, v1 fallback, or kernel default-off behavior."
+  },
+  "real_chain_components_affected": {
+    "ingest": "verified",
+    "store": "changed_or_verified",
+    "retrieval": "verified",
+    "context_composer": "changed_or_verified",
+    "answer_projection": "verified",
+    "kernel_loop": "changed",
+    "public_eval": "changed_or_verified"
+  },
+  "read_first": {
+    "memoryos": [
+      ".hermes-loop/work/current_goal.md",
+      ".hermes-loop/state.json",
+      ".hermes-loop/blueprint.md",
+      ".hermes-loop/work/phase-7/context_bundle.md",
+      ".hermes-loop/work/phase-6/ack.json",
+      ".hermes-loop/work/phase-6/result.md",
+      ".hermes-loop/work/phase-6/review_verdict.json",
+      ".hermes-loop/work/phase-6/reflect_phase-6.md",
+      ".hermes-loop/work/phase-6/blueprint_amendment.md",
+      "docs/known-issues.md",
+      "docs/public-benchmark-diagnosis.md",
+      "docs/agentic-memory-roadmap-zh.md",
+      "src/memoryos_lite/config.py",
+      "src/memoryos_lite/engine.py",
+      "src/memoryos_lite/evals.py",
+      "src/memoryos_lite/public_benchmarks.py",
+      "src/memoryos_lite/public_case_diagnostics.py",
+      "src/memoryos_lite/agent_kernel.py",
+      "src/memoryos_lite/v3_contracts.py",
+      "src/memoryos_lite/context_composer.py",
+      "src/memoryos_lite/store.py",
+      "tests/test_agent_kernel.py",
+      "tests/test_public_benchmarks.py",
+      "tests/test_context_composer.py",
+      "tests/test_evals.py"
+    ],
+    "letta_reference": [
+      "/home/iiyatu/projects/python/letta/letta/schemas/block.py",
+      "/home/iiyatu/projects/python/letta/letta/schemas/memory.py",
+      "/home/iiyatu/projects/python/letta/letta/schemas/archive.py",
+      "/home/iiyatu/projects/python/letta/letta/schemas/passage.py",
+      "/home/iiyatu/projects/python/letta/letta/services/block_manager.py",
+      "/home/iiyatu/projects/python/letta/letta/services/archive_manager.py",
+      "/home/iiyatu/projects/python/letta/letta/services/passage_manager.py",
+      "/home/iiyatu/projects/python/letta/letta/services/tool_executor/tool_execution_manager.py",
+      "/home/iiyatu/projects/python/letta/letta/services/tool_executor/core_tool_executor.py",
+      "/home/iiyatu/projects/python/letta/letta/agents/letta_agent_v3.py",
+      "/home/iiyatu/projects/python/letta/letta/services/context_window_calculator/context_window_calculator.py"
+    ]
+  },
+  "stale_artifacts": [
+    {
+      "path": "work/phase-7/reviews/codex-review.md",
+      "reason": "Exists before the current context bundle and does not cite work/phase-7/context_bundle.md; do not use as current review evidence."
+    },
+    {
+      "path": "work/phase-8/research.md",
+      "reason": "Targets old legacy deprecation wording and is stale relative to the active Letta-style benchmark usability blueprint."
+    }
+  ],
+  "failing_tests_required_before_implementation": [
+    "Denied archive_write or unknown tool request produces a denial trace/result and does not create archival memory.",
+    "Approval pause/resume state survives the step boundary used by benchmark/kernel smoke and resumed execution happens exactly once.",
+    "Executed archive_write emits tool result trace detail and a later-context-visible tool result message/log entry when relevant.",
+    "Public benchmark keeps kernel_trace_events empty when MEMORYOS_AGENT_KERNEL is unset/off.",
+    "Public benchmark reports non-empty kernel_trace_events when MEMORYOS_MEMORY_ARCH=v3 and MEMORYOS_AGENT_KERNEL=v1 are explicitly set."
+  ],
+  "implementation_guardrails": [
+    "Do not enable MEMORYOS_AGENT_KERNEL by default.",
+    "Do not change MEMORYOS_MEMORY_ARCH=v3 default or MEMORYOS_MEMORY_ARCH=v1 fallback.",
+    "Do not add Letta as a runtime dependency.",
+    "Do not expand tool support beyond archive_write unless a failing test and real chain need require it.",
+    "Do not tune answer prompts or claim answer-quality improvement from kernel trace work.",
+    "Do not rewrite Hermes infrastructure.",
+    "Do not revert unrelated workspace changes."
+  ],
+  "smoke_commands": {
+    "focused_tests": [
+      "uv run pytest tests/test_agent_kernel.py -q",
+      "uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_kernel_trace_remains_default_off tests/test_public_benchmarks.py::test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled -q"
+    ],
+    "required_baseline": [
+      "uv run pytest -q",
+      "uv run ruff check ."
+    ],
+    "kernel_public_smoke": [
+      "MEMORYOS_MEMORY_ARCH=v3 MEMORYOS_AGENT_KERNEL=v1 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge",
+      "MEMORYOS_MEMORY_ARCH=v3 MEMORYOS_AGENT_KERNEL=v1 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge"
+    ],
+    "conditional_milestone": [
+      "Only if Phase 7 changes answer/context behavior: run LongMemEval and LoCoMo 30-case full-chain LLM judge in parallel with MEMORYOS_MEMORY_ARCH=v3 and MEMORYOS_AGENT_KERNEL=v1 explicitly set."
+    ]
+  },
+  "usable_ack_checklist": [
+    "ack_level is usable and active_goal is referenced.",
+    "context_bundle.path is work/phase-7/context_bundle.md and plan/execute/review cite it.",
+    "real_path_wired is true for the opt-in v3 public benchmark path.",
+    "demo_only_or_stub_remaining has no blocking item.",
+    "RED tests were added or updated before production changes.",
+    "Verification includes focused kernel tests, default-off public benchmark test, opt-in public benchmark test or smoke, full pytest, and ruff unless explicitly scoped with evidence.",
+    "case-level eval records LongMemEval and LoCoMo kernel smoke separately; no aggregate-only claim.",
+    "review_verdict confirms v1 fallback preserved, v3 default preserved, kernel default unchanged, source grounding not regressed, and LoCoMo not hidden or unexplained."
+  ],
+  "review_focus": [
+    "Behavioral regression in v1 fallback or default v3 kernel-off path.",
+    "Denied tool execution accidentally writing memory.",
+    "Approval replay causing duplicate writes.",
+    "Tool result trace exists but is not durable or not visible to later context when claimed.",
+    "Public benchmark fields are misleading or absent when kernel is opt-in.",
+    "Benchmark overfitting or expected-answer/case-id leakage.",
+    "LoCoMo residual failures hidden by kernel trace success.",
+    "Any lane output that ignores context_bundle.md."
+  ],
+  "lane_instructions": {
+    "plan_storm": "Run a brainstorming lane with gpt-5.5 high effort. It must read work/phase-7/context_bundle.md before god_dispatch.json, compare 2-3 implementation options, recommend one, and write # phase: phase-7 to work/phase-7/brainstorm.md.",
+    "plan_draft": "Read context_bundle.md, brainstorm.md, and god_dispatch.json. Write spec.md and plan.md with RED -> GREEN -> REFACTOR -> smoke -> review.",
+    "plan_self_review": "Run review lane with gpt-5.5 high effort. Check active goal, anti-demo gate, v1 fallback, v3 default, kernel opt-in, benchmark overfitting, and context-bundle use. PASS writes plan_final.md; FAIL writes plan_review.md and requires iteration.",
+    "execute": "Only execute_lane may edit src/tests/docs. Each implementation task must follow TDD, with failing tests before production changes.",
+    "review": "Read-only review must inspect context_bundle.md, god_dispatch.json, plan_final.md, result.md, execute_review.md, and git diff before ack."
+  },
+  "decision": "dispatch_to_plan_storm"
+}

@@ -115,7 +115,7 @@ class BaselineOutput:
     v3_component_token_totals: dict[str, int] = field(default_factory=dict)
     v3_component_drop_counts: dict[str, int] = field(default_factory=dict)
     locomo_neighbor_diagnostics: list[dict[str, object]] = field(default_factory=list)
-    kernel_trace_events: list[str] = field(default_factory=list)
+    kernel_trace_events: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -738,7 +738,7 @@ def _run_baseline(
         v3_component_token_totals = context.metadata.get("v3_component_token_totals")
         v3_component_drop_counts = context.metadata.get("v3_component_drop_counts")
         locomo_neighbor_diagnostics = context.metadata.get("locomo_neighbor_diagnostics")
-        kernel_trace_events: list[str] = []
+        kernel_trace_events: list[dict[str, object]] = []
         v3_context_raw = context.metadata.get("v3_context")
         if (
             service.agent_kernel is not None
@@ -767,7 +767,9 @@ def _run_baseline(
                 ),
                 tool_requests=[tool_request],
             )
-            kernel_trace_events = [event.event_type for event in step.trace]
+            kernel_trace_events = [
+                event.model_dump(mode="json") for event in step.trace
+            ]
             approval_id = next(
                 (
                     event.approval_id
@@ -790,7 +792,9 @@ def _run_baseline(
                         tool_request.model_copy(update={"approval_id": approval_id})
                     ],
                 )
-                kernel_trace_events.extend(event.event_type for event in resumed.trace)
+                kernel_trace_events.extend(
+                    event.model_dump(mode="json") for event in resumed.trace
+                )
         return _baseline_from_evidence(
             case.question,
             memory_evidence,
@@ -1005,7 +1009,7 @@ def _baseline_from_evidence(
     v3_component_token_totals: dict[str, int] | None = None,
     v3_component_drop_counts: dict[str, int] | None = None,
     locomo_neighbor_diagnostics: list[dict[str, object]] | None = None,
-    kernel_trace_events: list[str] | None = None,
+    kernel_trace_events: list[dict[str, object]] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}

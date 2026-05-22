@@ -126,7 +126,7 @@ class PublicBenchmarkResult:
     v3_component_token_totals: dict[str, int] = field(default_factory=dict)
     v3_component_drop_counts: dict[str, int] = field(default_factory=dict)
     locomo_neighbor_diagnostics: list[dict[str, Any]] = field(default_factory=list)
-    kernel_trace_events: list[str] = field(default_factory=list)
+    kernel_trace_events: list[dict[str, Any]] = field(default_factory=list)
     case_diagnostics: dict[str, Any] = field(default_factory=dict)
     failure_class: str = "unknown"
     movement_status: str = "new_case_no_baseline"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 from memoryos_lite.agent_answer_eval import evaluate_agent_answer
 from memoryos_lite.public_case_movement import movement_status
@@ -23,7 +24,7 @@ def build_case_diagnostics(
     source_ids: list[str],
     v3_context: dict[str, object],
     v3_diagnostics: list[dict[str, object]],
-    kernel_trace_events: list[str],
+    kernel_trace_events: list[dict[str, Any]],
     baseline_verdict: str | None = None,
     movement_baseline_source: str | None = None,
 ) -> dict[str, object]:

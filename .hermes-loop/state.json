@@ -1,11 +1,11 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 7,
+  "current_phase_idx": 8,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-7",
+    "phase": "phase-8",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
@@ -13,9 +13,7 @@
     "state": null
   },
   "research_lane": {
-    "phases": [
-      "phase-8"
-    ]
+    "phases": []
   },
   "review_lane": {
     "active": false,
@@ -327,7 +325,7 @@
       "id": "phase-7",
       "name": "Kernel, Tool, Approval, And Memory Mutation Loop",
       "target_state": "kernel-opt-in-usable",
-      "status": "pending",
+      "status": "completed",
       "state_history": [
         {
           "completed_at": "2026-05-21T21:24:23+08:00",
@@ -352,6 +350,31 @@
             }
           },
           "commit": "95a7fda"
+        },
+        {
+          "completed_at": "2026-05-22T21:52:06+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-7/context_bundle.md",
+            "ack": "work/phase-7/ack.json",
+            "review": "work/phase-7/reviews/codex-review-current.md",
+            "review_verdict": "work/phase-7/review_verdict.json",
+            "reflection": "work/phase-7/reflect_phase-7.md",
+            "tests_passed": 400,
+            "checks_passed": 5,
+            "case_level_eval": {
+              "longmemeval": "5 no-LLM opt-in kernel smoke: 1 pass / 4 fail; structured kernel_trace_events=5/5; evidence_hit_answer_fail=4",
+              "locomo": "5 no-LLM opt-in kernel smoke: 0 pass / 5 fail; structured kernel_trace_events=5/5; retrieval_miss=4; evidence_hit_answer_fail=1"
+            },
+            "real_path_wired": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "no_answer_quality_claim": true,
+            "next_phase_scope": "Phase 8 should make a promotion or next-blueprint decision from larger full-chain LongMemEval and LoCoMo evidence; do not treat kernel trace presence as answer-quality success."
+          },
+          "commit": null
         }
       ]
     },
@@ -359,7 +382,7 @@
       "id": "phase-8",
       "name": "Promotion Gate And Next Blueprint Decision",
       "target_state": "promotion-decision",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": [
         {
           "completed_at": "2026-05-21T21:39:03+08:00",
@@ -385,5 +408,5 @@
       ]
     }
   ],
-  "last_updated": "2026-05-22T19:55:00+08:00"
+  "last_updated": "2026-05-22T21:52:06+08:00"
 }

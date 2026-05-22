@@ -1,0 +1,31 @@
+{
+  "phase": "phase-7",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-7/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "review_artifact": "work/phase-7/reviews/codex-review-current.md",
+  "verdict": "PASS",
+  "blocking_issues": [],
+  "residual_risks": [
+    "Crash-window idempotence still depends on persisted tool_executed trace after archival memory/message side effects.",
+    "Role tool message is visible in v3 recent context as compact text; full metadata remains durable on the message record but is not rendered into ContextLayerItem metadata.",
+    "Public benchmark kernel path is still a synthetic control-plane probe, not a full answer-generating agent loop.",
+    "Downstream consumers expecting kernel_trace_events as strings may need migration to structured event dictionaries."
+  ],
+  "review_verdict": {
+    "overfitting_risk": "medium",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false
+  },
+  "decision": "advance"
+}
