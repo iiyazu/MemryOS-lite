@@ -1,0 +1,55 @@
+{
+  "phase": "phase-9",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "verdict": "PASS",
+  "ack_level_recommendation": "usable",
+  "blockers": [],
+  "recommended_next_action": "Write phase-9 ack.json with ack_level usable and proceed to phase-10 recall work without treating phase-9 as score improvement evidence.",
+  "review_summary": {
+    "phase_binding": "All checked phase-9 Markdown artifacts begin with # phase: phase-9, and replay JSON rows include phase-9.",
+    "behavioral_regression_risk": "No retrieval ranking, answer projection or prompting, scoring, v1 fallback, v3 default, or kernel default changes found in the reviewed diagnostic implementation.",
+    "locomo_case_coverage": "Exactly 20 phase-8 LoCoMo failed cases have replay JSON artifacts; conv-26_qa_015 is tracked separately as judge/source-support risk and is not emitted as replay JSON.",
+    "source_grounding_separation": "source_metrics, judge_metrics, and source_hit_semantics keep source/retrieval accounting separate from judged answer quality; source_hit is not treated as retrieval localization.",
+    "prompt_hack_overfitting_risk": "No expected-answer or gold-answer leak found in replay JSON; phase-8 failed-id constants are coverage requirements only, not answer behavior.",
+    "aggregate_claim_risk": "No aggregate score improvement claim found for phase-9.",
+    "context_bundle_usage": "Review read context_bundle.md first; plan and execute artifacts cite the context bundle.",
+    "stale_artifact_risk": "Invalid phase-8 heartbeat retry artifacts are documented as ignored; replay artifacts consume the valid phase8_locomo50 report."
+  },
+  "verification_evidence": [
+    {
+      "source": "god_side_final_after_phase_binding_patch",
+      "command": "uv run pytest tests/test_public_failure_replay.py::test_real_phase8_failed_row_builds_complete_replay_row -q",
+      "result": "RED failed because 'phase' field was missing"
+    },
+    {
+      "source": "god_side_final_after_phase_binding_patch",
+      "command": "uv run pytest tests/test_public_failure_replay.py -q",
+      "result": "5 passed in 0.86s"
+    },
+    {
+      "source": "god_side_final_after_phase_binding_patch",
+      "command": "uv run pytest tests/test_diagnostic_report.py tests/test_public_benchmarks.py tests/test_public_failure_replay.py -q",
+      "result": "56 passed in 30.48s"
+    },
+    {
+      "source": "god_side_final_after_phase_binding_patch",
+      "command": "uv run ruff check .",
+      "result": "All checks passed!"
+    },
+    {
+      "source": "god_side_final_after_phase_binding_patch",
+      "command": "uv run pytest -q",
+      "result": "415 passed, 1 warning in 584.85s"
+    },
+    {
+      "source": "god_side_final_after_phase_binding_patch",
+      "command": "artifact/phase-binding validator",
+      "result": "validated phase bindings and 20 replay files"
+    },
+    {
+      "source": "read_only_review_check",
+      "command": "phase-9 replay JSON invariant scan",
+      "result": "20 replay files; phases ['phase-9']; conv-26_qa_015 replay JSON absent; no gold/expected-answer-like replay fields; source/judge metric separation true"
+    }
+  ]
+}
