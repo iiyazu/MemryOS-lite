@@ -3,12 +3,32 @@
 import json, subprocess, os, time
 from pathlib import Path
 from datetime import datetime, timezone
+import importlib.util
 
 LOOP = Path("/home/iiyatu/projects/python/memoryOS/.hermes-loop")
 PROJECT = LOOP.parent
 LAUNCHER = LOOP / "god_launcher.sh"
 STATE_FILE = LOOP / "state.json"
 LOCK_FILE = LOOP / "run.lock"
+
+
+def phase8_hardening_report(s):
+    """Return phase-8 eval/ACK status if the additive hardening module is present."""
+    ex = s.get("execute_lane", {})
+    if ex.get("phase") != "phase-8":
+        return None
+    module_path = LOOP / "hermes_hardening.py"
+    if not module_path.exists():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
+        if spec is None or spec.loader is None:
+            return {"error": "cannot load hermes_hardening.py"}
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module._run_phase8(LOOP, PROJECT / ".memoryos" / "evals", write=True)
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 def read_lock_pid() -> int | None:
@@ -83,8 +103,9 @@ def generate_report(s):
     
     ex = s.get("execute_lane", {})
     pl = s.get("plan_lane", {})
+    hardening = phase8_hardening_report(s)
     
-    return {
+    report = {
         "timestamp": now.isoformat(),
         "report_age_seconds": 0,
         "stale": not is_god_alive() and lock_status() in ("stale", "ok"),
@@ -104,6 +125,9 @@ def generate_report(s):
         "dirty_files": dirty[:500] if dirty else "(clean)",
         "action": "wait" if god_alive else "start"
     }
+    if hardening is not None:
+        report["phase8_hardening"] = hardening
+    return report
 
 def start_god() -> bool:
     """Safely start God. Returns True if God confirmed running after start."""
@@ -136,7 +160,9 @@ def main():
     report = generate_report(s)
     report["action"] = action
     
-    (LOOP / "reports" / "latest.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    reports_dir = LOOP / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    (reports_dir / "latest.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
     
     # Markdown
     hb_age = report["god"].get("heartbeat_age_seconds")
@@ -152,7 +178,7 @@ def main():
 | HB    | {hb_str} |
 | Action| {action} |
 """
-    (LOOP / "reports" / "latest.md").write_text(md)
+    (reports_dir / "latest.md").write_text(md)
     return report
 
 if __name__ == "__main__":

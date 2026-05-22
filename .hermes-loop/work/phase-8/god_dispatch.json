@@ -1,0 +1,97 @@
+{
+  "phase": "phase-8",
+  "state": "GOD_DISPATCH",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-8/context_bundle.md",
+    "sha256": "d3b1ae52a5005115642074eda3afbcbb26a70da146fc6734368a6e6fe7ac4e35",
+    "summary": "Promotion gate bundle for phase-8: current state is EXECUTE, phase-8 is in progress, stale legacy phase-8 artifacts must not be used, and the fresh evidence is the 20260522T151605Z parallel 50-case LongMemEval/LoCoMo full-chain v3 eval pair plus focused/full verification."
+  },
+  "real_chain_components_affected": {
+    "ingest": "verified",
+    "store": "verified",
+    "retrieval": "verified",
+    "context_composer": "verified",
+    "answer_projection": "verified",
+    "kernel_loop": "verified_default_off",
+    "public_eval": "verified_and_analyzed"
+  },
+  "phase_objective": "Produce a source-grounded promotion or next-blueprint decision from fresh phase-8 full verification and case-level benchmark evidence.",
+  "target_chain_component": "public_eval_decision_layer",
+  "read_first": [
+    "work/phase-8/context_bundle.md",
+    ".hermes-loop/state.json",
+    ".hermes-loop/blueprint.md",
+    ".hermes-loop/work/current_goal.md",
+    ".hermes-loop/work/phase-6/ack.json",
+    ".hermes-loop/work/phase-7/ack.json",
+    ".hermes-loop/work/phase-7/result.md",
+    ".hermes-loop/work/phase-7/execute_review.md",
+    ".hermes-loop/work/phase-7/reflect_phase-7.md",
+    "docs/known-issues.md",
+    "docs/public-benchmark-diagnosis.md",
+    "docs/agentic-memory-roadmap-zh.md",
+    "src/memoryos_lite/config.py",
+    "src/memoryos_lite/evals.py",
+    "src/memoryos_lite/public_benchmarks.py",
+    "src/memoryos_lite/public_case_diagnostics.py",
+    "src/memoryos_lite/diagnostic_report.py",
+    "tests/test_public_benchmarks.py",
+    "tests/test_agent_kernel.py",
+    "tests/test_context_composer.py",
+    "tests/test_evals.py"
+  ],
+  "letta_reference_files": [
+    "/home/iiyatu/projects/python/letta/letta/schemas/block.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/memory.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/archive.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/passage.py",
+    "/home/iiyatu/projects/python/letta/letta/services/block_manager.py",
+    "/home/iiyatu/projects/python/letta/letta/services/archive_manager.py",
+    "/home/iiyatu/projects/python/letta/letta/services/passage_manager.py",
+    "/home/iiyatu/projects/python/letta/letta/services/tool_executor/tool_execution_manager.py",
+    "/home/iiyatu/projects/python/letta/letta/services/tool_executor/core_tool_executor.py",
+    "/home/iiyatu/projects/python/letta/letta/agents/letta_agent_v3.py",
+    "/home/iiyatu/projects/python/letta/letta/services/context_window_calculator/context_window_calculator.py"
+  ],
+  "stale_artifacts": [
+    "work/phase-8/research.md predates this context bundle and reflects a legacy default/deprecation task.",
+    "work/phase-8/reviews/codex-review.md predates this context bundle and cannot support the current promotion gate."
+  ],
+  "red_evidence_required_before_implementation": [
+    "Phase 8 is decision-only by default; the RED condition is the absence of fresh phase-8 50-case full-chain evidence and stale phase-8 artifacts that do not cite context_bundle.md.",
+    "If a production code change becomes necessary, add a focused failing test before implementation and record the failing command in result.md."
+  ],
+  "verification_commands": {
+    "focused_guard": "uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_kernel_trace_remains_default_off tests/test_public_benchmarks.py::test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off -q",
+    "full_pytest": "uv run pytest -q",
+    "ruff": "uv run ruff check .",
+    "parallel_eval_longmemeval": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 50 --run-id phase8_lme50_<timestamp>",
+    "parallel_eval_locomo": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 50 --run-id phase8_locomo50_<timestamp>"
+  },
+  "usable_ack_checklist": [
+    "active goal is referenced in result.md, review_verdict.json, ack.json, and promotion_decision.md",
+    "work/phase-8/context_bundle.md is cited by plan, execute, and review outputs",
+    "fresh phase-8 pytest and ruff output is recorded",
+    "LongMemEval and LoCoMo milestone evals are run in parallel or the blocker is recorded",
+    "case-level analysis includes fail-to-pass, pass-to-fail, unchanged fail, retrieval miss, evidence-hit-answer-fail, unsupported answer, and judge questionable groups",
+    "source grounding movement is separated from aggregate pass rate",
+    "kernel default remains unchanged and promotion evals do not set MEMORYOS_AGENT_KERNEL=v1",
+    "decision is one of continue_targeted, expand_eval, hold, or promote_blueprint and is justified by case-level evidence"
+  ],
+  "review_focus": [
+    "stale phase artifact detection",
+    "benchmark overfitting and expected-answer leakage",
+    "source grounding regression",
+    "LoCoMo-specific misses and whether they remain unexplained",
+    "kernel opt-in preservation",
+    "whether deterministic fallback evidence is incorrectly treated as a milestone gate",
+    "whether aggregate score is used without case-level movement"
+  ],
+  "decision_policy": {
+    "continue_targeted": "Choose when a specific bottleneck remains visible and needs a new targeted blueprint.",
+    "expand_eval": "Choose only if 50-case evidence is stable across both benchmarks with no hidden grounding regression.",
+    "hold": "Choose when pass rate moved but evidence quality or judge stability regressed.",
+    "promote_blueprint": "Choose when the active blueprint/state should be updated for the next loop with a documented amendment."
+  }
+}

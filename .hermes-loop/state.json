@@ -1,16 +1,16 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 8,
+  "current_phase_idx": 9,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-8",
+    "phase": "phase-9",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": null,
-    "state": null
+    "phase": "phase-10",
+    "state": "PLAN_STORM"
   },
   "research_lane": {
     "phases": []
@@ -382,7 +382,7 @@
       "id": "phase-8",
       "name": "Promotion Gate And Next Blueprint Decision",
       "target_state": "promotion-decision",
-      "status": "in_progress",
+      "status": "completed",
       "state_history": [
         {
           "completed_at": "2026-05-21T21:39:03+08:00",
@@ -404,9 +404,85 @@
             }
           },
           "commit": "7f19edb"
+        },
+        {
+          "completed_at": "2026-05-23T01:39:27+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-8/context_bundle.md",
+            "ack": "work/phase-8/ack.json",
+            "review": "work/phase-8/reviews/codex-review-current.md",
+            "review_verdict": "work/phase-8/review_verdict.json",
+            "reflection": "work/phase-8/reflect_phase-8.md",
+            "tests_passed": 410,
+            "checks_passed": 5,
+            "case_level_eval": {
+              "longmemeval": "50 full-chain LLM judge: 47 pass / 3 fail; fail_to_pass=0; pass_to_fail=0; retrieval_miss=2; evidence_hit_answer_fail=1",
+              "locomo": "50 full-chain LLM judge: 30 pass / 20 fail; fail_to_pass=0; pass_to_fail=0; retrieval_miss=12; evidence_hit_answer_fail=8; judge_questionable=1"
+            },
+            "phase_decision": "continue_targeted",
+            "decision": "adjust_blueprint",
+            "real_path_wired": true,
+            "no_benchmark_promotion_claim": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "next_loop": "Targeted LoCoMo reliability loop from work/phase-8/blueprint_amendment.md and work/phase-8/next_blueprint_candidate.md"
+          },
+          "commit": null
         }
       ]
+    },
+    {
+      "id": "phase-9",
+      "name": "Evidence Closure And Failure Replay",
+      "target_state": "failure-replay-ready",
+      "status": "in_progress",
+      "state_history": []
+    },
+    {
+      "id": "phase-10",
+      "name": "Recall Memory Reliability",
+      "target_state": "recall-evidence-reliable",
+      "status": "pending",
+      "state_history": []
+    },
+    {
+      "id": "phase-11",
+      "name": "Evidence Handoff And Context Selection",
+      "target_state": "evidence-handoff-reliable",
+      "status": "pending",
+      "state_history": []
+    },
+    {
+      "id": "phase-12",
+      "name": "Archival/RAG Memory Unification",
+      "target_state": "archival-rag-usable",
+      "status": "pending",
+      "state_history": []
+    },
+    {
+      "id": "phase-13",
+      "name": "Core Memory Lifecycle",
+      "target_state": "core-memory-lifecycle-usable",
+      "status": "pending",
+      "state_history": []
+    },
+    {
+      "id": "phase-14",
+      "name": "Agent Memory Loop",
+      "target_state": "agent-loop-memory-usable",
+      "status": "pending",
+      "state_history": []
+    },
+    {
+      "id": "phase-15",
+      "name": "Benchmark Governance And Promotion",
+      "target_state": "governed-promotion-ready",
+      "status": "pending",
+      "state_history": []
     }
   ],
-  "last_updated": "2026-05-22T21:52:06+08:00"
+  "last_updated": "2026-05-22T17:40:48.878261+00:00"
 }

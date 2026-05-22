@@ -1,0 +1,18 @@
+{
+  "run_id": "phase8_lme50_hb_20260522T160637Z",
+  "benchmark": "longmemeval",
+  "command": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 50 --run-id phase8_lme50_hb_20260522T160637Z",
+  "start_time": "2026-05-22T16:06:37Z",
+  "last_seen": "2026-05-22T16:19:22.667663Z",
+  "partial_path": ".memoryos/evals/phase8_lme50_hb_20260522T160637Z_longmemeval.partial.json",
+  "final_path": ".memoryos/evals/phase8_lme50_hb_20260522T160637Z_longmemeval.json",
+  "rows_done": 15,
+  "last_case_id": "726462e0",
+  "pass": 6,
+  "fail": 9,
+  "answer_mode": "projected",
+  "judge_done": 0,
+  "judge_total": 15,
+  "file_mtime": "2026-05-22T16:18:19.280376Z",
+  "file_size": 5712666
+}

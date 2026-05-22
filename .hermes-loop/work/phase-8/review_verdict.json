@@ -1,0 +1,32 @@
+{
+  "phase": "phase-8",
+  "verdict": "usable_ack",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-8/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "review_file": "work/phase-8/reviews/codex-review-current.md",
+  "phase_decision": "continue_targeted",
+  "pass": true,
+  "findings": [],
+  "cautions": [
+    "This PASS supports the phase-8 promotion-gate decision, not benchmark promotion.",
+    "LoCoMo remains the controlling bottleneck at 30/50 with retrieval and answer-use failures.",
+    "The old work/phase-8/reviews/codex-review.md is stale and must not be used as current ACK evidence."
+  ],
+  "review_verdict": {
+    "overfitting_risk": "medium",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false
+  },
+  "decision": "adjust_blueprint"
+}

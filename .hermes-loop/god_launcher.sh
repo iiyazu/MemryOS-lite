@@ -26,6 +26,7 @@ trap cleanup EXIT
 ) &
 HB_PID=$!
 
-# Run codex in foreground
-codex exec --yolo "$(< .hermes-loop/god_loop_prompt.md)"
+# Run Codex God in foreground. The model/effort are explicit here so the
+# controller does not silently inherit a weaker local default.
+codex exec --yolo -m gpt-5.5 -c model_reasoning_effort=xhigh "$(< .hermes-loop/god_loop_prompt.md)"
 cleanup
