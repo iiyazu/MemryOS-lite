@@ -130,11 +130,16 @@ class RecallMemorySearcher:
         top_k: int = 5,
         analysis: QueryAnalysis | None = None,
         neighbor_window: int = 1,
+        neighbors_before: int | None = None,
+        neighbors_after: int | None = None,
+        preserve_neighbors: bool = False,
     ) -> list[EpisodeHit]:
         query_tokens = tokenize(query)
         query_content_tokens = _content_tokens(query_tokens)
         if not episodes or not query_content_tokens:
             return []
+        before_window = neighbor_window if neighbors_before is None else max(0, neighbors_before)
+        after_window = neighbor_window if neighbors_after is None else max(0, neighbors_after)
 
         entries = [_to_recall_entry(episode) for episode in episodes]
         corpus = [tokenize(entry.index_text) for entry in entries]
@@ -234,20 +239,57 @@ class RecallMemorySearcher:
             seen_message_ids.add(hit.episode.message_id)
 
         direct_selected = list(selected)
+        expandable_session_ids: set[object] = set()
+        if preserve_neighbors:
+            if len(direct_selected) < top_k:
+                for hit in direct_selected:
+                    benchmark_session_id = hit.episode.temporal_scope.get(
+                        "benchmark_session_id"
+                    )
+                    if benchmark_session_id is not None:
+                        expandable_session_ids.add(benchmark_session_id)
+            else:
+                direct_session_counts: dict[object, int] = {}
+                for hit in direct_selected:
+                    benchmark_session_id = hit.episode.temporal_scope.get(
+                        "benchmark_session_id"
+                    )
+                    if benchmark_session_id is None:
+                        continue
+                    direct_session_counts[benchmark_session_id] = (
+                        direct_session_counts.get(benchmark_session_id, 0) + 1
+                    )
+                expandable_session_ids = {
+                    session_id
+                    for session_id, count in direct_session_counts.items()
+                    if count >= 2
+                }
+        neighbor_limit = (
+            top_k
+            if not preserve_neighbors
+            else top_k + top_k * (before_window + after_window)
+        )
         for hit in direct_selected:
-            if len(selected) >= top_k:
+            if len(selected) >= neighbor_limit:
                 break
+            if preserve_neighbors:
+                benchmark_session_id = hit.episode.temporal_scope.get(
+                    "benchmark_session_id"
+                )
+                if benchmark_session_id not in expandable_session_ids:
+                    continue
             self._add_neighbors(
                 selected,
                 seen_message_ids,
                 hit_by_message_id,
                 by_session_and_position,
                 hit,
-                top_k,
-                neighbor_window,
+                neighbor_limit,
+                before_window,
+                after_window,
             )
 
-        return selected[:top_k]
+        return selected if preserve_neighbors else selected[:top_k]
 
     def _add_neighbors(
         self,
@@ -256,13 +298,19 @@ class RecallMemorySearcher:
         hit_by_message_id: dict[str, int],
         by_session_and_position: dict[tuple[str, int], RecallMemoryEntry],
         hit: EpisodeHit,
-        top_k: int,
-        neighbor_window: int,
+        limit: int,
+        neighbors_before: int,
+        neighbors_after: int,
     ) -> None:
-        for offset in range(1, neighbor_window + 1):
-            if len(selected) >= top_k:
+        for offset in range(1, max(neighbors_before, neighbors_after) + 1):
+            if len(selected) >= limit:
                 return
-            for position in (hit.episode.position - offset, hit.episode.position + offset):
+            positions: list[int] = []
+            if offset <= neighbors_before:
+                positions.append(hit.episode.position - offset)
+            if offset <= neighbors_after:
+                positions.append(hit.episode.position + offset)
+            for position in positions:
                 neighbor = by_session_and_position.get((hit.episode.session_id, position))
                 if neighbor is None:
                     continue
@@ -326,7 +374,7 @@ class RecallMemorySearcher:
                 )
                 hit_by_message_id[neighbor.message_id] = len(selected) - 1
                 seen_message_ids.add(neighbor.message_id)
-                if len(selected) >= top_k:
+                if len(selected) >= limit:
                     return
 
     def _append_existing_dedupe(

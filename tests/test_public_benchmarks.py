@@ -5,6 +5,7 @@ import json
 import memoryos_lite.public_benchmarks as public_benchmarks
 from memoryos_lite.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
 from memoryos_lite.config import Settings
+from memoryos_lite.evals import BaselineOutput
 from memoryos_lite.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
 from memoryos_lite.v3_contracts import (
     ArchivalPassage,
@@ -200,6 +201,348 @@ def test_run_public_benchmark_without_llm_judge_writes_report(tmp_path):
     assert results[0].session_overlap_ids == ["D1"]
     assert (settings.data_dir / "evals" / "public-test_locomo.json").exists()
     assert (settings.data_dir / "evals" / "public-test_locomo.partial.json").exists()
+
+
+def test_public_benchmark_projected_answer_cites_selected_evidence(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_cited_projection",
+        text="The citation contract marker is MemoryOS Lite.",
+        question="What is the citation contract marker?",
+        answer="MemoryOS Lite",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="phase6-cited-projection-red",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    result = results[0]
+    expected_source_id = "sample_cited_projection_qa_001:sample_cited_projection:D1:1"
+    diagnostics = result.case_diagnostics
+    assert expected_source_id in result.source_ids
+    assert f"[{expected_source_id}]" in result.answer
+    assert diagnostics["citation_contract_status"] == "supported_cited_answer"
+    assert diagnostics["unsupported_citation_ids"] == []
+    assert diagnostics["answer_support_status"] == "supported_cited_answer"
+
+
+def test_public_case_diagnostics_flags_projected_unretrieved_citation():
+    from memoryos_lite.public_case_diagnostics import build_case_diagnostics
+
+    diagnostics = build_case_diagnostics(
+        benchmark="locomo",
+        baseline="memoryos_lite",
+        case_id="projected-unretrieved-citation",
+        memory_arch="v3",
+        answer="The answer cites unavailable evidence [msg_unselected].",
+        answer_mode="projected",
+        verdict="fail",
+        reasoning="exact substring match",
+        expected_source_ids=["msg_selected"],
+        retrieval_candidate_source_ids=["msg_selected"],
+        episode_candidate_message_ids=[],
+        planned_evidence_message_ids=[],
+        source_ids=["msg_selected"],
+        v3_context={},
+        v3_diagnostics=[],
+        kernel_trace_events=[],
+        baseline_verdict=None,
+        movement_baseline_source=None,
+    )
+
+    assert diagnostics["unsupported_citation_ids"] == ["msg_unselected"]
+    assert diagnostics["citation_contract_status"] == "unsupported_citation"
+    assert diagnostics["failure_class"] == "unsupported_answer"
+
+
+def test_public_answerer_renders_structured_evidence_with_citation_contract(
+    tmp_path, monkeypatch
+):
+    captured_messages = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_messages.extend(messages)
+            return type("FakeResponse", (), {"content": "MemoryOS Lite [msg_selected]"})()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "What did Alice choose?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="msg_selected",
+                text="Alice chose MemoryOS Lite.",
+                component="recall",
+                source_ids=["source_msg_selected"],
+                session_id="D1",
+                date="2026-05-22",
+            )
+        ],
+    )
+
+    assert answer == "MemoryOS Lite [msg_selected]"
+    prompt_text = "\n".join(str(message.content) for message in captured_messages)
+    assert "Allowed citation IDs: msg_selected" in prompt_text
+    assert '"id": "msg_selected"' in prompt_text
+    assert '"component": "recall"' in prompt_text
+    assert '"session_id": "D1"' in prompt_text
+    assert '"date": "2026-05-22"' in prompt_text
+    assert "Alice chose MemoryOS Lite." in prompt_text
+    assert "cite every factual claim with exact [id]" in prompt_text
+    assert "Insufficient retrieved evidence to answer with source citations." in prompt_text
+
+
+def test_public_answerer_guides_relative_temporal_evidence_before_refusal(
+    tmp_path, monkeypatch
+):
+    captured_messages = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_messages.extend(messages)
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            if "relative temporal phrases" not in prompt_text:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Caroline met up with them last week relative to "
+                        "9 June 2023 [conv-26_qa_010:conv-26:D3:11]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "When did Caroline meet up with her friends, family, and mentors?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_010:conv-26:D3:11",
+                text=(
+                    "[7:55 pm on 9 June, 2023] Caroline: Thanks, Mel! "
+                    "My friends, family and mentors are my rocks. Here's a pic "
+                    "from when we met up last week!"
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_010:conv-26:D3:11"],
+                session_id="D3",
+                date="7:55 pm on 9 June, 2023",
+            )
+        ],
+    )
+
+    assert "last week relative to 9 June 2023" in answer
+    assert "[conv-26_qa_010:conv-26:D3:11]" in answer
+    prompt_text = "\n".join(str(message.content) for message in captured_messages)
+    assert "relative temporal phrases" in prompt_text
+    assert "last week" in prompt_text
+    assert "9 June, 2023" in prompt_text
+
+
+def test_public_answerer_guides_supported_partial_evidence_before_refusal(
+    tmp_path, monkeypatch
+):
+    captured_messages = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_messages.extend(messages)
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            if "supported partial answer" not in prompt_text:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "The retrieved evidence supports that Caroline is looking into "
+                        "counseling and mental health as a career, but it does not directly "
+                        "address writing [conv-26_qa_028:conv-26:D4:11]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Would Caroline pursue writing as a career option?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D4:11",
+                text=(
+                    "[10:37 am on 27 June, 2023] Caroline: Lately, I've been "
+                    "looking into counseling and mental health as a career. I want "
+                    "to help people who have gone through the same things as me."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D4:11"],
+                session_id="D4",
+                date="10:37 am on 27 June, 2023",
+            )
+        ],
+    )
+
+    assert "counseling and mental health as a career" in answer
+    assert "does not directly address writing" in answer
+    assert "[conv-26_qa_028:conv-26:D4:11]" in answer
+    prompt_text = "\n".join(str(message.content) for message in captured_messages)
+    assert "supported partial answer" in prompt_text
+    assert "reserve the exact refusal" in prompt_text
+
+
+def test_public_answerer_guides_yes_no_inference_before_refusal(
+    tmp_path, monkeypatch
+):
+    captured_messages = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_messages.extend(messages)
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            if "yes/no preference or career questions" not in prompt_text:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Likely no: Caroline is pursuing counseling and mental health "
+                        "work, while reading is described as a motivating interest "
+                        "[conv-26_qa_028:conv-26:D7:5] "
+                        "[conv-26_qa_028:conv-26:D7:9]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Would Caroline pursue writing as a career option?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:5",
+                text=(
+                    "Caroline is still looking into counseling and mental health "
+                    "jobs because she wants people to have someone to talk to."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:5"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            ),
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:9",
+                text=(
+                    "Caroline says books guide and motivate her and that reading is "
+                    "part of her journey."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:9"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            ),
+        ],
+    )
+
+    assert "Likely no" in answer
+    assert "[conv-26_qa_028:conv-26:D7:5]" in answer
+    assert "[conv-26_qa_028:conv-26:D7:9]" in answer
+    prompt_text = "\n".join(str(message.content) for message in captured_messages)
+    assert "yes/no preference or career questions" in prompt_text
+    assert "answer likely yes or likely no" in prompt_text
+    assert "pursue option X" in prompt_text
+    assert "different option Y" in prompt_text
+
+
+def test_answer_evidence_preserves_final_context_render_order():
+    output = BaselineOutput(
+        answer="answer",
+        context_tokens=10,
+        sources={
+            "source_z_first": "first rendered evidence",
+            "source_a_second": "second rendered evidence",
+        },
+        v3_final_context_trace=[
+            {
+                "component": "recall",
+                "source_ids": ["source_z_first"],
+                "rendered_index": 1,
+                "metadata": {"benchmark_session_id": "D1"},
+            },
+            {
+                "component": "recall",
+                "source_ids": ["source_a_second"],
+                "rendered_index": 2,
+                "metadata": {"benchmark_session_id": "D1"},
+            },
+        ],
+    )
+
+    evidence = public_benchmarks._answer_evidence_from_output(output)
+
+    assert [item.evidence_id for item in evidence] == [
+        "source_z_first",
+        "source_a_second",
+    ]
 
 
 def test_longmemeval_temporal_comparison_keeps_two_raw_sources(tmp_path):
@@ -863,6 +1206,140 @@ def test_public_benchmark_reports_locomo_neighbor_diagnostics(tmp_path):
     )
     neighbor_rows = [row for row in diagnostics if row["metadata"].get("neighbor_of")]
     assert all(row["metadata"].get("benchmark_session_id") != "D2" for row in neighbor_rows)
+
+
+def test_public_benchmark_v3_preserves_locomo_neighbor_sources_for_answer_evidence(
+    tmp_path,
+):
+    distractor_sessions = {
+        f"session_{index}": [
+            {
+                "speaker": "Caroline",
+                "dia_id": f"D{index}:1",
+                "text": (
+                    "Caroline considered writing as a career option in an unrelated "
+                    f"planning note {index}."
+                ),
+            }
+        ]
+        for index in range(1, 7)
+    }
+    data_path = tmp_path / "locomo_neighbor_source_preservation.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "sample_neighbor_source",
+                    "conversation": {
+                        **distractor_sessions,
+                        "session_7_date_time": "1:56 pm on 8 May, 2023",
+                        "session_7": [
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D7:1",
+                                "text": "I want to help make a difference.",
+                            },
+                            {
+                                "speaker": "Melanie",
+                                "dia_id": "D7:2",
+                                "text": "What is your plan to pitch in?",
+                            },
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D7:3",
+                                "text": "I am still comparing next steps.",
+                            },
+                            {
+                                "speaker": "Melanie",
+                                "dia_id": "D7:4",
+                                "text": "What kind of work are you considering?",
+                            },
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D7:5",
+                                "text": (
+                                    "I'm still looking into counseling and mental health "
+                                    "jobs. I want people to have someone to talk to."
+                                ),
+                            },
+                            {
+                                "speaker": "Melanie",
+                                "dia_id": "D7:6",
+                                "text": "What keeps pushing you forward with that?",
+                            },
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D7:7",
+                                "text": (
+                                    "Support helped my mental health. So I started looking "
+                                    "into counseling and mental health career options."
+                                ),
+                            },
+                            {
+                                "speaker": "Melanie",
+                                "dia_id": "D7:8",
+                                "text": (
+                                    "This book reminds me to pursue dreams, just like you "
+                                    "are doing."
+                                ),
+                            },
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D7:9",
+                                "text": (
+                                    "Books guide me, motivate me, and help me discover who "
+                                    "I am. Reading is part of my journey."
+                                ),
+                            },
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "Would Caroline pursue writing as a career option?",
+                            "answer": (
+                                "Likely no; though she likes reading, she wants to be a "
+                                "counselor"
+                            ),
+                            "evidence": ["D7:5", "D7:9"],
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="phase6-locomo-neighbor-source-preservation",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    expected_sources = {
+        "sample_neighbor_source_qa_001:sample_neighbor_source:D7:5",
+        "sample_neighbor_source_qa_001:sample_neighbor_source:D7:9",
+    }
+    diagnostics = report["case_diagnostics"]
+
+    assert expected_sources <= set(report["source_ids"])
+    assert expected_sources <= set(diagnostics["rendered_evidence_ids"])
+    assert diagnostics["rendered_context_status"] == "evidence_rendered"
+    assert report["source_hit"] is True
+    neighbor_rows = [
+        row
+        for row in report["locomo_neighbor_diagnostics"]
+        if row["metadata"].get("neighbor_of")
+    ]
+    assert expected_sources <= {row["item_id"] for row in neighbor_rows}
+    assert {
+        row["metadata"].get("benchmark_session_id") for row in neighbor_rows
+    } == {"D7"}
 
 
 def test_public_benchmark_case_diagnostics_separate_retrieval_miss_and_answer_fail(tmp_path):

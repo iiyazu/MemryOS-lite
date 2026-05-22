@@ -1,16 +1,16 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 6,
+  "current_phase_idx": 7,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-6",
+    "phase": "phase-7",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-7",
-    "state": "PLAN_STORM"
+    "phase": null,
+    "state": null
   },
   "research_lane": {
     "phases": [
@@ -284,7 +284,7 @@
       "id": "phase-6",
       "name": "Answer Projection And Citation Contract",
       "target_state": "answer-grounded",
-      "status": "in_progress",
+      "status": "completed",
       "state_history": [
         {
           "completed_at": "2026-05-21T20:49:21+08:00",
@@ -295,6 +295,31 @@
             "benchmark_scores": {}
           },
           "commit": "648813d"
+        },
+        {
+          "completed_at": "2026-05-22T19:55:00+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-6/context_bundle.md",
+            "ack": "work/phase-6/ack.json",
+            "review": "work/phase-6/reviews/phase6_review.md",
+            "review_verdict": "work/phase-6/review_verdict.json",
+            "reflection": "work/phase-6/reflect_phase-6.md",
+            "tests_passed": 396,
+            "checks_passed": 6,
+            "case_level_eval": {
+              "longmemeval": "30 full-chain LLM judge: 29 pass / 1 fail; fail_to_pass=11; pass_to_fail=0; retrieval_miss=0; evidence_hit_answer_fail=1",
+              "locomo": "30 full-chain LLM judge: 18 pass / 12 fail; fail_to_pass=11; pass_to_fail=0; retrieval_miss=9; evidence_hit_answer_fail=5; conv-26_qa_028 unchanged_pass with D7:5/D7:9 source overlap"
+            },
+            "real_path_wired": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "kernel_trace_nonempty_rows": 0,
+            "next_phase_scope": "Phase 7 may proceed only as opt-in kernel/tool work; continue separating LoCoMo retrieval misses from answer quality."
+          },
+          "commit": null
         }
       ]
     },
@@ -360,5 +385,5 @@
       ]
     }
   ],
-  "last_updated": "2026-05-22T06:29:45Z"
+  "last_updated": "2026-05-22T19:55:00+08:00"
 }

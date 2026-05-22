@@ -38,6 +38,9 @@ class AgentAnswerEvalResult:
     cited_source_ids: list[str]
     retrieved_source_ids: list[str]
     unsupported_citation_ids: list[str]
+    missing_citation: bool = False
+    explicit_no_evidence_refusal: bool = False
+    citation_contract_status: str = "unknown"
 
     def to_report(self) -> dict[str, object]:
         return asdict(self)
@@ -137,12 +140,36 @@ def evaluate_agent_answer(
     no_evidence = not retrieved_source_ids
     refusal = _is_refusal(answer)
     has_content = bool(answer.strip())
+    missing_citation = (
+        bool(retrieved_source_ids)
+        and has_content
+        and not refusal
+        and not cited_source_ids
+    )
+    explicit_no_evidence_refusal = no_evidence and refusal
 
     unsupported_answer = False
     if no_evidence:
         unsupported_answer = has_content and not refusal
     elif not refusal:
         unsupported_answer = not has_retrieved_source or bool(unsupported_citation_ids)
+    if missing_citation:
+        unsupported_answer = True
+
+    if unsupported_citation_ids:
+        citation_contract_status = "unsupported_citation"
+    elif explicit_no_evidence_refusal:
+        citation_contract_status = "no_evidence_refusal"
+    elif no_evidence and has_content and not refusal:
+        citation_contract_status = "unsupported_answer"
+    elif missing_citation:
+        citation_contract_status = "missing_citation"
+    elif cited_source_ids and not unsupported_answer:
+        citation_contract_status = "supported_cited_answer"
+    elif not retrieved_source_ids:
+        citation_contract_status = "no_evidence"
+    else:
+        citation_contract_status = "unsupported_answer"
 
     return AgentAnswerEvalResult(
         answer_has_citation=bool(cited_source_ids),
@@ -152,6 +179,9 @@ def evaluate_agent_answer(
         cited_source_ids=cited_source_ids,
         retrieved_source_ids=retrieved_source_ids,
         unsupported_citation_ids=unsupported_citation_ids,
+        missing_citation=missing_citation,
+        explicit_no_evidence_refusal=explicit_no_evidence_refusal,
+        citation_contract_status=citation_contract_status,
     )
 
 

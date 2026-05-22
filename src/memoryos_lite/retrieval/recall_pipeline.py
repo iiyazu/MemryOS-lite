@@ -32,11 +32,17 @@ class RecallPipeline:
         episodes = self.store.list_episodes(session_id)
         recall_entries = [episode_to_recall_entry(episode) for episode in episodes]
         analysis = self.query_analyzer.analyze(query)
+        preserve_session_neighbors = any(
+            "benchmark_session_id" in entry.temporal_scope for entry in recall_entries
+        )
         hits = self.recall_searcher.search(
             recall_entries,
             query,
             top_k=10,
             analysis=analysis,
+            neighbors_before=self.settings.memoryos_evidence_context_neighbors_before,
+            neighbors_after=self.settings.memoryos_evidence_context_neighbors_after,
+            preserve_neighbors=preserve_session_neighbors,
         )
         package = ContextPackage(
             session_id=session_id,

@@ -1,118 +1,118 @@
 # phase: phase-6
 
-# Spec: Context Composer + Agentic Kernel
+# Spec: Answer Projection And Citation Contract
+
+Context source: `.hermes-loop/work/phase-6/context_bundle.md`.
+
+Active goal: Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.
 
 ## Goal
 
-Add an opt-in v3 composer that assembles layered memory context and a durable
-agentic kernel that can run a single auditable step without breaking the legacy
-v1/v2 paths.
+Wire a testable answer citation contract into the real public benchmark `memoryos_lite` path. The phase must make answer grounding auditable without claiming benchmark improvement until case-level LongMemEval and LoCoMo evidence supports that claim.
 
-## Compatibility State
+## Contract
 
-`opt-in-v3`
+An answer is contract-compliant when:
 
-## Scope
+- every factual answer span is followed by one or more citations in the form `[evidence_id]`;
+- every cited `evidence_id` is present in the structured evidence rendered to the answerer for that case;
+- if no rendered evidence is available, or rendered evidence is insufficient, the answer is an explicit refusal and does not cite any ID;
+- projected/no-LLM answers use the same citation/refusal contract as LLM answers;
+- diagnostics can explain whether failure happened at retrieval, selected context, rendered evidence, citation support, answer quality, or judge status.
 
-This phase introduces:
+Unsupported examples:
 
-- a layered context composer
-- a durable agentic step runner
-- tool policy and approval gating
-- v3 diagnostics for layer inclusion, budget decisions, and continuation
-- feature-flagged routing so legacy context building remains available
+- answer contains no citation while rendered evidence exists;
+- answer cites `[wrong_id]` when `wrong_id` was not rendered;
+- answer gives a factual answer when rendered evidence is empty;
+- answer cites dropped v3 diagnostics or retrieval candidates that did not enter rendered evidence.
 
-This phase does not make v3 the default path.
+## Structured Evidence Input
 
-## Dependencies
+Introduce a small public benchmark evidence payload derived from selected/rendered evidence, not from expected answers:
 
-- Phase-5 lifecycle contracts and provenance types already exist.
-- Core memory APIs and archival search/store APIs already exist.
-- Existing `ContextPackage` and legacy `build_context` behavior must remain
-  readable for current callers.
+```python
+{
+    "id": "stable source or passage id",
+    "text": "rendered evidence text",
+    "source_type": "message|passage|core|unknown",
+    "session_id": "optional benchmark/session id",
+    "date": "optional date or timestamp if present in text/metadata",
+    "component": "recall|archival|core|recent|unknown",
+}
+```
 
-## Functional Requirements
+Required behavior:
 
-1. Add explicit feature flags for:
-   - `MEMORYOS_MEMORY_ARCH=v3`
-   - `MEMORYOS_AGENT_KERNEL=v1`
+- preserve stable IDs from `output.sources`, `v3_final_context_trace`, and rendered context metadata;
+- never include budget-dropped diagnostics as renderable evidence;
+- keep the payload append-only in public reports;
+- include date/session metadata when available, especially for LoCoMo and temporal LongMemEval cases;
+- do not include expected answer text or benchmark case-id rules.
 
-2. Build a v3 composer that returns:
-   - task item
-   - core memory items
-   - recall evidence
-   - archival passages or archival documents
-   - recent messages
-   - fallback items when space remains
+## Public Answerer
 
-3. Record per-layer diagnostics:
-   - layer name
-   - reason
-   - score or priority
-   - token estimate
-   - source refs
-   - budget decision
+`PublicAnswerer` should render structured evidence, not loose context text. The LLM prompt must state:
 
-4. Keep `ContextPackage` compatibility by routing the v3 package through an
-   adapter payload and metadata field rather than replacing the legacy schema.
+- answer only from the evidence list;
+- cite allowed IDs exactly as `[id]`;
+- do not invent IDs;
+- refuse when evidence is absent or insufficient;
+- for temporal/session questions, use evidence dates/session metadata and cite the supporting IDs.
 
-5. Add a durable agentic step runner contract that can:
-   - sanitize input messages
-   - resolve tool policy decisions
-   - request or resume approval
-   - execute a tool call
-   - persist assistant, tool, and approval trace events
-   - emit a continuation decision
+The method can keep backward-compatible call surfaces only if tests prove `run_public_benchmark` passes structured evidence through the real answerer path.
 
-6. Keep tool policy explicit:
-   - no implicit allow without a matching rule
-   - approval requirements must be durable
-   - failed or pending approvals must be observable
+## Deterministic Projection
 
-## Non-Goals
+Projected/no-LLM answers must preserve deterministic behavior:
 
-- Do not make v3 default.
-- Do not remove legacy `ContextBuilder` or `RecallPipeline`.
-- Do not require real tool execution for every test.
-- Do not let the new kernel bypass source-backed or approval-backed mutation
-  rules.
+- no API calls;
+- same retrieval/context diagnostics still populated;
+- projected answer text includes selected evidence citations;
+- no-evidence output is the same explicit refusal style expected by `agent_answer_eval`;
+- answer quality can still fail independently of citation support.
 
-## Proposed Design
+This means a projected answer with rendered evidence and a citation can be `supported_cited_answer` but still fail the judge/substr verdict, which should remain `evidence_hit_answer_fail`.
 
-### Composer
+## Diagnostics
 
-Introduce a dedicated composer service that reads from the store and retrieval
-helpers, then emits `ContextPackageV3`. The service should build layers in a
-fixed order:
+Extend diagnostics append-only. Required fields in `case_diagnostics` and top-level report mirrors where useful:
 
-1. task
-2. core memory
-3. recall evidence
-4. archival passages or documents
-5. recent messages
-6. fallback items
+- `rendered_evidence_ids`
+- `cited_source_ids`
+- `unsupported_citation_ids`
+- `missing_citation`
+- `explicit_no_evidence_refusal`
+- `citation_contract_status`: one of `supported_cited_answer`, `missing_citation`, `unsupported_citation`, `no_evidence_refusal`, `unsupported_answer`
+- existing `retrieval_status`, `selected_context_status`, `rendered_context_status`, `answer_support_status`, `failure_class`, `movement_status`, and `judge_status`
 
-The composer should stop once the budget is exhausted and record every drop in
-diagnostics.
+Failure classification must remain ordered:
 
-### Kernel
+1. judge questionable;
+2. retrieval miss;
+3. context missing evidence;
+4. citation/unsupported answer;
+5. supported cited pass;
+6. evidence-hit-answer-fail.
 
-Introduce a small agentic step runner with explicit policy and approval
-dependencies. The runner should accept a composed context, produce a durable
-step id, persist trace events, and return a continuation decision.
+## Compatibility
 
-### Adapter Surface
+- `MEMORYOS_MEMORY_ARCH=v3` remains the default architecture.
+- `MEMORYOS_MEMORY_ARCH=v1` remains an explicit fallback and must not receive v3-only context payload requirements.
+- `MEMORYOS_AGENT_KERNEL=v1` remains opt-in/default-off and is not required for Phase 6.
+- Existing public report fields are append-only; do not rename or remove current fields.
+- No Letta runtime dependency is added.
 
-`MemoryOSService.build_context()` should keep the legacy return type by default
-and only emit v3-compatible metadata when the v3 flag is set. This preserves
-current CLI/API consumers while giving opt-in callers access to the richer
-composer data.
+## Required RED Tests
 
-## Acceptance Criteria
+- `tests/test_public_benchmarks.py::test_public_benchmark_projected_answer_cites_selected_evidence`
+- `tests/test_public_benchmarks.py::test_public_case_diagnostics_flags_projected_unretrieved_citation`
+- `tests/test_public_benchmarks.py::test_public_answerer_renders_structured_evidence_with_citation_contract`
 
-- The v3 composer can assemble a layered package from the store.
-- Budget drops are explainable per layer.
-- Tool policy decisions and approval state are explicit and durable.
-- Legacy `build_context` behavior remains intact when the v3 flag is off.
-- The new path is opt-in only.
+Also add coverage for no-evidence refusal and temporal LoCoMo date/session grounding if the required RED tests do not cover them sufficiently.
 
+## Milestone Evidence
+
+After focused tests and regression pass, run 30-case full-chain LLM judge reports for LongMemEval and LoCoMo using the Phase 5 comparison reports from `.hermes-loop/work/phase-6/context_bundle.md`.
+
+Acceptable language after milestone eval is conservative: report case movement and diagnostics, not broad improvement claims. If provider access is blocked, record the blocker and run deterministic no-LLM smoke only as fallback evidence.

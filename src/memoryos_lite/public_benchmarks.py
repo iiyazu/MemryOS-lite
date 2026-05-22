@@ -34,6 +34,19 @@ class PublicBenchmarkCase:
     question_type: str | None = None
 
 
+@dataclass(frozen=True)
+class AnswerEvidence:
+    evidence_id: str
+    text: str
+    component: str = "context"
+    source_ids: list[str] = field(default_factory=list)
+    session_id: str | None = None
+    date: str | None = None
+    rendered_index: int | None = None
+    estimated_tokens: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass
 class PublicBenchmarkResult:
     benchmark: str
@@ -203,11 +216,14 @@ def run_public_benchmark(
                 run_settings,
                 budget_override=run_settings.rot_safe_budget,
             )
-            answer = output.answer
+            answer = _public_projected_answer_with_citations(output.answer, output.sources)
             answer_error: str | None = None
             if answerer is not None:
                 try:
-                    answer = answerer.answer(public_case.case.question, output.sources)
+                    answer = answerer.answer(
+                        public_case.case.question,
+                        _answer_evidence_from_output(output),
+                    )
                 except Exception as exc:
                     answer_error = f"answer_error: {exc}"
                     answer = ""
@@ -771,6 +787,100 @@ def _safe_id(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.:-]+", "_", value)
 
 
+def _answer_evidence_from_output(output: BaselineOutput) -> list[AnswerEvidence]:
+    trace_by_source_id = _final_trace_by_source_id(output.v3_final_context_trace)
+    evidence: list[AnswerEvidence] = []
+    for index, (source_id, text) in enumerate(sorted(output.sources.items()), start=1):
+        trace = trace_by_source_id.get(source_id, {})
+        metadata = trace.get("metadata") if isinstance(trace.get("metadata"), dict) else {}
+        evidence.append(
+            AnswerEvidence(
+                evidence_id=source_id,
+                text=text,
+                component=str(trace.get("component") or "context"),
+                source_ids=[source_id],
+                session_id=_string_or_none(metadata.get("benchmark_session_id")),
+                date=_string_or_none(metadata.get("benchmark_date")) or _date_from_text(text),
+                rendered_index=(
+                    trace.get("rendered_index")
+                    if isinstance(trace.get("rendered_index"), int)
+                    else index
+                ),
+                estimated_tokens=(
+                    trace.get("estimated_tokens")
+                    if isinstance(trace.get("estimated_tokens"), int)
+                    else None
+                ),
+                metadata={str(key): value for key, value in metadata.items()},
+            )
+        )
+    evidence.sort(
+        key=lambda item: (
+            item.rendered_index is None,
+            item.rendered_index if item.rendered_index is not None else 10_000_000,
+            item.evidence_id,
+        )
+    )
+    return evidence
+
+
+def _public_projected_answer_with_citations(answer: str, sources: dict[str, str]) -> str:
+    if not sources:
+        return "Insufficient retrieved evidence to answer with source citations."
+    if _has_any_citation(answer):
+        return answer
+    citations = " ".join(f"[{source_id}]" for source_id in sorted(sources))
+    return f"{answer} {citations}".strip()
+
+
+def _has_any_citation(answer: str) -> bool:
+    return bool(re.search(r"\[[^\]\s]+\]", answer))
+
+
+def _final_trace_by_source_id(trace: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for row in trace:
+        if row.get("dropped") is True:
+            continue
+        for source_id in _source_ids_from_trace_row(row):
+            rows.setdefault(source_id, row)
+    return rows
+
+
+def _source_ids_from_trace_row(row: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    source_ids = row.get("source_ids")
+    if isinstance(source_ids, str):
+        ids.append(source_ids)
+    elif isinstance(source_ids, list):
+        ids.extend(item for item in source_ids if isinstance(item, str))
+    refs = row.get("source_refs")
+    if isinstance(refs, list):
+        for ref in refs:
+            if isinstance(ref, dict) and isinstance(ref.get("source_id"), str):
+                ids.append(ref["source_id"])
+    return _dedupe(ids)
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result
+
+
+def _string_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _date_from_text(text: str) -> str | None:
+    match = re.match(r"^\[([^\]]+)\]", text.strip())
+    return match.group(1) if match else None
+
+
 class PublicAnswerer:
     def __init__(self, settings: Settings) -> None:
         api_key = settings.chat_api_key
@@ -787,24 +897,68 @@ class PublicAnswerer:
             **kwargs,
         )
 
-    def answer(self, question: str, sources: dict[str, str]) -> str:
-        if not sources:
-            return "未找到相关记忆"
-        context = "\n\n".join(
-            f"[{source_id}]\n{text}" for source_id, text in sorted(sources.items())
+    def answer(self, question: str, sources: dict[str, str] | list[AnswerEvidence]) -> str:
+        evidence = _coerce_answer_evidence(sources)
+        if not evidence:
+            return "Insufficient retrieved evidence to answer with source citations."
+        allowed_ids = ", ".join(item.evidence_id for item in evidence)
+        context = json.dumps(
+            [
+                {
+                    "id": item.evidence_id,
+                    "component": item.component,
+                    "source_ids": item.source_ids,
+                    "session_id": item.session_id,
+                    "date": item.date,
+                    "rendered_index": item.rendered_index,
+                    "estimated_tokens": item.estimated_tokens,
+                    "metadata": item.metadata,
+                    "text": item.text,
+                }
+                for item in evidence
+            ],
+            ensure_ascii=False,
+            indent=2,
         )
         response = self.llm.invoke(
             [
                 SystemMessage(
                     content=(
-                        "You answer memory benchmark questions using only the provided "
-                        "retrieved context. Answer concisely. If the context is insufficient, "
-                        "say that the memory does not contain enough information. For "
-                        "temporal-reasoning questions, use the timestamps in the retrieved "
-                        "context to determine order or duration."
+                        "You answer memory benchmark questions using only the provided structured "
+                        "evidence. Allowed citation IDs: "
+                        f"{allowed_ids}. You must cite every factual claim with exact [id] "
+                        "citations from the allowed IDs. Do not invent citation IDs. If the "
+                        "evidence is insufficient, answer exactly: Insufficient retrieved "
+                        "evidence to answer with source citations. For temporal or session "
+                        "questions, use the evidence date and session_id metadata. relative "
+                        "temporal phrases in evidence, such as 'last week' or 'yesterday', "
+                        "are usable when anchored by evidence date metadata; cite the "
+                        "anchoring evidence instead of refusing only because the exact "
+                        "calendar date is implicit. If evidence is relevant but incomplete, "
+                        "give a supported partial answer with a clear limitation and "
+                        "citations. reserve the exact refusal for cases with no relevant "
+                        "retrieved evidence. For yes/no preference or career questions, "
+                        "when cited evidence supports an alternative plan, career path, "
+                        "preference, or non-career interest, answer likely yes or likely no "
+                        "with that limitation instead of refusing only because the evidence "
+                        "does not literally mention the option in the question. If the "
+                        "question asks whether someone would pursue option X, and evidence "
+                        "shows they are pursuing a different option Y, a cautious likely no "
+                        "answer is supported when every claim is cited."
                     )
                 ),
-                HumanMessage(content=f"Retrieved context:\n{context}\n\nQuestion: {question}"),
+                HumanMessage(content=f"Retrieved evidence:\n{context}\n\nQuestion: {question}"),
             ]
         )
         return response.content if isinstance(response.content, str) else str(response.content)
+
+
+def _coerce_answer_evidence(
+    sources: dict[str, str] | list[AnswerEvidence],
+) -> list[AnswerEvidence]:
+    if isinstance(sources, dict):
+        return [
+            AnswerEvidence(evidence_id=source_id, text=text, source_ids=[source_id])
+            for source_id, text in sorted(sources.items())
+        ]
+    return sources

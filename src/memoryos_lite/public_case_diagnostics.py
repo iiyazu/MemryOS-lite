@@ -56,6 +56,7 @@ def build_case_diagnostics(
         unsupported=answer_eval.unsupported_answer,
         unsupported_citation_ids=answer_eval.unsupported_citation_ids,
         cited_source_ids=answer_eval.cited_source_ids,
+        citation_contract_status=answer_eval.citation_contract_status,
     )
     judge_status = _judge_status(verdict, reasoning)
     failure_class = _failure_class(
@@ -87,6 +88,9 @@ def build_case_diagnostics(
         "rendered_evidence_ids": rendered_ids,
         "cited_source_ids": answer_eval.cited_source_ids,
         "unsupported_citation_ids": answer_eval.unsupported_citation_ids,
+        "missing_citation": answer_eval.missing_citation,
+        "explicit_no_evidence_refusal": answer_eval.explicit_no_evidence_refusal,
+        "citation_contract_status": answer_eval.citation_contract_status,
         "retrieval_status": retrieval_status,
         "selected_context_status": selected_context_status,
         "rendered_context_status": rendered_context_status,
@@ -122,11 +126,18 @@ def _answer_support_status(
     unsupported: bool,
     unsupported_citation_ids: list[str],
     cited_source_ids: list[str],
+    citation_contract_status: str,
 ) -> str:
+    if citation_contract_status in {"missing_citation", "unsupported_citation"}:
+        return "unsupported_answer"
+    if citation_contract_status == "no_evidence_refusal":
+        return "no_evidence_refusal"
     if unsupported and (answer_mode == "llm" or unsupported_citation_ids):
         return "unsupported_answer"
-    if verdict == "pass" and (not cited_source_ids or not unsupported):
+    if verdict == "pass" and cited_source_ids and not unsupported:
         return "supported_cited_answer"
+    if verdict == "pass" and not unsupported:
+        return "supported_answer_missing_citation"
     if answer_mode == "projected" and rendered_has_expected and verdict == "fail":
         return "answer_failed_with_rendered_evidence"
     if unsupported:
@@ -156,13 +167,15 @@ def _failure_class(
         return "judge_questionable"
     if retrieval_status != "evidence_retrieved":
         return "retrieval_miss"
+    if answer_support_status == "unsupported_answer":
+        return "unsupported_answer"
+    if answer_support_status == "no_evidence_refusal":
+        return "unsupported_answer"
     if (
         selected_context_status != "evidence_selected"
         or rendered_context_status != "evidence_rendered"
     ):
         return "context_missing_evidence"
-    if answer_support_status == "unsupported_answer":
-        return "unsupported_answer"
     if verdict == "pass":
         return "supported_cited_answer"
     return "evidence_hit_answer_fail"

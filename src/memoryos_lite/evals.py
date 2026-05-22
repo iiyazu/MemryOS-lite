@@ -642,11 +642,17 @@ def _run_baseline(
         memory_evidence: list[EvidenceItem] = []
         messages_by_id = {message.id: message for message in messages}
         for context_evidence in context.retrieved_evidence:
+            retrieved_origin = context_evidence.metadata.get("origin")
             memory_evidence.append(
                 EvidenceItem(
                     text=context_evidence.text,
                     source_texts={context_evidence.message_id: context_evidence.text},
-                    origin="retrieved_message" if context_evidence.page_id else "message",
+                    origin=(
+                        "retrieved_message"
+                        if context_evidence.page_id
+                        or retrieved_origin in {"recall", "archival", "episode"}
+                        else "message"
+                    ),
                     superseded=context_evidence.superseded,
                 )
             )
