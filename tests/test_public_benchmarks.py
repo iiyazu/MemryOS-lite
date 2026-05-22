@@ -6,7 +6,12 @@ import memoryos_lite.public_benchmarks as public_benchmarks
 from memoryos_lite.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
 from memoryos_lite.config import Settings
 from memoryos_lite.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
-from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
+from memoryos_lite.v3_contracts import (
+    ArchivalPassage,
+    ArchiveAttachment,
+    CoreMemoryBlock,
+    SourceRef,
+)
 
 
 def _write_single_locomo_case(
@@ -1105,6 +1110,115 @@ def test_public_benchmark_v3_core_diagnostics_are_append_only(tmp_path, monkeypa
     assert core_diagnostics[0]["metadata"]["label"] == "profile"
     assert core_diagnostics[0]["metadata"]["tags"] == ["profile"]
     assert "planned_evidence_source_hit_at_5" in report
+
+
+def test_public_benchmark_v3_archival_scope_diagnostics_are_append_only(
+    tmp_path,
+    monkeypatch,
+):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_archive_diag",
+        text="Alice uses the attached archive marker.",
+        question="What archive marker does Alice use?",
+        answer="attached archive marker",
+    )
+    original_run_baseline = public_benchmarks._run_baseline
+
+    def seeded_run_baseline(
+        baseline,
+        case,
+        messages,
+        service,
+        settings,
+        budget_override=None,
+    ):
+        original_build_context = service.build_context
+
+        def build_context_with_archives(
+            session_id,
+            task,
+            budget=None,
+            retrieval_query=None,
+            include_global_core=False,
+        ):
+            if not service.store.list_archive_attachments(
+                scope_type="session",
+                scope_id=session_id,
+            ):
+                ref = SourceRef(
+                    source_type="message",
+                    source_id=messages[0].id,
+                    session_id=session_id,
+                )
+                service.store.create_archival_passage(
+                    ArchivalPassage(
+                        id="apsg_public_attached",
+                        archive_id="archive_public_attached",
+                        text="Alice uses the attached archive marker.",
+                        source_refs=[ref],
+                    )
+                )
+                service.store.create_archival_passage(
+                    ArchivalPassage(
+                        id="apsg_public_excluded",
+                        archive_id="archive_public_excluded",
+                        text="Alice uses an excluded archive marker.",
+                        source_refs=[ref],
+                    )
+                )
+                service.store.create_archive_attachment(
+                    ArchiveAttachment(
+                        id="aatt_public_attached",
+                        archive_id="archive_public_attached",
+                        scope_type="session",
+                        scope_id=session_id,
+                        source_refs=[ref],
+                    )
+                )
+            return original_build_context(
+                session_id,
+                task,
+                budget=budget,
+                retrieval_query=retrieval_query,
+                include_global_core=include_global_core,
+            )
+
+        service.build_context = build_context_with_archives
+        return original_run_baseline(
+            baseline,
+            case,
+            messages,
+            service,
+            settings,
+            budget_override=budget_override,
+        )
+
+    monkeypatch.setattr(public_benchmarks, "_run_baseline", seeded_run_baseline)
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v3-archival-scope-diagnostics-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    eligibility = report["case_diagnostics"]["archival_eligibility"]
+    assert report["verdict"] == "pass"
+    assert report["movement_status"] == "new_case_no_baseline"
+    assert "v3_diagnostics" in report
+    assert report["source_hit"] is True
+    assert "apsg_public_excluded" not in report["retrieval_candidate_source_ids"]
+    assert eligibility["eligible_archive_ids"] == ["archive_public_attached"]
+    assert eligibility["selected_passage_ids"] == ["apsg_public_attached"]
+    assert eligibility["scope_excluded_passage_ids"] == ["apsg_public_excluded"]
+    assert eligibility["archival_scope_excluded"] == 1
+    assert eligibility["archival_no_match"] == 0
 
 
 def test_public_benchmark_kernel_trace_remains_default_off(tmp_path):

@@ -253,6 +253,53 @@ class ArchiveAttachment(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ArchiveEligibilityScope(BaseModel):
+    session_id: str
+    identity_scope: IdentityScope | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    archive_ids: list[str] = Field(default_factory=list)
+
+
+class ArchiveEligibilityResult(BaseModel):
+    scope: ArchiveEligibilityScope
+    eligible_archive_ids: list[str] = Field(default_factory=list)
+    eligible_passages: list[ArchivalPassage] = Field(default_factory=list)
+    scope_excluded_passage_ids: list[str] = Field(default_factory=list)
+    no_match_passage_ids: list[str] = Field(default_factory=list)
+    selected_passage_ids: list[str] = Field(default_factory=list)
+    selected_source_refs: list[dict[str, Any]] = Field(default_factory=list)
+
+    @property
+    def eligible_passage_count(self) -> int:
+        return len(self.eligible_passages)
+
+    @property
+    def selected_passage_count(self) -> int:
+        return len(self.selected_passage_ids)
+
+    @property
+    def archival_scope_excluded(self) -> int:
+        return len(self.scope_excluded_passage_ids)
+
+    @property
+    def archival_no_match(self) -> int:
+        return len(self.no_match_passage_ids)
+
+    def diagnostics_payload(self) -> dict[str, Any]:
+        return {
+            "eligible_archive_ids": list(self.eligible_archive_ids),
+            "eligible_passage_count": self.eligible_passage_count,
+            "selected_passage_ids": list(self.selected_passage_ids),
+            "selected_passage_count": self.selected_passage_count,
+            "selected_source_refs": list(self.selected_source_refs),
+            "scope_excluded_passage_ids": list(self.scope_excluded_passage_ids),
+            "archival_scope_excluded": self.archival_scope_excluded,
+            "no_match_passage_ids": list(self.no_match_passage_ids),
+            "archival_no_match": self.archival_no_match,
+            "no_attached_archive": not self.eligible_archive_ids and not self.scope.source_ids,
+        }
+
+
 class CoreMemoryBlock(BaseModel):
     id: str
     label: str = Field(min_length=1)
@@ -355,6 +402,8 @@ class ContextComposerRequest(BaseModel):
     budget: int = Field(gt=0)
     retrieval_query: str | None = None
     identity_scope: IdentityScope | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    archive_ids: list[str] = Field(default_factory=list)
     include_layers: list[str] = Field(default_factory=list)
 
 
@@ -468,10 +517,12 @@ def item_to_archival_passage(
     item: MemoryItem,
     document_id: str | None = None,
 ) -> ArchivalPassage:
+    source_id = item.source_message_ids[0] if item.source_message_ids else None
     return ArchivalPassage(
         id=f"apsg_{item.id}",
         document_id=document_id,
         text=item.content,
+        source_id=source_id,
         source_refs=[
             SourceRef(
                 source_type=SourceType.MESSAGE,

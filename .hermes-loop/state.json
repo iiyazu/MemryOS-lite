@@ -1,20 +1,20 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 4,
+  "current_phase_idx": 5,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-4",
+    "phase": "phase-5",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-5",
+    "phase": "phase-6",
     "state": "PLAN_STORM"
   },
   "research_lane": {
     "phases": [
-      "phase-6"
+      "phase-7"
     ]
   },
   "review_lane": {
@@ -193,9 +193,9 @@
     },
     {
       "id": "phase-4",
-      "name": "Archival Memory Store",
-      "target_state": "shadow-write",
-      "status": "in_progress",
+      "name": "Archive And Passage Scope",
+      "target_state": "archive-scope-usable",
+      "status": "completed",
       "state_history": [
         {
           "completed_at": "2026-05-21T20:00:00+00:00",
@@ -206,14 +206,40 @@
             "benchmark_scores": {}
           },
           "commit": "7580e1d"
+        },
+        {
+          "completed_at": "2026-05-22T10:49:54+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-4/context_bundle.md",
+            "ack": "work/phase-4/ack.json",
+            "review": "work/phase-4/reviews/codex-review.md",
+            "review_verdict": "work/phase-4/review_verdict.json",
+            "reflection": "work/phase-4/reflect_phase-4.md",
+            "tests_passed": 378,
+            "checks_passed": 4,
+            "case_level_eval": {
+              "longmemeval": "30 full-chain LLM judge: 17 pass / 13 fail; retrieval_miss=3; context_missing_evidence=12; evidence_hit_answer_fail=4; movement=new_case_no_baseline",
+              "locomo": "30 full-chain LLM judge: 0 pass / 30 fail; retrieval_miss=11; context_missing_evidence=10; evidence_hit_answer_fail=9; movement=new_case_no_baseline"
+            },
+            "real_path_wired": true,
+            "no_benchmark_improvement_claim": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "blueprint_amendment_required": false,
+            "next_phase_scope": "Phase 5 should start narrow around LoCoMo temporal/session context accounting and query-to-evidence-to-final-context traceability"
+          },
+          "commit": null
         }
       ]
     },
     {
       "id": "phase-5",
-      "name": "Memory Lifecycle + Promotion Policy",
-      "target_state": "shadow-read",
-      "status": "pending",
+      "name": "Context Composer And Accounting",
+      "target_state": "composer-usable",
+      "status": "in_progress",
       "state_history": [
         {
           "completed_at": "2026-05-21T19:47:16+08:00",
@@ -229,8 +255,8 @@
     },
     {
       "id": "phase-6",
-      "name": "Context Composer + Agentic Kernel",
-      "target_state": "opt-in-v3",
+      "name": "Answer Projection And Citation Contract",
+      "target_state": "answer-grounded",
       "status": "pending",
       "state_history": [
         {
@@ -247,8 +273,8 @@
     },
     {
       "id": "phase-7",
-      "name": "Benchmark + Evaluation Compatibility",
-      "target_state": "bench-candidate",
+      "name": "Kernel, Tool, Approval, And Memory Mutation Loop",
+      "target_state": "kernel-opt-in-usable",
       "status": "pending",
       "state_history": [
         {
@@ -279,8 +305,8 @@
     },
     {
       "id": "phase-8",
-      "name": "Legacy Adapter + Deprecation Decision",
-      "target_state": "default-candidate",
+      "name": "Promotion Gate And Next Blueprint Decision",
+      "target_state": "promotion-decision",
       "status": "pending",
       "state_history": [
         {
@@ -307,5 +333,5 @@
       ]
     }
   ],
-  "last_updated": "2026-05-22T08:07:38+08:00"
+  "last_updated": "2026-05-22T02:49:54+00:00"
 }

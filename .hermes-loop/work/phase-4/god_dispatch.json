@@ -5,13 +5,13 @@
   "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
   "context_bundle": {
     "path": "work/phase-4/context_bundle.md",
-    "sha256": "c12ced67fcb4a1980a01659372e676570a9c0d199299c31a6afcdcd5cd674037",
+    "sha256": "20d8a93e0ef57e7d2a44a0b4de068aac186016370454d4dd36dd8803470cf623",
     "summary": "Phase 4 must replace global archival passage search with scoped archive/passage eligibility in the real v3 composer and public benchmark diagnostics. Existing archival store/search code is present but insufficient because V3ContextComposer currently searches all archival passages globally."
   },
   "lane": "execute_lane",
   "state_binding": {
     "execute_lane_phase": "phase-4",
-    "execute_lane_state": "GOD_DISPATCH",
+    "execute_lane_state": "EXECUTE",
     "plan_lane_phase": "phase-5",
     "research_lane_phases": ["phase-6"]
   },

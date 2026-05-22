@@ -15,7 +15,12 @@ from memoryos_lite.schemas import (
     Role,
 )
 from memoryos_lite.store import create_store
-from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
+from memoryos_lite.v3_contracts import (
+    ArchivalPassage,
+    ArchiveAttachment,
+    CoreMemoryBlock,
+    SourceRef,
+)
 
 
 def test_ingest_triggers_paging_and_commits_page(service):
@@ -237,6 +242,37 @@ def test_explicit_v1_build_context_excludes_v3_core_memory_blocks(tmp_path):
     assert context.metadata.get("memory_arch") != "v3"
     assert "v3_diagnostics" not in context.metadata
     assert "Alice lives in Shanghai." not in context.model_dump_json()
+
+
+def test_explicit_v1_build_context_excludes_v3_archival_scope_diagnostics(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
+    service = MemoryOSService(settings=settings)
+    session = service.create_session("archival-scope-v1")
+    ref = SourceRef(source_type="message", source_id="msg_1", session_id=session.id)
+    service.store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_v1_hidden",
+            archive_id="archive_1",
+            text="Alice lives in a scoped archival passage.",
+            source_refs=[ref],
+        )
+    )
+    service.store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_v1_hidden",
+            archive_id="archive_1",
+            scope_type="session",
+            scope_id=session.id,
+            source_refs=[ref],
+        )
+    )
+
+    context = service.build_context(session.id, "用户住在哪里？", budget=200)
+
+    assert context.metadata.get("memory_arch") != "v3"
+    assert "archival_eligibility" not in context.metadata
+    assert "v3_diagnostics" not in context.metadata
+    assert "Alice lives in a scoped archival passage." not in context.model_dump_json()
 
 
 def test_context_builder_deduplicates_pinned_core_pages_by_id(service):

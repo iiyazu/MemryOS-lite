@@ -7,7 +7,7 @@ def _passage(
     text: str,
     *,
     archive_id: str = "archive_1",
-    source_id: str = "source_1",
+    source_id: str | None = None,
     file_id: str = "file_1",
     tags: list[str] | None = None,
 ) -> ArchivalPassage:

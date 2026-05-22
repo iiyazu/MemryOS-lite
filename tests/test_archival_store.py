@@ -9,6 +9,7 @@ from memoryos_lite.v3_contracts import (
     ArchivalMemory,
     ArchivalPassage,
     ArchiveAttachment,
+    ArchiveEligibilityScope,
     SourceRef,
     SourceSpan,
 )
@@ -63,8 +64,6 @@ def test_archival_store_round_trips_documents_chunks_passages_and_attachments(tm
             archive_id=document.archive_id,
             text=chunk.text,
             citation=SourceSpan(start=0, end=24),
-            source_id="source_1",
-            file_id="file_1",
             tags=["travel"],
             source_refs=[ref],
         )
@@ -164,3 +163,73 @@ def test_archival_producer_helpers_preserve_message_source_refs(tmp_path):
     assert document.producer == "message"
     assert passage.source_refs[0].source_id == "msg_1"
     assert memory.source_refs[0].source_id == "msg_1"
+
+
+def test_archival_passage_invariants_and_attachment_scope_helper(tmp_path):
+    store = _store(tmp_path)
+    ref = _ref()
+
+    with pytest.raises(ValueError, match="agent/archive passages require archive_id"):
+        store.create_archival_passage(
+            ArchivalPassage(
+                id="apsg_neither",
+                text="missing passage identity",
+                source_refs=[ref],
+            )
+        )
+    with pytest.raises(ValueError, match="cannot set source_id"):
+        store.create_archival_passage(
+            ArchivalPassage(
+                id="apsg_both",
+                archive_id="archive_1",
+                source_id="source_1",
+                text="mixed passage identity",
+                source_refs=[ref],
+            )
+        )
+
+    archive_passage = store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_agent",
+            archive_id="archive_1",
+            text="Attached archive memory.",
+            source_refs=[ref],
+        )
+    )
+    source_passage = store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_source",
+            source_id="source_1",
+            file_id="file_1",
+            text="Source file passage.",
+            source_refs=[ref],
+        )
+    )
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_other",
+            archive_id="archive_2",
+            text="Unattached archive memory.",
+            source_refs=[ref],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_1",
+            archive_id="archive_1",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[ref],
+        )
+    )
+
+    result = store.list_archival_passages_for_scope(
+        ArchiveEligibilityScope(session_id="ses_1", source_ids=["source_1"])
+    )
+
+    assert result.eligible_archive_ids == ["archive_1"]
+    assert [passage.id for passage in result.eligible_passages] == [
+        archive_passage.id,
+        source_passage.id,
+    ]
+    assert result.scope_excluded_passage_ids == ["apsg_other"]

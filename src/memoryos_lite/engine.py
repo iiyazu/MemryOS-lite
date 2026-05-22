@@ -68,6 +68,7 @@ from memoryos_lite.v3_contracts import (
     ContextComposerRequest,
     ContextLayerItem,
     ContextPackageV3,
+    IdentityScope,
     ToolPolicyRule,
 )
 
@@ -1984,6 +1985,7 @@ class MemoryOSService:
                     task=task,
                     budget=effective_budget,
                     retrieval_query=retrieval_query,
+                    identity_scope=IdentityScope(session_id=session_id),
                 )
             )
             package = self._context_package_from_v3(v3_package)
@@ -2182,6 +2184,10 @@ class MemoryOSService:
                     diagnostic.model_dump(mode="json")
                     for diagnostic in v3_package.diagnostics
                 ],
+                "archival_eligibility": v3_package.metadata.get(
+                    "archival_eligibility",
+                    {},
+                ),
                 "indexed_source_ids": indexed_source_ids,
                 "recall_indexed_source_ids": indexed_source_ids,
                 "episode_candidate_message_ids": recall_candidate_message_ids,

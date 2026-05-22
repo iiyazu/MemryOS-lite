@@ -41,6 +41,7 @@ def build_case_diagnostics(
         v3_diagnostics=v3_diagnostics,
         fallback_ids=retrieved_ids,
     )
+    archival_eligibility = _archival_eligibility(v3_context)
     rendered_ids = _dedupe(source_ids)
     answer_eval = evaluate_agent_answer(answer, rendered_ids)
 
@@ -93,6 +94,7 @@ def build_case_diagnostics(
         "baseline_verdict": baseline_verdict,
         "movement_baseline_source": movement_baseline_source,
         "kernel_trace_present": bool(kernel_trace_events),
+        "archival_eligibility": archival_eligibility,
         "source_hit_semantics": "final_projection_source_overlap",
         "diagnostic_notes": notes,
     }
@@ -188,6 +190,16 @@ def _ids_from_v3_context(v3_context: dict[str, object]) -> list[str]:
         for key in ("source_ids", "source_message_ids"):
             ids.extend(_strings_from_value(item.get(key)))
     return ids
+
+
+def _archival_eligibility(v3_context: dict[str, object]) -> dict[str, object]:
+    if not isinstance(v3_context, dict):
+        return {}
+    metadata = v3_context.get("metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    eligibility = metadata.get("archival_eligibility")
+    return eligibility if isinstance(eligibility, dict) else {}
 
 
 def _strings_from_mapping(item: dict[str, object], keys: Iterable[str]) -> list[str]:

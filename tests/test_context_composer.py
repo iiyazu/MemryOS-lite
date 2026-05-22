@@ -9,7 +9,9 @@ from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
     ArchivalPassage,
+    ArchiveAttachment,
     ContextComposerRequest,
+    IdentityScope,
     SourceRef,
 )
 
@@ -80,6 +82,15 @@ def test_v3_composer_builds_layered_context_package(tmp_path):
             source_refs=[ref],
         )
     )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_1",
+            archive_id="archive_1",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[ref],
+        )
+    )
 
     package = V3ContextComposer(
         store=store,
@@ -101,6 +112,185 @@ def test_v3_composer_builds_layered_context_package(tmp_path):
     assert package.metadata["memory_arch"] == "v3"
     assert package.budget_decisions
     assert all(item.estimated_tokens > 0 for item in package.items)
+
+
+def test_v3_composer_filters_archival_passages_by_attached_scope(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    ref = _ref()
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_attached",
+            archive_id="archive_attached",
+            text="Alice keeps the quiet archive note about Shanghai rail.",
+            source_refs=[ref],
+        )
+    )
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_unattached",
+            archive_id="archive_unattached",
+            text="Alice keeps the loud perfect Shanghai rail answer in an unattached archive.",
+            source_refs=[_ref("msg_2")],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_attached",
+            archive_id="archive_attached",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[ref],
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="Where is Alice's Shanghai rail note?",
+            budget=80,
+        )
+    )
+
+    archival_items = [item for item in package.items if item.layer == "archival"]
+    assert [item.item_id for item in archival_items] == ["apsg_attached"]
+    eligibility = package.metadata["archival_eligibility"]
+    assert eligibility["eligible_archive_ids"] == ["archive_attached"]
+    assert eligibility["selected_passage_ids"] == ["apsg_attached"]
+    assert eligibility["archival_scope_excluded"] == 1
+    assert "apsg_unattached" in eligibility["scope_excluded_passage_ids"]
+
+
+def test_v3_composer_reports_archival_scope_eligibility(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    ref = _ref()
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_match",
+            archive_id="archive_attached",
+            text="Alice archived a Shanghai rail preference.",
+            source_refs=[ref],
+        )
+    )
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_no_match",
+            archive_id="archive_attached",
+            text="Bob archived a kitchen inventory.",
+            source_refs=[_ref("msg_2")],
+        )
+    )
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_excluded",
+            archive_id="archive_other",
+            text="Alice Shanghai rail distractor from another archive.",
+            source_refs=[_ref("msg_3")],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_attached",
+            archive_id="archive_attached",
+            scope_type="agent",
+            scope_id="agent_1",
+            source_refs=[ref],
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="What did Alice archive about Shanghai rail?",
+            budget=80,
+            identity_scope=IdentityScope(agent_id="agent_1"),
+        )
+    )
+
+    eligibility = package.metadata["archival_eligibility"]
+    assert eligibility["eligible_archive_ids"] == ["archive_attached"]
+    assert eligibility["selected_passage_ids"] == ["apsg_match"]
+    assert eligibility["selected_source_refs"] == [
+        {"source_type": "message", "source_id": "msg_1", "session_id": "ses_1"}
+    ]
+    assert eligibility["eligible_passage_count"] == 2
+    assert eligibility["selected_passage_count"] == 1
+    assert eligibility["archival_scope_excluded"] == 1
+    assert eligibility["archival_no_match"] == 1
+    event_types = [
+        diagnostic.event_type
+        for diagnostic in package.diagnostics
+        if diagnostic.layer == "archival"
+    ]
+    assert "archival_selected" in event_types
+    assert "archival_eligible_no_match" in event_types
+    assert "archival_scope_excluded" in event_types
+
+
+def test_v3_composer_does_not_report_budget_dropped_archival_passages_as_selected(
+    tmp_path,
+):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    ref = _ref()
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_budget_dropped",
+            archive_id="archive_attached",
+            text="Shanghai rail " + ("padding " * 200),
+            source_refs=[ref],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_attached",
+            archive_id="archive_attached",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[ref],
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="Shanghai rail?",
+            budget=20,
+        )
+    )
+
+    assert [item.item_id for item in package.items if item.layer == "archival"] == []
+    eligibility = package.metadata["archival_eligibility"]
+    assert eligibility["eligible_passage_count"] == 1
+    assert eligibility["selected_passage_ids"] == []
+    assert eligibility["selected_source_refs"] == []
+    assert eligibility["selected_passage_count"] == 0
+    archival_budget = [
+        decision for decision in package.budget_decisions if decision.layer == "archival"
+    ][0]
+    assert archival_budget.dropped_item_ids == ["apsg_budget_dropped"]
+    selected_events = [
+        diagnostic
+        for diagnostic in package.diagnostics
+        if diagnostic.event_type == "archival_selected"
+    ]
+    assert selected_events == []
 
 
 def test_v3_composer_core_items_use_structured_render_and_diagnostics(tmp_path):

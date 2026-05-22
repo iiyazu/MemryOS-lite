@@ -10,6 +10,8 @@ from memoryos_lite.schemas import Message
 from memoryos_lite.store import MemoryStore
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
+    ArchiveEligibilityResult,
+    ArchiveEligibilityScope,
     ContextComposerRequest,
     ContextLayerItem,
     ContextPackageV3,
@@ -74,12 +76,43 @@ class V3ContextComposer:
             layer="recall",
             items=self._recall_items(request, query),
         )
+        archival_items, archival_eligibility = self._archival_items(
+            request,
+            query,
+        )
         used = self._try_add_layer(
             package,
             budget=request.budget,
             used=used,
             layer="archival",
-            items=self._archival_items(query),
+            items=archival_items,
+        )
+        archival_item_ids = {item.item_id for item in archival_items}
+        selected_archival_items = [
+            item
+            for item in package.items
+            if item.layer == "archival" and item.item_id in archival_item_ids
+        ]
+        archival_eligibility = archival_eligibility.model_copy(
+            update={
+                "selected_passage_ids": [
+                    item.item_id for item in selected_archival_items
+                ],
+                "selected_source_refs": [
+                    self._source_ref_summary(source_ref)
+                    for item in selected_archival_items
+                    for source_ref in item.source_refs
+                ],
+            }
+        )
+        package.metadata["archival_eligibility"] = (
+            archival_eligibility.diagnostics_payload()
+        )
+        package.diagnostics.extend(
+            self._archival_eligibility_diagnostics(
+                archival_eligibility,
+                selected_items=selected_archival_items,
+            )
         )
         used = self._try_add_layer(
             package,
@@ -142,10 +175,31 @@ class V3ContextComposer:
             for evidence in recall.retrieved_evidence
         ]
 
-    def _archival_items(self, query: str) -> list[ContextLayerItem]:
-        passages = self.store.list_archival_passages()
+    def _archival_items(
+        self,
+        request: ContextComposerRequest,
+        query: str,
+    ) -> tuple[list[ContextLayerItem], ArchiveEligibilityResult]:
+        scope = ArchiveEligibilityScope(
+            session_id=request.session_id,
+            identity_scope=request.identity_scope,
+            source_ids=list(request.source_ids),
+            archive_ids=list(request.archive_ids),
+        )
+        eligibility = self.store.list_archival_passages_for_scope(scope)
+        passages = eligibility.eligible_passages
         hits = self.archival_searcher.search(passages, query=query, top_k=5)
-        return [
+        selected_ids = [hit.passage.id for hit in hits]
+        selected_id_set = set(selected_ids)
+        no_match_ids = [
+            passage.id for passage in passages if passage.id not in selected_id_set
+        ]
+        eligibility = eligibility.model_copy(
+            update={
+                "no_match_passage_ids": no_match_ids,
+            }
+        )
+        items = [
             ContextLayerItem(
                 layer="archival",
                 item_id=hit.passage.id,
@@ -153,7 +207,8 @@ class V3ContextComposer:
                 estimated_tokens=self.tokenizer.count(hit.passage.text),
                 source_refs=list(hit.source_refs),
                 metadata={
-                    "reason": hit.reason,
+                    "reason": "archival_selected",
+                    "match_reason": hit.reason,
                     "score": hit.score,
                     "source": hit.source,
                     **hit.metadata,
@@ -161,6 +216,78 @@ class V3ContextComposer:
             )
             for hit in hits
         ]
+        return items, eligibility
+
+    @staticmethod
+    def _source_ref_summary(source_ref: SourceRef) -> dict[str, str | None]:
+        return {
+            "source_type": getattr(source_ref.source_type, "value", source_ref.source_type),
+            "source_id": source_ref.source_id,
+            "session_id": source_ref.session_id,
+        }
+
+    def _archival_eligibility_diagnostics(
+        self,
+        eligibility: ArchiveEligibilityResult,
+        *,
+        selected_items: list[ContextLayerItem],
+    ) -> list[DiagnosticEvent]:
+        diagnostics: list[DiagnosticEvent] = []
+        selected_by_id = {item.item_id: item for item in selected_items}
+        for item in selected_items:
+            diagnostics.append(
+                self._diagnostic(item, included=True, dropped=False).model_copy(
+                    update={"event_type": "archival_selected"}
+                )
+            )
+        eligible_by_id = {passage.id: passage for passage in eligibility.eligible_passages}
+        for passage_id in eligibility.no_match_passage_ids:
+            passage = eligible_by_id[passage_id]
+            diagnostics.append(
+                DiagnosticEvent(
+                    layer="archival",
+                    event_type="archival_eligible_no_match",
+                    item_id=passage.id,
+                    reason_code="archival_no_match",
+                    included=False,
+                    dropped=False,
+                    source_refs=list(passage.source_refs),
+                    metadata={
+                        "archive_id": passage.archive_id,
+                        "source_id": passage.source_id,
+                    },
+                )
+            )
+        for passage_id in eligibility.scope_excluded_passage_ids:
+            diagnostics.append(
+                DiagnosticEvent(
+                    layer="archival",
+                    event_type="archival_scope_excluded",
+                    item_id=passage_id,
+                    reason_code="archival_scope_excluded",
+                    included=False,
+                    dropped=False,
+                    metadata={
+                        "eligible_archive_ids": list(eligibility.eligible_archive_ids),
+                    },
+                )
+            )
+        if (
+            not eligibility.eligible_archive_ids
+            and not eligibility.scope.source_ids
+            and not selected_by_id
+        ):
+            diagnostics.append(
+                DiagnosticEvent(
+                    layer="archival",
+                    event_type="archival_no_attached_archive",
+                    reason_code="archival_no_attached_archive",
+                    included=False,
+                    dropped=False,
+                    metadata={"session_id": eligibility.scope.session_id},
+                )
+            )
+        return diagnostics
 
     def _recent_items(self, session_id: str) -> list[ContextLayerItem]:
         messages = self.store.list_messages(session_id)[-self.settings.recent_message_limit :]

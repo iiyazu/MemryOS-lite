@@ -46,13 +46,16 @@ Non-goals:
 
 ## Relevant State
 
-- `state.json.current_state`: `GOD_DISPATCH`.
+- `state.json.current_state`: `EXECUTE`.
 - `state.json.current_phase_idx`: `4`.
 - `execute_lane.phase`: `phase-4`.
+- `execute_lane.state`: `EXECUTE`.
 - `plan_lane.phase`: `phase-5`.
+- `plan_lane.state`: `PLAN_STORM`.
 - `research_lane.phases`: `phase-6`.
 - Phase 3 completed with commit `420c727` and usable ACK.
-- Phase 4 has older tracked artifacts from a previous blueprint loop. Treat `.hermes-loop/work/phase-4/brainstorm.md`, `spec.md`, `plan.md`, `plan_final.md`, `execute_review.md`, `result.md`, and `ack.json` as stale unless regenerated after this context bundle and unless they cite this file.
+- Phase 4 now has regenerated `brainstorm.md`, `spec.md`, `plan.md`, `plan_final.md`, and `result.md` that cite this context bundle.
+- Phase 4 `execute_review.md`, `reviews/codex-review.md`, and `ack.json` still contain older Archival Memory Store evidence and must be regenerated before ACK.
 
 ## Active Blueprint Section
 

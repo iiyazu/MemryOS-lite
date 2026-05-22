@@ -49,6 +49,8 @@ from memoryos_lite.v3_contracts import (
     ArchivalMemory,
     ArchivalPassage,
     ArchiveAttachment,
+    ArchiveEligibilityResult,
+    ArchiveEligibilityScope,
     CoreMemoryBlock,
     IdentityScope,
     MemoryHistoryEvent,
@@ -678,6 +680,17 @@ class MemoryStore:
         return json.dumps(value, ensure_ascii=False)
 
     @staticmethod
+    def _dedupe_strings(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    @staticmethod
     def _aware(value: datetime | None) -> datetime | None:
         if value is None or value.tzinfo is not None:
             return value
@@ -1044,6 +1057,7 @@ class MemoryStore:
 
     def create_archival_passage(self, passage: ArchivalPassage) -> ArchivalPassage:
         self._require_source_refs(passage.source_refs, "archival passage write")
+        self._validate_archival_passage_identity(passage)
         with self.db() as db:
             db.add(
                 ArchivalPassageRecord(
@@ -1070,6 +1084,13 @@ class MemoryStore:
             )
         return passage
 
+    @staticmethod
+    def _validate_archival_passage_identity(passage: ArchivalPassage) -> None:
+        if passage.archive_id and passage.source_id:
+            raise ValueError("agent/archive passages cannot set source_id")
+        if not passage.archive_id and not passage.source_id:
+            raise ValueError("agent/archive passages require archive_id")
+
     def list_archival_passages(
         self,
         archive_id: str | None = None,
@@ -1089,6 +1110,67 @@ class MemoryStore:
                 stmt = stmt.where(ArchivalPassageRecord.file_id == file_id)
             records = list(db.scalars(stmt))
         return [self._passage_from_record(record) for record in records]
+
+    def resolve_attached_archive_ids(
+        self,
+        scope: ArchiveEligibilityScope,
+    ) -> list[str]:
+        eligible = list(scope.archive_ids)
+        pairs: list[tuple[str, str]] = [("session", scope.session_id)]
+        if scope.identity_scope is not None:
+            identity = scope.identity_scope
+            pairs.extend(
+                (scope_type, scope_id)
+                for scope_type, scope_id in [
+                    ("user", identity.user_id),
+                    ("agent", identity.agent_id),
+                    ("run", identity.run_id),
+                    ("session", identity.session_id),
+                    ("project", identity.project_id),
+                ]
+                if scope_id
+            )
+            if identity.archive_id:
+                eligible.append(identity.archive_id)
+        pairs.extend(("source", source_id) for source_id in scope.source_ids)
+        seen_pairs: set[tuple[str, str]] = set()
+        for scope_type, scope_id in pairs:
+            pair = (scope_type, scope_id)
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            for attachment in self.list_archive_attachments(
+                scope_type=scope_type,
+                scope_id=scope_id,
+            ):
+                eligible.append(attachment.archive_id)
+        return self._dedupe_strings(eligible)
+
+    def list_archival_passages_for_scope(
+        self,
+        scope: ArchiveEligibilityScope,
+    ) -> ArchiveEligibilityResult:
+        eligible_archive_ids = self.resolve_attached_archive_ids(scope)
+        all_passages = self.list_archival_passages()
+        source_ids = set(scope.source_ids)
+        eligible_passages = [
+            passage
+            for passage in all_passages
+            if (
+                passage.archive_id is not None
+                and passage.archive_id in eligible_archive_ids
+            )
+            or (passage.source_id is not None and passage.source_id in source_ids)
+        ]
+        eligible_ids = {passage.id for passage in eligible_passages}
+        return ArchiveEligibilityResult(
+            scope=scope,
+            eligible_archive_ids=eligible_archive_ids,
+            eligible_passages=eligible_passages,
+            scope_excluded_passage_ids=[
+                passage.id for passage in all_passages if passage.id not in eligible_ids
+            ],
+        )
 
     def create_archive_attachment(self, attachment: ArchiveAttachment) -> ArchiveAttachment:
         self._require_source_refs(attachment.source_refs, "archive attachment write")
@@ -1264,8 +1346,8 @@ class MemoryStore:
                 archive_id=document.archive_id,
                 text=text,
                 citation=SourceSpan(start=0, end=len(text)),
-                source_id=document.source_id,
-                file_id=document.file_id,
+                source_id=None if document.archive_id else document.source_id,
+                file_id=None if document.archive_id else document.file_id,
                 tags=list(document.tags),
                 source_refs=source_refs,
                 metadata={"producer": document.producer},
