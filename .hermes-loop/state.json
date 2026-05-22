@@ -1,15 +1,15 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 10,
+  "current_phase_idx": 11,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-10",
+    "phase": "phase-11",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-11",
+    "phase": "phase-12",
     "state": "PLAN_STORM"
   },
   "research_lane": {
@@ -473,14 +473,42 @@
       "id": "phase-10",
       "name": "Recall Memory Reliability",
       "target_state": "recall-evidence-reliable",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-23T06:26:28+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-10/context_bundle.md",
+            "ack": "work/phase-10/ack.json",
+            "review": "work/phase-10/reviews/codex-review-phase-10.md",
+            "review_verdict": "work/phase-10/review_verdict.json",
+            "reflection": "work/phase-10/reflect_phase-10.md",
+            "tests_passed": 419,
+            "checks_passed": 5,
+            "case_level_eval": {
+              "longmemeval": "30 full-chain LLM judge: 29 pass / 1 fail; fail_to_pass=0; pass_to_fail=0; evidence_hit_answer_fail=51a45a95",
+              "locomo": "30 full-chain LLM judge: 20 pass / 10 fail; fail_to_pass=conv-26_qa_011,conv-26_qa_012; pass_to_fail=0; remaining retrieval_miss=6; remaining evidence_hit_answer_fail=4; primary session-localization signal=conv-26_qa_011"
+            },
+            "real_path_wired": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "source_grounding_regressed": false,
+            "locomo_regressed_or_unexplained": false,
+            "phase_binding_enforced": true,
+            "next_phase_hypothesis": "Evidence handoff/context selection should trace expected sources through indexed -> retrieved -> selected -> rendered -> cited -> judged; do not repeat broad recall unless handoff diagnostics prove recall evidence is missing or misleading."
+          },
+          "commit": "7da574c"
+        }
+      ]
     },
     {
       "id": "phase-11",
       "name": "Evidence Handoff And Context Selection",
       "target_state": "evidence-handoff-reliable",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": []
     },
     {
@@ -512,5 +540,5 @@
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-22T17:40:48.878261+00:00"
+  "last_updated": "2026-05-23T06:26:28+08:00"
 }
