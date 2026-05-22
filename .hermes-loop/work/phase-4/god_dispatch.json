@@ -1,41 +1,144 @@
 {
   "phase": "phase-4",
   "phase_index": 4,
-  "phase_name": "Archival Memory Store",
-  "target_state": "shadow-write",
-  "task_description": "从 blueprint.md 的 phase-4 段提取的任务。\n- Design the archival schema from scratch.\n- Add ArchivalDocument, ArchivalChunk, ArchivalPassage, ArchivalMemory, ArchivalMemoryHistory, ArchiveAttachment, and optional ArchivalEntityLink.\n- Keep old Page/Item as migration input or adapter only.\n- Add Letta-style archive attachment so agents, projects, and sources can retrieve scoped attached archives.\n- Add a passage-level retrieval path that supports archive_id, source_id, file_id, tags, date, text, vector, and hybrid queries.\n- Explicit docs can enter archive.\n- Message, sleep, and retrieval consolidation jobs can produce archival documents, passages, or archival memories.\n- Archival memory supports add, search, update, delete, and history.\n- Archive search returns passage-level evidence with source refs, scope, created/updated metadata, score, and citation.\n",
-  "for_plan_agent": {
-    "goal": "完成 Archival Memory Store 的设计、契约与实现计划，确保新 archival 层从旧 Page/Item 中解耦并保持现有默认行为稳定。",
-    "constraints": [
-      "目标兼容状态: shadow-write",
-      "遵守 blueprint.md 中的兼容性要求，Page/Item 只能作为迁移输入或适配层",
-      "保持 source-backed 规则，不得把无来源内容自动写入 archival memory",
-      "默认 v1/v2 行为不变，新的 archival 路径只能通过显式接入或迁移通道出现"
-    ],
-    "relevant_files": [
-      ".hermes-loop/blueprint.md",
-      ".hermes-loop/state.json",
-      "CLAUDE.md",
-      "src/memoryos_lite/store.py",
-      "src/memoryos_lite/schemas.py",
-      "src/memoryos_lite/retrieval/**",
-      "tests/**"
-    ],
-    "design_notes": "本 phase 的核心风险是 schema 设计过宽、Page/Item 继续承担新语义、以及 passage 级检索和历史表之间的边界不清。Plan 必须把 document / chunk / passage / memory / history / attachment 的职责拆开，并明确迁移与适配边界。"
+  "phase_name": "Archive And Passage Scope",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-4/context_bundle.md",
+    "sha256": "c12ced67fcb4a1980a01659372e676570a9c0d199299c31a6afcdcd5cd674037",
+    "summary": "Phase 4 must replace global archival passage search with scoped archive/passage eligibility in the real v3 composer and public benchmark diagnostics. Existing archival store/search code is present but insufficient because V3ContextComposer currently searches all archival passages globally."
   },
-  "for_review_agent": {
-    "tests_must_pass": true,
-    "regression_bar": "zero unintended legacy regressions; default v1/v2 behavior remains unchanged unless God explicitly accepts a migration delta",
-    "spec_checklist": [
-      "ArchivalDocument, ArchivalChunk, ArchivalPassage, ArchivalMemory, ArchivalMemoryHistory, and ArchiveAttachment are all accounted for.",
-      "Page/Item are treated only as migration input or adapter, not the new target model.",
-      "Passage-level retrieval supports archive_id, source_id, file_id, tags, date, text, vector, and hybrid search.",
-      "Add, search, update, delete, and history semantics are explicit for archival memory.",
-      "Source-backed evidence and citation metadata are preserved in archive search results."
+  "lane": "execute_lane",
+  "state_binding": {
+    "execute_lane_phase": "phase-4",
+    "execute_lane_state": "GOD_DISPATCH",
+    "plan_lane_phase": "phase-5",
+    "research_lane_phases": ["phase-6"]
+  },
+  "real_chain_components_affected": {
+    "ingest": "verified",
+    "store": "changed",
+    "retrieval": "changed",
+    "context_composer": "changed",
+    "answer_projection": "verified",
+    "kernel_loop": "verified",
+    "public_eval": "changed"
+  },
+  "objective": "Make archival passage retrieval scoped and diagnosable in the real MemoryOS v3/public benchmark path, so unattached archives cannot pollute context and case-level reports can distinguish retrieval miss from archive scope exclusion.",
+  "why_now": "Phase 3 completed structured core memory without claiming benchmark improvement. Existing archive/passage code is already in the tree, but global v3 archival search remains a demo-level gap and LoCoMo retrieval/context failures remain explicit.",
+  "stale_artifacts_to_discard_unless_regenerated": [
+    "work/phase-4/brainstorm.md",
+    "work/phase-4/spec.md",
+    "work/phase-4/plan.md",
+    "work/phase-4/plan_final.md",
+    "work/phase-4/execute_review.md",
+    "work/phase-4/result.md",
+    "work/phase-4/ack.json"
+  ],
+  "inspect_first": [
+    ".hermes-loop/work/phase-4/context_bundle.md",
+    ".hermes-loop/work/current_goal.md",
+    ".hermes-loop/state.json",
+    ".hermes-loop/blueprint.md",
+    ".hermes-loop/work/phase-3/ack.json",
+    ".hermes-loop/work/phase-3/result.md",
+    ".hermes-loop/work/phase-3/reviews/codex-review-phase-3.md",
+    ".hermes-loop/work/phase-3/reflect_phase-3.md",
+    "docs/known-issues.md",
+    "docs/public-benchmark-diagnosis.md",
+    "docs/agentic-memory-roadmap-zh.md",
+    "src/memoryos_lite/config.py",
+    "src/memoryos_lite/v3_contracts.py",
+    "src/memoryos_lite/store.py",
+    "src/memoryos_lite/context_composer.py",
+    "src/memoryos_lite/engine.py",
+    "src/memoryos_lite/public_benchmarks.py",
+    "src/memoryos_lite/retrieval/archival_searcher.py",
+    "tests/test_archival_store.py",
+    "tests/test_archival_searcher.py",
+    "tests/test_context_composer.py",
+    "tests/test_engine.py",
+    "tests/test_public_benchmarks.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/archive.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/passage.py",
+    "/home/iiyatu/projects/python/letta/letta/services/archive_manager.py",
+    "/home/iiyatu/projects/python/letta/letta/services/passage_manager.py"
+  ],
+  "required_failing_tests_before_implementation": [
+    "tests/test_context_composer.py::test_v3_composer_filters_archival_passages_by_attached_scope",
+    "tests/test_context_composer.py::test_v3_composer_reports_archival_scope_eligibility",
+    "tests/test_public_benchmarks.py::test_public_benchmark_v3_archival_scope_diagnostics_are_append_only",
+    "tests/test_engine.py::test_explicit_v1_build_context_excludes_v3_archival_scope_diagnostics"
+  ],
+  "benchmark_cases_to_keep_visible": {
+    "longmemeval": {
+      "retrieval_miss": ["58bf7951", "6ade9755"],
+      "context_missing_evidence": ["e47becba", "118b2229", "58ef2f1c"],
+      "evidence_hit_answer_fail": ["51a45a95", "f8c5f88b"]
+    },
+    "locomo": {
+      "retrieval_miss": [
+        "conv-26_qa_002",
+        "conv-26_qa_003",
+        "conv-26_qa_004",
+        "conv-26_qa_005",
+        "conv-26_qa_008"
+      ],
+      "context_missing_evidence": ["conv-26_qa_009"],
+      "evidence_hit_answer_fail": [
+        "conv-26_qa_001",
+        "conv-26_qa_006",
+        "conv-26_qa_007",
+        "conv-26_qa_010"
+      ]
+    }
+  },
+  "implementation_constraints": [
+    "Read work/phase-4/context_bundle.md before any phase-local artifact.",
+    "All regenerated markdown artifacts must start with '# phase: phase-4'.",
+    "All regenerated JSON artifacts must include \"phase\": \"phase-4\".",
+    "Do not add Letta as a runtime dependency.",
+    "Keep SQLite authoritative and Qdrant optional.",
+    "Keep MEMORYOS_MEMORY_ARCH=v3 as default.",
+    "Keep MEMORYOS_MEMORY_ARCH=v1 fallback explicit and isolated.",
+    "Keep MEMORYOS_AGENT_KERNEL=v1 opt-in/default-off.",
+    "Do not claim benchmark improvement from 5/10-case smoke or aggregate pass rate alone.",
+    "Do not hide LoCoMo failures or pass-to-fail cases.",
+    "Do not use benchmark case-id hacks or expected-answer leaks."
+  ],
+  "expected_commands": {
+    "focused_red_green": [
+      "uv run pytest tests/test_context_composer.py::test_v3_composer_filters_archival_passages_by_attached_scope -q",
+      "uv run pytest tests/test_context_composer.py::test_v3_composer_reports_archival_scope_eligibility -q",
+      "uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_v3_archival_scope_diagnostics_are_append_only -q",
+      "uv run pytest tests/test_engine.py::test_explicit_v1_build_context_excludes_v3_archival_scope_diagnostics -q"
     ],
-    "benchmark_commands": [
-      "uv run pytest -q"
-    ],
-    "benchmark_pass_threshold": "legacy baseline remains green"
-  }
+    "focused_suite": "uv run pytest tests/test_archival_store.py tests/test_archival_searcher.py tests/test_context_composer.py tests/test_engine.py tests/test_public_benchmarks.py -q",
+    "full_suite": "uv run pytest -q",
+    "lint": "uv run ruff check .",
+    "milestone_longmemeval": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 30",
+    "milestone_locomo": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 30"
+  },
+  "usable_ack_checklist": [
+    "Scoped archival eligibility is wired into real v3 build_context(), not only a helper or demo.",
+    "Unattached archive passages are excluded for scoped v3 requests.",
+    "Public benchmark diagnostics expose archival eligibility and selected passage/source IDs append-only.",
+    "Retrieval miss vs archive scope exclusion is diagnosable at case level.",
+    "LongMemEval and LoCoMo milestone or fallback case-level reports are separated.",
+    "v1 fallback is preserved.",
+    "v3 default is preserved.",
+    "Kernel default is unchanged.",
+    "Review lane confirms stale artifacts were regenerated after context_bundle.md.",
+    "No broad storage rewrite or Letta runtime dependency was introduced."
+  ],
+  "review_focus": [
+    "Behavioral regression in v1 fallback, v3 default, public benchmark scoring, or kernel default.",
+    "Source grounding and source-hit candidate pollution from core/archival refs.",
+    "LoCoMo-specific retrieval/scope failure modes.",
+    "Prompt-hack, benchmark case-id, or expected-answer leakage.",
+    "Whether tests were actually RED before production changes.",
+    "Whether context bundle was used by plan, execute, and review outputs.",
+    "Whether mandatory milestone eval evidence is present or an explicit LLM-provider blocker is recorded."
+  ],
+  "decision_hint": "Proceed to PLAN_STORM for phase-4. Existing phase-4 plan artifacts are stale and must be regenerated against this context bundle."
 }

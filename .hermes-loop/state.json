@@ -1,20 +1,20 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 3,
+  "current_phase_idx": 4,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-3",
+    "phase": "phase-4",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-4",
+    "phase": "phase-5",
     "state": "PLAN_STORM"
   },
   "research_lane": {
     "phases": [
-      "phase-5"
+      "phase-6"
     ]
   },
   "review_lane": {
@@ -155,7 +155,7 @@
       "id": "phase-3",
       "name": "Core Memory Blocks",
       "target_state": "shadow-write",
-      "status": "in_progress",
+      "status": "completed",
       "state_history": [
         {
           "completed_at": "2026-05-21T09:00:00+00:00",
@@ -166,6 +166,28 @@
             "benchmark_scores": {}
           },
           "commit": "44eb040"
+        },
+        {
+          "completed_at": "2026-05-22T08:07:38+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-3/context_bundle.md",
+            "review": "work/phase-3/reviews/codex-review-phase-3.md",
+            "reflection": "work/phase-3/reflect_phase-3.md",
+            "tests_passed": 372,
+            "checks_passed": 7,
+            "case_level_eval": {
+              "longmemeval": "10 projected no-LLM v3 smoke: 3/10; retrieval_miss=2; context_missing_evidence=3; evidence_hit_answer_fail=2; movement=new_case_no_baseline",
+              "locomo": "10 projected no-LLM v3 smoke: 0/10; retrieval_miss=5; context_missing_evidence=1; evidence_hit_answer_fail=4; movement=new_case_no_baseline"
+            },
+            "real_path_wired": true,
+            "no_benchmark_improvement_claim": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true
+          },
+          "commit": "420c727"
         }
       ]
     },
@@ -173,7 +195,7 @@
       "id": "phase-4",
       "name": "Archival Memory Store",
       "target_state": "shadow-write",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": [
         {
           "completed_at": "2026-05-21T20:00:00+00:00",
@@ -285,5 +307,5 @@
       ]
     }
   ],
-  "last_updated": "2026-05-22T06:26:27+08:00"
+  "last_updated": "2026-05-22T08:07:38+08:00"
 }
