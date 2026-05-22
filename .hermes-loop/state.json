@@ -1,15 +1,15 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 9,
+  "current_phase_idx": 10,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-9",
+    "phase": "phase-10",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-10",
+    "phase": "phase-11",
     "state": "PLAN_STORM"
   },
   "research_lane": {
@@ -438,14 +438,42 @@
       "id": "phase-9",
       "name": "Evidence Closure And Failure Replay",
       "target_state": "failure-replay-ready",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-23T02:48:49+08:00",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-9/context_bundle.md",
+            "ack": "work/phase-9/ack.json",
+            "review": "work/phase-9/reviews/codex-review-phase-9.md",
+            "review_verdict": "work/phase-9/review_verdict.json",
+            "reflection": "work/phase-9/reflect_phase-9.md",
+            "tests_passed": 415,
+            "checks_passed": 5,
+            "case_level_eval": {
+              "longmemeval": "phase-8 50-case baseline consumed, not rerun in diagnostic-only phase: 47 pass / 3 fail",
+              "locomo": "phase-8 50-case baseline consumed and replayed: 30 pass / 20 fail; 20 failed replay JSONs; path classes session_localization_miss=9, retrieval_miss=3, temporal_date_miss=4, evidence_rendered_answer_fails=3, refusal_despite_evidence=1; judge_questionable=conv-26_qa_015 tracked separately"
+            },
+            "real_path_wired": true,
+            "diagnostic_only": true,
+            "no_benchmark_improvement_claim": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "phase_binding_enforced": true,
+            "next_phase_hypothesis": "Target LoCoMo session-localization recall reliability first; keep source/judge separation explicit."
+          },
+          "commit": "b06eea3"
+        }
+      ]
     },
     {
       "id": "phase-10",
       "name": "Recall Memory Reliability",
       "target_state": "recall-evidence-reliable",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": []
     },
     {
