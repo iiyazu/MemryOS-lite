@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from memoryos_lite.config import Settings
+from memoryos_lite.core_memory import render_core_memory_blocks
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import Message
@@ -93,19 +94,16 @@ class V3ContextComposer:
     def _core_items(self) -> list[ContextLayerItem]:
         items: list[ContextLayerItem] = []
         for block in self.store.list_core_memory_blocks():
-            text = f"{block.label}: {block.value}"
+            rendered = render_core_memory_blocks([block], tokenizer=self.tokenizer)
+            metadata = rendered.metadata_by_block[block.id]
             items.append(
                 ContextLayerItem(
                     layer="core",
                     item_id=block.id,
-                    text=text,
-                    estimated_tokens=self.tokenizer.count(text),
+                    text=rendered.text,
+                    estimated_tokens=self.tokenizer.count(rendered.text),
                     source_refs=list(block.source_refs),
-                    metadata={
-                        "label": block.label,
-                        "description": block.description,
-                        "reason": "core_memory_block",
-                    },
+                    metadata=metadata,
                 )
             )
         return items

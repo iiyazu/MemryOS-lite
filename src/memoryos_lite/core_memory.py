@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from memoryos_lite.schemas import new_id, utc_now
 from memoryos_lite.store import MemoryStore
@@ -16,15 +16,74 @@ from memoryos_lite.v3_contracts import (
 Actor = Literal["system", "user", "agent", "tool"]
 
 
-def render_core_memory_blocks(blocks: list[CoreMemoryBlock]) -> str:
-    lines = ["[Core Memory]"]
+@dataclass(frozen=True)
+class CoreMemoryRender:
+    text: str
+    metadata_by_block: dict[str, dict[str, object]]
+
+
+def render_core_memory_blocks(
+    blocks: list[CoreMemoryBlock],
+    *,
+    tokenizer: TokenEstimator,
+) -> CoreMemoryRender:
+    lines = ["<memory_blocks>"]
+    metadata_by_block: dict[str, dict[str, object]] = {}
     for block in sorted(blocks, key=lambda b: (b.created_at, b.label, b.id)):
         if block.deleted_at is not None:
             continue
-        lines.append(f"- {block.label} ({block.limit_tokens} tokens)")
-        lines.append(f"  {block.description}")
-        lines.append(f"  {block.value}")
-    return "\n".join(lines)
+        tokens_current = tokenizer.count(block.value)
+        source_refs = [_format_source_ref(ref) for ref in block.source_refs]
+        block_metadata: dict[str, object] = {
+            "label": block.label,
+            "description": block.description,
+            "read_only": block.read_only,
+            "tags": list(block.tags),
+            "metadata": dict(block.metadata),
+            "tokens_current": tokens_current,
+            "tokens_limit": block.limit_tokens,
+            "source_ref_count": len(block.source_refs),
+            "reason": "core_memory_block",
+        }
+        metadata_by_block[block.id] = block_metadata
+        lines.extend(
+            [
+                f"<{block.label}>",
+                "<description>",
+                block.description,
+                "</description>",
+                "<metadata>",
+                f"- read_only={str(block.read_only).lower()}",
+                f"- tokens_current={tokens_current}",
+                f"- tokens_limit={block.limit_tokens}",
+                f"- tags={','.join(block.tags)}",
+                f"- metadata={_format_metadata(block.metadata)}",
+                "- sources=",
+            ]
+        )
+        lines.extend(f"  - {source_ref}" for source_ref in source_refs)
+        lines.extend(
+            [
+                "</metadata>",
+                "<value>",
+                block.value,
+                "</value>",
+                f"</{block.label}>",
+            ]
+        )
+    lines.append("</memory_blocks>")
+    return CoreMemoryRender(text="\n".join(lines), metadata_by_block=metadata_by_block)
+
+
+def _format_source_ref(source_ref: SourceRef) -> str:
+    source_type = getattr(source_ref.source_type, "value", source_ref.source_type)
+    return f"{source_type}:{source_ref.source_id}"
+
+
+def _format_metadata(metadata: dict[str, Any]) -> str:
+    if not metadata:
+        return "{}"
+    return ",".join(f"{key}={metadata[key]}" for key in sorted(metadata))
 
 
 @dataclass
@@ -43,6 +102,9 @@ class CoreMemoryService:
         actor: Actor,
         reason: str,
         approval_state: ApprovalState | None = None,
+        read_only: bool = False,
+        tags: list[str] | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> CoreMemoryBlock:
         refs = self._require_provenance(source_refs, approval_state)
         self._require_actor_and_reason(actor, reason)
@@ -54,7 +116,10 @@ class CoreMemoryService:
             description=description,
             value=value,
             limit_tokens=limit_tokens,
+            read_only=read_only,
+            tags=list(tags or []),
             source_refs=refs,
+            metadata=dict(metadata or {}),
             created_at=now,
             updated_at=now,
         )
@@ -73,6 +138,7 @@ class CoreMemoryService:
         refs = self._require_provenance(source_refs, approval_state)
         self._require_actor_and_reason(actor, reason)
         block = self._require_block(block_id)
+        self._ensure_mutable(block)
         separator = "\n\n"
         next_value = block.value + (separator if block.value else "") + addition
         return self._persist_update(
@@ -100,6 +166,7 @@ class CoreMemoryService:
         if not old:
             raise ValueError("replace core memory updates require old")
         block = self._require_block(block_id)
+        self._ensure_mutable(block)
         if old not in block.value:
             raise ValueError("replace old value was not found")
         next_value = block.value.replace(old, content, 1)
@@ -125,6 +192,7 @@ class CoreMemoryService:
         refs = self._require_provenance(source_refs, approval_state)
         self._require_actor_and_reason(actor, reason)
         block = self._require_block(block_id)
+        self._ensure_mutable(block)
         return self._persist_update(
             block=block,
             next_value=content,
@@ -145,6 +213,8 @@ class CoreMemoryService:
     ) -> CoreMemoryBlock:
         refs = self._require_provenance(source_refs, approval_state)
         self._require_actor_and_reason(actor, reason)
+        block = self._require_block(block_id)
+        self._ensure_mutable(block)
         deleted = self.store.delete_core_memory_block(
             block_id,
             source_refs=refs,
@@ -198,6 +268,11 @@ class CoreMemoryService:
     def _ensure_within_limit(self, value: str, limit_tokens: int) -> None:
         if self.tokenizer.count(value) > limit_tokens:
             raise ValueError("core memory block exceeds limit_tokens")
+
+    @staticmethod
+    def _ensure_mutable(block: CoreMemoryBlock) -> None:
+        if block.read_only:
+            raise ValueError("read-only core memory block cannot be mutated")
 
     @staticmethod
     def _require_actor_and_reason(actor: Actor, reason: str) -> None:

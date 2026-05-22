@@ -2,9 +2,11 @@ import builtins
 import importlib
 import json
 
+import memoryos_lite.public_benchmarks as public_benchmarks
 from memoryos_lite.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
 from memoryos_lite.config import Settings
 from memoryos_lite.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
+from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
 
 
 def _write_single_locomo_case(
@@ -1017,6 +1019,92 @@ def test_public_benchmark_explicit_v1_fallback_has_no_v3_case_context(tmp_path):
     assert report["memory_arch"] != "v3"
     assert report["v3_diagnostics"] == []
     assert report["case_diagnostics"]["memory_arch"] in {None, "v1"}
+
+
+def test_public_benchmark_v3_core_diagnostics_are_append_only(tmp_path, monkeypatch):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_core_diag",
+        text="Alice prefers rail travel.",
+        question="What does Alice prefer?",
+        answer="rail travel",
+    )
+    original_run_baseline = public_benchmarks._run_baseline
+
+    def seeded_run_baseline(
+        baseline,
+        case,
+        messages,
+        service,
+        settings,
+        budget_override=None,
+    ):
+        original_build_context = service.build_context
+
+        def build_context_with_core(
+            session_id,
+            task,
+            budget=None,
+            retrieval_query=None,
+            include_global_core=False,
+        ):
+            if service.store.get_core_memory_block("core_public_profile") is None:
+                service.store.create_core_memory_block(
+                    CoreMemoryBlock(
+                        id="core_public_profile",
+                        label="profile",
+                        description="Stable user facts",
+                        value="Alice prefers rail travel.",
+                        limit_tokens=100,
+                        source_refs=[
+                            SourceRef(source_type="message", source_id=messages[0].id)
+                        ],
+                        tags=["profile"],
+                        metadata={"scope": "benchmark"},
+                    )
+                )
+            return original_build_context(
+                session_id,
+                task,
+                budget=budget,
+                retrieval_query=retrieval_query,
+                include_global_core=include_global_core,
+            )
+
+        service.build_context = build_context_with_core
+        return original_run_baseline(
+            baseline,
+            case,
+            messages,
+            service,
+            settings,
+            budget_override=budget_override,
+        )
+
+    monkeypatch.setattr(public_benchmarks, "_run_baseline", seeded_run_baseline)
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v3-core-diagnostics-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert "v3_layer_counts" in report
+    assert "v3_budget_decisions" in report
+    assert "v3_diagnostics" in report
+    assert report["v3_layer_counts"]["core"] >= 1
+    core_diagnostics = [d for d in report["v3_diagnostics"] if d["layer"] == "core"]
+    assert core_diagnostics
+    assert core_diagnostics[0]["budget_tokens"] > 0
+    assert core_diagnostics[0]["metadata"]["label"] == "profile"
+    assert core_diagnostics[0]["metadata"]["tags"] == ["profile"]
+    assert "planned_evidence_source_hit_at_5" in report
 
 
 def test_public_benchmark_kernel_trace_remains_default_off(tmp_path):

@@ -1,0 +1,31 @@
+# phase: phase-3
+
+Verdict: PASS
+
+I used `.hermes-loop/work/phase-3/context_bundle.md` as the required first repository artifact, then checked `god_dispatch.json`, `plan_final.md`, `result.md`, `execute_review.md`, the phase-3 diff, focused code paths, tests, and the two recorded smoke reports.
+
+## Issues
+
+- LOW - Store-level provenance remains bypassable if future code writes core blocks directly through the persistence API. `CoreMemoryService.create_block()` enforces `source_refs` or approved manual provenance at `src/memoryos_lite/core_memory.py:109`, and service mutations enforce provenance before read-only checks at `src/memoryos_lite/core_memory.py:138`, `src/memoryos_lite/core_memory.py:164`, `src/memoryos_lite/core_memory.py:192`, and `src/memoryos_lite/core_memory.py:214`. The lower-level `MemoryStore.create_core_memory_block()` persists a supplied `CoreMemoryBlock` without its own non-empty source-ref guard at `src/memoryos_lite/store.py:844`. This is not blocking for this execute pass because no automatic production writer was added and seeded tests use source refs, but future automatic core writers should route through the service or add a store-level guard.
+
+- LOW - The structured core renderer emits XML-like tags from raw block labels and writes description/value content directly at `src/memoryos_lite/core_memory.py:51` through `src/memoryos_lite/core_memory.py:71`. This matches the local Letta-style reference shape and I found no benchmark case-id or expected-answer hack, but labels/content are not delimiter-escaped. Before adding broader agent/tool writes into core memory, add prompt-surface tests for labels or values containing `</value>`, `</memory_blocks>`, or section-looking tags.
+
+## Evidence Checked
+
+- Phase binding freshness: `god_dispatch.json`, `plan_final.md`, `result.md`, and `execute_review.md` all cite `.hermes-loop/work/phase-3/context_bundle.md` and the active goal. The old stale-artifact risk called out in the bundle has been addressed for these phase-3 artifacts.
+- Migration compatibility: `MemoryStore.init_db()` calls `_ensure_current_schema()` before stamping Alembic head at `src/memoryos_lite/store.py:368` through `src/memoryos_lite/store.py:377`; `_ensure_current_schema()` adds missing `read_only` and `tags_json` columns to existing `core_memory_blocks` tables before `_stamp_alembic_head()` writes `0007_add_core_block_read_only_tags` at `src/memoryos_lite/store.py:379` through `src/memoryos_lite/store.py:433`. The focused migration test covers an existing 0006-style table at `tests/test_core_memory_store.py:67`.
+- Real v3 path: `V3ContextComposer._core_items()` consumes `render_core_memory_blocks()` at `src/memoryos_lite/context_composer.py:94` through `src/memoryos_lite/context_composer.py:109`; `MemoryOSService._context_package_from_v3()` exposes pinned core, `v3_context`, `v3_layer_counts`, `v3_budget_decisions`, and `v3_diagnostics` at `src/memoryos_lite/engine.py:2110` through `src/memoryos_lite/engine.py:2195`.
+- Candidate/source-hit pollution: core layer source refs are excluded from the planned/indexed source-id extraction because only `recall`, `archival`, and `recent` are passed to `_v3_source_ids()` at `src/memoryos_lite/engine.py:2160` through `src/memoryos_lite/engine.py:2171`, and `_v3_source_ids()` only emits message refs from requested layers at `src/memoryos_lite/engine.py:2198`.
+- v1/v3/kernel preservation: settings still default to `MEMORYOS_MEMORY_ARCH=v3` and `MEMORYOS_AGENT_KERNEL=off` at `src/memoryos_lite/config.py:29`; the explicit v1 exclusion test is at `tests/test_engine.py:219`; the kernel-default-off public benchmark test is referenced in `result.md` and `execute_review.md`.
+- Public benchmark append-only diagnostics: `PublicBenchmarkResult` includes `memory_arch`, `v3_context`, `v3_layer_counts`, `v3_budget_decisions`, and `v3_diagnostics` at `src/memoryos_lite/public_benchmarks.py:106` through `src/memoryos_lite/public_benchmarks.py:110`, and `_to_public_result()` maps them without changing scoring fields at `src/memoryos_lite/public_benchmarks.py:715` through `src/memoryos_lite/public_benchmarks.py:719`.
+- Focused verification rerun by review lane: `PYTHONDONTWRITEBYTECODE=1 uv run pytest -q -p no:cacheprovider tests/test_core_memory_store.py::test_init_db_upgrades_existing_core_memory_schema_before_stamping_head tests/test_context_composer.py::test_v3_composer_core_items_use_structured_render_and_diagnostics tests/test_engine.py::test_v3_build_context_includes_core_memory_diagnostics tests/test_engine.py::test_explicit_v1_build_context_excludes_v3_core_memory_blocks tests/test_public_benchmarks.py::test_public_benchmark_v3_core_diagnostics_are_append_only tests/test_public_benchmarks.py::test_public_benchmark_kernel_trace_remains_default_off` -> `6 passed in 4.59s`.
+- Reported execute verification checked in `result.md` / `execute_review.md`: focused phase-3 suite `89 passed`, full pytest `372 passed, 1 warning`, and `uv run ruff check .` all checks passed. I did not rerun the full suite in review lane.
+- Smoke reports parsed directly: `.memoryos/evals/public_20260521_234559_longmemeval.json` has 10 cases, all `memory_arch=v3`, `3/10` pass, nonempty `v3_diagnostics` for all cases, core count `0`, and failure classes `context_missing_evidence=3`, `evidence_hit_answer_fail=2`, `retrieval_miss=2`, `supported_cited_answer=3`. `.memoryos/evals/public_20260521_235024_locomo.json` has 10 cases, all `memory_arch=v3`, `0/10` pass, nonempty `v3_diagnostics` for all cases, core count `0`, and failure classes `evidence_hit_answer_fail=4`, `retrieval_miss=5`, `context_missing_evidence=1`. Both reports use `movement_status=new_case_no_baseline` for every case.
+
+## ACK Recommendation
+
+Recommend usable ACK for phase-3 with notes. The implementation is wired into the real MemoryOS v3 `build_context()` and public benchmark report path, preserves explicit v1 fallback, keeps `MEMORYOS_AGENT_KERNEL` opt-in/default-off, records case-level smoke failures, and does not claim benchmark improvement from the 10-case no-LLM smokes.
+
+## Required Fixes
+
+None required before phase-3 ACK. Carry the two LOW residual risks into phase-4 planning if phase-4 introduces automatic core-memory writes or broader agent-authored core updates.

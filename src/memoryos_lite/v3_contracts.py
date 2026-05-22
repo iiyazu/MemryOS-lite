@@ -259,6 +259,8 @@ class CoreMemoryBlock(BaseModel):
     description: str = Field(min_length=1)
     value: str = ""
     limit_tokens: int = Field(gt=0)
+    read_only: bool = False
+    tags: list[str] = Field(default_factory=list)
     source_refs: list[SourceRef] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)

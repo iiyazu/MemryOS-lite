@@ -5,7 +5,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, create_engine, func, select, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    func,
+    select,
+    text,
+)
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -185,6 +196,8 @@ class CoreMemoryBlockRecord(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False, default="")
     limit_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    read_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     deleted_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -358,9 +371,39 @@ class MemoryStore:
         except OperationalError as exc:
             if "already exists" not in str(exc):
                 raise
+        self._ensure_current_schema()
         # Stamp alembic_version so `alembic upgrade head` on an existing DB
         # does not fail with "table already exists".
         self._stamp_alembic_head()
+
+    def _ensure_current_schema(self) -> None:
+        with self.engine.begin() as conn:
+            table_exists = conn.execute(
+                text(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'core_memory_blocks'"
+                )
+            ).fetchone()
+            if table_exists is None:
+                return
+            columns = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(core_memory_blocks)"))
+            }
+            if "read_only" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE core_memory_blocks "
+                        "ADD COLUMN read_only BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
+            if "tags_json" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE core_memory_blocks "
+                        "ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'"
+                    )
+                )
 
     def _stamp_alembic_head(self) -> None:
         with self.engine.begin() as conn:
@@ -378,12 +421,15 @@ class MemoryStore:
                 conn.execute(
                     text(
                         "INSERT INTO alembic_version (version_num)"
-                        " VALUES ('0006_add_archival_memory')"
+                        " VALUES ('0007_add_core_block_read_only_tags')"
                     )
                 )
-            elif row[0] != "0006_add_archival_memory":
+            elif row[0] != "0007_add_core_block_read_only_tags":
                 conn.execute(
-                    text("UPDATE alembic_version SET version_num = '0006_add_archival_memory'")
+                    text(
+                        "UPDATE alembic_version "
+                        "SET version_num = '0007_add_core_block_read_only_tags'"
+                    )
                 )
 
     @contextmanager
@@ -751,6 +797,8 @@ class MemoryStore:
             description=record.description,
             value=record.value,
             limit_tokens=record.limit_tokens,
+            read_only=record.read_only,
+            tags=json.loads(record.tags_json),
             source_refs=MemoryStore._load_source_refs(record.source_refs_json),
             metadata=json.loads(record.metadata_json),
             created_at=record.created_at,
@@ -806,6 +854,8 @@ class MemoryStore:
             description=block.description,
             value=block.value,
             limit_tokens=block.limit_tokens,
+            read_only=block.read_only,
+            tags=list(block.tags),
             source_refs=list(block.source_refs),
             metadata=dict(block.metadata),
             created_at=block.created_at,
@@ -830,6 +880,8 @@ class MemoryStore:
                     description=created.description,
                     value=created.value,
                     limit_tokens=created.limit_tokens,
+                    read_only=created.read_only,
+                    tags_json=json.dumps(created.tags, ensure_ascii=False),
                     source_refs_json=self._dump_source_refs(created.source_refs),
                     metadata_json=json.dumps(created.metadata, ensure_ascii=False),
                     deleted_at=created.deleted_at,
@@ -876,6 +928,8 @@ class MemoryStore:
             record.description = block.description
             record.value = block.value
             record.limit_tokens = block.limit_tokens
+            record.read_only = block.read_only
+            record.tags_json = json.dumps(block.tags, ensure_ascii=False)
             record.source_refs_json = self._dump_source_refs(block.source_refs)
             record.metadata_json = json.dumps(block.metadata, ensure_ascii=False)
             record.deleted_at = block.deleted_at

@@ -2165,7 +2165,10 @@ class MemoryOSService:
             v3_package.items,
             layers={"recall", "archival"},
         )
-        indexed_source_ids = self._v3_source_ids(v3_package.items)
+        indexed_source_ids = self._v3_source_ids(
+            v3_package.items,
+            layers={"recall", "archival", "recent"},
+        )
         package.metadata.update(
             {
                 "memory_arch": "v3",

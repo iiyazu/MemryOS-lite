@@ -103,6 +103,51 @@ def test_v3_composer_builds_layered_context_package(tmp_path):
     assert all(item.estimated_tokens > 0 for item in package.items)
 
 
+def test_v3_composer_core_items_use_structured_render_and_diagnostics(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    ref = _ref()
+    CoreMemoryService(store, WordTokenizer()).create_block(
+        label="human",
+        description="Stable user facts",
+        value="Alice prefers rail travel.",
+        limit_tokens=20,
+        source_refs=[ref],
+        actor="user",
+        reason="explicit user instruction",
+        tags=["profile"],
+        metadata={"scope": "benchmark"},
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="What does Alice prefer?",
+            budget=80,
+        )
+    )
+
+    core_items = [item for item in package.items if item.layer == "core"]
+    assert len(core_items) == 1
+    core_item = core_items[0]
+    assert "<memory_blocks>" in core_item.text
+    assert "<human>" in core_item.text
+    assert core_item.metadata["label"] == "human"
+    assert core_item.metadata["tags"] == ["profile"]
+    assert core_item.metadata["metadata"] == {"scope": "benchmark"}
+    assert core_item.metadata["tokens_limit"] == 20
+    assert core_item.source_refs[0].source_id == "msg_1"
+    core_diagnostics = [d for d in package.diagnostics if d.layer == "core"]
+    assert core_diagnostics
+    assert core_diagnostics[0].budget_tokens == core_item.estimated_tokens
+    assert core_diagnostics[0].metadata["source_ref_count"] == 1
+
+
 def test_service_build_context_routes_to_v3_when_opted_in(tmp_path):
     settings = Settings(
         data_dir=tmp_path / ".memoryos",

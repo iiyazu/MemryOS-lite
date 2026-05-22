@@ -312,6 +312,27 @@ def test_core_memory_block_defaults_soft_delete_fields():
     assert block.deleted_by_event_id is None
 
 
+def test_core_memory_block_has_letta_style_defaults_and_serialization():
+    block = CoreMemoryBlock(
+        id="core_1",
+        label="human",
+        description="Stable user facts",
+        value="Alice lives in Shanghai.",
+        limit_tokens=200,
+        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
+        metadata={"priority": "stable"},
+        tags=["profile", "benchmark"],
+    )
+
+    assert block.read_only is False
+    assert block.tags == ["profile", "benchmark"]
+    data = block.model_dump(mode="json")
+    assert data["read_only"] is False
+    assert data["tags"] == ["profile", "benchmark"]
+    assert data["source_refs"][0]["source_id"] == "msg_1"
+    assert data["metadata"] == {"priority": "stable"}
+
+
 def test_core_memory_replace_requires_old_value():
     with pytest.raises(ValidationError):
         CoreMemoryUpdate(

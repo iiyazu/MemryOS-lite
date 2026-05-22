@@ -47,6 +47,7 @@ def test_core_memory_service_append_replace_update_and_render(tmp_path):
         source_refs=[ref],
         actor="agent",
         reason="seed profile",
+        tags=["profile"],
     )
 
     appended = service.append_block(
@@ -75,12 +76,66 @@ def test_core_memory_service_append_replace_update_and_render(tmp_path):
     assert "Alice prefers rail travel." in appended.value
     assert replaced.value != block.value
     assert updated.value == "Alice lives in Suzhou."
-    assert render_core_memory_blocks([updated]) == (
-        "[Core Memory]\n"
-        "- profile (20 tokens)\n"
-        "  Stable user facts\n"
-        "  Alice lives in Suzhou."
+    rendered = render_core_memory_blocks([updated], tokenizer=FakeTokenizer())
+    assert "<memory_blocks>" in rendered.text
+    assert "<profile>" in rendered.text
+    assert "<description>\nStable user facts\n</description>" in rendered.text
+    assert "- read_only=false" in rendered.text
+    assert "- tokens_current=4" in rendered.text
+    assert "- tokens_limit=20" in rendered.text
+    assert "- tags=profile" in rendered.text
+    assert "- message:msg_1" in rendered.text
+    assert "<value>\nAlice lives in Suzhou.\n</value>" in rendered.text
+    assert rendered.metadata_by_block[updated.id]["label"] == "profile"
+    assert rendered.metadata_by_block[updated.id]["tokens_limit"] == 20
+
+
+def test_core_memory_service_rejects_read_only_mutations(tmp_path):
+    service = _service(tmp_path)
+    ref = SourceRef(source_type="message", source_id="msg_1")
+    block = service.create_block(
+        label="profile",
+        description="Stable user facts",
+        value="Alice lives in Shanghai.",
+        limit_tokens=20,
+        source_refs=[ref],
+        actor="agent",
+        reason="seed profile",
+        read_only=True,
     )
+
+    with pytest.raises(ValueError, match="read-only core memory block"):
+        service.append_block(
+            block.id,
+            "Alice prefers rail.",
+            source_refs=[ref],
+            actor="agent",
+            reason="append",
+        )
+    with pytest.raises(ValueError, match="read-only core memory block"):
+        service.replace_block(
+            block.id,
+            old="Shanghai",
+            content="Suzhou",
+            source_refs=[ref],
+            actor="agent",
+            reason="replace",
+        )
+    with pytest.raises(ValueError, match="read-only core memory block"):
+        service.update_block(
+            block.id,
+            "Alice lives in Suzhou.",
+            source_refs=[ref],
+            actor="agent",
+            reason="update",
+        )
+    with pytest.raises(ValueError, match="read-only core memory block"):
+        service.delete_block(
+            block.id,
+            source_refs=[ref],
+            actor="agent",
+            reason="delete",
+        )
 
 
 def test_core_memory_service_rejects_over_limit_updates(tmp_path):
