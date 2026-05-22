@@ -275,6 +275,50 @@ def test_explicit_v1_build_context_excludes_v3_archival_scope_diagnostics(tmp_pa
     assert "Alice lives in a scoped archival passage." not in context.model_dump_json()
 
 
+def test_v3_build_context_trace_includes_component_accounting_and_final_context_trace(
+    tmp_path,
+):
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+    service = MemoryOSService(settings=settings)
+    session = service.create_session("v3-accounting")
+    service.ingest(
+        session.id,
+        MessageCreate(role=Role.USER, content="Carol's benchmark marker is MemoryOS Lite."),
+    )
+
+    context = service.build_context(session.id, "What is Carol's benchmark marker?", budget=120)
+
+    assert context.metadata["v3_component_accounting"]
+    assert context.metadata["v3_final_context_trace"]
+    assert context.metadata["v3_component_token_totals"]["recall"] > 0
+    assert context.metadata["v3_component_drop_counts"]["recall"] == 0
+    context_built = service.store.list_traces(session.id)[-1]
+    assert context_built.payload["v3_component_accounting"] == context.metadata[
+        "v3_component_accounting"
+    ]
+    assert context_built.payload["v3_final_context_trace"] == context.metadata[
+        "v3_final_context_trace"
+    ]
+
+
+def test_explicit_v1_build_context_excludes_v3_component_accounting(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
+    service = MemoryOSService(settings=settings)
+    session = service.create_session("v1-no-accounting")
+    service.ingest(
+        session.id,
+        MessageCreate(role=Role.USER, content="Carol's benchmark marker is MemoryOS Lite."),
+    )
+
+    context = service.build_context(session.id, "What is Carol's benchmark marker?", budget=120)
+
+    assert context.metadata.get("memory_arch") != "v3"
+    assert "v3_component_accounting" not in context.metadata
+    assert "v3_final_context_trace" not in context.metadata
+    assert "v3_component_token_totals" not in context.metadata
+    assert "locomo_neighbor_diagnostics" not in context.metadata
+
+
 def test_context_builder_deduplicates_pinned_core_pages_by_id(service):
     session = service.create_session("test")
     summary = "用户长期稳定方案是 MemoryOS Lite，并且关注 source attribution。"

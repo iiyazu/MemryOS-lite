@@ -101,10 +101,13 @@ class RecallPipeline:
                     metadata={
                         "origin": "episode",
                         "score": hit.score,
+                        "neighbor_of": hit.neighbor_of,
+                        "neighbor_offset": hit.rank_features.get("neighbor_offset"),
                         "benchmark_session_id": hit.episode.temporal_scope.get(
                             "benchmark_session_id"
                         ),
                         "benchmark_date": hit.episode.temporal_scope.get("benchmark_date"),
+                        "rank_features": dict(hit.rank_features),
                     },
                 )
             )
@@ -157,9 +160,17 @@ class RecallPipeline:
                     included=False,
                     dropped=True,
                     budget_tokens=budget_tokens,
+                    source_refs=list(getattr(hit.episode, "source_refs", [])),
                     metadata={
                         "reason": hit.reason,
                         "source": hit.source,
+                        "neighbor_of": hit.neighbor_of,
+                        "neighbor_offset": hit.rank_features.get("neighbor_offset"),
+                        "benchmark_session_id": hit.episode.temporal_scope.get(
+                            "benchmark_session_id"
+                        ),
+                        "benchmark_date": hit.episode.temporal_scope.get("benchmark_date"),
+                        "rank_features": dict(hit.rank_features),
                     },
                 ).model_dump(mode="json")
             )

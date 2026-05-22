@@ -669,6 +669,202 @@ def test_public_benchmark_reports_v3_context_diagnostics(tmp_path):
     assert "planned_evidence_source_hit_at_5" in report
 
 
+def test_public_benchmark_reports_v3_component_accounting_append_only(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        filename="locomo_v3_accounting.json",
+        sample_id="sample_v3_accounting",
+        text="The v3 accounting marker is MemoryOS Lite.",
+        question="What is the v3 accounting marker?",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v3-accounting-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert "v3_component_accounting" in report
+    assert "v3_final_context_trace" in report
+    assert "v3_component_token_totals" in report
+    assert "v3_component_drop_counts" in report
+    assert report["v3_component_accounting"]
+    assert report["v3_final_context_trace"]
+    assert report["case_diagnostics"]["final_context_trace_source_ids"]
+    assert "v3_diagnostics" in report
+
+
+def test_public_case_diagnostics_uses_v3_final_context_trace_source_refs():
+    from memoryos_lite.public_case_diagnostics import build_case_diagnostics
+
+    diagnostics = build_case_diagnostics(
+        benchmark="locomo",
+        baseline="memoryos_lite",
+        case_id="final-trace-source-refs",
+        memory_arch="v3",
+        answer="NeverReturnedExpectedToken",
+        answer_mode="projected",
+        verdict="fail",
+        reasoning="exact substring match",
+        expected_source_ids=["msg_expected"],
+        retrieval_candidate_source_ids=["msg_expected"],
+        episode_candidate_message_ids=[],
+        planned_evidence_message_ids=[],
+        source_ids=["msg_expected"],
+        v3_context={
+            "metadata": {
+                "final_context_trace": [
+                    {
+                        "component": "recall",
+                        "item_id": "recall_item",
+                        "source_refs": [
+                            {"source_type": "message", "source_id": "msg_expected"}
+                        ],
+                        "included": True,
+                        "dropped": False,
+                    }
+                ],
+                "component_drop_counts": {"recall": 0},
+                "locomo_neighbor_diagnostics": [],
+            }
+        },
+        v3_diagnostics=[],
+        kernel_trace_events=[],
+        baseline_verdict=None,
+        movement_baseline_source=None,
+    )
+
+    assert diagnostics["selected_context_status"] == "evidence_selected"
+    assert diagnostics["final_context_trace_source_ids"] == ["msg_expected"]
+    assert diagnostics["selected_context_overlap_ids"] == ["msg_expected"]
+
+
+def test_public_case_diagnostics_does_not_select_dropped_v3_diagnostics():
+    from memoryos_lite.public_case_diagnostics import build_case_diagnostics
+
+    diagnostics = build_case_diagnostics(
+        benchmark="locomo",
+        baseline="memoryos_lite",
+        case_id="dropped-v3-diagnostic",
+        memory_arch="v3",
+        answer="NeverReturnedExpectedToken",
+        answer_mode="projected",
+        verdict="fail",
+        reasoning="exact substring match",
+        expected_source_ids=["msg_dropped"],
+        retrieval_candidate_source_ids=["msg_dropped"],
+        episode_candidate_message_ids=[],
+        planned_evidence_message_ids=[],
+        source_ids=[],
+        v3_context={
+            "metadata": {
+                "final_context_trace": [
+                    {
+                        "component": "recall",
+                        "item_id": "msg_dropped",
+                        "source_ids": ["msg_dropped"],
+                        "source_refs": [
+                            {"source_type": "message", "source_id": "msg_dropped"}
+                        ],
+                        "included": False,
+                        "dropped": True,
+                    }
+                ],
+            }
+        },
+        v3_diagnostics=[
+            {
+                "layer": "recall",
+                "event_type": "budget",
+                "item_id": "msg_dropped",
+                "source_refs": [
+                    {"source_type": "message", "source_id": "msg_dropped"}
+                ],
+                "included": False,
+                "dropped": True,
+            }
+        ],
+        kernel_trace_events=[],
+        baseline_verdict=None,
+        movement_baseline_source=None,
+    )
+
+    assert diagnostics["retrieval_status"] == "evidence_retrieved"
+    assert diagnostics["selected_context_status"] == "evidence_missing"
+    assert diagnostics["selected_context_overlap_ids"] == []
+    assert diagnostics["final_context_trace_source_ids"] == []
+
+
+def test_public_benchmark_reports_locomo_neighbor_diagnostics(tmp_path):
+    data_path = tmp_path / "locomo_neighbor.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "sample_neighbor",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "Alice set up the picnic plan yesterday.",
+                            },
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:2",
+                                "text": "The queried neighbor marker is MemoryOS Lite.",
+                            },
+                        ],
+                        "session_2": [
+                            {
+                                "speaker": "Bob",
+                                "dia_id": "D2:1",
+                                "text": "Adjacent distractor should stay out of D1 neighbor trace.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What is the queried neighbor marker?",
+                            "answer": "MemoryOS Lite",
+                            "evidence": ["D1:2"],
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-locomo-neighbor-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    diagnostics = report["locomo_neighbor_diagnostics"]
+    assert diagnostics
+    assert any(
+        str(row["metadata"].get("neighbor_of") or "").endswith("D1:2")
+        and row["metadata"].get("benchmark_session_id") == "D1"
+        for row in diagnostics
+    )
+    neighbor_rows = [row for row in diagnostics if row["metadata"].get("neighbor_of")]
+    assert all(row["metadata"].get("benchmark_session_id") != "D2" for row in neighbor_rows)
+
+
 def test_public_benchmark_case_diagnostics_separate_retrieval_miss_and_answer_fail(tmp_path):
     data_path = tmp_path / "locomo_taxonomy.json"
     data_path.write_text(

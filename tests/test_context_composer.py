@@ -293,6 +293,215 @@ def test_v3_composer_does_not_report_budget_dropped_archival_passages_as_selecte
     assert selected_events == []
 
 
+def test_v3_composer_records_component_accounting_for_included_and_budget_dropped_items(
+    tmp_path,
+):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    store.add_message(
+        Message(
+            id="msg_recall",
+            session_id="ses_1",
+            role=Role.USER,
+            content="Shanghai rail marker.",
+            token_count=3,
+        )
+    )
+    ref = _ref("msg_archival")
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_budget_dropped",
+            archive_id="archive_attached",
+            text="Shanghai rail " + ("padding " * 200),
+            source_refs=[ref],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_attached",
+            archive_id="archive_attached",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[ref],
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="Shanghai rail?",
+            budget=20,
+        )
+    )
+
+    accounting = package.metadata["component_accounting"]
+    assert any(
+        row["component"] == "recall"
+        and row["item_id"] == "msg_recall"
+        and row["source_ids"] == ["msg_recall"]
+        and row["included"] is True
+        and row["dropped"] is False
+        for row in accounting
+    )
+    dropped = next(
+        row for row in accounting if row["item_id"] == "apsg_budget_dropped"
+    )
+    assert dropped["component"] == "archival"
+    assert dropped["source_ids"] == ["msg_archival"]
+    assert dropped["estimated_tokens"] > 0
+    assert dropped["included"] is False
+    assert dropped["dropped"] is True
+    assert dropped["reason_code"] == "budget_drop"
+
+
+def test_v3_composer_final_context_trace_flattens_selected_source_refs(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    store.add_message(
+        Message(
+            id="msg_selected",
+            session_id="ses_1",
+            role=Role.USER,
+            content="The selected recall source says MemoryOS Lite.",
+            token_count=7,
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="What says MemoryOS Lite?",
+            budget=80,
+        )
+    )
+
+    trace = package.metadata["final_context_trace"]
+    recall_row = next(
+        row for row in trace if row["component"] == "recall" and row["item_id"] == "msg_selected"
+    )
+    assert recall_row["source_ids"] == ["msg_selected"]
+    assert isinstance(recall_row["rendered_index"], int)
+    assert recall_row["included"] is True
+    assert recall_row["dropped"] is False
+    assert all(row["dropped"] is False for row in trace)
+
+
+def test_v3_composer_keeps_locomo_neighbor_in_same_benchmark_session(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    for message in [
+        Message(
+            id="msg_d1_1",
+            session_id="ses_1",
+            role=Role.USER,
+            content="Alice set up the picnic plan yesterday.",
+            metadata={"benchmark_session_id": "D1", "benchmark_date": "2026-01-01"},
+            token_count=7,
+        ),
+        Message(
+            id="msg_d1_2",
+            session_id="ses_1",
+            role=Role.USER,
+            content="The queried temporal marker is MemoryOS Lite.",
+            metadata={"benchmark_session_id": "D1", "benchmark_date": "2026-01-01"},
+            token_count=7,
+        ),
+        Message(
+            id="msg_d2_1",
+            session_id="ses_1",
+            role=Role.USER,
+            content="D2 adjacent distractor should not be a neighbor.",
+            metadata={"benchmark_session_id": "D2", "benchmark_date": "2026-01-02"},
+            token_count=8,
+        ),
+    ]:
+        store.add_message(message)
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="What is the queried temporal marker?",
+            budget=100,
+        )
+    )
+
+    neighbor_rows = [
+        row for row in package.metadata["final_context_trace"]
+        if row["component"] == "recall" and row["metadata"].get("neighbor_of") == "msg_d1_2"
+    ]
+    assert any(row["item_id"] == "msg_d1_1" for row in neighbor_rows)
+    assert all(row["item_id"] != "msg_d2_1" for row in neighbor_rows)
+    assert any(
+        row["item_id"] == "msg_d1_1"
+        and row["source_ids"] == ["msg_d1_1"]
+        and row["metadata"]["benchmark_session_id"] == "D1"
+        for row in package.metadata["locomo_neighbor_diagnostics"]
+    )
+
+
+def test_v3_composer_records_locomo_neighbor_budget_drop(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    store.add_message(
+        Message(
+            id="msg_neighbor",
+            session_id="ses_1",
+            role=Role.USER,
+            content="same-session neighbor " + ("padding " * 80),
+            metadata={"benchmark_session_id": "D1", "benchmark_date": "2026-01-01"},
+            token_count=82,
+        )
+    )
+    store.add_message(
+        Message(
+            id="msg_hit",
+            session_id="ses_1",
+            role=Role.USER,
+            content="The compact marker is MemoryOS Lite.",
+            metadata={"benchmark_session_id": "D1", "benchmark_date": "2026-01-01"},
+            token_count=6,
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="What is the compact marker?",
+            budget=18,
+        )
+    )
+
+    dropped = next(
+        row for row in package.metadata["locomo_neighbor_diagnostics"]
+        if row["item_id"] == "msg_neighbor"
+    )
+    assert dropped["source_ids"] == ["msg_neighbor"]
+    assert dropped["metadata"]["neighbor_of"] == "msg_hit"
+    assert dropped["included"] is False
+    assert dropped["dropped"] is True
+    assert dropped["reason_code"] == "budget_drop"
+
+
 def test_v3_composer_core_items_use_structured_render_and_diagnostics(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
     store = create_store(settings)

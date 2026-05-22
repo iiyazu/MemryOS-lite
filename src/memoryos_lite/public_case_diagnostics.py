@@ -41,6 +41,7 @@ def build_case_diagnostics(
         v3_diagnostics=v3_diagnostics,
         fallback_ids=retrieved_ids,
     )
+    final_context_trace_source_ids = _final_context_trace_source_ids(v3_context)
     archival_eligibility = _archival_eligibility(v3_context)
     rendered_ids = _dedupe(source_ids)
     answer_eval = evaluate_agent_answer(answer, rendered_ids)
@@ -81,6 +82,8 @@ def build_case_diagnostics(
         "expected_source_ids": expected_ids,
         "retrieved_evidence_ids": retrieved_ids,
         "selected_context_ids": selected_ids,
+        "selected_context_overlap_ids": sorted(set(expected_ids) & set(selected_ids)),
+        "final_context_trace_source_ids": final_context_trace_source_ids,
         "rendered_evidence_ids": rendered_ids,
         "cited_source_ids": answer_eval.cited_source_ids,
         "unsupported_citation_ids": answer_eval.unsupported_citation_ids,
@@ -95,6 +98,11 @@ def build_case_diagnostics(
         "movement_baseline_source": movement_baseline_source,
         "kernel_trace_present": bool(kernel_trace_events),
         "archival_eligibility": archival_eligibility,
+        "component_drop_counts": _v3_metadata_mapping(v3_context, "component_drop_counts"),
+        "locomo_neighbor_diagnostics": _v3_metadata_list(
+            v3_context,
+            "locomo_neighbor_diagnostics",
+        ),
         "source_hit_semantics": "final_projection_source_overlap",
         "diagnostic_notes": notes,
     }
@@ -169,10 +177,14 @@ def _selected_context_ids(
 ) -> list[str]:
     ids: list[str] = []
     for item in v3_diagnostics:
+        if item.get("included") is not True:
+            continue
         ids.extend(_strings_from_mapping(item, ("source_id", "source_message_id", "item_id")))
         for key in ("source_ids", "source_message_ids", "source_message_id_chain"):
             ids.extend(_strings_from_value(item.get(key)))
+        ids.extend(_source_ids_from_source_refs(item.get("source_refs")))
     ids.extend(_ids_from_v3_context(v3_context))
+    ids.extend(_final_context_trace_source_ids(v3_context))
     if memory_arch != "v3" and not ids:
         return fallback_ids
     return _dedupe(ids)
@@ -189,7 +201,40 @@ def _ids_from_v3_context(v3_context: dict[str, object]) -> list[str]:
         ids.extend(_strings_from_mapping(item, ("item_id", "source_id", "source_message_id")))
         for key in ("source_ids", "source_message_ids"):
             ids.extend(_strings_from_value(item.get(key)))
+        ids.extend(_source_ids_from_source_refs(item.get("source_refs")))
     return ids
+
+
+def _final_context_trace_source_ids(v3_context: dict[str, object]) -> list[str]:
+    metadata = v3_context.get("metadata") if isinstance(v3_context, dict) else None
+    if not isinstance(metadata, dict):
+        return []
+    trace = metadata.get("final_context_trace")
+    if not isinstance(trace, list):
+        return []
+    ids: list[str] = []
+    for row in trace:
+        if not isinstance(row, dict) or row.get("dropped") is True:
+            continue
+        ids.extend(_strings_from_value(row.get("source_ids")))
+        ids.extend(_source_ids_from_source_refs(row.get("source_refs")))
+    return _dedupe(ids)
+
+
+def _v3_metadata_mapping(v3_context: dict[str, object], key: str) -> dict[str, object]:
+    metadata = v3_context.get("metadata") if isinstance(v3_context, dict) else None
+    if not isinstance(metadata, dict):
+        return {}
+    value = metadata.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _v3_metadata_list(v3_context: dict[str, object], key: str) -> list[object]:
+    metadata = v3_context.get("metadata") if isinstance(v3_context, dict) else None
+    if not isinstance(metadata, dict):
+        return []
+    value = metadata.get(key)
+    return value if isinstance(value, list) else []
 
 
 def _archival_eligibility(v3_context: dict[str, object]) -> dict[str, object]:
@@ -217,6 +262,19 @@ def _strings_from_value(value: object) -> list[str]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, str)]
     return []
+
+
+def _source_ids_from_source_refs(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    ids: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source_id = item.get("source_id")
+        if isinstance(source_id, str):
+            ids.append(source_id)
+    return ids
 
 
 def _dedupe(values: Iterable[str]) -> list[str]:

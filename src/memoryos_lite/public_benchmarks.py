@@ -108,6 +108,11 @@ class PublicBenchmarkResult:
     v3_layer_counts: dict[str, int] = field(default_factory=dict)
     v3_budget_decisions: list[dict[str, Any]] = field(default_factory=list)
     v3_diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    v3_component_accounting: list[dict[str, Any]] = field(default_factory=list)
+    v3_final_context_trace: list[dict[str, Any]] = field(default_factory=list)
+    v3_component_token_totals: dict[str, int] = field(default_factory=dict)
+    v3_component_drop_counts: dict[str, int] = field(default_factory=dict)
+    locomo_neighbor_diagnostics: list[dict[str, Any]] = field(default_factory=list)
     kernel_trace_events: list[str] = field(default_factory=list)
     case_diagnostics: dict[str, Any] = field(default_factory=dict)
     failure_class: str = "unknown"
@@ -717,6 +722,11 @@ def _to_public_result(
         v3_layer_counts=output.v3_layer_counts,
         v3_budget_decisions=output.v3_budget_decisions,
         v3_diagnostics=output.v3_diagnostics,
+        v3_component_accounting=output.v3_component_accounting,
+        v3_final_context_trace=output.v3_final_context_trace,
+        v3_component_token_totals=output.v3_component_token_totals,
+        v3_component_drop_counts=output.v3_component_drop_counts,
+        locomo_neighbor_diagnostics=output.locomo_neighbor_diagnostics,
         kernel_trace_events=output.kernel_trace_events,
         case_diagnostics=case_diagnostics,
         failure_class=str(case_diagnostics["failure_class"]),

@@ -110,6 +110,11 @@ class BaselineOutput:
     v3_layer_counts: dict[str, int] = field(default_factory=dict)
     v3_budget_decisions: list[dict[str, object]] = field(default_factory=list)
     v3_diagnostics: list[dict[str, object]] = field(default_factory=list)
+    v3_component_accounting: list[dict[str, object]] = field(default_factory=list)
+    v3_final_context_trace: list[dict[str, object]] = field(default_factory=list)
+    v3_component_token_totals: dict[str, int] = field(default_factory=dict)
+    v3_component_drop_counts: dict[str, int] = field(default_factory=dict)
+    locomo_neighbor_diagnostics: list[dict[str, object]] = field(default_factory=list)
     kernel_trace_events: list[str] = field(default_factory=list)
 
 
@@ -722,6 +727,11 @@ def _run_baseline(
         v3_layer_counts = context.metadata.get("v3_layer_counts")
         v3_budget_decisions = context.metadata.get("v3_budget_decisions")
         v3_diagnostics = context.metadata.get("v3_diagnostics")
+        v3_component_accounting = context.metadata.get("v3_component_accounting")
+        v3_final_context_trace = context.metadata.get("v3_final_context_trace")
+        v3_component_token_totals = context.metadata.get("v3_component_token_totals")
+        v3_component_drop_counts = context.metadata.get("v3_component_drop_counts")
+        locomo_neighbor_diagnostics = context.metadata.get("locomo_neighbor_diagnostics")
         kernel_trace_events: list[str] = []
         v3_context_raw = context.metadata.get("v3_context")
         if (
@@ -831,6 +841,39 @@ def _run_baseline(
             v3_diagnostics=(
                 [item for item in v3_diagnostics if isinstance(item, dict)]
                 if isinstance(v3_diagnostics, list)
+                else None
+            ),
+            v3_component_accounting=(
+                [item for item in v3_component_accounting if isinstance(item, dict)]
+                if isinstance(v3_component_accounting, list)
+                else None
+            ),
+            v3_final_context_trace=(
+                [item for item in v3_final_context_trace if isinstance(item, dict)]
+                if isinstance(v3_final_context_trace, list)
+                else None
+            ),
+            v3_component_token_totals=(
+                {
+                    str(component): count
+                    for component, count in v3_component_token_totals.items()
+                    if isinstance(count, int)
+                }
+                if isinstance(v3_component_token_totals, dict)
+                else None
+            ),
+            v3_component_drop_counts=(
+                {
+                    str(component): count
+                    for component, count in v3_component_drop_counts.items()
+                    if isinstance(count, int)
+                }
+                if isinstance(v3_component_drop_counts, dict)
+                else None
+            ),
+            locomo_neighbor_diagnostics=(
+                [item for item in locomo_neighbor_diagnostics if isinstance(item, dict)]
+                if isinstance(locomo_neighbor_diagnostics, list)
                 else None
             ),
             kernel_trace_events=kernel_trace_events,
@@ -951,6 +994,11 @@ def _baseline_from_evidence(
     v3_layer_counts: dict[str, int] | None = None,
     v3_budget_decisions: list[dict[str, object]] | None = None,
     v3_diagnostics: list[dict[str, object]] | None = None,
+    v3_component_accounting: list[dict[str, object]] | None = None,
+    v3_final_context_trace: list[dict[str, object]] | None = None,
+    v3_component_token_totals: dict[str, int] | None = None,
+    v3_component_drop_counts: dict[str, int] | None = None,
+    locomo_neighbor_diagnostics: list[dict[str, object]] | None = None,
     kernel_trace_events: list[str] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
@@ -1001,6 +1049,11 @@ def _baseline_from_evidence(
         v3_layer_counts=v3_layer_counts or {},
         v3_budget_decisions=v3_budget_decisions or [],
         v3_diagnostics=v3_diagnostics or [],
+        v3_component_accounting=v3_component_accounting or [],
+        v3_final_context_trace=v3_final_context_trace or [],
+        v3_component_token_totals=v3_component_token_totals or {},
+        v3_component_drop_counts=v3_component_drop_counts or {},
+        locomo_neighbor_diagnostics=locomo_neighbor_diagnostics or [],
         kernel_trace_events=kernel_trace_events or [],
     )
 

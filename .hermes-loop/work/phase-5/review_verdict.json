@@ -1,0 +1,87 @@
+{
+  "phase": "phase-5",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-5/context_bundle.md",
+    "sha256": "e1d8a5d83885f2cfffa95f378775256486b27e897e66b42ad3ff6ed83c1808eb",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ]
+  },
+  "review_artifact": "work/phase-5/reviews/codex-review.md",
+  "verdict": "PASS",
+  "ack_level": "usable",
+  "real_path_wired": true,
+  "diagnostic_scope_only": true,
+  "blocking_findings": [],
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py::test_public_case_diagnostics_does_not_select_dropped_v3_diagnostics -q",
+      "result": "1 passed in 0.05s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "388 passed, 1 warning in 549.00s"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed!"
+    },
+    {
+      "command": "validate Phase 5 LongMemEval and LoCoMo report JSONs for row counts, judge_status, movement_status, and v3 accounting fields",
+      "result": "LongMemEval 30 rows, 18/30 pass, no pass_to_fail, no new_case_no_baseline; LoCoMo 30 rows, 7/30 pass, no pass_to_fail, no new_case_no_baseline; all rows have v3 accounting fields"
+    }
+  ],
+  "case_level_eval": {
+    "longmemeval": {
+      "limit": 30,
+      "llm_answer": true,
+      "llm_judge": true,
+      "pass_fail": "18/30",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [
+        "58bf7951",
+        "6ade9755",
+        "75499fd8"
+      ],
+      "evidence_hit_answer_fail": [],
+      "judge_questionable": []
+    },
+    "locomo": {
+      "limit": 30,
+      "llm_answer": true,
+      "llm_judge": true,
+      "pass_fail": "7/30",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [
+        "conv-26_qa_002",
+        "conv-26_qa_003",
+        "conv-26_qa_004",
+        "conv-26_qa_005",
+        "conv-26_qa_008",
+        "conv-26_qa_011",
+        "conv-26_qa_014",
+        "conv-26_qa_019",
+        "conv-26_qa_020",
+        "conv-26_qa_025",
+        "conv-26_qa_028"
+      ],
+      "evidence_hit_answer_fail": [],
+      "judge_questionable": []
+    }
+  },
+  "review_verdict": {
+    "overfitting_risk": "low",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false
+  },
+  "decision": "advance",
+  "next_phase": "phase-6"
+}

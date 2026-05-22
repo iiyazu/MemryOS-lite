@@ -2007,6 +2007,21 @@ class MemoryOSService:
                     "memory_arch": "v3",
                     "v3_layer_counts": package.metadata["v3_layer_counts"],
                     "v3_budget_decisions": package.metadata["v3_budget_decisions"],
+                    "v3_component_accounting": package.metadata[
+                        "v3_component_accounting"
+                    ],
+                    "v3_final_context_trace": package.metadata[
+                        "v3_final_context_trace"
+                    ],
+                    "v3_component_token_totals": package.metadata[
+                        "v3_component_token_totals"
+                    ],
+                    "v3_component_drop_counts": package.metadata[
+                        "v3_component_drop_counts"
+                    ],
+                    "locomo_neighbor_diagnostics": package.metadata[
+                        "locomo_neighbor_diagnostics"
+                    ],
                 },
             )
             return package
@@ -2184,6 +2199,30 @@ class MemoryOSService:
                     diagnostic.model_dump(mode="json")
                     for diagnostic in v3_package.diagnostics
                 ],
+                "v3_component_accounting": v3_package.metadata.get(
+                    "component_accounting",
+                    [],
+                ),
+                "v3_final_context_trace": v3_package.metadata.get(
+                    "final_context_trace",
+                    [],
+                ),
+                "v3_component_token_totals": v3_package.metadata.get(
+                    "component_token_totals",
+                    {},
+                ),
+                "v3_component_included_counts": v3_package.metadata.get(
+                    "component_included_counts",
+                    {},
+                ),
+                "v3_component_drop_counts": v3_package.metadata.get(
+                    "component_drop_counts",
+                    {},
+                ),
+                "locomo_neighbor_diagnostics": v3_package.metadata.get(
+                    "locomo_neighbor_diagnostics",
+                    [],
+                ),
                 "archival_eligibility": v3_package.metadata.get(
                     "archival_eligibility",
                     {},

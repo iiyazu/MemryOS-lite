@@ -266,16 +266,33 @@ class RecallMemorySearcher:
                 neighbor = by_session_and_position.get((hit.episode.session_id, position))
                 if neighbor is None:
                     continue
+                hit_benchmark_session = hit.episode.temporal_scope.get(
+                    "benchmark_session_id"
+                )
+                neighbor_benchmark_session = neighbor.temporal_scope.get(
+                    "benchmark_session_id"
+                )
+                if (
+                    hit_benchmark_session is not None
+                    and neighbor_benchmark_session is not None
+                    and hit_benchmark_session != neighbor_benchmark_session
+                ):
+                    continue
                 if neighbor.message_id in seen_message_ids:
                     self._append_existing_dedupe(selected, hit_by_message_id, neighbor, hit)
                     continue
+                neighbor_metadata = {
+                    "neighbor_of": hit.episode.message_id,
+                    "neighbor_offset": offset,
+                    **neighbor.temporal_scope,
+                }
                 diagnostics = (
                     _diagnostic(
                         neighbor,
                         "neighbor",
                         hit.score,
                         True,
-                        {"neighbor_of": hit.episode.message_id, "offset": offset},
+                        neighbor_metadata,
                     ),
                     _diagnostic(
                         neighbor,
@@ -286,6 +303,11 @@ class RecallMemorySearcher:
                             "neighbor_of": hit.episode.message_id,
                             "neighbor_offset": float(offset),
                             "neighbor_rank": hit.score,
+                            "rank_features": {
+                                "neighbor_of_rank": hit.score,
+                                "neighbor_offset": float(offset),
+                            },
+                            **neighbor.temporal_scope,
                         },
                     ),
                 )
