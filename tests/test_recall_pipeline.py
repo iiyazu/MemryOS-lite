@@ -122,6 +122,45 @@ def test_recall_pipeline_tracks_dropped_evidence_when_evidence_exceeds_budget(tm
     assert package.metadata["recall_diagnostics"]
 
 
+def test_recall_pipeline_emits_session_packet_metadata(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    for message_id, session_marker, content in [
+        ("d1_1", "D1", "Caroline is weighing psychology classes."),
+        ("d1_2", "D1", "Caroline said counseling could help people."),
+        ("d2_1", "D2", "Caroline education fields career options distractor."),
+        ("d3_1", "D3", "Caroline education fields career planning distractor."),
+    ]:
+        store.add_message(
+            Message(
+                id=message_id,
+                session_id="ses",
+                role=Role.USER,
+                content=content,
+                metadata={"benchmark_session_id": session_marker},
+                token_count=len(content.split()),
+            )
+        )
+
+    package = RecallPipeline(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build_context(
+        session_id="ses",
+        task="What fields would Caroline pursue in education?",
+        budget=200,
+    )
+
+    assert package.metadata["recall_evidence_packets"]
+    assert "D1" in package.metadata["recall_planned_session_ids"]
+    assert any(
+        evidence.metadata.get("packet_session_id") == "D1"
+        for evidence in package.retrieved_evidence
+    )
+
+
 def test_service_build_context_uses_v2_when_opted_in(tmp_path):
     settings = Settings(
         data_dir=tmp_path / ".memoryos",

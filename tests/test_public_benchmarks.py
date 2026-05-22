@@ -1012,6 +1012,79 @@ def test_public_benchmark_reports_v3_context_diagnostics(tmp_path):
     assert "planned_evidence_source_hit_at_5" in report
 
 
+def test_public_benchmark_v3_reports_recall_packet_diagnostics_for_locomo_session_slice(
+    tmp_path,
+):
+    data_path = tmp_path / "locomo_v3_packets.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "sample_v3_packets",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D1:1",
+                                "text": "I am weighing psychology classes.",
+                            },
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D1:2",
+                                "text": "Counseling could help people.",
+                            },
+                        ],
+                        "session_2": [
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D2:1",
+                                "text": "Education fields career options are distracting.",
+                            }
+                        ],
+                        "session_3": [
+                            {
+                                "speaker": "Caroline",
+                                "dia_id": "D3:1",
+                                "text": "Education fields career planning is distracting.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What fields would Caroline pursue in education?",
+                            "answer": "psychology and counseling",
+                            "evidence": ["D1:1", "D1:2"],
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-v3-packet-diagnostics-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    packets = report["v3_context"]["metadata"]["recall_evidence_packets"]
+    assert packets
+    assert any(packet["packet_session_id"] == "D1" for packet in packets)
+    assert report["case_diagnostics"]["retrieved_evidence_ids"]
+    assert (
+        report["case_diagnostics"]["source_hit_semantics"]
+        == "final_projection_source_overlap"
+    )
+    assert report["kernel_trace_events"] == []
+
+
 def test_public_benchmark_reports_v3_component_accounting_append_only(tmp_path):
     data_path = _write_single_locomo_case(
         tmp_path,

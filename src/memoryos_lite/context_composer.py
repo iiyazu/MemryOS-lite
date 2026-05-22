@@ -70,7 +70,11 @@ class V3ContextComposer:
             layer="core",
             items=self._core_items(),
         )
-        recall_items, recall_diagnostics = self._recall_items(request, query)
+        recall_items, recall_diagnostics, recall_metadata = self._recall_items(
+            request,
+            query,
+        )
+        package.metadata.update(recall_metadata)
         used = self._try_add_layer(
             package,
             budget=request.budget,
@@ -149,7 +153,7 @@ class V3ContextComposer:
         self,
         request: ContextComposerRequest,
         query: str,
-    ) -> tuple[list[ContextLayerItem], list[DiagnosticEvent]]:
+    ) -> tuple[list[ContextLayerItem], list[DiagnosticEvent], dict[str, object]]:
         assert self.recall_pipeline is not None
         recall = self.recall_pipeline.build_context(
             session_id=request.session_id,
@@ -162,6 +166,17 @@ class V3ContextComposer:
             for diagnostic in recall.metadata.get("recall_diagnostics", [])
             if isinstance(diagnostic, dict)
         ]
+        metadata = {
+            "recall_evidence_packets": recall.metadata.get("recall_evidence_packets", []),
+            "recall_candidate_session_ids": recall.metadata.get(
+                "recall_candidate_session_ids",
+                [],
+            ),
+            "recall_planned_session_ids": recall.metadata.get(
+                "recall_planned_session_ids",
+                [],
+            ),
+        }
         return [
             ContextLayerItem(
                 layer="recall",
@@ -182,7 +197,7 @@ class V3ContextComposer:
                 },
             )
             for evidence in recall.retrieved_evidence
-        ], diagnostics
+        ], diagnostics, metadata
 
     def _archival_items(
         self,
@@ -348,6 +363,8 @@ class V3ContextComposer:
             if row["component"] == "recall"
             and (
                 bool(row["metadata"].get("benchmark_session_id"))
+                or bool(row["metadata"].get("packet_session_id"))
+                or bool(row["metadata"].get("evidence_packet_id"))
                 or bool(row["metadata"].get("neighbor_of"))
                 or str(row["reason_code"]).startswith("neighbor_of=")
             )

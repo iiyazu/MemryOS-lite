@@ -157,6 +157,58 @@ def test_recall_searcher_prioritizes_direct_hits_before_neighbors():
     assert all(hit.neighbor_of is None for hit in hits)
 
 
+def test_recall_searcher_session_diversity_keeps_weak_same_session_anchor():
+    entries = [
+        _recall_entry(
+            "d1_weak",
+            "Caroline started psychology classes after considering her education.",
+            1,
+        ),
+        _recall_entry("d2_strong", "Caroline education fields pursue career research.", 2),
+        _recall_entry("d3_strong", "Caroline education fields pursue career support.", 3),
+        _recall_entry("d4_strong", "Caroline education fields pursue career planning.", 4),
+        _recall_entry("d5_strong", "Caroline education fields pursue career options.", 5),
+    ]
+    for index, entry in enumerate(entries, start=1):
+        entry.temporal_scope["benchmark_session_id"] = f"D{index}"
+
+    hits = RecallMemorySearcher().search(
+        entries,
+        "What fields would Caroline pursue in her education?",
+        top_k=3,
+        preserve_neighbors=True,
+    )
+
+    assert "d1_weak" in [hit.episode.message_id for hit in hits]
+    weak_hit = next(hit for hit in hits if hit.episode.message_id == "d1_weak")
+    assert weak_hit.rank_features["session_diversified_anchor"] == 1.0
+    assert weak_hit.rank_features["packet_rank"] >= 0.0
+
+
+def test_recall_searcher_preserves_packet_neighbors_when_direct_hits_fill_top_k():
+    entries = [
+        _recall_entry("d1_anchor", "Friends support Caroline through change.", 1),
+        _recall_entry("d2_anchor", "Pride friends support Caroline.", 2),
+        _recall_entry("d3_anchor", "Current friends supported Caroline.", 3),
+        _recall_entry("d3_answer", "She has known these friends for four years.", 4),
+    ]
+    for index, entry in enumerate(entries, start=1):
+        entry.temporal_scope["benchmark_session_id"] = f"D{min(index, 3)}"
+
+    hits = RecallMemorySearcher().search(
+        entries,
+        "How long has Caroline had her current group of friends?",
+        top_k=2,
+        neighbors_after=1,
+        preserve_neighbors=True,
+    )
+
+    assert "d3_anchor" in [hit.episode.message_id for hit in hits]
+    neighbor = next(hit for hit in hits if hit.episode.message_id == "d3_answer")
+    assert neighbor.neighbor_of == "d3_anchor"
+    assert neighbor.packet_metadata["packet_session_id"] == "D3"
+
+
 def test_recall_searcher_boosts_assistant_source_queries():
     entries = [
         _recall_entry("msg_1", "I suggest using MemoryOS Lite.", 1, role=Role.ASSISTANT),

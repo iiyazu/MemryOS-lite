@@ -2223,6 +2223,18 @@ class MemoryOSService:
                     "locomo_neighbor_diagnostics",
                     [],
                 ),
+                "recall_evidence_packets": v3_package.metadata.get(
+                    "recall_evidence_packets",
+                    [],
+                ),
+                "recall_candidate_session_ids": v3_package.metadata.get(
+                    "recall_candidate_session_ids",
+                    [],
+                ),
+                "recall_planned_session_ids": v3_package.metadata.get(
+                    "recall_planned_session_ids",
+                    [],
+                ),
                 "archival_eligibility": v3_package.metadata.get(
                     "archival_eligibility",
                     {},

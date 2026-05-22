@@ -120,6 +120,7 @@ class EpisodeHit:
     diagnostics: tuple[DiagnosticEvent, ...] = ()
     rank_features: dict[str, float] = field(default_factory=dict)
     neighbor_of: str | None = None
+    packet_metadata: dict[str, object] = field(default_factory=dict)
 
 
 class RecallMemorySearcher:
@@ -224,6 +225,14 @@ class RecallMemorySearcher:
             )
 
         direct_hits.sort(key=lambda hit: (hit.score, -hit.episode.position), reverse=True)
+        direct_hits = self._select_direct_hits(
+            direct_hits,
+            top_k=top_k,
+            preserve_neighbors=preserve_neighbors,
+            by_session_and_position=by_session_and_position,
+            neighbors_before=before_window,
+            neighbors_after=after_window,
+        )
         selected: list[EpisodeHit] = []
         seen_message_ids: set[str] = set()
         hit_by_message_id: dict[str, int] = {}
@@ -241,14 +250,20 @@ class RecallMemorySearcher:
         direct_selected = list(selected)
         expandable_session_ids: set[object] = set()
         if preserve_neighbors:
-            if len(direct_selected) < top_k:
+            for hit in direct_selected:
+                benchmark_session_id = hit.episode.temporal_scope.get(
+                    "benchmark_session_id"
+                )
+                if benchmark_session_id is not None and hit.packet_metadata:
+                    expandable_session_ids.add(benchmark_session_id)
+            if not expandable_session_ids and len(direct_selected) < top_k:
                 for hit in direct_selected:
                     benchmark_session_id = hit.episode.temporal_scope.get(
                         "benchmark_session_id"
                     )
                     if benchmark_session_id is not None:
                         expandable_session_ids.add(benchmark_session_id)
-            else:
+            elif not expandable_session_ids:
                 direct_session_counts: dict[object, int] = {}
                 for hit in direct_selected:
                     benchmark_session_id = hit.episode.temporal_scope.get(
@@ -290,6 +305,199 @@ class RecallMemorySearcher:
             )
 
         return selected if preserve_neighbors else selected[:top_k]
+
+    def _select_direct_hits(
+        self,
+        direct_hits: list[EpisodeHit],
+        *,
+        top_k: int,
+        preserve_neighbors: bool,
+        by_session_and_position: dict[tuple[str, int], RecallMemoryEntry],
+        neighbors_before: int,
+        neighbors_after: int,
+    ) -> list[EpisodeHit]:
+        if not preserve_neighbors or top_k <= 0:
+            return direct_hits
+        if not any(
+            hit.episode.temporal_scope.get("benchmark_session_id") is not None
+            for hit in direct_hits
+        ):
+            return direct_hits
+
+        selected = list(direct_hits[:top_k])
+        selected_message_ids = {hit.episode.message_id for hit in selected}
+        benchmark_hits = [
+            hit
+            for hit in direct_hits
+            if hit.episode.temporal_scope.get("benchmark_session_id") is not None
+        ]
+        diversified_anchor_id: str | None = None
+        if benchmark_hits and selected:
+            chronological_anchor = min(
+                benchmark_hits,
+                key=lambda hit: (
+                    hit.episode.position,
+                    -hit.score,
+                    hit.episode.message_id,
+                ),
+            )
+            if chronological_anchor.episode.message_id not in selected_message_ids:
+                weakest_selected_index = min(
+                    range(len(selected)),
+                    key=lambda index: (
+                        selected[index].score,
+                        -selected[index].episode.position,
+                    ),
+                )
+                weakest_selected = selected[weakest_selected_index]
+                if self._can_replace_with_session_anchor(
+                    chronological_anchor,
+                    weakest_selected,
+                ):
+                    selected[weakest_selected_index] = chronological_anchor
+                    selected_message_ids = {
+                        hit.episode.message_id for hit in selected
+                    }
+            if chronological_anchor.episode.message_id in selected_message_ids:
+                diversified_anchor_id = chronological_anchor.episode.message_id
+
+        selected_rank = {
+            hit.episode.message_id: index for index, hit in enumerate(direct_hits)
+        }
+        selected.sort(
+            key=lambda hit: selected_rank.get(hit.episode.message_id, len(direct_hits))
+        )
+        selected_ids = {hit.episode.message_id for hit in selected}
+        annotated_selected = [
+            self._with_packet_metadata(
+                hit,
+                by_session_and_position=by_session_and_position,
+                neighbors_before=neighbors_before,
+                neighbors_after=neighbors_after,
+                packet_rank=packet_rank,
+                packet_reason=(
+                    "session_diversified_anchor"
+                    if hit.episode.message_id == diversified_anchor_id
+                    else "direct_anchor"
+                ),
+                session_diversified=hit.episode.message_id == diversified_anchor_id,
+            )
+            for packet_rank, hit in enumerate(selected)
+        ]
+        remaining = [
+            hit for hit in direct_hits if hit.episode.message_id not in selected_ids
+        ]
+        return annotated_selected + remaining
+
+    @staticmethod
+    def _can_replace_with_session_anchor(
+        anchor: EpisodeHit,
+        weakest_selected: EpisodeHit,
+    ) -> bool:
+        if weakest_selected.score <= 0:
+            return True
+        return anchor.score >= weakest_selected.score * 0.65
+
+    def _with_packet_metadata(
+        self,
+        hit: EpisodeHit,
+        *,
+        by_session_and_position: dict[tuple[str, int], RecallMemoryEntry],
+        neighbors_before: int,
+        neighbors_after: int,
+        packet_rank: int,
+        packet_reason: str,
+        session_diversified: bool,
+    ) -> EpisodeHit:
+        packet_session_id = hit.episode.temporal_scope.get("benchmark_session_id")
+        if packet_session_id is None:
+            return hit
+        member_entries = self._packet_member_entries(
+            hit.episode,
+            by_session_and_position=by_session_and_position,
+            neighbors_before=neighbors_before,
+            neighbors_after=neighbors_after,
+        )
+        packet_metadata = self._packet_metadata(
+            hit.episode,
+            member_entries=member_entries,
+            packet_rank=packet_rank,
+            packet_reason=packet_reason,
+        )
+        rank_features = dict(hit.rank_features)
+        rank_features["packet_rank"] = float(packet_rank)
+        if session_diversified:
+            rank_features["session_diversified_anchor"] = 1.0
+        else:
+            rank_features.setdefault("session_diversified_anchor", 0.0)
+        rank_features["packet_member_count"] = float(len(member_entries))
+        diagnostics = hit.diagnostics + (
+            _diagnostic(
+                hit.episode,
+                packet_reason,
+                hit.score,
+                True,
+                packet_metadata,
+            ),
+        )
+        return replace(
+            hit,
+            diagnostics=diagnostics,
+            rank_features=rank_features,
+            packet_metadata=packet_metadata,
+        )
+
+    def _packet_member_entries(
+        self,
+        anchor: Episode | RecallMemoryEntry,
+        *,
+        by_session_and_position: dict[tuple[str, int], RecallMemoryEntry],
+        neighbors_before: int,
+        neighbors_after: int,
+    ) -> list[RecallMemoryEntry]:
+        entries: list[RecallMemoryEntry] = []
+        for offset in range(-neighbors_before, neighbors_after + 1):
+            position = anchor.position + offset
+            member = by_session_and_position.get((anchor.session_id, position))
+            if member is None:
+                continue
+            anchor_benchmark_session = anchor.temporal_scope.get("benchmark_session_id")
+            member_benchmark_session = member.temporal_scope.get("benchmark_session_id")
+            if (
+                anchor_benchmark_session is not None
+                and member_benchmark_session is not None
+                and anchor_benchmark_session != member_benchmark_session
+            ):
+                continue
+            entries.append(member)
+        return entries
+
+    def _packet_metadata(
+        self,
+        anchor: Episode | RecallMemoryEntry,
+        *,
+        member_entries: list[RecallMemoryEntry],
+        packet_rank: int,
+        packet_reason: str,
+    ) -> dict[str, object]:
+        packet_session_id = anchor.temporal_scope.get("benchmark_session_id")
+        packet_id = f"recall_packet:{packet_session_id}:{anchor.message_id}"
+        member_message_ids = [entry.message_id for entry in member_entries]
+        member_source_ids = [
+            source_ref.source_id
+            for entry in member_entries
+            for source_ref in _entry_source_refs(entry)
+            if source_ref.source_id
+        ]
+        return {
+            "evidence_packet_id": packet_id,
+            "packet_anchor_message_id": anchor.message_id,
+            "packet_session_id": packet_session_id,
+            "packet_member_message_ids": member_message_ids,
+            "packet_member_source_ids": member_source_ids,
+            "packet_reason": packet_reason,
+            "packet_rank": packet_rank,
+        }
 
     def _add_neighbors(
         self,
@@ -334,6 +542,10 @@ class RecallMemorySearcher:
                     "neighbor_offset": offset,
                     **neighbor.temporal_scope,
                 }
+                packet_metadata = dict(hit.packet_metadata)
+                if packet_metadata:
+                    packet_metadata["packet_reason"] = "same_session_neighbor"
+                    neighbor_metadata.update(packet_metadata)
                 diagnostics = (
                     _diagnostic(
                         neighbor,
@@ -354,22 +566,37 @@ class RecallMemorySearcher:
                             "rank_features": {
                                 "neighbor_of_rank": hit.score,
                                 "neighbor_offset": float(offset),
+                                "packet_rank": float(
+                                    hit.packet_metadata.get("packet_rank", 0.0)
+                                )
+                                if hit.packet_metadata
+                                else 0.0,
                             },
                             **neighbor.temporal_scope,
+                            **packet_metadata,
                         },
                     ),
                 )
+                rank_features = {
+                    "neighbor_of_rank": hit.score,
+                    "neighbor_offset": float(offset),
+                }
+                if hit.packet_metadata:
+                    rank_features["packet_rank"] = float(
+                        hit.packet_metadata.get("packet_rank", 0.0)
+                    )
+                    rank_features["packet_member_count"] = float(
+                        len(hit.packet_metadata.get("packet_member_message_ids", []))
+                    )
                 selected.append(
                     EpisodeHit(
                         episode=neighbor,
                         score=max(hit.score - 0.1 * offset, 0.0),
                         reason=f"neighbor_of={hit.episode.message_id}",
                         diagnostics=diagnostics,
-                        rank_features={
-                            "neighbor_of_rank": hit.score,
-                            "neighbor_offset": float(offset),
-                        },
+                        rank_features=rank_features,
                         neighbor_of=hit.episode.message_id,
+                        packet_metadata=packet_metadata,
                     )
                 )
                 hit_by_message_id[neighbor.message_id] = len(selected) - 1

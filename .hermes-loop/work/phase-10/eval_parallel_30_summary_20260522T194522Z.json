@@ -1,0 +1,21 @@
+{
+  "phase": "phase-10",
+  "longmemeval": {
+    "run_id": "phase10_lme30_20260522T194522Z",
+    "final_path": ".memoryos/evals/phase10_lme30_20260522T194522Z_longmemeval.json",
+    "partial_path": ".memoryos/evals/phase10_lme30_20260522T194522Z_longmemeval.partial.json",
+    "rows": 30,
+    "pass": 28,
+    "fail": 2,
+    "final_exists": true
+  },
+  "locomo": {
+    "run_id": "phase10_locomo30_20260522T194522Z",
+    "final_path": ".memoryos/evals/phase10_locomo30_20260522T194522Z_locomo.json",
+    "partial_path": ".memoryos/evals/phase10_locomo30_20260522T194522Z_locomo.partial.json",
+    "rows": 30,
+    "pass": 18,
+    "fail": 12,
+    "final_exists": true
+  }
+}
