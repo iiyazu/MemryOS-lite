@@ -1,19 +1,21 @@
 {
   "version": "2.0",
-  "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 11,
+  "current_state": "ACK",
+  "current_phase_idx": 13,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-11",
-    "state": "GOD_DISPATCH"
+    "phase": "phase-13",
+    "state": "ACK"
   },
   "plan_lane": {
-    "phase": "phase-12",
+    "phase": "phase-14",
     "state": "PLAN_STORM"
   },
   "research_lane": {
-    "phases": []
+    "phases": [
+      "phase-14"
+    ]
   },
   "review_lane": {
     "active": false,
@@ -515,30 +517,51 @@
       "id": "phase-12",
       "name": "Archival/RAG Memory Unification",
       "target_state": "archival-rag-usable",
-      "status": "pending",
+      "status": "completed",
       "state_history": []
     },
     {
       "id": "phase-13",
       "name": "Core Memory Lifecycle",
       "target_state": "core-memory-lifecycle-usable",
-      "status": "pending",
+      "status": "completed",
       "state_history": []
     },
     {
       "id": "phase-14",
-      "name": "Agent Memory Loop",
+      "name": "Opt-In Kernel Memory Action Verification",
       "target_state": "agent-loop-memory-usable",
       "status": "pending",
       "state_history": []
     },
     {
       "id": "phase-15",
+      "name": "Diagnostic Kernel Maintenance Planner",
+      "target_state": "diagnostic-maintenance-planner-ready",
+      "status": "pending",
+      "state_history": []
+    },
+    {
+      "id": "phase-16",
+      "name": "Kernel Maintenance Tool Surface",
+      "target_state": "kernel-maintenance-tools-usable",
+      "status": "pending",
+      "state_history": []
+    },
+    {
+      "id": "phase-17",
+      "name": "LoCoMo Maintenance Repair Eval",
+      "target_state": "locomo-maintenance-repair-measured",
+      "status": "pending",
+      "state_history": []
+    },
+    {
+      "id": "phase-18",
       "name": "Benchmark Governance And Promotion",
       "target_state": "governed-promotion-ready",
       "status": "pending",
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-23T06:26:28+08:00"
+  "last_updated": "2026-05-23T16:22:54+00:00"
 }

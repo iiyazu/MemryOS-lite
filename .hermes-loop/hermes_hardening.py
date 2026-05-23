@@ -277,6 +277,69 @@ def check_state_ack_consistency(loop_root: str | Path, phase_id: str) -> dict[st
     }
 
 
+def check_execute_bootstrap_gate(loop_root: str | Path) -> dict[str, Any]:
+    loop = Path(loop_root)
+    state_path = loop / "state.json"
+    if not state_path.exists():
+        return {
+            "ok": False,
+            "phase_id": None,
+            "action": "missing_state",
+            "blockers": ["missing state.json"],
+        }
+
+    try:
+        state = _read_json(state_path)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "phase_id": None,
+            "action": "invalid_state",
+            "blockers": [f"invalid state.json: {exc}"],
+        }
+
+    execute_lane = state.get("execute_lane") if isinstance(state, dict) else {}
+    phase_id = (
+        str(execute_lane.get("phase"))
+        if isinstance(execute_lane, dict) and execute_lane.get("phase")
+        else None
+    )
+    current_state = str(state.get("current_state", "")).upper() if isinstance(state, dict) else ""
+    if not phase_id or current_state != "EXECUTE":
+        return {
+            "ok": True,
+            "phase_id": phase_id,
+            "action": "not_in_execute",
+            "blockers": [],
+        }
+
+    phase_dir = loop / "work" / phase_id
+    blockers: list[str] = []
+    required_files = ("context_bundle.md", "god_dispatch.json", "plan_final.md")
+    present = []
+    missing = []
+    for name in required_files:
+        path = phase_dir / name
+        if path.exists():
+            present.append(name)
+        else:
+            missing.append(f"missing {name}")
+    if missing:
+        blockers.extend(missing)
+        action = "bootstrap_dispatch"
+    else:
+        action = "allow_execute"
+
+    return {
+        "phase_id": phase_id,
+        "ok": not blockers,
+        "action": action,
+        "blockers": blockers,
+        "present_files": present,
+        "phase_dir": str(phase_dir),
+    }
+
+
 def scan_stale_artifacts(
     phase_dir: str | Path,
     *,

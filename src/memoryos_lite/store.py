@@ -3,7 +3,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import (
     Boolean,
@@ -932,11 +932,28 @@ class MemoryStore:
             return blocks
         return [block for block in blocks if block.deleted_at is None]
 
-    def update_core_memory_block(self, block: CoreMemoryBlock) -> CoreMemoryBlock | None:
+    def update_core_memory_block(
+        self,
+        block: CoreMemoryBlock,
+        *,
+        actor: str | None = None,
+        reason: str | None = None,
+        source_refs: list[SourceRef] | None = None,
+        operation: Literal["update", "replace"] = "update",
+    ) -> CoreMemoryBlock | None:
+        if not actor:
+            raise ValueError("core memory store updates require actor")
+        if not reason:
+            raise ValueError("core memory store updates require reason")
+        if not source_refs:
+            raise ValueError("core memory store updates require source_refs")
         with self.db() as db:
             record = db.get(CoreMemoryBlockRecord, block.id)
             if record is None:
                 return None
+            if record.read_only:
+                raise ValueError("read-only core memory block cannot be mutated")
+            before = self._core_block_from_record(record)
             record.label = block.label
             record.description = block.description
             record.value = block.value
@@ -948,7 +965,22 @@ class MemoryStore:
             record.deleted_at = block.deleted_at
             record.deleted_by_event_id = block.deleted_by_event_id
             record.updated_at = block.updated_at
-            return self._core_block_from_record(record)
+            after = self._core_block_from_record(record)
+            db.add(
+                self._history_record_from_event(
+                    MemoryHistoryEvent(
+                        memory_id=before.id,
+                        memory_type="core_block",
+                        operation=operation,
+                        actor=actor,  # type: ignore[arg-type]
+                        reason=reason,
+                        before=before.model_dump(mode="json"),
+                        after=after.model_dump(mode="json"),
+                        source_refs=list(source_refs),
+                    )
+                )
+            )
+            return after
 
     def delete_core_memory_block(
         self,
@@ -961,6 +993,8 @@ class MemoryStore:
             record = db.get(CoreMemoryBlockRecord, block_id)
             if record is None:
                 return None
+            if record.read_only:
+                raise ValueError("read-only core memory block cannot be mutated")
             before = self._core_block_from_record(record)
             event = MemoryHistoryEvent(
                 memory_id=before.id,
@@ -1083,6 +1117,108 @@ class MemoryStore:
                 )
             )
         return passage
+
+    def _archival_passage_from_memory(self, memory: ArchivalMemory) -> ArchivalPassage:
+        scope = memory.identity_scope
+        if scope is None and memory.archive_id is not None:
+            scope = IdentityScope(archive_id=memory.archive_id)
+        source_id = None
+        file_id = None
+        if memory.archive_id is None:
+            source_id = memory.source_id
+            if source_id is None:
+                source_id = next(
+                    (
+                        source_ref.source_id
+                        for source_ref in memory.source_refs
+                        if source_ref.source_id
+                    ),
+                    None,
+                )
+            if source_id is None:
+                file_id = memory.file_id
+        return ArchivalPassage(
+            id=self._archival_passage_id(memory.id),
+            archive_id=memory.archive_id,
+            text=memory.content,
+            citation=SourceSpan(start=0, end=len(memory.content)),
+            source_id=source_id,
+            file_id=file_id,
+            scope=scope,
+            tags=list(memory.tags),
+            source_refs=list(memory.source_refs),
+            legacy_item_id=memory.id,
+            metadata={
+                **memory.metadata,
+                "producer": "archival_memory",
+                "archival_memory_id": memory.id,
+                "memory_type": memory.memory_type,
+                "memory_updated_at": memory.updated_at.isoformat(),
+            },
+            created_at=memory.created_at,
+            updated_at=memory.updated_at,
+        )
+
+    @staticmethod
+    def _archival_passage_id(memory_id: str) -> str:
+        return f"apsg_{memory_id}"
+
+    def _upsert_archival_passage_for_memory(
+        self,
+        db: DbSession,
+        memory: ArchivalMemory,
+    ) -> None:
+        passage = self._archival_passage_from_memory(memory)
+        self._validate_archival_passage_identity(passage)
+        record = db.get(ArchivalPassageRecord, passage.id)
+        if record is None:
+            db.add(
+                ArchivalPassageRecord(
+                    id=passage.id,
+                    document_id=passage.document_id,
+                    chunk_id=passage.chunk_id,
+                    archive_id=passage.archive_id,
+                    text=passage.text,
+                    citation_start=passage.citation.start if passage.citation else None,
+                    citation_end=passage.citation.end if passage.citation else None,
+                    source_id=passage.source_id,
+                    file_id=passage.file_id,
+                    scope_json=(
+                        passage.scope.model_dump_json() if passage.scope is not None else None
+                    ),
+                    tags_json=self._dump_json(passage.tags),
+                    score=passage.score,
+                    source_refs_json=self._dump_source_refs(passage.source_refs),
+                    legacy_item_id=passage.legacy_item_id,
+                    metadata_json=self._dump_json(passage.metadata),
+                    created_at=passage.created_at,
+                    updated_at=passage.updated_at,
+                )
+            )
+            return
+        record.document_id = passage.document_id
+        record.chunk_id = passage.chunk_id
+        record.archive_id = passage.archive_id
+        record.text = passage.text
+        record.citation_start = passage.citation.start if passage.citation else None
+        record.citation_end = passage.citation.end if passage.citation else None
+        record.source_id = passage.source_id
+        record.file_id = passage.file_id
+        record.scope_json = (
+            passage.scope.model_dump_json() if passage.scope is not None else None
+        )
+        record.tags_json = self._dump_json(passage.tags)
+        record.score = passage.score
+        record.source_refs_json = self._dump_source_refs(passage.source_refs)
+        record.legacy_item_id = passage.legacy_item_id
+        record.metadata_json = self._dump_json(passage.metadata)
+        record.updated_at = passage.updated_at
+
+    def _delete_archival_passage_for_memory(self, db: DbSession, memory_id: str) -> None:
+        passage_id = self._archival_passage_id(memory_id)
+        record = db.get(ArchivalPassageRecord, passage_id)
+        if record is not None:
+            db.delete(record)
 
     @staticmethod
     def _validate_archival_passage_identity(passage: ArchivalPassage) -> None:
@@ -1228,6 +1364,7 @@ class MemoryStore:
         with self.db() as db:
             db.add(self._archival_memory_record(memory))
             db.add(self._archival_history_record(event))
+            self._upsert_archival_passage_for_memory(db, memory)
         return memory
 
     def update_archival_memory(
@@ -1264,7 +1401,8 @@ class MemoryStore:
             history.append(event.model_dump(mode="json"))
             record.history_json = self._dump_json(history)
             db.add(self._archival_history_record(event))
-            return self._archival_memory_from_record(record)
+            self._upsert_archival_passage_for_memory(db, updated)
+            return updated
 
     def delete_archival_memory(
         self,
@@ -1298,6 +1436,7 @@ class MemoryStore:
             history.append(event.model_dump(mode="json"))
             record.history_json = self._dump_json(history)
             db.add(self._archival_history_record(event))
+            self._delete_archival_passage_for_memory(db, memory_id)
             return deleted
 
     def list_archival_memory_history(self, memory_id: str) -> list[MemoryHistoryEvent]:

@@ -1,7 +1,10 @@
+import pytest
 from sqlalchemy import text
 
 from memoryos_lite.config import Settings
+from memoryos_lite.core_memory import CoreMemoryService
 from memoryos_lite.store import MemoryStore
+from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
 
 
@@ -44,16 +47,27 @@ def test_core_memory_store_round_trip_history_and_soft_delete(tmp_path):
     assert add_event.after["read_only"] is True
     assert add_event.after["tags"] == ["profile", "source-backed"]
 
-    deleted = store.delete_core_memory_block(
-        "core_1",
+    mutable_block = CoreMemoryBlock(
+        id="core_2",
+        label="scratch",
+        description="Mutable user facts",
+        value="Alice temporarily lives in Berlin.",
+        limit_tokens=100,
         source_refs=[SourceRef(source_type="message", source_id="msg_2")],
+        read_only=False,
+    )
+    store.create_core_memory_block(mutable_block)
+
+    deleted = store.delete_core_memory_block(
+        "core_2",
+        source_refs=[SourceRef(source_type="message", source_id="msg_3")],
         actor="agent",
         reason="user requested removal",
     )
     assert deleted.deleted_at is not None
-    assert store.get_core_memory_block("core_1") is None
-    assert store.get_core_memory_block("core_1", include_deleted=True).deleted_at is not None
-    assert store.list_core_memory_history("core_1")[-1].operation == "delete"
+    assert store.get_core_memory_block("core_2") is None
+    assert store.get_core_memory_block("core_2", include_deleted=True).deleted_at is not None
+    assert store.list_core_memory_history("core_2")[-1].operation == "delete"
 
 
 def test_init_db_stamps_current_migration_head(tmp_path):
@@ -145,3 +159,60 @@ def test_init_db_upgrades_existing_core_memory_schema_before_stamping_head(tmp_p
     assert loaded is not None
     assert loaded.read_only is True
     assert loaded.tags == ["profile"]
+
+
+def test_core_memory_store_update_requires_audit_metadata(tmp_path):
+    store = MemoryStore(_settings(tmp_path))
+    store.init_db()
+    core = CoreMemoryService(store, TokenEstimator())
+    ref = SourceRef(source_type="message", source_id="msg_1")
+    block = core.create_block(
+        label="human",
+        description="stable user facts",
+        value="Alice prefers trains.",
+        limit_tokens=40,
+        source_refs=[ref],
+        actor="agent",
+        reason="seed core profile",
+    )
+
+    with pytest.raises(ValueError, match="core memory store updates require actor"):
+        store.update_core_memory_block(
+            block.model_copy(update={"value": "Alice prefers buses."})
+        )
+
+    assert store.get_core_memory_block(block.id).value == "Alice prefers trains."
+    assert [event.operation for event in store.list_core_memory_history(block.id)] == ["add"]
+
+
+def test_read_only_core_block_rejects_store_update_and_delete(tmp_path):
+    store = MemoryStore(_settings(tmp_path))
+    store.init_db()
+    core = CoreMemoryService(store, TokenEstimator())
+    ref = SourceRef(source_type="message", source_id="msg_1")
+    block = core.create_block(
+        label="persona",
+        description="stable assistant facts",
+        value="I prefer concise answers.",
+        limit_tokens=40,
+        source_refs=[ref],
+        actor="agent",
+        reason="seed persona",
+        read_only=True,
+    )
+
+    with pytest.raises(ValueError, match="read-only core memory block cannot be mutated"):
+        store.update_core_memory_block(
+            block.model_copy(update={"value": "I prefer detailed answers."}),
+            actor="agent",
+            reason="mutate read-only block",
+            source_refs=[ref],
+        )
+
+    with pytest.raises(ValueError, match="read-only core memory block cannot be mutated"):
+        store.delete_core_memory_block(
+            block.id,
+            source_refs=[ref],
+            actor="agent",
+            reason="delete read-only",
+        )

@@ -1,0 +1,79 @@
+{
+  "phase": "phase-12",
+  "ack_level": "usable",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-12/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "implemented_chain": {
+    "ingest": "not_applicable",
+    "store": "verified",
+    "retrieval": "changed",
+    "context_composer": "verified",
+    "answer_projection": "verified",
+    "kernel_loop": "changed",
+    "public_eval": "not_applicable"
+  },
+  "real_path_wired": true,
+  "demo_only_or_stub_remaining": [],
+  "failing_tests_added_before_fix": [
+    "tests/test_agent_kernel.py::test_kernel_archive_write_becomes_same_session_archival_context_item"
+  ],
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_agent_kernel.py::test_kernel_archive_write_becomes_same_session_archival_context_item -q",
+      "result": "1 passed"
+    },
+    {
+      "command": "uv run pytest tests/test_agent_kernel.py tests/test_archival_store.py tests/test_memory_lifecycle.py tests/test_context_composer.py -q",
+      "result": "30 passed"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "446 passed, 1 warning"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed"
+    }
+  ],
+  "case_level_eval": {
+    "longmemeval": {
+      "limit": 0,
+      "llm_answer": true,
+      "llm_judge": true,
+      "pass_fail": "not_applicable",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [],
+      "evidence_hit_answer_fail": [],
+      "judge_questionable": []
+    },
+    "locomo": {
+      "limit": 0,
+      "llm_answer": true,
+      "llm_judge": true,
+      "pass_fail": "not_applicable",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [],
+      "evidence_hit_answer_fail": [],
+      "judge_questionable": []
+    }
+  },
+  "review_verdict": {
+    "overfitting_risk": "low",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false
+  },
+  "decision": "advance"
+}

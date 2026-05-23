@@ -63,16 +63,35 @@ class MemoryLifecycleService:
                 raise ValueError("core promotion requires approved approval_state")
             if self.core_memory is None:
                 raise ValueError("core memory service is required for core promotion")
-            self.core_memory.create_block(
-                label=candidate.metadata.get("label", "promotion"),
-                description=candidate.reason,
-                value=candidate.content,
-                limit_tokens=int(candidate.metadata.get("limit_tokens", 200)),
-                source_refs=list(candidate.source_refs),
-                actor=actor,  # type: ignore[arg-type]
-                reason=candidate.reason,
-                approval_state=approval_state,
-            )
+            label = str(candidate.metadata.get("label") or "promotion")
+            provenance = {
+                **candidate.metadata,
+                "promotion_candidate_id": candidate.id,
+                "approval_id": approval_state.id,
+            }
+            existing = self.core_memory.get_block_by_label(label)
+            if existing is None:
+                self.core_memory.create_block(
+                    label=label,
+                    description=candidate.reason,
+                    value=candidate.content,
+                    limit_tokens=int(candidate.metadata.get("limit_tokens", 200)),
+                    source_refs=list(candidate.source_refs),
+                    actor=actor,  # type: ignore[arg-type]
+                    reason=candidate.reason,
+                    approval_state=approval_state,
+                    metadata=provenance,
+                )
+            else:
+                self.core_memory.update_block(
+                    existing.id,
+                    candidate.content,
+                    source_refs=list(candidate.source_refs),
+                    actor=actor,  # type: ignore[arg-type]
+                    reason=candidate.reason,
+                    approval_state=approval_state,
+                    metadata=provenance,
+                )
             return candidate.model_copy(update={"status": "applied", "updated_at": utc_now()})
 
         memory = ArchivalMemory(

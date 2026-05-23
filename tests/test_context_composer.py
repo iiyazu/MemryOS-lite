@@ -4,10 +4,15 @@ from memoryos_lite.config import Settings
 from memoryos_lite.context_composer import V3ContextComposer
 from memoryos_lite.core_memory import CoreMemoryService
 from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.memory_lifecycle import (
+    MemoryLifecycleService,
+    archival_to_core_candidate,
+)
 from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
+    ApprovalState,
     ArchivalPassage,
     ArchiveAttachment,
     ContextComposerRequest,
@@ -527,7 +532,7 @@ def test_v3_composer_core_items_use_structured_render_and_diagnostics(tmp_path):
         ContextComposerRequest(
             session_id="ses_1",
             task="What does Alice prefer?",
-            budget=80,
+            budget=120,
         )
     )
 
@@ -545,6 +550,65 @@ def test_v3_composer_core_items_use_structured_render_and_diagnostics(tmp_path):
     assert core_diagnostics
     assert core_diagnostics[0].budget_tokens == core_item.estimated_tokens
     assert core_diagnostics[0].metadata["source_ref_count"] == 1
+
+
+def test_v3_composer_renders_approved_core_promotion_with_provenance(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+    store = create_store(settings)
+    store.reset()
+    ref = _ref()
+    core = CoreMemoryService(store, TokenEstimator())
+    lifecycle = MemoryLifecycleService(store, core)
+
+    core.create_block(
+        label="human",
+        description="stable user facts",
+        value="Alice prefers trains.",
+        limit_tokens=40,
+        source_refs=[ref],
+        actor="user",
+        reason="seed human profile",
+    )
+
+    candidate = archival_to_core_candidate(
+        "Alice prefers rail travel.",
+        source_refs=[ref],
+        reason="promote stable preference",
+        confidence=0.95,
+        label="human",
+        limit_tokens=40,
+    )
+    approved = ApprovalState(
+        id="appr_1",
+        session_id="ses_1",
+        tool_name="memory_core_update",
+        requested_action={"content": candidate.content},
+        status="approved",
+        requested_by="agent",
+        approved_by="user",
+        resolved_at=candidate.created_at,
+    )
+    lifecycle.apply_candidate(candidate, actor="agent", approval_state=approved)
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=TokenEstimator(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="What does Alice prefer?",
+            budget=120,
+        )
+    )
+
+    core_items = [item for item in package.items if item.layer == "core"]
+    assert len(core_items) == 1
+    assert "Alice prefers rail travel." in core_items[0].text
+    assert core_items[0].source_refs[0].source_id == "msg_1"
+    assert core_items[0].metadata["metadata"]["promotion_candidate_id"] == candidate.id
+    assert core_items[0].metadata["metadata"]["approval_id"] == approved.id
+    assert core_items[0].metadata["tokens_current"] > 0
 
 
 def test_service_build_context_routes_to_v3_when_opted_in(tmp_path):

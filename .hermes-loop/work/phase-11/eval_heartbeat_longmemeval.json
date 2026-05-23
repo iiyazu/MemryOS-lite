@@ -1,0 +1,20 @@
+{
+  "phase": "phase-11",
+  "run_id": "phase11_lme30_handoff_20260523T102420Z",
+  "benchmark": "longmemeval",
+  "status": "interrupted",
+  "command": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge --comparison-report .memoryos/evals/phase10_lme30_packets_20260522T202553Z_longmemeval.json --run-id phase11_lme30_handoff_20260523T102420Z",
+  "start_time": "2026-05-23T10:24:20+0000",
+  "last_seen": "2026-05-23T10:30:34.893837+00:00",
+  "partial_path": ".memoryos/evals/phase11_lme30_handoff_20260523T102420Z_longmemeval.partial.json",
+  "final_path": ".memoryos/evals/phase11_lme30_handoff_20260523T102420Z_longmemeval.json",
+  "rows_done": 7,
+  "last_case_id": "6ade9755",
+  "pass": 7,
+  "fail": 0,
+  "answer_mode": "llm",
+  "judge_done": 7,
+  "judge_total": 30,
+  "file_mtime": "2026-05-23T10:29:54.040817+00:00",
+  "file_size": 6323948
+}

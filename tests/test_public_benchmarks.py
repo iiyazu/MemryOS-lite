@@ -306,6 +306,239 @@ def test_public_answerer_renders_structured_evidence_with_citation_contract(
     assert "Insufficient retrieved evidence to answer with source citations." in prompt_text
 
 
+def test_public_answerer_normalizes_unique_short_locomo_citations_to_allowed_ids(
+    tmp_path, monkeypatch
+):
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Melanie planned to go camping around June 2023 [D2:7], "
+                        "with later camping evidence also available [D6:16]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "When was Melanie planning to go camping?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_007:conv-26:D2:7",
+                text=(
+                    "[1:14 pm on 25 May, 2023] Melanie: I am thinking about "
+                    "going camping next month."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_007:conv-26:D2:7"],
+                session_id="D2",
+                date="1:14 pm on 25 May, 2023",
+            ),
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_007:conv-26:D6:16",
+                text="[8:18 pm on 6 July, 2023] Melanie: Camping was fun.",
+                component="recall",
+                source_ids=["conv-26_qa_007:conv-26:D6:16"],
+                session_id="D6",
+                date="8:18 pm on 6 July, 2023",
+            ),
+        ],
+    )
+
+    assert "[conv-26_qa_007:conv-26:D2:7]" in answer
+    assert "[conv-26_qa_007:conv-26:D6:16]" in answer
+    assert "[D2:7]" not in answer
+    assert "[D6:16]" not in answer
+
+
+def test_public_answerer_normalized_locomo_citations_reach_result_diagnostics(
+    tmp_path, monkeypatch
+):
+    full_id = "conv-26_qa_007:conv-26:D2:7"
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Melanie planned to go camping around June 2023 [D2:7]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+    evidence = [
+        public_benchmarks.AnswerEvidence(
+            evidence_id=full_id,
+            text=(
+                "[1:14 pm on 25 May, 2023] Melanie: I am thinking about "
+                "going camping next month."
+            ),
+            component="recall",
+            source_ids=[full_id],
+            session_id="D2",
+            date="1:14 pm on 25 May, 2023",
+        )
+    ]
+
+    answer = answerer.answer("When was Melanie planning to go camping?", evidence)
+
+    public_case = public_benchmarks.PublicBenchmarkCase(
+        benchmark="locomo",
+        case=public_benchmarks.EvalCase(
+            case_id="conv-26_qa_007",
+            conversation=[
+                public_benchmarks.MessageCreate(
+                    role=public_benchmarks.Role.USER,
+                    content="Melanie planned to go camping around June 2023.",
+                )
+            ],
+            question="When was Melanie planning to go camping?",
+            expected_facts=["June 2023"],
+        ),
+        messages=[],
+        expected_answer="June 2023",
+        expected_source_ids=[full_id],
+        expected_session_ids=["D2"],
+        source_sessions_by_id={full_id: "D2"},
+    )
+    output = BaselineOutput(
+        answer="Melanie planned to go camping around June 2023.",
+        context_tokens=12,
+        sources={full_id: evidence[0].text},
+        retrieval_candidate_source_ids=[full_id],
+        memory_arch="v3",
+        v3_final_context_trace=[
+            {
+                "component": "recall",
+                "item_id": full_id,
+                "source_ids": [full_id],
+                "rendered_index": 1,
+                "metadata": {
+                    "benchmark_session_id": "D2",
+                    "benchmark_date": "1:14 pm on 25 May, 2023",
+                },
+            }
+        ],
+        v3_context={
+            "metadata": {
+                "final_context_trace": [
+                    {
+                        "component": "recall",
+                        "item_id": full_id,
+                        "source_ids": [full_id],
+                        "rendered_index": 1,
+                        "included": True,
+                        "dropped": False,
+                    }
+                ]
+            }
+        },
+    )
+
+    result = public_benchmarks._to_public_result(
+        public_case,
+        "memoryos_lite",
+        answer,
+        "llm",
+        [full_id],
+        "pass",
+        "judge pass",
+        ["June 2023"],
+        [],
+        output,
+        latency_ms=1,
+        answer_evidence=evidence,
+        baseline_verdict="pass",
+        movement_baseline_source="phase10.json",
+    )
+
+    diagnostics = result.case_diagnostics
+    assert f"[{full_id}]" in result.answer
+    assert "[D2:7]" not in result.answer
+    assert diagnostics["cited_source_ids"] == [full_id]
+    assert diagnostics["unsupported_citation_ids"] == []
+    assert diagnostics["citation_contract_status"] == "supported_cited_answer"
+    assert diagnostics["failure_class"] == "supported_cited_answer"
+    assert diagnostics["evidence_handoff"]["failure_boundary"] == "none"
+
+
+def test_public_answerer_brackets_parenthetical_allowed_citation_ids(
+    tmp_path, monkeypatch
+):
+    source_a = "8ebdbe50:answer_8ad8a34f:003"
+    source_b = "8ebdbe50:answer_8ad8a34f:009"
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "You completed a certification in Data Science last month "
+                        f"({source_a}, {source_b})."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "What certification did I complete last month?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id=source_a,
+                text=(
+                    "I need to add my latest certification in Data Science, "
+                    "which I completed last month, to my profile."
+                ),
+                component="recall",
+                source_ids=[source_a],
+                session_id="answer_8ad8a34f",
+            ),
+            public_benchmarks.AnswerEvidence(
+                evidence_id=source_b,
+                text=(
+                    "I need to update my LinkedIn profile to reflect my latest "
+                    "certification in Data Science, which I completed last month."
+                ),
+                component="recall",
+                source_ids=[source_b],
+                session_id="answer_8ad8a34f",
+            ),
+        ],
+    )
+
+    assert f"[{source_a}]" in answer
+    assert f"[{source_b}]" in answer
+    assert f"({source_a}" not in answer
+
+
 def test_public_answerer_guides_relative_temporal_evidence_before_refusal(
     tmp_path, monkeypatch
 ):
@@ -511,6 +744,912 @@ def test_public_answerer_guides_yes_no_inference_before_refusal(
     assert "answer likely yes or likely no" in prompt_text
     assert "pursue option X" in prompt_text
     assert "different option Y" in prompt_text
+
+
+def test_public_answerer_guides_complete_qualified_fact_answers(
+    tmp_path, monkeypatch
+):
+    captured_messages = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_messages.extend(messages)
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            if "preserve explicit qualifiers" not in prompt_text:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "I attended the University of Melbourne "
+                            "[3b6f954b:answer_94030872:009]."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "I attended the University of Melbourne in Australia "
+                        "[3b6f954b:answer_94030872:009]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Where did I attend for my study abroad program?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="3b6f954b:answer_94030872:009",
+                text=(
+                    "I attended the University of Melbourne in Australia "
+                    "for my study abroad program."
+                ),
+                component="recall",
+                source_ids=["3b6f954b:answer_94030872:009"],
+                session_id="answer_94030872",
+                date="2023/05/23 (Tue) 10:24",
+            )
+        ],
+    )
+
+    assert "University of Melbourne in Australia" in answer
+    assert "[3b6f954b:answer_94030872:009]" in answer
+    prompt_text = "\n".join(str(message.content) for message in captured_messages)
+    assert "preserve explicit qualifiers" in prompt_text
+    assert "countries" in prompt_text
+
+
+def test_public_answerer_omits_internal_diagnostics_metadata_from_prompt(
+    tmp_path, monkeypatch
+):
+    captured_messages = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_messages.extend(messages)
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            if "rank_features" in prompt_text or "packet_member_message_ids" in prompt_text:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Likely no: Caroline is pursuing counseling and mental health "
+                        "work, while reading is a motivating interest "
+                        "[conv-26_qa_028:conv-26:D7:5] [conv-26_qa_028:conv-26:D7:9]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Would Caroline pursue writing as a career option?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:5",
+                text=(
+                    "Caroline is looking into counseling and mental health jobs "
+                    "because she wants people to have someone to talk to."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:5"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+                metadata={
+                    "rank_features": {"token_overlap": 2.0},
+                    "packet_member_message_ids": ["conv-26_qa_028:conv-26:D7:5"],
+                },
+            ),
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:9",
+                text=(
+                    "Caroline says books guide and motivate her and that reading "
+                    "is part of her journey."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:9"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+                metadata={
+                    "rank_features": {"token_overlap": 1.0},
+                    "packet_member_message_ids": ["conv-26_qa_028:conv-26:D7:9"],
+                },
+            ),
+        ],
+    )
+
+    assert "Likely no" in answer
+    assert "[conv-26_qa_028:conv-26:D7:5]" in answer
+    assert "[conv-26_qa_028:conv-26:D7:9]" in answer
+    prompt_text = "\n".join(str(message.content) for message in captured_messages)
+    assert "rank_features" not in prompt_text
+    assert "packet_member_message_ids" not in prompt_text
+
+
+def test_public_answerer_preserves_explicit_location_qualifier_without_metadata_noise(
+    tmp_path, monkeypatch
+):
+    captured_messages = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_messages.extend(messages)
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            if "rank_features" in prompt_text or "packet_member_message_ids" in prompt_text:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "I attended the University of Melbourne in Australia "
+                        "[3b6f954b:answer_94030872:009]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Where did I attend for my study abroad program?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="3b6f954b:answer_94030872:009",
+                text=(
+                    "I attended the University of Melbourne in Australia "
+                    "for my study abroad program."
+                ),
+                component="recall",
+                source_ids=["3b6f954b:answer_94030872:009"],
+                session_id="answer_94030872",
+                date="2023/05/23 (Tue) 10:24",
+                metadata={
+                    "rank_features": {"token_overlap": 5.0},
+                    "packet_member_message_ids": ["3b6f954b:answer_94030872:009"],
+                },
+            )
+        ],
+    )
+
+    assert "University of Melbourne in Australia" in answer
+    assert "[3b6f954b:answer_94030872:009]" in answer
+    prompt_text = "\n".join(str(message.content) for message in captured_messages)
+    assert "rank_features" not in prompt_text
+    assert "packet_member_message_ids" not in prompt_text
+
+
+def test_public_answerer_repairs_missing_location_qualifier_after_retry(
+    tmp_path, monkeypatch
+):
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "I attended my study abroad program at the University of "
+                        "Melbourne [3b6f954b:answer_94030872:009]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Where did I attend for my study abroad program?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="3b6f954b:answer_94030872:009",
+                text=(
+                    "I attended the University of Melbourne in Australia "
+                    "for my study abroad program."
+                ),
+                component="recall",
+                source_ids=["3b6f954b:answer_94030872:009"],
+                session_id="answer_94030872",
+                date="2023/05/23 (Tue) 10:24",
+            )
+        ],
+    )
+
+    assert "University of Melbourne in Australia" in answer
+    assert "[3b6f954b:answer_94030872:009]" in answer
+
+
+def test_public_answerer_retries_when_answer_omits_explicit_location_qualifier(
+    tmp_path, monkeypatch
+):
+    captured_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            captured_prompts.append(prompt_text)
+            if self.calls == 1:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Based on the evidence, you attended the University of "
+                            "Melbourne for your study abroad program "
+                            "[3b6f954b:answer_94030872:009]."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "You attended the University of Melbourne in Australia "
+                        "for your study abroad program "
+                        "[3b6f954b:answer_94030872:009]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Where did I attend for my study abroad program?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="3b6f954b:answer_94030872:009",
+                text=(
+                    "I attended the University of Melbourne in Australia "
+                    "for my study abroad program."
+                ),
+                component="recall",
+                source_ids=["3b6f954b:answer_94030872:009"],
+                session_id="answer_94030872",
+                date="2023/05/23 (Tue) 10:24",
+            )
+        ],
+    )
+
+    assert "University of Melbourne in Australia" in answer
+    assert "[3b6f954b:answer_94030872:009]" in answer
+    assert len(captured_prompts) == 2
+    assert "omitted explicit qualifiers" in captured_prompts[1]
+    assert "Australia" in captured_prompts[1]
+
+
+def test_public_answerer_retries_missing_qualifiers_after_refusal(
+    tmp_path, monkeypatch
+):
+    captured_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            captured_prompts.append(prompt_text)
+            if self.calls in (1, 2):
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "You attended the University of Melbourne in Australia "
+                        "for your study abroad program "
+                        "[3b6f954b:answer_94030872:009]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Where did I attend for my study abroad program?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="3b6f954b:answer_94030872:009",
+                text=(
+                    "I attended the University of Melbourne in Australia "
+                    "for my study abroad program."
+                ),
+                component="recall",
+                source_ids=["3b6f954b:answer_94030872:009"],
+                session_id="answer_94030872",
+                date="2023/05/23 (Tue) 10:24",
+            )
+        ],
+    )
+
+    assert answer == (
+        "You attended the University of Melbourne in Australia "
+        "for your study abroad program [3b6f954b:answer_94030872:009]."
+    )
+    assert len(captured_prompts) == 3
+    assert "omitted explicit qualifiers" in captured_prompts[2]
+    assert "Australia" in captured_prompts[2]
+
+
+def test_public_answerer_guides_relevant_evidence_over_refusal(
+    tmp_path, monkeypatch
+):
+    captured_messages = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_messages.extend(messages)
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            if "If any retrieved evidence is relevant" not in prompt_text:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Likely no: Caroline is looking into counseling and mental "
+                        "health work, while books are described as motivation rather "
+                        "than a writing career [conv-26_qa_028:conv-26:D7:5] "
+                        "[conv-26_qa_028:conv-26:D7:9]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Would Caroline pursue writing as a career option?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:5",
+                text=(
+                    "Caroline is looking into counseling and mental health jobs "
+                    "because she wants people to have someone to talk to."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:5"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            ),
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:9",
+                text=(
+                    "Caroline says the book she read motivates her and that "
+                    "reading is part of her journey."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:9"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            ),
+        ],
+    )
+
+    assert "Likely no" in answer
+    assert "[conv-26_qa_028:conv-26:D7:5]" in answer
+    assert "[conv-26_qa_028:conv-26:D7:9]" in answer
+    prompt_text = "\n".join(str(message.content) for message in captured_messages)
+    assert "If any retrieved evidence is relevant" in prompt_text
+    assert "do not use the exact refusal" in prompt_text
+
+
+def test_public_answerer_retries_exact_refusal_when_evidence_exists(
+    tmp_path, monkeypatch
+):
+    captured_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            captured_prompts.append(prompt_text)
+            if self.calls == 1:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Likely no: Caroline is looking into counseling and mental "
+                        "health work, while reading is described as motivation rather "
+                        "than a writing career [conv-26_qa_028:conv-26:D7:5] "
+                        "[conv-26_qa_028:conv-26:D7:9]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Would Caroline pursue writing as a career option?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:5",
+                text=(
+                    "Caroline is looking into counseling and mental health jobs "
+                    "because she wants people to have someone to talk to."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:5"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            ),
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:9",
+                text=(
+                    "Caroline says the book she read motivates her and that "
+                    "reading is part of her journey."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:9"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            ),
+        ],
+    )
+
+    assert "Likely no" in answer
+    assert "[conv-26_qa_028:conv-26:D7:5]" in answer
+    assert "[conv-26_qa_028:conv-26:D7:9]" in answer
+    assert len(captured_prompts) == 2
+    assert "This is a retry after an overly cautious draft" in captured_prompts[1]
+    assert "Do not return the exact refusal" in captured_prompts[1]
+    assert "Do not require the exact option text to appear" in captured_prompts[1]
+
+
+def test_public_answerer_retry_prompt_drops_exact_refusal_clause(
+    tmp_path, monkeypatch
+):
+    captured_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            captured_prompts.append(prompt_text)
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Insufficient retrieved evidence to answer with source citations."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answerer.answer(
+        "When did I volunteer at the local animal shelter's fundraising dinner?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="58ef2f1c:answer_59547700:009",
+                text="I volunteered at the fundraising dinner on February 14th.",
+                component="recall",
+                source_ids=["58ef2f1c:answer_59547700:009"],
+                session_id="answer_59547700",
+                date="2023/04/02 (Sun) 22:15",
+            )
+        ],
+    )
+
+    assert len(captured_prompts) == 2
+    assert "This is a retry after an overly cautious draft" in captured_prompts[1]
+    assert "Do not return the exact refusal" in captured_prompts[1]
+    assert (
+        "answer exactly: Insufficient retrieved evidence to answer with source citations."
+        not in captured_prompts[1]
+    )
+    assert "The provided evidence was selected as relevant" in captured_prompts[1]
+
+
+def test_public_answerer_does_not_synthesize_likely_no_after_repeated_refusal(
+    tmp_path, monkeypatch
+):
+    captured_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            captured_prompts.append(prompt_text)
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Insufficient retrieved evidence to answer with source citations."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Would Dana accept the promotion?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="msg_promotion_interest",
+                text=(
+                    "Dana said the promotion aligns with her long-term goals "
+                    "and she is excited about the chance to lead the team."
+                ),
+                component="recall",
+                source_ids=["msg_promotion_interest"],
+                session_id="D1",
+                date="2026-05-23",
+            ),
+        ],
+    )
+
+    assert answer == "Insufficient retrieved evidence to answer with source citations."
+    assert len(captured_prompts) == 2
+    assert "This is a retry after an overly cautious draft" in captured_prompts[1]
+
+
+def test_public_answerer_repairs_missing_preference_support_after_supported_answer(
+    tmp_path, monkeypatch
+):
+    captured_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            captured_prompts.append("\n".join(str(message.content) for message in messages))
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Likely no: Caroline is pursuing counseling and mental "
+                        "health work, while there is no indication that she is "
+                        "pursuing writing as a career [conv-26_qa_028:conv-26:D7:5] "
+                        "[conv-26_qa_028:conv-26:D7:9]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "Would Caroline pursue writing as a career option?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:5",
+                text=(
+                    "Caroline is looking into counseling and mental health jobs "
+                    "because she wants people to have someone to talk to."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:5"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            ),
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_028:conv-26:D7:9",
+                text=(
+                    "Caroline says the book she read motivates her and that "
+                    "reading is part of her journey."
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_028:conv-26:D7:9"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            ),
+        ],
+    )
+
+    assert "Likely no" in answer
+    assert "reading is part of her journey" in answer
+    assert len(captured_prompts) == 1
+
+
+def test_public_answerer_grounds_last_year_temporal_inference_from_evidence_date(
+    tmp_path, monkeypatch
+):
+    captured_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            captured_prompts.append(prompt_text)
+            if self.calls == 1:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            if (
+                "last year" in prompt_text
+                and "evidence date metadata" in prompt_text
+                and "explicit calendar year" in prompt_text
+            ):
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": "2022 [conv-26_qa_027:conv-26:D7:8]"
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Insufficient retrieved evidence to answer with source citations."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "When did Melanie read the book 'Nothing is Impossible'?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="conv-26_qa_027:conv-26:D7:8",
+                text=(
+                    "This book I read last year reminds me to always pursue my "
+                    "dreams, just like you are doing!"
+                ),
+                component="recall",
+                source_ids=["conv-26_qa_027:conv-26:D7:8"],
+                session_id="D7",
+                date="4:33 pm on 12 July, 2023",
+            )
+        ],
+    )
+
+    assert answer.startswith("2022")
+    assert "[conv-26_qa_027:conv-26:D7:8]" in answer
+    assert len(captured_prompts) == 2
+    assert "last year" in captured_prompts[1]
+    assert "evidence date metadata" in captured_prompts[1]
+    assert "explicit calendar year" in captured_prompts[1]
+
+
+def test_public_answerer_recovers_temporal_holiday_answer_after_retry(
+    tmp_path, monkeypatch
+):
+    captured_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            prompt_text = "\n".join(str(message.content) for message in messages)
+            captured_prompts.append(prompt_text)
+            if self.calls == 1:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "Insufficient retrieved evidence to answer with source citations."
+                        )
+                    },
+                )()
+            if "holiday names" in prompt_text and "month names" in prompt_text:
+                return type(
+                    "FakeResponse",
+                    (),
+                    {
+                        "content": (
+                            "You volunteered on February 14th "
+                            "[58ef2f1c:answer_59547700:009]."
+                        )
+                    },
+                )()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "Insufficient retrieved evidence to answer with source citations."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "When did I volunteer at the local animal shelter's fundraising dinner?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="58ef2f1c:answer_59547700:009",
+                text=(
+                    'I volunteered in LA at the "Love is in the Air" fundraising '
+                    "dinner back on Valentine's Day."
+                ),
+                component="recall",
+                source_ids=["58ef2f1c:answer_59547700:009"],
+                session_id="answer_59547700",
+                date="2023/04/02 (Sun) 22:15",
+            )
+        ],
+    )
+
+    assert answer == "You volunteered on February 14th [58ef2f1c:answer_59547700:009]."
+    assert len(captured_prompts) == 2
+    assert "holiday names" in captured_prompts[1]
+    assert "month names" in captured_prompts[1]
+    assert "Valentine's Day" in captured_prompts[1]
+
+
+def test_public_answerer_does_not_append_location_qualifiers_to_temporal_answer(
+    tmp_path, monkeypatch
+):
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def invoke(self, messages):
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": (
+                        "You volunteered on Valentine's Day "
+                        "[58ef2f1c:answer_59547700:009]."
+                    )
+                },
+            )()
+
+    monkeypatch.setattr(public_benchmarks, "ChatOpenAI", FakeChatOpenAI)
+    answerer = public_benchmarks.PublicAnswerer(
+        Settings(data_dir=tmp_path / ".memoryos", openai_api_key="test-key")
+    )
+
+    answer = answerer.answer(
+        "When did I volunteer at the local animal shelter's fundraising dinner?",
+        [
+            public_benchmarks.AnswerEvidence(
+                evidence_id="58ef2f1c:answer_59547700:009",
+                text=(
+                    'I volunteered in LA at the "Love is in the Air" fundraising '
+                    "dinner back on Valentine's Day."
+                ),
+                component="recall",
+                source_ids=["58ef2f1c:answer_59547700:009"],
+                session_id="answer_59547700",
+                date="2023/04/02 (Sun) 22:15",
+            )
+        ],
+    )
+
+    assert answer == (
+        "You volunteered on Valentine's Day [58ef2f1c:answer_59547700:009]."
+    )
 
 
 def test_answer_evidence_preserves_final_context_render_order():
@@ -1217,6 +2356,167 @@ def test_public_case_diagnostics_does_not_select_dropped_v3_diagnostics():
     assert diagnostics["final_context_trace_source_ids"] == []
 
 
+def test_public_case_diagnostics_splits_selected_and_render_handoff_drops():
+    from memoryos_lite.public_case_diagnostics import build_case_diagnostics
+
+    selected_drop = build_case_diagnostics(
+        benchmark="locomo",
+        baseline="memoryos_lite",
+        case_id="selected-drop-demo",
+        memory_arch="v3",
+        answer="NeverReturnedExpectedToken",
+        answer_mode="projected",
+        verdict="fail",
+        reasoning="exact substring match",
+        expected_source_ids=["msg_expected"],
+        retrieval_candidate_source_ids=["msg_expected"],
+        episode_candidate_message_ids=[],
+        planned_evidence_message_ids=[],
+        source_ids=[],
+        v3_context={"metadata": {"final_context_trace": []}},
+        v3_diagnostics=[],
+        kernel_trace_events=[],
+        baseline_verdict="fail",
+        movement_baseline_source="previous.json",
+    )
+
+    assert selected_drop["retrieval_status"] == "evidence_retrieved"
+    assert selected_drop["evidence_handoff"]["failure_boundary"] == "selected_drop"
+    assert selected_drop["failure_class"] == "evidence_retrieved_not_selected"
+
+    render_drop = build_case_diagnostics(
+        benchmark="locomo",
+        baseline="memoryos_lite",
+        case_id="render-drop-demo",
+        memory_arch="v3",
+        answer="NeverReturnedExpectedToken",
+        answer_mode="projected",
+        verdict="fail",
+        reasoning="exact substring match",
+        expected_source_ids=["msg_expected"],
+        retrieval_candidate_source_ids=["msg_expected"],
+        episode_candidate_message_ids=[],
+        planned_evidence_message_ids=[],
+        source_ids=[],
+        v3_context={
+            "metadata": {
+                "final_context_trace": [
+                    {
+                        "component": "recall",
+                        "item_id": "msg_expected",
+                        "source_ids": ["msg_expected"],
+                        "source_refs": [
+                            {"source_type": "message", "source_id": "msg_expected"}
+                        ],
+                        "included": True,
+                        "dropped": False,
+                    }
+                ]
+            }
+        },
+        v3_diagnostics=[],
+        kernel_trace_events=[],
+        baseline_verdict="fail",
+        movement_baseline_source="previous.json",
+    )
+
+    assert render_drop["selected_context_status"] == "evidence_selected"
+    assert render_drop["rendered_context_status"] == "evidence_missing"
+    assert render_drop["evidence_handoff"]["failure_boundary"] == "render_drop"
+    assert render_drop["failure_class"] == "evidence_selected_not_rendered"
+
+
+def test_public_result_reports_answer_evidence_handoff_metadata():
+    from memoryos_lite.evals import BaselineOutput
+    from memoryos_lite.public_benchmarks import (
+        PublicBenchmarkCase,
+        _answer_evidence_from_output,
+        _to_public_result,
+    )
+    from memoryos_lite.schemas import EvalCase
+
+    output = BaselineOutput(
+        answer="NeverReturnedExpectedToken",
+        context_tokens=7,
+        sources={"msg_expected": "[D5] expected rendered evidence"},
+        retrieval_candidate_source_ids=["msg_expected"],
+        memory_arch="v3",
+        v3_final_context_trace=[
+            {
+                "component": "recall",
+                "item_id": "recall_item",
+                "source_ids": ["msg_expected"],
+                "rendered_index": 3,
+                "estimated_tokens": 7,
+                "metadata": {
+                    "benchmark_session_id": "D5",
+                    "benchmark_date": "2023-05-08",
+                },
+            }
+        ],
+        v3_context={
+            "metadata": {
+                "final_context_trace": [
+                    {
+                        "component": "recall",
+                        "item_id": "recall_item",
+                        "source_ids": ["msg_expected"],
+                        "rendered_index": 3,
+                        "estimated_tokens": 7,
+                        "metadata": {
+                            "benchmark_session_id": "D5",
+                            "benchmark_date": "2023-05-08",
+                        },
+                        "included": True,
+                        "dropped": False,
+                    }
+                ]
+            }
+        },
+    )
+    answer_evidence = _answer_evidence_from_output(output)
+    public_case = PublicBenchmarkCase(
+        benchmark="locomo",
+        case=EvalCase(
+            case_id="answer-evidence-handoff",
+            conversation=[],
+            question="What is the marker?",
+            expected_facts=["ExpectedToken"],
+        ),
+        messages=[],
+        expected_answer="ExpectedToken",
+        expected_source_ids=["msg_expected"],
+        expected_session_ids=["D5"],
+        source_sessions_by_id={"msg_expected": "D5"},
+    )
+
+    result = _to_public_result(
+        public_case,
+        "memoryos_lite",
+        "NeverReturnedExpectedToken",
+        "llm",
+        ["msg_expected"],
+        "fail",
+        "judge fail",
+        [],
+        ["ExpectedToken"],
+        output,
+        latency_ms=1,
+        answer_evidence=answer_evidence,
+        baseline_verdict="fail",
+        movement_baseline_source="previous.json",
+    )
+    report = result.to_report()
+
+    handoff = report["case_diagnostics"]["evidence_handoff"]
+    assert handoff["answer_evidence_ids"] == ["msg_expected"]
+    assert handoff["answer_evidence_overlap_ids"] == ["msg_expected"]
+    assert handoff["stage_status"]["answer_evidence"] == "evidence_in_answer_evidence"
+    assert report["answer_evidence"][0]["session_id"] == "D5"
+    assert report["answer_evidence"][0]["date"] == "2023-05-08"
+    assert report["answer_evidence"][0]["rendered_index"] == 3
+
+
 def test_public_benchmark_reports_locomo_neighbor_diagnostics(tmp_path):
     data_path = tmp_path / "locomo_neighbor.json"
     data_path.write_text(
@@ -1549,6 +2849,7 @@ def test_public_case_movement_from_comparison_report_pairs(tmp_path):
 
     assert comparison[("locomo", "memoryos_lite", "case-pass-to-fail")].verdict == "pass"
     assert movement_status("pass", "fail") == "pass_to_fail"
+    assert movement_status("pass", "error") == "pass_to_fail"
     assert movement_status("fail", "pass") == "fail_to_pass"
     assert movement_status("pass", "pass") == "unchanged_pass"
     assert movement_status("fail", "fail") == "unchanged_fail"

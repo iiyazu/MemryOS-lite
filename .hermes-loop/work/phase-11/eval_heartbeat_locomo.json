@@ -1,0 +1,20 @@
+{
+  "phase": "phase-11",
+  "run_id": "phase11_locomo30_handoff_20260523T102420Z",
+  "benchmark": "locomo",
+  "status": "interrupted",
+  "command": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge --comparison-report .memoryos/evals/phase10_locomo30_packets_20260522T202553Z_locomo.json --run-id phase11_locomo30_handoff_20260523T102420Z",
+  "start_time": "2026-05-23T10:24:20+0000",
+  "last_seen": "2026-05-23T10:30:34.982823+00:00",
+  "partial_path": ".memoryos/evals/phase11_locomo30_handoff_20260523T102420Z_locomo.partial.json",
+  "final_path": ".memoryos/evals/phase11_locomo30_handoff_20260523T102420Z_locomo.json",
+  "rows_done": 10,
+  "last_case_id": "conv-26_qa_010",
+  "pass": 7,
+  "fail": 3,
+  "answer_mode": "llm",
+  "judge_done": 10,
+  "judge_total": 30,
+  "file_mtime": "2026-05-23T10:29:58.205067+00:00",
+  "file_size": 12748053
+}

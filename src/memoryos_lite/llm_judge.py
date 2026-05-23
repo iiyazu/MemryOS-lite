@@ -75,13 +75,22 @@ class LLMJudge:
             f"Expected facts: {json.dumps(case.expected_facts, ensure_ascii=False)}\n"
             f"Forbidden facts: {json.dumps(case.forbidden_facts, ensure_ascii=False)}"
         )
+        messages = [
+            SystemMessage(content=_SYSTEM_PROMPT),
+            HumanMessage(content=user_msg),
+        ]
+        verdict = self._invoke_judge(case.case_id, messages)
+        if verdict.verdict == "error":
+            return self._invoke_judge(case.case_id, messages)
+        return verdict
+
+    def _invoke_judge(
+        self, case_id: str, messages: list[SystemMessage | HumanMessage]
+    ) -> JudgeVerdict:
         response = self.llm.invoke(
-            [
-                SystemMessage(content=_SYSTEM_PROMPT),
-                HumanMessage(content=user_msg),
-            ]
+            messages
         )
-        return self._parse_response(case.case_id, response.content)
+        return self._parse_response(case_id, response.content)
 
     def judge_batch(self, cases: list[tuple[EvalCase, str]]) -> list[JudgeVerdict]:
         """Judge multiple (case, answer) pairs."""
@@ -97,9 +106,8 @@ class LLMJudge:
             if text.endswith("```"):
                 text = text[:-3]
             text = text.strip()
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
+        data = self._extract_json_object(text)
+        if data is None:
             return JudgeVerdict(
                 case_id=case_id,
                 verdict="error",
@@ -116,3 +124,18 @@ class LLMJudge:
             forbidden_present=data.get("forbidden_present", []),
             reasoning=data.get("reasoning", ""),
         )
+
+    @staticmethod
+    def _extract_json_object(text: str) -> dict[str, Any] | None:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            if start == -1:
+                return None
+            decoder = json.JSONDecoder()
+            try:
+                data, _ = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                return None
+        return data if isinstance(data, dict) else None

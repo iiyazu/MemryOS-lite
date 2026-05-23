@@ -9,7 +9,6 @@ from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
     ApprovalState,
     CoreMemoryBlock,
-    MemoryHistoryEvent,
     SourceRef,
 )
 
@@ -150,6 +149,23 @@ class CoreMemoryService:
             reason=reason,
         )
 
+    def get_block_by_label(
+        self,
+        label: str,
+        *,
+        include_deleted: bool = False,
+    ) -> CoreMemoryBlock | None:
+        matches = [
+            block
+            for block in self.store.list_core_memory_blocks(include_deleted=include_deleted)
+            if block.label == label
+        ]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise ValueError(f"multiple live core memory blocks share label {label!r}")
+        return matches[0]
+
     def replace_block(
         self,
         block_id: str,
@@ -188,6 +204,7 @@ class CoreMemoryService:
         actor: Actor,
         reason: str,
         approval_state: ApprovalState | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> CoreMemoryBlock:
         refs = self._require_provenance(source_refs, approval_state)
         self._require_actor_and_reason(actor, reason)
@@ -200,6 +217,7 @@ class CoreMemoryService:
             source_refs=refs,
             actor=actor,
             reason=reason,
+            metadata=metadata,
         )
 
     def delete_block(
@@ -234,29 +252,26 @@ class CoreMemoryService:
         source_refs: list[SourceRef],
         actor: Actor,
         reason: str,
+        metadata: dict[str, object] | None = None,
     ) -> CoreMemoryBlock:
         self._ensure_within_limit(next_value, block.limit_tokens)
         updated = block.model_copy(
             update={
                 "value": next_value,
                 "source_refs": source_refs,
+                "metadata": {**block.metadata, **(metadata or {})},
                 "updated_at": utc_now(),
             }
         )
-        saved = self.store.update_core_memory_block(updated)
-        if saved is None:
-            raise KeyError(f"core memory block not found: {block.id}")
-        event = MemoryHistoryEvent(
-            memory_id=block.id,
-            memory_type="core_block",
-            operation=operation,
+        saved = self.store.update_core_memory_block(
+            updated,
             actor=actor,
             reason=reason,
-            before=block.model_dump(mode="json"),
-            after=saved.model_dump(mode="json"),
             source_refs=source_refs,
+            operation=operation,
         )
-        self.store.append_core_memory_history(event)
+        if saved is None:
+            raise KeyError(f"core memory block not found: {block.id}")
         return saved
 
     def _require_block(self, block_id: str) -> CoreMemoryBlock:

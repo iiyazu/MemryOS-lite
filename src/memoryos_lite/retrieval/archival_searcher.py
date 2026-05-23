@@ -122,6 +122,7 @@ class ArchivalPassageSearcher:
             citation=passage.citation,
             source_refs=list(passage.source_refs),
             metadata={
+                **passage.metadata,
                 "archive_id": passage.archive_id,
                 "document_id": passage.document_id,
                 "chunk_id": passage.chunk_id,

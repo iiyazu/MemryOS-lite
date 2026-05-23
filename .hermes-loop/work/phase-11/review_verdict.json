@@ -1,0 +1,230 @@
+{
+  "phase": "phase-11",
+  "verdict": "FAIL",
+  "ack_level": "blocked",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-11/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "state_at_review": {
+    "current_state": "EXECUTE",
+    "current_phase_idx": 11,
+    "phase_status": "in_progress"
+  },
+  "evidence_scope": {
+    "run_timestamp": "20260523T095835Z",
+    "used": [
+      ".hermes-loop/work/phase-11/eval_parallel_30_summary_20260523T095835Z.json",
+      ".memoryos/evals/phase11_lme30_handoff_20260523T095835Z_longmemeval.json",
+      ".memoryos/evals/phase11_locomo30_handoff_20260523T095835Z_locomo.json"
+    ],
+    "excluded": [
+      "all stale, partial, failed, and prior phase-status artifacts named as invalid in the review prompt"
+    ]
+  },
+  "evidence": {
+    "summary": ".hermes-loop/work/phase-11/eval_parallel_30_summary_20260523T095835Z.json",
+    "milestone_eval": {
+      "longmemeval": {
+        "report": ".memoryos/evals/phase11_lme30_handoff_20260523T095835Z_longmemeval.json",
+        "run_id": "phase11_lme30_handoff_20260523T095835Z",
+        "limit": 30,
+        "answer_mode": "llm",
+        "judge_done": 30,
+        "judge_total": 30,
+        "pass": 30,
+        "fail": 0,
+        "pass_to_fail": [],
+        "fail_to_pass": [
+          "51a45a95"
+        ],
+        "judge_pass_but_not_supported_cited": [],
+        "missing_citation": []
+      },
+      "locomo": {
+        "report": ".memoryos/evals/phase11_locomo30_handoff_20260523T095835Z_locomo.json",
+        "run_id": "phase11_locomo30_handoff_20260523T095835Z",
+        "limit": 30,
+        "answer_mode": "llm",
+        "judge_done": 30,
+        "judge_total": 30,
+        "pass": 20,
+        "fail": 10,
+        "pass_to_fail": [
+          "conv-26_qa_028"
+        ],
+        "fail_to_pass": [
+          "conv-26_qa_027"
+        ],
+        "judge_pass_but_not_supported_cited": [],
+        "missing_citation": []
+      }
+    },
+    "real_path": {
+      "memory_arch_rows": {
+        "longmemeval": [
+          "v3"
+        ],
+        "locomo": [
+          "v3"
+        ]
+      },
+      "kernel_trace_nonempty_rows": 0
+    }
+  },
+  "explicit_decisions": {
+    "lme_58ef2f1c_ack_blocking": false,
+    "lme_58ef2f1c_reason": "now a supported cited answer",
+    "ack_eligible": false
+  },
+  "blockers": [
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_028",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "pass_to_fail",
+      "failure_class": "evidence_hit_answer_fail",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": true,
+      "handoff_boundary": "none",
+      "reason": "new pass-to-fail regression"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_005",
+      "verdict": "pass",
+      "judge_status": "judge_pass",
+      "movement_status": "unchanged_pass",
+      "failure_class": "retrieval_miss",
+      "answer_support_status": "supported_cited_answer",
+      "source_hit": false,
+      "handoff_boundary": "retrieval_miss",
+      "reason": "judge pass but source-miss remains visible"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_003",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "fail_to_pass",
+      "failure_class": "retrieval_miss",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": false,
+      "handoff_boundary": "retrieval_miss",
+      "reason": "still not ACK-grade because expected source was not hit"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_004",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "unchanged_fail",
+      "failure_class": "retrieval_miss",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": false,
+      "handoff_boundary": "retrieval_miss",
+      "reason": "remaining retrieval miss"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_006",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "unchanged_fail",
+      "failure_class": "evidence_hit_answer_fail",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": true,
+      "handoff_boundary": "none",
+      "reason": "remaining evidence-hit-answer-fail"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_008",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "unchanged_fail",
+      "failure_class": "retrieval_miss",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": false,
+      "handoff_boundary": "retrieval_miss",
+      "reason": "remaining retrieval miss"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_016",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "unchanged_fail",
+      "failure_class": "evidence_hit_answer_fail",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": true,
+      "handoff_boundary": "none",
+      "reason": "remaining evidence-hit-answer-fail"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_019",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "unchanged_fail",
+      "failure_class": "retrieval_miss",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": false,
+      "handoff_boundary": "retrieval_miss",
+      "reason": "remaining retrieval miss"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_020",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "unchanged_fail",
+      "failure_class": "retrieval_miss",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": false,
+      "handoff_boundary": "retrieval_miss",
+      "reason": "remaining retrieval miss"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_024",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "unchanged_fail",
+      "failure_class": "evidence_hit_answer_fail",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": true,
+      "handoff_boundary": "none",
+      "reason": "remaining evidence-hit-answer-fail"
+    },
+    {
+      "benchmark": "locomo",
+      "case_id": "conv-26_qa_025",
+      "verdict": "fail",
+      "judge_status": "judge_fail",
+      "movement_status": "unchanged_fail",
+      "failure_class": "retrieval_miss",
+      "answer_support_status": "answer_not_supported_by_judge",
+      "source_hit": false,
+      "handoff_boundary": "retrieval_miss",
+      "reason": "remaining retrieval miss"
+    }
+  ],
+  "review_verdict": {
+    "overfitting_risk": "medium",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": true,
+    "locomo_regressed_or_unexplained": true,
+    "config_defaults_not_rechecked_in_this_review": true
+  },
+  "decision": "repeat_phase"
+}

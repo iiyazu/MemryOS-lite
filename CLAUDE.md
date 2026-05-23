@@ -1,3 +1,4 @@
+# AUTONOMOUS MODE: No user interaction. All agent prompts include autonomy instructions.
 # CLAUDE.md
 
 This file provides working guidance for Claude Code and other coding agents in this repository.

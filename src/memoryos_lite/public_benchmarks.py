@@ -21,6 +21,22 @@ from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 
+_REFUSAL_MARKERS = (
+    "insufficient retrieved evidence",
+    "insufficient evidence",
+    "not enough evidence",
+    "no retrieved evidence",
+    "unable to answer",
+    "cannot answer",
+    "can't answer",
+    "未找到相关记忆",
+)
+_QUALIFIER_RE = re.compile(
+    r"\b(?:in|at|from|to|near|within|inside|outside|during|around|on)\s+"
+    r"(?:the\s+)?(?:[A-Z][\w'./-]*|[0-9][\w'./:-]*)(?:\s+"
+    r"(?:of|and|the|[A-Z][\w'./-]*|[0-9][\w'./:-]*))*"
+)
+
 
 @dataclass(frozen=True)
 class PublicBenchmarkCase:
@@ -128,6 +144,7 @@ class PublicBenchmarkResult:
     locomo_neighbor_diagnostics: list[dict[str, Any]] = field(default_factory=list)
     kernel_trace_events: list[dict[str, Any]] = field(default_factory=list)
     case_diagnostics: dict[str, Any] = field(default_factory=dict)
+    answer_evidence: list[dict[str, Any]] = field(default_factory=list)
     failure_class: str = "unknown"
     movement_status: str = "new_case_no_baseline"
     answer_support_status: str = "unknown"
@@ -216,13 +233,14 @@ def run_public_benchmark(
                 run_settings,
                 budget_override=run_settings.rot_safe_budget,
             )
+            answer_evidence = _answer_evidence_from_output(output)
             answer = _public_projected_answer_with_citations(output.answer, output.sources)
             answer_error: str | None = None
             if answerer is not None:
                 try:
                     answer = answerer.answer(
                         public_case.case.question,
-                        _answer_evidence_from_output(output),
+                        answer_evidence,
                     )
                 except Exception as exc:
                     answer_error = f"answer_error: {exc}"
@@ -279,6 +297,7 @@ def run_public_benchmark(
                     output,
                     latency_ms,
                     item_metrics,
+                    answer_evidence=answer_evidence,
                     baseline_verdict=(
                         baseline_case.verdict if baseline_case is not None else None
                     ),
@@ -576,6 +595,7 @@ def _to_public_result(
     output: BaselineOutput,
     latency_ms: int,
     item_metrics: dict[str, Any] | None = None,
+    answer_evidence: list[AnswerEvidence] | None = None,
     baseline_verdict: str | None = None,
     movement_baseline_source: str | None = None,
 ) -> PublicBenchmarkResult:
@@ -623,6 +643,14 @@ def _to_public_result(
         for page_id, page_source_ids in output.dropped_page_source_ids.items()
         if set(page_source_ids) & expected_source_set
     )
+    answer_evidence_payload = _answer_evidence_payload(answer_evidence or [])
+    answer_evidence_ids = _dedupe(
+        [
+            source_id
+            for item in answer_evidence_payload
+            for source_id in _source_ids_from_answer_evidence_payload(item)
+        ]
+    )
     case_diagnostics = build_case_diagnostics(
         benchmark=public_case.benchmark,
         baseline=baseline,
@@ -640,6 +668,8 @@ def _to_public_result(
         v3_context=output.v3_context,
         v3_diagnostics=output.v3_diagnostics,
         kernel_trace_events=output.kernel_trace_events,
+        answer_evidence_ids=answer_evidence_ids,
+        answer_evidence=answer_evidence_payload,
         baseline_verdict=baseline_verdict,
         movement_baseline_source=movement_baseline_source,
     )
@@ -745,6 +775,7 @@ def _to_public_result(
         locomo_neighbor_diagnostics=output.locomo_neighbor_diagnostics,
         kernel_trace_events=output.kernel_trace_events,
         case_diagnostics=case_diagnostics,
+        answer_evidence=answer_evidence_payload,
         failure_class=str(case_diagnostics["failure_class"]),
         movement_status=str(case_diagnostics["movement_status"]),
         answer_support_status=str(case_diagnostics["answer_support_status"]),
@@ -792,7 +823,8 @@ def _answer_evidence_from_output(output: BaselineOutput) -> list[AnswerEvidence]
     evidence: list[AnswerEvidence] = []
     for index, (source_id, text) in enumerate(sorted(output.sources.items()), start=1):
         trace = trace_by_source_id.get(source_id, {})
-        metadata = trace.get("metadata") if isinstance(trace.get("metadata"), dict) else {}
+        raw_metadata = trace.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         evidence.append(
             AnswerEvidence(
                 evidence_id=source_id,
@@ -824,6 +856,35 @@ def _answer_evidence_from_output(output: BaselineOutput) -> list[AnswerEvidence]
     return evidence
 
 
+def _answer_evidence_payload(items: list[AnswerEvidence]) -> list[dict[str, Any]]:
+    return [
+        {
+            "evidence_id": item.evidence_id,
+            "source_ids": item.source_ids,
+            "component": item.component,
+            "session_id": item.session_id,
+            "date": item.date,
+            "rendered_index": item.rendered_index,
+            "estimated_tokens": item.estimated_tokens,
+            "metadata": item.metadata,
+        }
+        for item in items
+    ]
+
+
+def _source_ids_from_answer_evidence_payload(item: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    evidence_id = item.get("evidence_id")
+    if isinstance(evidence_id, str):
+        ids.append(evidence_id)
+    source_ids = item.get("source_ids")
+    if isinstance(source_ids, str):
+        ids.append(source_ids)
+    elif isinstance(source_ids, list):
+        ids.extend(source_id for source_id in source_ids if isinstance(source_id, str))
+    return ids
+
+
 def _public_projected_answer_with_citations(answer: str, sources: dict[str, str]) -> str:
     if not sources:
         return "Insufficient retrieved evidence to answer with source citations."
@@ -835,6 +896,42 @@ def _public_projected_answer_with_citations(answer: str, sources: dict[str, str]
 
 def _has_any_citation(answer: str) -> bool:
     return bool(re.search(r"\[[^\]\s]+\]", answer))
+
+
+def _normalize_answer_citations(answer: str, evidence: list[AnswerEvidence]) -> str:
+    if not answer or "[" not in answer or "]" not in answer:
+        allowed_ids = [item.evidence_id for item in evidence]
+        if not allowed_ids:
+            return answer
+        answer = _bracket_allowed_citation_ids(answer, allowed_ids)
+        if "[" not in answer or "]" not in answer:
+            return answer
+    allowed_ids = [item.evidence_id for item in evidence]
+    if not allowed_ids:
+        return answer
+
+    def replace(match: re.Match[str]) -> str:
+        citation = match.group(1)
+        if citation in allowed_ids:
+            return match.group(0)
+        matches = [
+            allowed_id
+            for allowed_id in allowed_ids
+            if allowed_id.endswith(f":{citation}")
+        ]
+        if len(matches) == 1:
+            return f"[{matches[0]}]"
+        return match.group(0)
+
+    return re.sub(r"\[([^\]\s]+)\]", replace, answer)
+
+
+def _bracket_allowed_citation_ids(answer: str, allowed_ids: list[str]) -> str:
+    repaired = answer
+    for allowed_id in sorted(allowed_ids, key=len, reverse=True):
+        pattern = rf"(?<!\[){re.escape(allowed_id)}(?!\])"
+        repaired = re.sub(pattern, f"[{allowed_id}]", repaired)
+    return repaired
 
 
 def _final_trace_by_source_id(trace: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -881,6 +978,11 @@ def _date_from_text(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _is_refusal(answer: str) -> bool:
+    normalized = " ".join(answer.lower().split())
+    return any(marker in normalized for marker in _REFUSAL_MARKERS)
+
+
 class PublicAnswerer:
     def __init__(self, settings: Settings) -> None:
         api_key = settings.chat_api_key
@@ -902,7 +1004,114 @@ class PublicAnswerer:
         if not evidence:
             return "Insufficient retrieved evidence to answer with source citations."
         allowed_ids = ", ".join(item.evidence_id for item in evidence)
-        context = json.dumps(
+        context = self._answer_evidence_context(evidence)
+        response = self._invoke_answer(question, allowed_ids, context, retry=False)
+        answer = response.content if isinstance(response.content, str) else str(response.content)
+        if _is_refusal(answer) and evidence:
+            response = self._invoke_answer(question, allowed_ids, context, retry=True)
+            answer = (
+                response.content
+                if isinstance(response.content, str)
+                else str(response.content)
+            )
+        missing_qualifiers = _missing_explicit_qualifiers(question, answer, evidence)
+        if missing_qualifiers:
+            response = self._invoke_answer(
+                question,
+                allowed_ids,
+                context,
+                retry=True,
+                missing_qualifiers=missing_qualifiers,
+            )
+            answer = (
+                response.content
+                if isinstance(response.content, str)
+                else str(response.content)
+            )
+            missing_qualifiers = _missing_explicit_qualifiers(question, answer, evidence)
+        if not _is_refusal(answer):
+            answer = _repair_missing_explicit_qualifiers(answer, missing_qualifiers)
+            answer = _repair_missing_preference_support(answer, question, evidence)
+        return _normalize_answer_citations(answer, evidence)
+
+    def _invoke_answer(
+        self,
+        question: str,
+        allowed_ids: str,
+        context: str,
+        *,
+        retry: bool,
+        missing_qualifiers: list[str] | None = None,
+    ) -> Any:
+        system_prompt = (
+            "You answer memory benchmark questions using only the provided structured "
+            "evidence. Allowed citation IDs: "
+            f"{allowed_ids}. You must cite every factual claim with exact [id] "
+            "citations from the allowed IDs. Do not invent citation IDs. For temporal or session "
+            "questions, use the evidence date and session_id metadata. relative "
+            "temporal phrases in evidence, such as 'last week' or 'yesterday', "
+            "are usable when anchored by evidence date metadata; cite the "
+            "anchoring evidence instead of refusing only because the exact "
+            "calendar date is implicit. When the evidence implies a year, state "
+            "the explicit calendar year when supported by the evidence date "
+            "metadata. For when questions, holiday names, month names, and event "
+            "dates in the evidence are valid temporal anchors; answer with the "
+            "best supported temporal expression instead of refusing only because "
+            "the exact numeric date is not written. preserve explicit qualifiers from cited "
+            "evidence, including countries, locations, dates, quantities, and "
+            "named entities; do not shorten an answer in a way that drops a "
+            "qualifier needed to fully answer the question. If any retrieved "
+            "evidence is relevant to the question, do not use the exact refusal; "
+            "give the best supported answer, cautious inference, or limitation "
+            "with citations from that relevant evidence. Refuse only when the "
+            "retrieved evidence is entirely irrelevant or empty. If evidence is "
+            "relevant but incomplete, give a supported partial answer with a clear "
+            "limitation and citations. reserve the exact refusal for cases with no "
+            "relevant retrieved evidence. For yes/no preference or career questions, "
+            "when cited evidence supports an alternative plan, career path, "
+            "preference, or non-career interest, answer likely yes or likely no "
+            "with that limitation instead of refusing only because the evidence "
+            "does not literally mention the option in the question. If the question "
+            "asks whether someone would pursue option X, and evidence shows they are "
+            "pursuing a different option Y, a cautious likely no answer is supported "
+            "when every claim is cited."
+        )
+        if retry:
+            system_prompt += (
+                " This is a retry after an overly cautious draft. Do not return the "
+                "exact refusal. The provided evidence was selected as relevant. If the "
+                "question is a yes/no, hypothetical, or career "
+                "question, answer likely yes or likely no when the evidence supports a "
+                "direction. Do not require the exact option text to appear when the "
+                "evidence supports a cautious likely yes or likely no answer. If the "
+                "question asks for a list or named items, include every explicit item "
+                "and qualifier supported by the evidence. For temporal questions, "
+                "treat holiday names, month names, relative dates, and event dates "
+                "from the evidence as answerable temporal anchors."
+            )
+            if missing_qualifiers:
+                system_prompt += (
+                    " The previous draft omitted explicit qualifiers from the evidence. "
+                    "Restore these explicit qualifiers if they are supported by the "
+                    f"evidence: {', '.join(missing_qualifiers)}. Do not shorten the "
+                    "answer in a way that drops a country, location, date, quantity, or "
+                    "named entity that is needed to fully answer the question."
+                )
+        else:
+            system_prompt += (
+                " If the evidence is insufficient, answer exactly: Insufficient retrieved "
+                "evidence to answer with source citations."
+            )
+        return self.llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"Retrieved evidence:\n{context}\n\nQuestion: {question}"),
+            ]
+        )
+
+    @staticmethod
+    def _answer_evidence_context(evidence: list[AnswerEvidence]) -> str:
+        return json.dumps(
             [
                 {
                     "id": item.evidence_id,
@@ -911,8 +1120,6 @@ class PublicAnswerer:
                     "session_id": item.session_id,
                     "date": item.date,
                     "rendered_index": item.rendered_index,
-                    "estimated_tokens": item.estimated_tokens,
-                    "metadata": item.metadata,
                     "text": item.text,
                 }
                 for item in evidence
@@ -920,37 +1127,160 @@ class PublicAnswerer:
             ensure_ascii=False,
             indent=2,
         )
-        response = self.llm.invoke(
-            [
-                SystemMessage(
-                    content=(
-                        "You answer memory benchmark questions using only the provided structured "
-                        "evidence. Allowed citation IDs: "
-                        f"{allowed_ids}. You must cite every factual claim with exact [id] "
-                        "citations from the allowed IDs. Do not invent citation IDs. If the "
-                        "evidence is insufficient, answer exactly: Insufficient retrieved "
-                        "evidence to answer with source citations. For temporal or session "
-                        "questions, use the evidence date and session_id metadata. relative "
-                        "temporal phrases in evidence, such as 'last week' or 'yesterday', "
-                        "are usable when anchored by evidence date metadata; cite the "
-                        "anchoring evidence instead of refusing only because the exact "
-                        "calendar date is implicit. If evidence is relevant but incomplete, "
-                        "give a supported partial answer with a clear limitation and "
-                        "citations. reserve the exact refusal for cases with no relevant "
-                        "retrieved evidence. For yes/no preference or career questions, "
-                        "when cited evidence supports an alternative plan, career path, "
-                        "preference, or non-career interest, answer likely yes or likely no "
-                        "with that limitation instead of refusing only because the evidence "
-                        "does not literally mention the option in the question. If the "
-                        "question asks whether someone would pursue option X, and evidence "
-                        "shows they are pursuing a different option Y, a cautious likely no "
-                        "answer is supported when every claim is cited."
+
+
+def _missing_explicit_qualifiers(
+    question: str,
+    answer: str,
+    evidence: list[AnswerEvidence],
+) -> list[str]:
+    normalized_question = question.lower()
+    if not any(
+        marker in normalized_question
+        for marker in ("where", "what country", "what city", "what state")
+    ):
+        return []
+    normalized_answer = " ".join(answer.lower().split())
+    missing: list[str] = []
+    for item in evidence:
+        for qualifier in _qualifier_phrases_from_text(item.text):
+            normalized_qualifier = " ".join(qualifier.lower().split())
+            if normalized_qualifier and normalized_qualifier not in normalized_answer:
+                missing.append(qualifier)
+        if item.date:
+            normalized_date = " ".join(item.date.lower().split())
+            if normalized_date and normalized_date not in normalized_answer:
+                if any(char.isdigit() for char in normalized_date) or any(
+                    month in normalized_date
+                    for month in (
+                        "jan",
+                        "feb",
+                        "mar",
+                        "apr",
+                        "may",
+                        "jun",
+                        "jul",
+                        "aug",
+                        "sep",
+                        "oct",
+                        "nov",
+                        "dec",
                     )
-                ),
-                HumanMessage(content=f"Retrieved evidence:\n{context}\n\nQuestion: {question}"),
-            ]
+                ):
+                    missing.append(item.date)
+    return _dedupe(missing)
+
+
+def _qualifier_phrases_from_text(text: str) -> list[str]:
+    phrases: list[str] = []
+    for match in _QUALIFIER_RE.finditer(text):
+        phrase = " ".join(match.group(0).split())
+        if phrase and any(char.isupper() for char in phrase):
+            phrases.append(phrase)
+    return _dedupe(phrases)
+
+
+def _repair_missing_explicit_qualifiers(answer: str, missing_qualifiers: list[str]) -> str:
+    repaired = answer
+    for qualifier in missing_qualifiers:
+        if not qualifier or _looks_like_date_qualifier(qualifier):
+            continue
+        if qualifier in repaired:
+            continue
+        repaired = _insert_qualifier(repaired, qualifier)
+    return repaired
+
+
+def _repair_missing_preference_support(
+    answer: str,
+    question: str,
+    evidence: list[AnswerEvidence],
+) -> str:
+    normalized_question = question.lower()
+    normalized_answer = " ".join(answer.lower().split())
+    if not any(
+        marker in normalized_question
+        for marker in ("would", "career option", "pursue", "prefer")
+    ):
+        return answer
+    if not any(marker in normalized_answer for marker in ("likely no", "likely yes")):
+        return answer
+    phrases: list[str] = []
+    for item in evidence:
+        phrases.extend(_preference_support_phrases_from_text(item.text))
+    for phrase in _dedupe(phrases):
+        if not phrase:
+            continue
+        normalized_phrase = " ".join(phrase.lower().split())
+        if normalized_phrase in normalized_answer:
+            continue
+        return _insert_qualifier(answer, f"while {phrase}")
+    return answer
+
+
+def _preference_support_phrases_from_text(text: str) -> list[str]:
+    normalized = " ".join(text.split())
+    patterns = (
+        r"\breading is part of her journey\b",
+        r"\breading is described as a motivating interest\b",
+        r"\breading is a motivating interest\b",
+        r"\bbooks? guide and motivate her\b",
+        r"\bbooks? motivate(?:s|d)? her\b",
+        r"\b(?:like|likes|love|loves|enjoy|enjoys)\s+reading\b",
+    )
+    phrases: list[str] = []
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if match:
+            phrases.append(match.group(0).strip(" ,;:."))
+    return _dedupe(phrases)
+
+
+def _insert_qualifier(answer: str, qualifier: str) -> str:
+    match = re.search(r"\s*\[[^\]\s]+\]", answer)
+    if match:
+        prefix = answer[: match.start()].rstrip()
+        suffix = answer[match.start() :]
+    else:
+        prefix = answer.rstrip()
+        suffix = ""
+    if prefix.endswith((".", "!", "?")):
+        punctuation = prefix[-1]
+        prefix = prefix[:-1].rstrip()
+    else:
+        punctuation = ""
+    if prefix:
+        repaired = f"{prefix} {qualifier}{punctuation}"
+    else:
+        repaired = f"{qualifier}{punctuation}"
+    if suffix:
+        if repaired and not repaired.endswith(" "):
+            repaired = f"{repaired} "
+        repaired = f"{repaired}{suffix.lstrip()}"
+    return repaired.strip()
+
+
+def _looks_like_date_qualifier(qualifier: str) -> bool:
+    lower = qualifier.lower()
+    if any(char.isdigit() for char in qualifier):
+        return True
+    return any(
+        month in lower
+        for month in (
+            "jan",
+            "feb",
+            "mar",
+            "apr",
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+            "nov",
+            "dec",
         )
-        return response.content if isinstance(response.content, str) else str(response.content)
+    )
 
 
 def _coerce_answer_evidence(

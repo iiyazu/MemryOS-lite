@@ -64,12 +64,69 @@ def test_parse_json_with_code_fence():
     assert verdict.forbidden_present == ["bad_fact"]
 
 
+def test_parse_json_with_surrounding_text():
+    settings = Settings(openai_api_key="sk-fake")
+    judge = LLMJudge(settings)
+    response = (
+        "Here is the evaluation JSON:\n"
+        + json.dumps(
+            {
+                "expected_present": ["fact_a"],
+                "expected_missing": [],
+                "forbidden_present": [],
+                "verdict": "pass",
+                "reasoning": "All facts found",
+            }
+        )
+        + "\nThanks."
+    )
+    verdict = judge._parse_response("test_001", response)
+    assert verdict.verdict == "pass"
+    assert verdict.expected_present == ["fact_a"]
+    assert verdict.expected_missing == []
+    assert verdict.forbidden_present == []
+
+
 def test_parse_invalid_json_returns_error():
     settings = Settings(openai_api_key="sk-fake")
     judge = LLMJudge(settings)
     verdict = judge._parse_response("test_001", "not json at all")
     assert verdict.verdict == "error"
     assert "Failed to parse" in verdict.reasoning
+
+
+def test_judge_retries_once_after_empty_response(monkeypatch):
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            self.calls = 0
+
+        def invoke(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return type("FakeResponse", (), {"content": ""})()
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "content": json.dumps(
+                        {
+                            "expected_present": ["fact_a"],
+                            "expected_missing": [],
+                            "forbidden_present": [],
+                            "verdict": "pass",
+                            "reasoning": "Retry returned valid JSON",
+                        }
+                    )
+                },
+            )()
+
+    monkeypatch.setattr("memoryos_lite.llm_judge.ChatOpenAI", FakeChatOpenAI)
+    judge = LLMJudge(Settings(openai_api_key="sk-fake"))
+
+    verdict = judge.judge(_make_case(), "fact_a")
+
+    assert verdict.verdict == "pass"
+    assert judge.llm.calls == 2
 
 
 def test_init_requires_api_key():

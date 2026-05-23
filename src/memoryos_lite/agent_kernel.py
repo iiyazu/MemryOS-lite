@@ -12,6 +12,7 @@ from memoryos_lite.v3_contracts import (
     AgentStepResult,
     ApprovalState,
     ArchivalMemory,
+    ArchiveAttachment,
     KernelTraceEvent,
     SourceRef,
     SourceType,
@@ -127,6 +128,43 @@ class SimpleToolExecutionManager:
             actor="agent",
             reason=str(request.arguments.get("reason") or "agent kernel archive_write"),
         )
+        if self.store.get_session(request.session_id) is None:
+            with self.store.db() as db:
+                db.execute(
+                    text(
+                        """
+                        insert or ignore into sessions (id, title, created_at)
+                        values (:id, :title, :created_at)
+                        """
+                    ),
+                    {
+                        "id": request.session_id,
+                        "title": request.session_id,
+                        "created_at": utc_now(),
+                    },
+                )
+        session_attachment_exists = any(
+            attachment.archive_id == memory.archive_id
+            for attachment in self.store.list_archive_attachments(
+                scope_type="session",
+                scope_id=request.session_id,
+            )
+        )
+        if not session_attachment_exists:
+            self.store.create_archive_attachment(
+                ArchiveAttachment(
+                    id=new_id("aatt"),
+                    archive_id=memory.archive_id,
+                    scope_type="session",
+                    scope_id=request.session_id,
+                    source_refs=source_refs,
+                    metadata={
+                        "producer": "agent_kernel",
+                        "tool_name": request.tool_name,
+                        "memory_id": memory.id,
+                    },
+                )
+            )
         return ToolExecutionResult(
             tool_name=request.tool_name,
             ok=True,

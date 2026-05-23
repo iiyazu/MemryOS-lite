@@ -48,7 +48,7 @@ def movement_status(baseline_verdict: str | None, current_verdict: str) -> str:
     if baseline_verdict is None:
         return "new_case_no_baseline"
     baseline = _normalize_verdict(baseline_verdict)
-    if baseline == "pass" and current == "fail":
+    if baseline == "pass" and current != "pass":
         return "pass_to_fail"
     if baseline in {"fail", "error"} and current == "pass":
         return "fail_to_pass"

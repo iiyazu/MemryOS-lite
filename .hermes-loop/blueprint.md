@@ -304,7 +304,7 @@ Completed historical promotion gate. The accepted phase-8 decision is
 `adjust_blueprint` / `continue_targeted`, with Phase 9 as the next active
 phase.
 
-## Promoted Phase 9-15 Loop
+## Promoted Phase 9-18 Loop
 
 ## Core Thesis
 
@@ -348,6 +348,19 @@ LoCoMo is the controlling bottleneck:
 Therefore the next loop starts with recall/evidence reliability, then expands
 to archival, core, and agent-loop lifecycle work.
 
+Post phase-13 continuation evidence:
+
+- Phase 13 completed with usable ACK for core-memory lifecycle hardening.
+- The opt-in kernel remains default-off.
+- Manual 5-case full-chain LLM judge after phase 13:
+  - LongMemEval: `5/5`, `answer_mode=llm`, `judge_status=judge_pass`,
+    `source_hit=5/5`;
+  - LoCoMo: `4/5`, `answer_mode=llm`, `judge_status=judge_pass/judge_fail`,
+    `source_hit=2/5`.
+- The 5-case LLM judge smoke is a chain-health signal only. It is not
+  promotion evidence and does not override the need for LoCoMo source-grounding
+  repair and larger same-case gates.
+
 ## Global Non-Goals
 
 - Do not enable `MEMORYOS_AGENT_KERNEL=v1` by default.
@@ -365,6 +378,10 @@ to archival, core, and agent-loop lifecycle work.
 tests.
 
 Mandatory rules:
+
+- **LongMemEval and LoCoMo eval commands must run in parallel**
+  (separate background processes). Do not run them sequentially — this
+  doubles wall-clock time.
 
 - no projected/no-LLM report can satisfy a quality gate;
 - every quality gate command must explicitly include `--llm-answer` and
@@ -709,12 +726,13 @@ ACK gate:
 - rendered core memory stays within token budget;
 - core updates do not bypass approval/provenance.
 
-## Phase 14 - Agent Memory Loop
+## Phase 14 - Opt-In Kernel Memory Action Verification
 
 Target state: `agent-loop-memory-usable`.
 
 Purpose:
-make the opt-in kernel able to perform a complete, audited memory action loop.
+make the opt-in kernel able to prove one complete, audited memory action loop
+without broadening the tool surface.
 
 Current capability:
 
@@ -726,35 +744,34 @@ Current capability:
 
 Design direction:
 
-The agent loop should be allowed to operate on memory only under policy:
+Phase 14 is deliberately narrow. It should keep `archive_write` as the only
+supported kernel tool and add a post-action verification event proving that the
+approved write produced durable store state and later v3 context eligibility:
 
 ```text
 observe context
--> decide memory action
--> request tool
+-> request archive_write
 -> policy decision
 -> approval if required
 -> execute
--> verify retrieval
+-> verify store/history/archive attachment/context eligibility
 -> trace result
 ```
 
-Potential tools:
-
-- `recall_search`;
-- `archive_search`;
-- `archive_write`;
-- `core_memory_propose`;
-- `core_memory_update`;
-- `memory_deprecate`.
+Do not add `recall_search`, `archive_search`, `core_memory_update`, or
+destructive memory tools in this phase unless RED evidence proves the narrow
+verification loop is demo-only.
 
 Required tests:
 
 - opt-in kernel remains off by default;
 - policy denies unsupported tools;
 - approval replay cannot be tampered with;
-- archive write can be verified by later retrieval;
-- core proposal remains pending until approved.
+- approved `archive_write` emits `tool_executed` followed by `tool_verified`;
+- `tool_verified` inspects real store state, archival history, same-session
+  archive attachment, and v3 archival eligibility;
+- unsupported tools and tampered approval replays emit neither `tool_executed`
+  nor `tool_verified`.
 
 Eval gate:
 
@@ -769,9 +786,161 @@ ACK gate:
 
 - kernel default remains off;
 - every mutation has policy, approval/source refs, and trace;
-- at least one memory write can be retrieved in a later context build.
+- one approved `archive_write` can be verified through the real store and later
+  v3 context eligibility;
+- no benchmark improvement claim is made from this structural kernel phase.
 
-## Phase 15 - Benchmark Governance And Promotion
+## Phase 15 - Diagnostic Kernel Maintenance Planner
+
+Target state: `diagnostic-maintenance-planner-ready`.
+
+Purpose:
+turn public benchmark failure diagnostics into safe, reviewable kernel memory
+action proposals without executing broad autonomous memory edits.
+
+Current bottleneck:
+
+- LoCoMo can pass under LLM judge even when source localization is weak.
+- `source_hit=false` with `judge_pass` must be treated as a grounding risk, not
+  a retrieval success.
+- `retrieval_miss` and `evidence_hit_answer_fail` need different maintenance
+  responses.
+
+Design direction:
+
+The planner observes case-level diagnostics and emits candidate tool requests:
+
+```text
+public case diagnostics
+-> failure-class router
+-> candidate maintenance action
+-> policy/approval gate
+-> no execution unless explicitly run through kernel
+```
+
+Initial action types:
+
+- `retrieval_repair_note` for retrieval/session localization misses;
+- `archive_write` evidence summary for evidence-hit-answer-fail cases;
+- `grounding_risk` trace for judge-pass/source-miss cases;
+- `core_promotion_request` only as a pending candidate, never as direct core
+  mutation.
+
+Required tests:
+
+- `retrieval_miss` produces a repair proposal with expected/retrieved source
+  ids and no expected-answer leakage;
+- `evidence_hit_answer_fail` produces a source-backed evidence-summary
+  proposal;
+- `judge_pass` plus `source_hit=false` produces a grounding-risk trace/proposal
+  and is not counted as retrieval success;
+- planner output is deterministic and does not execute tools by itself.
+
+Eval gate:
+
+- focused planner tests;
+- fixed 5/10-case LoCoMo diagnostic replay proving proposed actions match
+  failure classes;
+- no pass-rate improvement claim unless a later eval consumes the maintenance
+  artifacts through the real context path.
+
+ACK gate:
+
+- every proposal has source refs or an explicit denial reason;
+- no proposal uses expected-answer leakage;
+- source localization and judge outcome remain separately reported;
+- kernel default remains off.
+
+## Phase 16 - Kernel Maintenance Tool Surface
+
+Target state: `kernel-maintenance-tools-usable`.
+
+Purpose:
+add the minimum Letta-style memory maintenance tools needed for the diagnostic
+planner while preserving approval, provenance, replay safety, and default-off
+kernel behavior.
+
+Allowed tools:
+
+- `archive_attach`: attach an archive to a session or scoped identity;
+- `passage_link`: link a passage/source/session relationship for retrieval
+  visibility;
+- `retrieval_repair_note`: persist a diagnostic maintenance note separate from
+  user-facing memory;
+- `core_promotion_request`: create a pending source-backed core promotion
+  candidate, not a direct core update.
+
+Not allowed:
+
+- direct `core_memory_update` from the kernel;
+- destructive delete/deprecate tools;
+- benchmark case-id hacks;
+- expected-answer-derived memory writes.
+
+Required tests:
+
+- every write tool requires approval or strong source refs;
+- unsupported/destructive tools fail closed;
+- replay tampering cannot execute or verify a write;
+- each successful tool has durable history and a `tool_verified` event;
+- v3 composer can see only the artifacts that are eligible by scope.
+
+Eval gate:
+
+- focused tool/kernel/store/context tests;
+- opt-in kernel 5-case structural smoke only;
+- default-kernel-off public reports remain unchanged.
+
+ACK gate:
+
+- tool execution is auditable and replay-safe;
+- maintenance writes are visible to v3 only through scope/provenance rules;
+- kernel remains opt-in.
+
+## Phase 17 - LoCoMo Maintenance Repair Eval
+
+Target state: `locomo-maintenance-repair-measured`.
+
+Purpose:
+prove whether kernel-created maintenance artifacts improve LoCoMo source
+localization and answer quality when consumed through the real v3 context path.
+
+Required evaluation pattern:
+
+```text
+baseline fixed LoCoMo slice
+-> diagnostic planner proposals
+-> approved maintenance writes
+-> rerun same fixed LoCoMo slice
+-> compare source_hit, planned evidence hit, judge result, and failure class
+```
+
+Primary metrics:
+
+- `source_hit`;
+- `planned_evidence_source_hit_at_5`;
+- `episode_source_hit_at_10`;
+- source-miss judge-pass count;
+- `retrieval_miss` to downstream-failure conversion;
+- pass-to-fail and fail-to-pass lists.
+
+Eval gate:
+
+- fixed LoCoMo 10-case same-subset full-chain LLM judge;
+- LoCoMo 30-case full-chain LLM judge only if fixed-slice source movement is
+  useful and explainable;
+- LongMemEval 30-case regression guard if maintenance artifacts affect default
+  v3 context selection.
+
+ACK gate:
+
+- source localization improves or failure classes become more precise;
+- no hidden source-grounding regression;
+- LoCoMo is reported separately from LongMemEval;
+- kernel default remains off unless explicitly approved by the user after
+  larger evidence.
+
+## Phase 18 - Benchmark Governance And Promotion
 
 Target state: `governed-promotion-ready`.
 
@@ -806,11 +975,22 @@ ACK gate:
 - v1 fallback remains explicit;
 - next blueprint decision is backed by case-level evidence.
 
-## Initial Next Step
+## Current Continuation Step
 
-Start with Phase 9, then Phase 10. Do not start with archival, core, or kernel
-work until LoCoMo failure replay identifies whether recall/evidence reliability
-is genuinely exhausted.
+Phase 13 is completed and ACKed. Continue with Phase 14 as already planned:
+opt-in kernel memory-action verification. Do not broaden Phase 14 into a full
+agent loop.
+
+After Phase 14 is usable, continue to the new kernel-maintenance sequence:
+
+1. Phase 15: diagnostic kernel maintenance planner.
+2. Phase 16: kernel maintenance tool surface.
+3. Phase 17: LoCoMo maintenance repair eval.
+4. Phase 18: benchmark governance and promotion.
+
+The old governance phase is intentionally delayed until kernel maintenance has
+either improved LoCoMo source localization or shown, with evidence, that this
+path is not useful.
 
 Recommended first fixed LoCoMo slice:
 
@@ -850,14 +1030,18 @@ Phase 9 and must include these read-first files:
 - `docs/public-benchmark-diagnosis.md`
 - `docs/known-issues.md`
 
-Before writing the first dispatch, God must write
-`work/phase-9/context_bundle.md` with the active goal, phase-8 accepted
-evidence, invalid heartbeat artifacts to ignore, the 20 LoCoMo failure cases,
-the Phase 9 ACK gate, and the phase-9/phase-10 30-case gate policy.
+Before executing Phase 14, God must promote the execute lane from Phase 13 ACK
+to Phase 14 EXECUTE and read:
 
-The first dispatch should be diagnostic-first. Phase 9 must not change answer or
-retrieval behavior unless a failing diagnostic test proves the current replay
-report cannot classify real cases.
+- `work/phase-14/context_bundle.md`;
+- `work/phase-14/god_dispatch.json`;
+- `work/phase-14/plan_final.md`;
+- `work/phase-13/ack.json`;
+- this updated root blueprint.
+
+Phase 14 must not change answer or retrieval behavior. It should only verify
+the opt-in kernel memory-action loop and leave default public benchmark runs
+kernel-off.
 
 
 ## Stop Conditions

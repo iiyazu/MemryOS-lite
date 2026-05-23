@@ -1,0 +1,216 @@
+{
+  "phase": "phase-12",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "state": {
+    "current_state": "GOD_DISPATCH",
+    "current_phase_idx": 12,
+    "execute_lane": {
+      "phase": "phase-12",
+      "state": "GOD_DISPATCH"
+    },
+    "plan_lane": {
+      "phase": "phase-13",
+      "state": "PLAN_STORM"
+    },
+    "phase_11_status": "in_progress",
+    "phase_12_status": "in_progress"
+  },
+  "context_bundle": {
+    "path": "work/phase-12/context_bundle.md",
+    "repo_path": ".hermes-loop/work/phase-12/context_bundle.md",
+    "sha256": "a1958f6968a94f65019efa64b254e3360419b0832a545adb01ebdcbcde40aa22",
+    "summary": "Phase 12 must prove the archival/RAG loop from tool write to scoped archival passage retrieval and v3 context evidence, while preserving Phase 11 LoCoMo debt visibility, v3 default, v1 fallback, and kernel opt-in."
+  },
+  "objective": "Make tool-mediated archival memory writes become source-attributed, scoped, retrievable v3 archival evidence with audited history and stale-passage protection, without treating structural archive success as benchmark promotion evidence.",
+  "real_chain_components_affected": {
+    "ingest": "not_applicable",
+    "store": "changed_or_verified",
+    "retrieval": "changed_or_verified",
+    "context_composer": "changed_or_verified",
+    "answer_projection": "verified_if_public_path_touched",
+    "kernel_loop": "changed_or_verified_opt_in_only",
+    "public_eval": "verified_if_default_v3_public_context_touched"
+  },
+  "phase_bootstrap_rule": {
+    "current_state": "GOD_DISPATCH",
+    "allowed_now": [
+      "refresh work/phase-12/context_bundle.md",
+      "write work/phase-12/god_dispatch.json",
+      "scan current phase stale ACK/result/review artifacts"
+    ],
+    "forbidden_now": [
+      "implementation",
+      "uv run pytest",
+      "uv run ruff",
+      "memoryos eval public",
+      "writing src/tests/docs outside phase-local control artifacts"
+    ],
+    "next_state_expected": "PLAN_STORM"
+  },
+  "inspect_first": [
+    ".hermes-loop/work/phase-12/context_bundle.md",
+    ".hermes-loop/work/phase-12/god_dispatch.json",
+    ".hermes-loop/work/phase-12/interrupted_orphan_execute.md",
+    ".hermes-loop/work/phase-11/result.md",
+    ".hermes-loop/work/phase-11/case_matrix.md",
+    ".hermes-loop/work/phase-11/execute_review.md",
+    ".hermes-loop/work/phase-11/review_verdict.json",
+    ".hermes-loop/work/phase-10/ack.json",
+    ".hermes-loop/work/phase-10/case_matrix.md",
+    "docs/known-issues.md",
+    "docs/public-benchmark-diagnosis.md",
+    "docs/agentic-memory-roadmap-zh.md",
+    "src/memoryos_lite/agent_kernel.py",
+    "src/memoryos_lite/store.py",
+    "src/memoryos_lite/context_composer.py",
+    "src/memoryos_lite/engine.py",
+    "src/memoryos_lite/retrieval/archival_searcher.py",
+    "src/memoryos_lite/memory_lifecycle.py",
+    "src/memoryos_lite/v3_contracts.py",
+    "src/memoryos_lite/public_benchmarks.py",
+    "src/memoryos_lite/public_case_diagnostics.py",
+    "tests/test_agent_kernel.py",
+    "tests/test_archival_store.py",
+    "tests/test_memory_lifecycle.py",
+    "tests/test_context_composer.py",
+    "tests/test_public_benchmarks.py"
+  ],
+  "letta_reference_policy": {
+    "runtime_dependency_allowed": false,
+    "required_comparison_targets": [
+      "/home/iiyatu/projects/python/letta/letta/schemas/block.py",
+      "/home/iiyatu/projects/python/letta/letta/schemas/memory.py",
+      "/home/iiyatu/projects/python/letta/letta/schemas/archive.py",
+      "/home/iiyatu/projects/python/letta/letta/schemas/passage.py",
+      "/home/iiyatu/projects/python/letta/letta/services/block_manager.py",
+      "/home/iiyatu/projects/python/letta/letta/services/archive_manager.py",
+      "/home/iiyatu/projects/python/letta/letta/services/passage_manager.py",
+      "/home/iiyatu/projects/python/letta/letta/services/tool_executor/tool_execution_manager.py",
+      "/home/iiyatu/projects/python/letta/letta/services/tool_executor/core_tool_executor.py",
+      "/home/iiyatu/projects/python/letta/letta/agents/letta_agent_v3.py",
+      "/home/iiyatu/projects/python/letta/letta/services/context_window_calculator/context_window_calculator.py"
+    ],
+    "borrow_semantics_only": [
+      "archive identity and attachment scope",
+      "agent passage versus source passage invariants",
+      "passage-level provenance and tags",
+      "tool-mediated memory write constraints",
+      "component-level context accounting"
+    ]
+  },
+  "red_evidence_required_before_implementation": [
+    {
+      "type": "tool_to_archival_context_test",
+      "target_file": "tests/test_agent_kernel.py",
+      "description": "After approved archive_write, a later same-session V3ContextComposer.build retrieves the written content as an archival item with source_refs, memory id metadata, and archival_eligibility.selected_passage_ids.",
+      "expected_current_failure": "The existing test only sees the tool-result message in recent context; the written memory is not proven to become eligible archival evidence without explicit archive attachment or scope."
+    },
+    {
+      "type": "stale_passage_guard",
+      "target_file": "tests/test_memory_lifecycle.py",
+      "description": "Update/delete on the same written archival memory updates or removes apsg_{memory_id}, so stale archival evidence cannot be selected."
+    },
+    {
+      "type": "scope_leak_guard",
+      "target_file": "tests/test_context_composer.py",
+      "description": "Session/source/archive scoping prevents a written archival passage from leaking into unrelated sessions or unattached archives."
+    },
+    {
+      "type": "public_path_guard_if_needed",
+      "target_file": "tests/test_public_benchmarks.py",
+      "description": "Only if public reports are touched, v3 no-LLM public rows expose archival eligibility/final trace without changing scoring or claiming answer-quality improvement."
+    }
+  ],
+  "required_outputs": [
+    "work/phase-12/brainstorm.md",
+    "work/phase-12/spec.md",
+    "work/phase-12/plan.md",
+    "work/phase-12/plan_review.md",
+    "work/phase-12/plan_final.md",
+    "work/phase-12/red_result.md",
+    "work/phase-12/result.md",
+    "work/phase-12/execute_review.md",
+    "work/phase-12/case_matrix.md",
+    "work/phase-12/review_verdict.json",
+    "work/phase-12/ack.json or work/phase-12/adjustment.md"
+  ],
+  "lane_invocation_templates": {
+    "plan_storm": "codex exec --yolo -m gpt-5.5 -c model_reasoning_effort=\"high\" \"# phase: phase-12\\nRead .hermes-loop/work/phase-12/context_bundle.md before any other phase-local artifact. Then read .hermes-loop/work/phase-12/god_dispatch.json. Produce work/phase-12/brainstorm.md with 2-3 implementation options for archival/RAG memory unification, tradeoffs, chosen route, risks, and demo-only traps. Do not edit src/, tests/, docs outside work/phase-12/.\"",
+    "plan_draft": "codex exec --yolo -m gpt-5.5 -c model_reasoning_effort=\"high\" \"# phase: phase-12\\nRead context_bundle.md, brainstorm.md, and god_dispatch.json. Produce work/phase-12/spec.md and work/phase-12/plan.md. Plan must be TDD-oriented RED -> GREEN -> REFACTOR -> smoke -> review. Do not edit src/, tests/, docs outside work/phase-12/.\"",
+    "plan_review": "codex exec --yolo -m gpt-5.5 -c model_reasoning_effort=\"high\" \"# phase: phase-12\\nRead context_bundle.md, god_dispatch.json, brainstorm.md, spec.md, and plan.md. Review against active goal, anti-demo gate, v1 fallback, v3 default, kernel opt-in, source grounding, and benchmark overfitting. Write work/phase-12/plan_review.md. If PASS, write work/phase-12/plan_final.md.\"",
+    "execute": "codex exec --yolo -m gpt-5.5 -c model_reasoning_effort=\"medium\" \"# phase: phase-12\\nRead context_bundle.md and plan_final.md before any code changes. Execute with TDD: add RED tests first, verify RED, implement minimal GREEN, refactor, run focused tests and required smoke. Write work/phase-12/result.md and execute_review.md.\"",
+    "review": "codex exec --yolo -m gpt-5.5 -c model_reasoning_effort=\"high\" \"# phase: phase-12\\nRead context_bundle.md, god_dispatch.json, plan_final.md, result.md, execute_review.md, and git diff. Review read-only. Write work/phase-12/reviews/codex-review-phase-12.md and work/phase-12/review_verdict.json.\""
+  },
+  "focused_verification_commands": [
+    "uv run pytest tests/test_agent_kernel.py tests/test_archival_store.py tests/test_memory_lifecycle.py tests/test_context_composer.py -q",
+    "uv run ruff check ."
+  ],
+  "baseline_verification_commands": [
+    "uv run pytest -q",
+    "uv run ruff check ."
+  ],
+  "structural_smoke_commands": [
+    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge"
+  ],
+  "milestone_eval_policy": {
+    "run_parallel_when_required": true,
+    "longmemeval_30": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 30",
+    "locomo_30": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 30",
+    "required_only_if": "Phase 12 changes default v3 public benchmark context behavior; otherwise case_level_eval.limit may be 0 with a written not_applicable rationale."
+  },
+  "fixed_case_context_to_keep_visible": {
+    "phase_11_not_ack_grade": true,
+    "longmemeval_latest_gate": {
+      "limit": 30,
+      "pass": 30,
+      "fail": 0
+    },
+    "locomo_latest_gate": {
+      "limit": 30,
+      "pass": 20,
+      "fail": 10,
+      "pass_to_fail": [
+        "conv-26_qa_028"
+      ],
+      "source_miss_judged_pass_risk": [
+        "conv-26_qa_005"
+      ],
+      "remaining_failures": [
+        "conv-26_qa_003",
+        "conv-26_qa_004",
+        "conv-26_qa_006",
+        "conv-26_qa_008",
+        "conv-26_qa_016",
+        "conv-26_qa_019",
+        "conv-26_qa_020",
+        "conv-26_qa_024",
+        "conv-26_qa_025"
+      ]
+    }
+  },
+  "usable_ack_checklist": [
+    "Every Phase 12 artifact has phase binding.",
+    "Plan, execute, and review artifacts cite work/phase-12/context_bundle.md.",
+    "At least one RED test failed before production code changed.",
+    "archive_write or equivalent archival write is connected to ArchivalMemory, bridged ArchivalPassage, scoped retrieval eligibility, v3 archival context item, and source refs.",
+    "Update/delete history prevents stale bridged passages from being selected.",
+    "No sourceless archival mutation is accepted.",
+    "Remaining Phase 11 LoCoMo debt is listed and not hidden by structural archival success.",
+    "v1 fallback is preserved.",
+    "v3 default is preserved.",
+    "MEMORYOS_AGENT_KERNEL=v1 remains opt-in and is not enabled by default.",
+    "If public benchmark context is touched, LoCoMo and LongMemEval evidence are reported separately with pass-to-fail lists."
+  ],
+  "review_focus": [
+    "Does the implementation exercise the real tool/store/passage/retrieval/v3 context path?",
+    "Did tests fail before archival behavior changed?",
+    "Does the fix use generic scope/provenance semantics rather than case ids or expected answers?",
+    "Can written archival memory leak into unrelated sessions or unattached archives?",
+    "Do update/delete operations prevent stale archival evidence from being selected?",
+    "Are source refs preserved into ContextLayerItem, final_context_trace, and legacy retrieved_evidence?",
+    "Did any change alter v1 fallback, v3 default, or kernel default-off behavior?",
+    "Did the phase avoid claiming benchmark improvement from structural no-LLM evidence?"
+  ],
+  "decision_if_evidence_missing": "repeat_or_adjust",
+  "god_decision": "dispatch_only_from_GOD_DISPATCH"
+}

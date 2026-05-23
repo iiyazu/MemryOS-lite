@@ -1,3 +1,4 @@
+# AUTONOMOUS MODE: No user interaction. All agent prompts include autonomy instructions.
 # AGENTS.md
 
 This file provides working guidance for Codex and other coding agents in this repository.

@@ -62,7 +62,8 @@ research、plan、execute、review lane 只提供证据、计划、补丁和审�
 - The heartbeat retry run ids `phase8_lme50_hb_20260522T160637Z` and
   `phase8_locomo50_hb_20260522T160637Z` were killed/partial/projected and are
   invalid for promotion evidence.
-- Active execution now starts at `phase-9` when `state.json` points there.
+- Active execution follows `state.json`. Do not assume `phase-9` or any
+  historical phase as the entry point when `state.json` points elsewhere.
 
 Keep benchmark language conservative. Do not claim global improvement from
 LongMemEval alone or aggregate scores without same-case LoCoMo evidence.
@@ -372,6 +373,26 @@ promoted blueprint. Do not hide pass-to-fail cases or judge instability.
 
 ## State Flow
 
+### Phase Bootstrap Safety
+
+Before running any test, eval, `uv`, `pytest`, `ruff`, or code-writing command,
+verify the active execute phase has at least:
+
+- `work/{phase-id}/context_bundle.md`
+- `work/{phase-id}/god_dispatch.json`
+- `work/{phase-id}/plan_final.md`
+
+If `state.json.current_state == "EXECUTE"` but `god_dispatch.json` or
+`plan_final.md` is missing, this is an unsafe orphan execute state. Do not run
+tests or modify `src/`, `tests/`, `docs/`, `.memoryos/`, or benchmark reports.
+First write `interrupted_orphan_execute.md`, set the controller back to
+`GOD_DISPATCH` or generate the missing phase-local dispatch/plan artifacts, and
+stop.
+
+If `state.json.current_state == "GOD_DISPATCH"`, only generate or refresh the
+phase-local context and dispatch artifacts. Do not start implementation or eval
+from GOD_DISPATCH.
+
 ### GOD_DISPATCH
 
 Read blueprint, state, active goal, current reports, and known issues. Generate
@@ -411,8 +432,14 @@ PASS → plan_final.md. FAIL → 迭代修改 (max 3) → 超限 → GOD_ADJUST.
 
 ### EXECUTE
 
-Only execute_lane may implement. Read `context_bundle.md` and `plan_final.md`
-before code changes.
+Only execute_lane may implement.
+
+**If `review_verdict.json` exists and says FAIL:**
+Read each blocking finding → fix the specific regression → re-run tests.
+Do NOT re-plan. Do NOT re-brainstorm. Just fix what the review blocked.
+
+**If no FAIL verdict or first EXECUTE run:**
+Read `context_bundle.md` and `plan_final.md` before code changes.
 **每个 task 启动 execution subagent** 按 TDD 执行: RED→GREEN→REFACTOR.
 Add or update failing tests before production changes unless the phase is explicitly read-only.
 Keep changes minimal and wire them into the real v3/public benchmark path.
@@ -453,8 +480,14 @@ check:
 - stale phase artifacts
 - context bundle coverage and whether lane outputs used the required context
 
-ALL PASS creates `ack.json`; otherwise create `review_verdict.json` and return
-to execute or `GOD_ADJUST`.
+ALL PASS creates `ack.json` and advances to ACK.
+
+If FAIL:
+1. Write `review_verdict.json` with specific blocking findings
+2. Set `state.json.current_state = "EXECUTE"` and `execute_lane.state = "EXECUTE"`
+3. On next EXECUTE: first read `review_verdict.json`, then fix each blocking finding
+4. After fix: re-run milestone eval → re-run REVIEW
+5. If 3 FAIL cycles → escalate to GOD_ADJUST
 
 ### ACK
 

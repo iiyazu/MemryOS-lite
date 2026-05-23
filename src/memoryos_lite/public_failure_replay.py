@@ -83,11 +83,20 @@ def build_replay_row(row: Mapping[str, Any], *, context_bundle: str) -> dict[str
         diagnostic_key="rendered_evidence_ids",
         row_keys=("source_ids",),
     )
+    answer_evidence_ids = _candidate_ids(
+        diagnostics,
+        row,
+        diagnostic_key="answer_evidence_ids",
+        row_keys=(),
+    )
     cited_source_ids = _strings(diagnostics.get("cited_source_ids"))
     unsupported_citation_ids = _strings(diagnostics.get("unsupported_citation_ids"))
     retrieved_overlap_ids = _overlap(expected_source_ids, retrieved_ids)
     selected_overlap_ids = _overlap(expected_source_ids, selected_ids)
     rendered_overlap_ids = _overlap(expected_source_ids, rendered_ids)
+    answer_evidence_overlap_ids = _overlap(expected_source_ids, answer_evidence_ids)
+    evidence_handoff = _mapping(diagnostics.get("evidence_handoff"))
+    failure_boundary = _first_string(evidence_handoff.get("failure_boundary"), default="unknown")
     path_class = classify_path_level_failure(row, diagnostics)
     report_class = _first_string(
         diagnostics.get("failure_class"),
@@ -172,6 +181,10 @@ def build_replay_row(row: Mapping[str, Any], *, context_bundle: str) -> dict[str
         "selected_overlap_ids": selected_overlap_ids,
         "rendered_ids": rendered_ids,
         "rendered_overlap_ids": rendered_overlap_ids,
+        "answer_evidence_ids": answer_evidence_ids,
+        "answer_evidence_overlap_ids": answer_evidence_overlap_ids,
+        "evidence_handoff": dict(evidence_handoff),
+        "failure_boundary": failure_boundary,
         "answer_output": _first_string(row.get("answer"), default=""),
         "cited_source_ids": cited_source_ids,
         "unsupported_citation_ids": unsupported_citation_ids,

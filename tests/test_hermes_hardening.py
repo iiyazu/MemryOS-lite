@@ -228,6 +228,51 @@ def test_state_ack_gate_requires_usable_ack_and_passing_review(tmp_path: Path) -
     assert result["blockers"] == []
 
 
+def test_execute_bootstrap_gate_blocks_execute_without_dispatch_plan(tmp_path: Path) -> None:
+    hardening = load_hardening_module()
+    loop = tmp_path / ".hermes-loop"
+    phase_dir = loop / "work" / "phase-12"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "context_bundle.md").write_text("# phase: phase-12\n", encoding="utf-8")
+    write_json(
+        loop / "state.json",
+        {
+            "current_state": "EXECUTE",
+            "execute_lane": {"phase": "phase-12", "state": "EXECUTE"},
+        },
+    )
+
+    result = hardening.check_execute_bootstrap_gate(loop)
+
+    assert result["ok"] is False
+    assert result["phase_id"] == "phase-12"
+    assert result["action"] == "bootstrap_dispatch"
+    assert "missing god_dispatch.json" in result["blockers"]
+    assert "missing plan_final.md" in result["blockers"]
+
+
+def test_execute_bootstrap_gate_allows_planned_execute(tmp_path: Path) -> None:
+    hardening = load_hardening_module()
+    loop = tmp_path / ".hermes-loop"
+    phase_dir = loop / "work" / "phase-12"
+    phase_dir.mkdir(parents=True)
+    (phase_dir / "context_bundle.md").write_text("# phase: phase-12\n", encoding="utf-8")
+    write_json(phase_dir / "god_dispatch.json", {"phase": "phase-12"})
+    (phase_dir / "plan_final.md").write_text("# phase: phase-12\n", encoding="utf-8")
+    write_json(
+        loop / "state.json",
+        {
+            "current_state": "EXECUTE",
+            "execute_lane": {"phase": "phase-12", "state": "EXECUTE"},
+        },
+    )
+
+    result = hardening.check_execute_bootstrap_gate(loop)
+
+    assert result["ok"] is True
+    assert result["blockers"] == []
+
+
 def test_stale_artifact_index_marks_files_without_current_context_bundle(tmp_path: Path) -> None:
     hardening = load_hardening_module()
     phase_dir = tmp_path / "work" / "phase-8"

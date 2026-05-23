@@ -1,0 +1,48 @@
+{
+  "phase": "phase-11",
+  "run_timestamp": "20260523T061159Z",
+  "process_status": {
+    "longmemeval": 143,
+    "locomo": 143
+  },
+  "longmemeval": {
+    "phase": "phase-11",
+    "run_id": "phase11_lme30_handoff_20260523T061159Z",
+    "benchmark": "longmemeval",
+    "status": "failed",
+    "command": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge --comparison-report .memoryos/evals/phase10_lme30_packets_20260522T202553Z_longmemeval.json --run-id phase11_lme30_handoff_20260523T061159Z",
+    "start_time": "2026-05-23T06:11:59+0000",
+    "last_seen": "2026-05-23T06:28:44.260867+00:00",
+    "partial_path": ".memoryos/evals/phase11_lme30_handoff_20260523T061159Z_longmemeval.partial.json",
+    "final_path": ".memoryos/evals/phase11_lme30_handoff_20260523T061159Z_longmemeval.json",
+    "rows_done": 24,
+    "last_case_id": "75499fd8",
+    "pass": 22,
+    "fail": 2,
+    "answer_mode": "llm",
+    "judge_done": 24,
+    "judge_total": 30,
+    "file_mtime": "2026-05-23T06:28:04.500002+00:00",
+    "file_size": 20883469
+  },
+  "locomo": {
+    "phase": "phase-11",
+    "run_id": "phase11_locomo30_handoff_20260523T061159Z",
+    "benchmark": "locomo",
+    "status": "failed",
+    "command": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge --comparison-report .memoryos/evals/phase10_locomo30_packets_20260522T202553Z_locomo.json --run-id phase11_locomo30_handoff_20260523T061159Z",
+    "start_time": "2026-05-23T06:11:59+0000",
+    "last_seen": "2026-05-23T06:28:44.213134+00:00",
+    "partial_path": ".memoryos/evals/phase11_locomo30_handoff_20260523T061159Z_locomo.partial.json",
+    "final_path": ".memoryos/evals/phase11_locomo30_handoff_20260523T061159Z_locomo.json",
+    "rows_done": 27,
+    "last_case_id": "conv-26_qa_027",
+    "pass": 17,
+    "fail": 10,
+    "answer_mode": "llm",
+    "judge_done": 27,
+    "judge_total": 30,
+    "file_mtime": "2026-05-23T06:28:11.244172+00:00",
+    "file_size": 32983288
+  }
+}

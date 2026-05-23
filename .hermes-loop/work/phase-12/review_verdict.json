@@ -1,0 +1,74 @@
+{
+  "phase": "phase-12",
+  "verdict": "PASS",
+  "ack_level": "usable_ack",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-12/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "state_at_review": {
+    "current_state": "EXECUTE",
+    "current_phase_idx": 12,
+    "phase_status": "in_progress"
+  },
+  "evidence_scope": {
+    "used": [
+      ".hermes-loop/work/phase-12/context_bundle.md",
+      ".hermes-loop/work/phase-12/god_dispatch.json",
+      ".hermes-loop/work/phase-12/brainstorm.md",
+      ".hermes-loop/work/phase-12/spec.md",
+      ".hermes-loop/work/phase-12/plan_final.md",
+      ".hermes-loop/work/phase-12/red_result.md",
+      ".hermes-loop/work/phase-12/result.md",
+      ".hermes-loop/work/phase-12/execute_review.md",
+      ".hermes-loop/work/phase-12/case_matrix.md",
+      "git diff"
+    ],
+    "excluded": [
+      "stale artifacts outside phase-12",
+      "benchmark claims beyond the structural verification performed in this phase"
+    ]
+  },
+  "evidence": {
+    "verification_commands": [
+      {
+        "command": "uv run pytest tests/test_agent_kernel.py::test_kernel_archive_write_becomes_same_session_archival_context_item -q",
+        "result": "1 passed"
+      },
+      {
+        "command": "uv run pytest tests/test_agent_kernel.py tests/test_archival_store.py tests/test_memory_lifecycle.py tests/test_context_composer.py -q",
+        "result": "30 passed"
+      },
+      {
+        "command": "uv run pytest -q",
+        "result": "446 passed, 1 warning"
+      },
+      {
+        "command": "uv run ruff check .",
+        "result": "All checks passed"
+      }
+    ],
+    "focused_suite": "30 passed",
+    "full_suite": "446 passed, 1 warning",
+    "ruff": "clean"
+  },
+  "explicit_decisions": {
+    "ack_eligible": true
+  },
+  "blockers": [],
+  "review_verdict": {
+    "overfitting_risk": "low",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false
+  },
+  "decision": "advance"
+}

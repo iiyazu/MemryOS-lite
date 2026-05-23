@@ -8,6 +8,7 @@ from memoryos_lite.agent_kernel import (
 )
 from memoryos_lite.config import Settings
 from memoryos_lite.context_composer import V3ContextComposer
+from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import Role
 from memoryos_lite.store import create_store
 from memoryos_lite.v3_contracts import (
@@ -21,19 +22,19 @@ from memoryos_lite.v3_contracts import (
 )
 
 
-def _request() -> AgentStepRequest:
+def _request(session_id: str = "ses_1") -> AgentStepRequest:
     return AgentStepRequest(
-        session_id="ses_1",
+        session_id=session_id,
         input_messages=[],
-        context=ContextPackageV3(session_id="ses_1", task="demo"),
+        context=ContextPackageV3(session_id=session_id, task="demo"),
     )
 
 
-def _source_ref() -> SourceRef:
+def _source_ref(session_id: str = "ses_1") -> SourceRef:
     return SourceRef(
         source_type=SourceType.MESSAGE,
         source_id="msg_1",
-        session_id="ses_1",
+        session_id=session_id,
     )
 
 
@@ -48,7 +49,7 @@ def _archive_request(
         session_id=session_id,
         tool_name=tool_name,
         arguments={"content": content, "memory_type": "fact"},
-        source_refs=[_source_ref()],
+        source_refs=[_source_ref(session_id)],
         approval_id=approval_id,
     )
 
@@ -359,3 +360,64 @@ def test_kernel_tool_result_message_is_visible_to_later_v3_context(tmp_path):
         or recent_tool_items[0].metadata.get("memory_id") == memory_id
     )
     assert package.metadata["memory_arch"] == "v3"
+
+
+def test_kernel_archive_write_becomes_same_session_archival_context_item(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    session = store.create_session("phase 12 archival test")
+    first = _approval_runner(store).run_step(
+        _request(session.id),
+        tool_requests=[_archive_request(session_id=session.id)],
+    )
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    assert approval_id is not None
+
+    reopened = create_store(settings)
+    resumed = _approval_runner(reopened).run_step(
+        _request(session.id),
+        tool_requests=[_archive_request(approval_id=approval_id, session_id=session.id)],
+    )
+    memory_id = next(
+        event.payload["result"]["memory_id"]
+        for event in resumed.trace
+        if event.event_type == "tool_executed"
+    )
+
+    v3_package = V3ContextComposer(store=reopened, settings=settings).build(
+        ContextComposerRequest(
+            session_id=session.id,
+            task="approved archival fact",
+            budget=120,
+        )
+    )
+    archival_items = [item for item in v3_package.items if item.layer == "archival"]
+
+    assert [item.text for item in archival_items] == ["approved archival fact"]
+    assert archival_items[0].source_refs[0].source_id == "msg_1"
+    assert archival_items[0].metadata["archival_memory_id"] == memory_id
+    assert archival_items[0].metadata["archive_id"] == session.id
+    assert v3_package.metadata["archival_eligibility"]["selected_passage_ids"] == [
+        f"apsg_{memory_id}"
+    ]
+    assert v3_package.metadata["archival_eligibility"]["selected_source_refs"] == [
+        {"source_type": "message", "source_id": "msg_1", "session_id": session.id}
+    ]
+
+    service = MemoryOSService(settings=settings, store=reopened)
+    legacy_package = service.build_context(
+        session_id=session.id,
+        task="approved archival fact",
+        budget=120,
+    )
+    archival_evidence = [
+        evidence
+        for evidence in legacy_package.retrieved_evidence
+        if evidence.metadata.get("origin") == "archival"
+    ]
+    assert [evidence.text for evidence in archival_evidence] == ["approved archival fact"]
+    assert archival_evidence[0].message_id == "msg_1"
+    assert archival_evidence[0].metadata["v3_item_id"] == f"apsg_{memory_id}"
