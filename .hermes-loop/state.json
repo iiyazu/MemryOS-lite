@@ -1,15 +1,15 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 14,
+  "current_phase_idx": 15,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-14",
+    "phase": "phase-15",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-15",
+    "phase": "phase-16",
     "state": "PLAN_STORM"
   },
   "research_lane": {
@@ -57,7 +57,7 @@
             "no_behavior_changes": true,
             "kernel_default_unchanged": true
           },
-          "commit": null
+          "commit": "e886cf8"
         }
       ]
     },
@@ -508,8 +508,24 @@
       "id": "phase-11",
       "name": "Evidence Handoff And Context Selection",
       "target_state": "evidence-handoff-reliable",
-      "status": "in_progress",
-      "state_history": []
+      "status": "superseded",
+      "state_history": [
+        {
+          "completed_at": "2026-05-24T00:00:00Z",
+          "ack_evidence": {
+            "ack_level": "not_acked",
+            "decision": "superseded",
+            "reason": "Phase 11 review failed and requested repeat_phase; later phase-12 and phase-13 ACKed narrower work advanced the active path.",
+            "adjustment": "work/phase-11/adjustment.md",
+            "review_verdict": "work/phase-11/review_verdict.json",
+            "superseded_by": [
+              "phase-12",
+              "phase-13"
+            ]
+          },
+          "commit": null
+        }
+      ]
     },
     {
       "id": "phase-12",
@@ -555,14 +571,45 @@
       "id": "phase-14",
       "name": "Opt-In Kernel Memory Action Verification",
       "target_state": "agent-loop-memory-usable",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-23T19:07:44Z",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-14/context_bundle.md",
+            "ack": "work/phase-14/ack.json",
+            "review": "work/phase-14/reviews/codex-review-phase-14.md",
+            "review_verdict": "work/phase-14/review_verdict.json",
+            "reflection": "work/phase-14/reflect_phase-14.md",
+            "tests_passed": 470,
+            "checks_passed": 7,
+            "case_level_eval": {
+              "longmemeval": "not applicable: no default LongMemEval retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed",
+              "locomo": "not applicable: no default LoCoMo retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed"
+            },
+            "real_path_wired": true,
+            "structural_kernel_smoke_only": true,
+            "no_benchmark_improvement_claim": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "source_grounding_regressed": false,
+            "locomo_regressed_or_unexplained": false,
+            "review_eval_scope": "smoke",
+            "promotion_gate": "not_applicable",
+            "next_phase_scope": "Phase 15 should start with K2 hybrid tool selection before any executable diagnostic maintenance planner work."
+          },
+          "commit": null
+        }
+      ]
     },
     {
       "id": "phase-15",
-      "name": "Diagnostic Kernel Maintenance Planner",
-      "target_state": "diagnostic-maintenance-planner-ready",
-      "status": "pending",
+      "name": "Hybrid Tool Selection And Diagnostic Maintenance Planner",
+      "target_state": "hybrid-selection-and-diagnostic-planner-ready",
+      "status": "in_progress",
       "state_history": []
     },
     {
@@ -587,5 +634,5 @@
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-23T16:35:25Z"
+  "last_updated": "2026-05-23T19:07:44Z"
 }

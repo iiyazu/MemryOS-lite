@@ -2,17 +2,22 @@
 # God Launcher with flock + parallel heartbeat
 LOCKFILE="/home/iiyatu/projects/python/memoryOS/.hermes-loop/run.lock"
 HBFILE="/home/iiyatu/projects/python/memoryOS/.hermes-loop/heartbeat.log"
+LOOP_ROOT=".hermes-loop"
+CODEX_OUTPUT="$LOOP_ROOT/codex_output.log"
+IDLE_TIMEOUT_SECONDS="${HERMES_CODEX_IDLE_TIMEOUT_SECONDS:-10800}"
+ATTEMPT="${HERMES_CODEX_ATTEMPT:-1}"
 cd /home/iiyatu/projects/python/memoryOS
 
-exec 9>"$LOCKFILE"
+exec 9>>"$LOCKFILE"
 if ! flock -n 9; then
     echo "God already running (lock held)"
     exit 1
 fi
 
+: > "$LOCKFILE"
 echo "pid=$$ run_id=$(date -Iseconds)" > "$LOCKFILE"
 
-cleanup() { rm -f "$LOCKFILE"; kill $HB_PID 2>/dev/null; }
+cleanup() { kill "${HB_PID:-}" 2>/dev/null; wait "${HB_PID:-}" 2>/dev/null; }
 trap cleanup EXIT
 
 # Parallel heartbeat writer — writes every 30s independent of Codex
@@ -50,6 +55,32 @@ import sys
 print(json.loads(sys.argv[1]).get("action", ""))
 PY
 )"
+
+if [ "$BOOTSTRAP_ACTION" = "promote_execute" ]; then
+    BOOTSTRAP_STATUS="$(python3 - <<'PY'
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+loop = Path(".hermes-loop")
+module_path = loop / "hermes_hardening.py"
+spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec is not None and spec.loader is not None
+spec.loader.exec_module(module)
+print(json.dumps(module.promote_dispatch_to_execute(loop), ensure_ascii=False))
+PY
+)"
+    BOOTSTRAP_ACTION="$(python3 - "$BOOTSTRAP_STATUS" <<'PY'
+import json
+import sys
+
+print(json.loads(sys.argv[1]).get("action", ""))
+PY
+)"
+fi
 
 if [ "$BOOTSTRAP_ACTION" = "bootstrap_dispatch" ]; then
     BOOTSTRAP_PROMPT=".hermes-loop/bootstrap_prompt.md"
@@ -99,10 +130,72 @@ PY
     PROMPT_FILE="$BOOTSTRAP_PROMPT"
 fi
 
-# Run Codex God in foreground. The model/effort are explicit here so the
-# controller does not silently inherit a weaker local default.
+PHASE_ID="$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+state_path = Path(".hermes-loop/state.json")
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    state = {}
+execute_lane = state.get("execute_lane", {}) if isinstance(state, dict) else {}
+phase_id = execute_lane.get("phase") if isinstance(execute_lane, dict) else ""
+print(phase_id or "")
+PY
+)"
+
+# Run Codex God with an explicit active-job registry. The model/effort are
+# explicit here so the controller does not silently inherit a weaker local
+# default.
 {
     echo "===== god_launcher $(date -Iseconds) prompt=$PROMPT_FILE bootstrap_action=$BOOTSTRAP_ACTION ====="
-    codex exec --yolo -m gpt-5.5 -c model_reasoning_effort=xhigh -c approval_policy=never "$(< "$PROMPT_FILE")"
-} >> .hermes-loop/codex_output.log 2>&1
-cleanup
+    codex exec --yolo -m gpt-5.5 -c model_reasoning_effort=xhigh -c approval_policy=never "$(< "$PROMPT_FILE")" &
+    CODEX_PID=$!
+    python3 - "$CODEX_PID" "$PHASE_ID" "$PROMPT_FILE" "$ATTEMPT" "$IDLE_TIMEOUT_SECONDS" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+loop = Path(".hermes-loop")
+module_path = loop / "hermes_hardening.py"
+spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec is not None and spec.loader is not None
+spec.loader.exec_module(module)
+module.write_active_job(
+    loop,
+    pid=int(sys.argv[1]),
+    phase_id=sys.argv[2] or None,
+    prompt_file=sys.argv[3],
+    attempt=int(sys.argv[4]),
+    output_path="codex_output.log",
+    idle_timeout_seconds=int(sys.argv[5]),
+)
+PY
+    wait "$CODEX_PID"
+    CODEX_EXIT=$?
+    if [ "$CODEX_EXIT" -eq 0 ]; then
+        CODEX_STATUS="completed"
+    else
+        CODEX_STATUS="failed"
+    fi
+    python3 - "$CODEX_EXIT" "$CODEX_STATUS" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+loop = Path(".hermes-loop")
+module_path = loop / "hermes_hardening.py"
+spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec is not None and spec.loader is not None
+spec.loader.exec_module(module)
+module.complete_active_job(
+    loop,
+    exit_code=int(sys.argv[1]),
+    status=sys.argv[2],
+)
+PY
+} >> "$CODEX_OUTPUT" 2>&1
+exit "$CODEX_EXIT"

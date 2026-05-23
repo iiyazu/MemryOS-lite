@@ -89,6 +89,15 @@ Current diagnosis:
   cases before code changes.
 - Every milestone phase must produce case-level diagnostics, not only score
   summaries.
+- Public benchmark gold fields, including expected answers, expected evidence
+  ids, and gold-derived failure labels, are eval-only sidecars. They must not be
+  copied into agent-visible memory, tool requests, source refs, archive
+  attachments, repair notes, promotion candidates, or context-composer inputs.
+- A maintenance proposal can be promoted to a kernel tool request only if it can
+  be regenerated from model-visible artifacts: retrieved candidates, selected
+  context, rendered evidence, answer text, citations, tool traces, and store
+  provenance. Gold labels may score or classify the proposal after the fact, but
+  may not supply its content, target ids, or scope.
 
 ## Superpowers And Goal Discipline
 
@@ -103,6 +112,21 @@ God should use Superpowers methodology as workflow discipline:
 Because Hermes/God runs autonomously, interactive "ask user" gates are replaced
 by the active goal and written artifacts. God must still record the decision
 that would normally be approved by a user.
+
+Concrete autonomous replacements:
+
+- Superpowers brainstorming approval gates become God-recorded design decisions
+  in `brainstorm.md`, `spec.md`, and `plan_review.md`;
+- Superpowers plan execution choices default to subagent-driven execution when
+  tasks are independent, otherwise inline execution, with the choice recorded
+  in `plan_final.md`;
+- review FAIL feedback must route to bounded repair, repeat, `god_adjust`, or
+  hold; it must not wait for human confirmation by default;
+- `pause` is reserved for explicit human-only authorization, destructive risk,
+  unavailable mandatory external service, or a hard-constraint conflict that
+  cannot be narrowed safely;
+- no lane prompt may use `request_user_input`, visual-companion consent, typed
+  confirmation, or "should I continue" as part of the autonomous loop.
 
 At startup God must write or confirm `.hermes-loop/work/current_goal.md`:
 
@@ -186,6 +210,23 @@ If a lane output ignores the bundle, contradicts it without evidence, or relies
 on unstated prior chat memory, God must treat that output as stale and rerun the
 lane or enter `GOD_ADJUST`.
 
+## Execute Goal Contract
+
+Before EXECUTE starts implementation, God must write
+`work/{phase-id}/execute_goal.md`. The first line must be
+`# phase: {phase-id}` and the body must include `/goal`.
+
+This goal is phase-local. It may constrain scope, files, real-path wiring,
+required tests, `result.md`, `execute_review.md`, and demo-only prohibitions.
+It must cap repair loops with `Max repair cycles: 1`, `2`, or `3`.
+
+It must not use benchmark scores as the target condition. LongMemEval and
+LoCoMo may appear as diagnostic or gate evidence, but not as constraints such
+as target pass rate, target accuracy, `50/50`, or "continue until score
+improves". If eval evidence regresses, God classifies the failure and chooses
+repair, repeat, adjust, or hold; it does not optimize in an unbounded score
+loop.
+
 ## Full-Chain LLM Judge Gates
 
 5-case runs are smoke only. 10-case runs are early stability. 30-50 case
@@ -198,6 +239,24 @@ Full-chain means:
 - run through `MEMORYOS_MEMORY_ARCH=v3`;
 - add `MEMORYOS_AGENT_KERNEL=v1` only when the phase explicitly tests kernel
   behavior.
+
+Review eval autonomy:
+
+- God may choose `not_applicable`, `smoke`, or `milestone` eval scope during
+  review.
+- `not_applicable` is limited to control-plane, docs, prompt, or
+  non-behavioral hardening changes, and must be justified in
+  `review_eval_decision.reason`.
+- `smoke` may use deterministic/no-LLM or one-benchmark diagnostics, but cannot
+  satisfy a milestone promotion gate.
+- `milestone` requires both LongMemEval and LoCoMo. If the promotion gate is
+  marked satisfied, LLM answer and LLM judge must be enabled unless the active
+  phase explicitly states that full-chain judge is not applicable.
+- Every `review_verdict.json` must include `review_eval_decision` with
+  benchmark run/skip choices, LLM answer/judge choices, and
+  `promotion_gate` as `satisfied`, `not_applicable`, or `not_satisfied`.
+- God must not claim chain-level improvement from LongMemEval-only or
+  LoCoMo-only evidence.
 
 Default command shape:
 
@@ -259,6 +318,230 @@ Before implementation, God and research_lane must compare MemoryOS against:
 | `context_window_calculator.py` | per-component token accounting | v3 budget remains opaque |
 
 The goal is semantic compatibility, not line-by-line porting.
+
+## Kernel And Eval Boundary
+
+Letta-style kernel work in MemoryOS means a tool-mediated state transition, not
+an eval-oracle repair loop.
+
+Adopt these kernel invariants from Letta:
+
+- approval is bound to the current pending tool call, including `step_id`,
+  stable `tool_call_id` or equivalent request fingerprint, tool name, arguments,
+  session/scope, and source refs;
+- replay is idempotent only when a matching tool return or executed trace for
+  the same pending call already exists;
+- tool execution produces a structured result with success/error status, bounded
+  return payload, durable tool-return message, and trace event;
+- memory-writing tools route through a service contract
+  `policy -> executor -> lifecycle/store service -> verification -> tool return`;
+- direct store writes inside the kernel are allowed only for the narrow current
+  `archive_write` bridge until a phase explicitly replaces them with a service
+  executor contract.
+
+Eval diagnostics must stay outside the agent-visible memory plane:
+
+- `expected_source_ids`, expected answers, benchmark case ids used as labels,
+  and gold-derived final failure classes may appear in reports, ACK evidence,
+  and case matrices only;
+- proposal payloads and tool arguments must include a `gold_fields_used=false`
+  assertion or an explicit denial reason;
+- if a proposed repair depends on gold-only fields, it must be emitted as
+  diagnostic-only and cannot be executed through the kernel;
+- same-slice repair runs are structural smokes, not promotion evidence.
+
+## Kernel Agent Graduation Blueprint
+
+Spec source:
+`docs/superpowers/specs/2026-05-24-kernel-agent-graduation-blueprint-design.md`.
+
+Graduation objective:
+build a Letta-style, audited, source-grounded memory control plane on top of
+MemoryOS Lite's existing v3 composer, recall, archival memory, core memory, and
+lifecycle services. Architecture graduation comes first; public benchmark
+graduation is the hard validation gate.
+
+Default semantics:
+
+- external kernel enablement remains opt-in and must not be enabled by this
+  blueprint without separate approval;
+- once the kernel is enabled, the graduated kernel defaults to hybrid tool
+  selection inside the kernel;
+- default public benchmark runs remain maintenance-write-free and comparable to
+  the existing v3 baseline;
+- opt-in repair evals must use isolated stores and cannot become promotion
+  evidence without clean-store or held-out validation.
+
+Target kernel loop:
+
+```text
+user turn / trigger
+-> V3ContextComposer.build()
+-> ToolSelectionRouter
+-> ToolPolicyEngine
+-> ApprovalLedger
+-> ToolExecutionManager
+-> domain executor / existing memory service
+-> VerificationService
+-> tool-return record + kernel trace
+-> ContinuationController
+-> next step | pause | stop | escalate
+```
+
+Borrowed Letta semantics:
+
+- agent step loop with bounded continuation;
+- approval pending state bound to the pending tool call;
+- approval replay allowed only for an exact binding match;
+- tool executor routing instead of ad hoc kernel mutations;
+- compact, durable tool-return records;
+- memory tools executed by domain services, not by unscoped direct store writes;
+- component-level context and return-payload accounting.
+
+Non-goals:
+
+- do not import or clone Letta's full runtime;
+- do not add destructive delete/deprecate tools in the first graduation loop;
+- do not let benchmark gold fields guide executable maintenance writes;
+- do not describe MemoryOS Lite as production-ready MemoryOS.
+
+### Kernel Graduation Milestones
+
+K0 - Kernel Contract Freeze:
+
+- freeze tool call, approval, execution result, verification, and trace schemas;
+- add deterministic serialization/replay contract fixtures;
+- make unsupported tools fail closed before adding broader tool execution.
+
+K1 - Audited Control Plane:
+
+- carry one `archive_write` through policy, approval, execution, verification,
+  tool return, and trace;
+- verify real store state, history, attachment/scope eligibility, and later v3
+  visibility;
+- make verification failure durable and impossible to count as successful
+  mutation evidence.
+
+K2 - Hybrid Tool Selection:
+
+- deterministic router generates candidate tools and constraints;
+- constrained LLM selector may choose only inside the candidate set or no-op;
+- schema, policy, provenance, and fallback checks run after selection;
+- illegal tool names, invalid arguments, timeouts, and LLM failures deny or
+  fallback without executing unknown tools.
+
+K3 - Graduated Memory Tools:
+
+- Level 1 write-safe tools: `archive_write`, `archive_attach`,
+  `core_promotion_request`;
+- Level 2 read/search tools: `recall_search`, `archive_search`;
+- Level 3 controlled core edit tools: `core_memory_append`,
+  `core_memory_replace`;
+- every opened tool must have registry, policy, executor, verification, trace,
+  and integration tests before it counts toward graduation.
+
+K4 - Maintenance Planner And Repair Eval:
+
+- produce maintenance proposals only from model-visible diagnostics;
+- separate executable payloads from eval-only sidecars;
+- require every executable proposal to assert `gold_fields_used=false`;
+- treat same-slice repair as structural smoke, not quality promotion evidence.
+
+K5 - Graduation Governance:
+
+- run clean-store or held-out validation before promotion claims;
+- report LoCoMo and LongMemEval separately;
+- split judged pass movement from source-grounded movement;
+- block graduation on unexplained pass-to-fail, source-grounding regressions, or
+  benchmark leakage.
+
+### Required Kernel Data Contracts
+
+`ToolCallRecord` must include:
+
+- `step_id`;
+- `tool_call_id`;
+- stable `request_fingerprint`;
+- `tool_name`;
+- `arguments`;
+- `session_id`;
+- `identity_scope`;
+- `source_refs`;
+- `selection_origin`: `deterministic | llm | fallback`;
+- `candidate_reason`.
+
+`ApprovalRecord` must include:
+
+- complete binding to the tool call;
+- `status`: `pending | approved | rejected | expired | executed | skipped`;
+- actor, reason, requested/resolved timestamps;
+- replay and idempotency metadata.
+
+`ToolExecutionResult` must include:
+
+- `status`: `success | error`;
+- `tool_name`;
+- bounded result payload;
+- error payload if applicable;
+- source refs;
+- verification payload for tools that require write verification.
+
+`VerificationResult` must include:
+
+- `status`: `verified | failed | not_required`;
+- boolean `ok`;
+- executed checks;
+- failure reason;
+- bindings to the tool call, approval, and written resource.
+
+`KernelTraceEvent` must cover at least:
+
+- `kernel_step_started`;
+- `tool_candidates_generated`;
+- `tool_selected`;
+- `tool_policy_decision`;
+- `approval_pending`;
+- `approval_granted`;
+- `approval_replay_denied`;
+- `tool_denied`;
+- `tool_executed`;
+- `tool_verified`;
+- `tool_replay_skipped`;
+- `continuation_decided`;
+- `kernel_step_completed`.
+
+### Hybrid Tool Selection Boundary
+
+The kernel-internal selector may see:
+
+- current user/task input;
+- v3 selected context;
+- allowed tool descriptions;
+- policy summaries;
+- model-visible retrieval and verification traces.
+
+The selector must not see or use:
+
+- expected answers;
+- `expected_source_ids`;
+- benchmark judge labels;
+- gold-derived failure target classes;
+- case-specific repair ids.
+
+The deterministic router is authoritative for candidate scope. The LLM selector
+cannot invent tools, expand permission scope, bypass source requirements, or
+turn eval sidecar fields into tool arguments.
+
+### Phase Mapping For Active Loop
+
+- Phase 14 owns K0/K1 minimums: contract freeze plus one audited
+  `archive_write` loop.
+- Phase 15 owns K2 first, then the K4 planner only after constrained selection
+  is testable.
+- Phase 16 owns K3 graduated tool surface and must route each tool through a
+  named domain service.
+- Phase 17 owns K4 repair smoke and clean-store or held-out validation setup.
+- Phase 18 owns K5 governance and the final promote/hold/continue decision.
 
 ## Historical Completed Phase Index
 
@@ -739,6 +1022,11 @@ Purpose:
 make the opt-in kernel able to prove one complete, audited memory action loop
 without broadening the tool surface.
 
+Kernel graduation mapping:
+Phase 14 implements the minimum K0/K1 slice. It freezes the records needed for
+approval, execution, verification, trace, and replay, then proves them with the
+existing `archive_write` bridge only.
+
 Current capability:
 
 - `SimpleAgentStepRunner`;
@@ -772,9 +1060,15 @@ Required tests:
 - opt-in kernel remains off by default;
 - policy denies unsupported tools;
 - approval replay cannot be tampered with;
+- approval replay is bound to the original pending `step_id` and stable
+  tool-call identity or request fingerprint;
 - approved `archive_write` emits `tool_executed` followed by `tool_verified`;
 - `tool_verified` inspects real store state, archival history, same-session
   archive attachment, and v3 archival eligibility;
+- verification failure emits a durable negative verification event and cannot be
+  counted as a successful memory action;
+- tool-return messages include enough verification summary for replay
+  idempotency checks without reusing gold benchmark fields;
 - unsupported tools and tampered approval replays emit neither `tool_executed`
   nor `tool_verified`.
 
@@ -791,17 +1085,33 @@ ACK gate:
 
 - kernel default remains off;
 - every mutation has policy, approval/source refs, and trace;
+- K0 records are sufficiently stable for replay and later tool routing;
 - one approved `archive_write` can be verified through the real store and later
   v3 context eligibility;
 - no benchmark improvement claim is made from this structural kernel phase.
 
-## Phase 15 - Diagnostic Kernel Maintenance Planner
+## Phase 15 - Hybrid Tool Selection And Diagnostic Maintenance Planner
 
-Target state: `diagnostic-maintenance-planner-ready`.
+Target state: `hybrid-selection-and-diagnostic-planner-ready`.
 
 Purpose:
-turn public benchmark failure diagnostics into safe, reviewable kernel memory
-action proposals without executing broad autonomous memory edits.
+implement K2 hybrid tool selection before allowing K4 planner proposals: the
+kernel must first prove that a deterministic candidate router, constrained LLM
+selector, schema/policy validation, and deterministic fallback cannot execute
+out-of-scope tools. Only after that gate may public benchmark failure
+diagnostics produce safe, reviewable kernel memory action proposals without
+executing broad autonomous memory edits.
+
+K2-first requirements:
+
+- kernel enabled implies hybrid tool selection is on by default internally;
+- deterministic routing declares allowed candidates and constraints;
+- the LLM may select only from declared candidates or select no tool;
+- invalid output, unavailable LLM, timeout, missing provenance, or policy denial
+  falls back deterministically or stops without mutation;
+- selection traces record `selection_origin` and `candidate_reason`;
+- no maintenance planner proposal may be executable until these requirements
+  have focused tests.
 
 Current bottleneck:
 
@@ -816,8 +1126,8 @@ Design direction:
 The planner observes case-level diagnostics and emits candidate tool requests:
 
 ```text
-public case diagnostics
--> failure-class router
+public case diagnostics, split into eval-only and model-visible fields
+-> failure-class router for workflow selection only
 -> candidate maintenance action
 -> policy/approval gate
 -> no execution unless explicitly run through kernel
@@ -831,15 +1141,30 @@ Initial action types:
 - `core_promotion_request` only as a pending candidate, never as direct core
   mutation.
 
+Gold-boundary rule:
+
+- `expected_source_ids`, expected answers, and gold-derived target ids must not
+  appear in proposal content, tool arguments, source refs, archive ids, passage
+  links, or promotion candidates;
+- if the planner cannot create a proposal from model-visible traces alone, it
+  must emit a diagnostic-only denial with the missing model-visible evidence.
+
 Required tests:
 
+- deterministic candidate generation and fallback are reproducible;
+- a constrained LLM selector cannot choose an unregistered/non-candidate tool;
+- tool-selection inputs do not contain expected answers, expected source ids,
+  judge labels, or gold-derived repair targets;
 - `retrieval_miss` produces a repair proposal with expected/retrieved source
-  ids and no expected-answer leakage;
+  ids only in the eval sidecar; the executable proposal itself contains no
+  expected-source or expected-answer leakage;
 - `evidence_hit_answer_fail` produces a source-backed evidence-summary
   proposal;
 - `judge_pass` plus `source_hit=false` produces a grounding-risk trace/proposal
   and is not counted as retrieval success;
 - planner output is deterministic and does not execute tools by itself.
+- every executable proposal records `gold_fields_used=false`, while every
+  gold-dependent proposal is denied as diagnostic-only.
 
 Eval gate:
 
@@ -851,6 +1176,7 @@ Eval gate:
 
 ACK gate:
 
+- K2 selection is bounded, traceable, and fail-closed;
 - every proposal has source refs or an explicit denial reason;
 - no proposal uses expected-answer leakage;
 - source localization and judge outcome remain separately reported;
@@ -861,24 +1187,27 @@ ACK gate:
 Target state: `kernel-maintenance-tools-usable`.
 
 Purpose:
-add the minimum Letta-style memory maintenance tools needed for the diagnostic
-planner while preserving approval, provenance, replay safety, and default-off
-kernel behavior.
+implement K3 by adding the minimum Letta-style memory tools needed for the
+diagnostic planner while preserving approval, provenance, replay safety, and
+default-off kernel behavior.
 
-Allowed tools:
+Allowed tools by graduation level:
 
-- `archive_attach`: attach an archive to a session or scoped identity;
-- `passage_link`: link a passage/source/session relationship for retrieval
-  visibility;
-- `retrieval_repair_note`: persist a diagnostic maintenance note separate from
-  user-facing memory;
-- `core_promotion_request`: create a pending source-backed core promotion
-  candidate, not a direct core update.
+- Level 1: `archive_write`, `archive_attach`, `core_promotion_request`;
+- Level 2: `recall_search`, `archive_search`;
+- Level 3, only after separate safety gate: `core_memory_append`,
+  `core_memory_replace`.
+
+Maintenance artifacts may include a diagnostic-only `retrieval_repair_note`,
+but it is not user-facing memory and cannot bypass the registered Level 1-3
+tool/service contracts to alter retrieval visibility.
 
 Not allowed:
 
-- direct `core_memory_update` from the kernel;
+- unapproved direct core edits or direct `core_memory_update` from the kernel;
 - destructive delete/deprecate tools;
+- direct `passage_link` mutations that bypass a named lifecycle/archival
+  service and scope verification;
 - benchmark case-id hacks;
 - expected-answer-derived memory writes.
 
@@ -889,6 +1218,9 @@ Required tests:
 - replay tampering cannot execute or verify a write;
 - each successful tool has durable history and a `tool_verified` event;
 - v3 composer can see only the artifacts that are eligible by scope.
+- each tool maps to an explicit service method before implementation; no new
+  tool may bypass `MemoryLifecycleService`, `CoreMemoryService`, or a named
+  archival/retrieval maintenance service with direct ad hoc store writes.
 
 Eval gate:
 
@@ -898,6 +1230,8 @@ Eval gate:
 
 ACK gate:
 
+- each opened tool level has registry, policy, named executor/service,
+  verification, trace, and integration coverage;
 - tool execution is auditable and replay-safe;
 - maintenance writes are visible to v3 only through scope/provenance rules;
 - kernel remains opt-in.
@@ -907,17 +1241,20 @@ ACK gate:
 Target state: `locomo-maintenance-repair-measured`.
 
 Purpose:
-prove whether kernel-created maintenance artifacts improve LoCoMo source
-localization and answer quality when consumed through the real v3 context path.
+execute the K4 evaluation slice: prove whether kernel-created maintenance
+artifacts improve LoCoMo source localization and answer quality when consumed
+through the real v3 context path, without converting repair smoke into
+promotion evidence.
 
 Required evaluation pattern:
 
 ```text
 baseline fixed LoCoMo slice
--> diagnostic planner proposals
--> approved maintenance writes
--> rerun same fixed LoCoMo slice
--> compare source_hit, planned evidence hit, judge result, and failure class
+-> diagnostic planner proposals from model-visible fields only
+-> approved maintenance writes in an isolated repair-smoke store
+-> rerun same fixed LoCoMo slice as structural smoke only
+-> freeze generic rules and maintenance artifacts
+-> run clean held-out LoCoMo validation before any quality claim
 ```
 
 Primary metrics:
@@ -932,8 +1269,10 @@ Primary metrics:
 Eval gate:
 
 - fixed LoCoMo 10-case same-subset full-chain LLM judge;
-- LoCoMo 30-case full-chain LLM judge only if fixed-slice source movement is
-  useful and explainable;
+- same-slice movement can satisfy only the repair-smoke gate, not promotion;
+- LoCoMo 30-case full-chain LLM judge only from a clean store or held-out
+  validation setup after the fixed-slice source movement is useful and
+  explainable;
 - LongMemEval 30-case regression guard if maintenance artifacts affect default
   v3 context selection.
 
@@ -950,7 +1289,8 @@ ACK gate:
 Target state: `governed-promotion-ready`.
 
 Purpose:
-prevent accidental promotion from noisy aggregate improvements.
+execute K5 governance and prevent accidental promotion from noisy aggregate
+improvements.
 
 Required gates:
 
@@ -964,6 +1304,17 @@ Required gates:
 - retrieval/source metrics separate from judged answer quality;
 - invalid artifact quarantine;
 - phase ACK only after review verdict passes.
+
+Minimum promotion thresholds relative to accepted phase-8/phase-10 baselines:
+
+- no same-case LoCoMo pass-to-fail remains unexplained;
+- LoCoMo source localization does not regress, including source-miss
+  judge-pass cases;
+- LoCoMo judged pass rate and source-grounded pass rate are reported separately;
+- LongMemEval 50 does not materially regress from the accepted phase-8 baseline
+  without an explicit hold decision;
+- any improvement claim must be supported by held-out or clean-store evidence,
+  not only same-slice maintenance repair.
 
 Promotion decisions:
 
@@ -984,14 +1335,15 @@ ACK gate:
 
 Phase 13 is completed and ACKed. Continue with Phase 14 as already planned:
 opt-in kernel memory-action verification. Do not broaden Phase 14 into a full
-agent loop.
+agent loop. Phase 14 should now be read as the K0/K1 minimum slice from the
+kernel graduation blueprint.
 
-After Phase 14 is usable, continue to the new kernel-maintenance sequence:
+After Phase 14 is usable, continue to the kernel graduation sequence:
 
-1. Phase 15: diagnostic kernel maintenance planner.
-2. Phase 16: kernel maintenance tool surface.
-3. Phase 17: LoCoMo maintenance repair eval.
-4. Phase 18: benchmark governance and promotion.
+1. Phase 15: K2 hybrid tool selection, then diagnostic maintenance planner.
+2. Phase 16: K3 graduated kernel maintenance tool surface.
+3. Phase 17: K4 LoCoMo maintenance repair smoke and validation setup.
+4. Phase 18: K5 benchmark governance and promotion decision.
 
 The old governance phase is intentionally delayed until kernel maintenance has
 either improved LoCoMo source localization or shown, with evidence, that this

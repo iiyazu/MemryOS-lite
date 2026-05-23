@@ -110,10 +110,10 @@
     },
     {
       "id": "phase-15",
-      "name": "Diagnostic Kernel Maintenance Planner",
-      "target_state": "diagnostic-maintenance-planner-ready",
+      "name": "Hybrid Tool Selection And Diagnostic Maintenance Planner",
+      "target_state": "hybrid-selection-and-diagnostic-planner-ready",
       "plan_file": "blueprint.md",
-      "blueprint_heading": "Phase 15 - Diagnostic Kernel Maintenance Planner"
+      "blueprint_heading": "Phase 15 - Hybrid Tool Selection And Diagnostic Maintenance Planner"
     },
     {
       "id": "phase-16",

@@ -19,7 +19,11 @@ Implement the smallest credible audited kernel loop:
 
 - keep `archive_write` as the only supported kernel tool;
 - add a durable `tool_verified` trace event after successful `tool_executed`;
+- bind approval replay to the original pending step/tool-call identity, not only
+  a globally searched approval id;
 - verify the real store and same-session v3 archival eligibility path;
+- emit a durable negative verification result if execution succeeds but store or
+  context eligibility verification fails;
 - keep unsupported tools denied;
 - keep `MEMORYOS_AGENT_KERNEL=v1` opt-in.
 
@@ -71,6 +75,18 @@ Also add or extend tests so replay-tampered approvals and unsupported tools
 produce no `tool_executed`, no `tool_verified`, no tool message, and no memory
 write.
 
+Add a replay-binding RED test that proves an approval cannot be resumed with a
+matching `approval_id` but mismatched original step/tool-call identity or request
+fingerprint. The exact representation may be a new `tool_call_id`, a persisted
+request fingerprint, or both; the assertion must prove replay is scoped to the
+pending action rather than only a global trace lookup.
+
+Add a verification-failure RED test using a controlled store/executor condition
+where `archive_write` reports execution but post-action verification cannot prove
+history, passage, attachment, or same-session eligibility. The expected result is
+a durable negative verification trace, no successful `tool_verified(ok=True)`,
+and no ACK-grade success claim.
+
 Update `tests/test_public_benchmarks.py::test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled`
 so the opt-in trace shape includes `tool_verified` after `tool_executed`. Keep
 `test_public_benchmark_kernel_trace_remains_default_off` unchanged.
@@ -90,11 +106,17 @@ Add verification support with minimal surface area.
 
 Required shape:
 
+- `ToolExecutionRequest` or the pending approval payload carries stable
+  step/tool-call identity or a request fingerprint used for replay validation;
 - `ToolExecutionResult` can carry a structured `verification` payload;
 - `SimpleToolExecutionManager._archive_write()` computes verification after the
   archival memory and archive attachment are written;
 - `SimpleAgentStepRunner.run_step()` emits `tool_verified` after `tool_executed`
   when a successful tool result has verification data.
+- failed verification is represented explicitly in the result/trace rather than
+  being omitted or treated as execution success.
+- the persisted tool result message includes a compact verification summary so
+  idempotency checks can distinguish executed-and-verified from executed-only.
 
 Verification must inspect real store state:
 
@@ -151,7 +173,9 @@ The phase is not usable if:
 
 - `tool_verified` only echoes the request/result payload;
 - verification does not inspect real store or context eligibility;
+- verification failure has no durable negative trace;
+- approval replay relies only on a global `approval_id` lookup without binding
+  the pending step/tool-call identity or request fingerprint;
 - unsupported tools are silently remapped or no-op accepted;
 - kernel becomes default-on;
 - public benchmark scoring changes without a full-chain same-case gate.
-

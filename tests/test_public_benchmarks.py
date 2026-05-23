@@ -3343,6 +3343,7 @@ def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
         "tool_policy_decision",
         "approval_granted",
         "tool_executed",
+        "tool_verified",
         "kernel_step_completed",
     ]
     for event in kernel_trace_events:
@@ -3385,6 +3386,16 @@ def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
     assert executed_event["payload"]["ok"] is True
     assert executed_event["payload"]["result"]["memory_id"].startswith("amem_")
     assert executed_event["payload"]["result"]["archive_id"] == executed_event["session_id"]
+
+    verified_event = next(
+        event for event in kernel_trace_events if event["event_type"] == "tool_verified"
+    )
+    assert verified_event["approval_id"] == approval_id
+    assert verified_event["payload"]["tool_name"] == "archive_write"
+    assert verified_event["payload"]["ok"] is True
+    assert verified_event["payload"]["verification"]["status"] == "verified"
+    assert verified_event["payload"]["verification"]["session_attachment_found"] is True
+    assert verified_event["payload"]["verification"]["eligible_for_session"] is True
     assert report["case_diagnostics"]["kernel_trace_present"] is True
     assert report["case_diagnostics"]["failure_class"] in {
         "supported_cited_answer",

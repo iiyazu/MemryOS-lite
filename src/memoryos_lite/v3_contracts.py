@@ -644,6 +644,7 @@ class ToolExecutionResult(BaseModel):
     result: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     source_refs: list[SourceRef] = Field(default_factory=list)
+    verification: dict[str, Any] = Field(default_factory=dict)
 
 
 class ContinuationDecision(BaseModel):

@@ -8,6 +8,14 @@ Context bundle: `.hermes-loop/work/phase-11/context_bundle.md`.
 
 Decision: `repeat_phase`.
 
+Current state reconciliation:
+
+- Phase 11 did not receive ACK and remains invalid as completion evidence.
+- Later Phase 12 and Phase 13 ACKs advanced the active execution path with
+  narrower architectural work.
+- For controller ordering, Phase 11 is therefore documented as superseded by
+  later ACKed phases, not completed.
+
 ## Evidence Used
 
 - `.hermes-loop/work/phase-11/eval_parallel_30_summary_20260523T095835Z.json`

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Hermes Scheduler + Reporter — 监控存活, 死时启动 God, 生成报告, 不改代码或 state.json."""
-import json, subprocess, os, time
-from pathlib import Path
-from datetime import datetime, timezone
 import importlib.util
+import json
+import os
+import subprocess
+import time
+from datetime import UTC, datetime
+from pathlib import Path
 
 LOOP = Path("/home/iiyatu/projects/python/memoryOS/.hermes-loop")
 PROJECT = LOOP.parent
@@ -12,10 +15,11 @@ STATE_FILE = LOOP / "state.json"
 LOCK_FILE = LOOP / "run.lock"
 
 
-def phase8_hardening_report(s):
-    """Return phase-8 eval/ACK status if the additive hardening module is present."""
+def controller_hardening_report(s):
+    """Return current phase control-plane hardening status if available."""
     ex = s.get("execute_lane", {})
-    if ex.get("phase") != "phase-8":
+    phase_id = ex.get("phase")
+    if not phase_id:
         return None
     module_path = LOOP / "hermes_hardening.py"
     if not module_path.exists():
@@ -26,7 +30,14 @@ def phase8_hardening_report(s):
             return {"error": "cannot load hermes_hardening.py"}
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        return module._run_phase8(LOOP, PROJECT / ".memoryos" / "evals", write=True)
+        if phase_id == "phase-8":
+            return module._run_phase8(LOOP, PROJECT / ".memoryos" / "evals", write=True)
+        return module.run_phase_hardening(
+            LOOP,
+            PROJECT / ".memoryos" / "evals",
+            phase_id,
+            write=True,
+        )
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -67,44 +78,50 @@ def is_god_alive(grace_period: bool = False) -> bool:
     if not hb.exists():
         return grace_period  # Fresh start, no heartbeat yet
     try:
-        lines = [l for l in hb.read_text().strip().split("\n") if l.strip()]
+        lines = [line for line in hb.read_text().strip().split("\n") if line.strip()]
         if not lines:
             return grace_period
         hb_ts = lines[-1].split()[-1]
         hb_dt = datetime.fromisoformat(hb_ts)
-        age = (datetime.now(timezone.utc) - hb_dt).total_seconds()
+        age = (datetime.now(UTC) - hb_dt).total_seconds()
         if age < 1200:
             return True
         return grace_period and age < 1500  # 25min grace for restarts
-    except:
+    except Exception:
         return grace_period
 
+
 def generate_report(s):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     god_alive = is_god_alive()
-    
+
     # Heartbeat
     hb = LOOP / "heartbeat.log"
     hb_last = ""
     hb_age = None
     if hb.exists():
-        lines = [l for l in hb.read_text().strip().split("\n") if l.strip()]
+        lines = [line for line in hb.read_text().strip().split("\n") if line.strip()]
         if lines:
             hb_last = lines[-1]
             try:
                 hb_ts = hb_last.split()[-1]
                 hb_dt = datetime.fromisoformat(hb_ts)
                 hb_age = (now - hb_dt).total_seconds()
-            except:
+            except Exception:
                 pass
-    
+
     # Dirty files
-    dirty = subprocess.run(["git", "-C", str(PROJECT), "status", "--short"], capture_output=True, text=True).stdout.strip()
-    
+    dirty = subprocess.run(
+        ["git", "-C", str(PROJECT), "status", "--short"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+
     ex = s.get("execute_lane", {})
     pl = s.get("plan_lane", {})
-    hardening = phase8_hardening_report(s)
-    
+    hardening = controller_hardening_report(s)
+
     report = {
         "timestamp": now.isoformat(),
         "report_age_seconds": 0,
@@ -121,20 +138,28 @@ def generate_report(s):
         "execute_lane": {"phase": ex.get("phase"), "state": ex.get("state")},
         "plan_lane": {"phase": pl.get("phase"), "state": pl.get("state")},
         "research_lane": s.get("research_lane", {}).get("phases", []),
-        "phases": [{"id": p["id"], "name": p["name"], "status": p["status"]} for p in s.get("phases", [])],
+        "phases": [
+            {"id": p["id"], "name": p["name"], "status": p["status"]}
+            for p in s.get("phases", [])
+        ],
         "dirty_files": dirty[:500] if dirty else "(clean)",
         "action": "wait" if god_alive else "start"
     }
     if hardening is not None:
-        report["phase8_hardening"] = hardening
+        report["controller_hardening"] = hardening
     return report
+
 
 def start_god() -> bool:
     """Safely start God. Returns True if God confirmed running after start."""
     if is_god_alive():
         return True
-    subprocess.Popen(["bash", str(LAUNCHER)], cwd=str(PROJECT),
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(
+        ["bash", str(LAUNCHER)],
+        cwd=str(PROJECT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     # Wait and verify — use grace period for fresh start
     for _ in range(6):
         time.sleep(5)
@@ -142,32 +167,33 @@ def start_god() -> bool:
             return True
     return False
 
+
 def main():
     s = json.loads(STATE_FILE.read_text())
-    
+
     # If DONE, exit silently
     if s.get("current_state") == "DONE":
         return
-    
+
     god_alive = is_god_alive()
     action = "wait"
     if not god_alive:
         started = start_god()
         god_alive = started
         action = "started_ok" if started else "started_failed"
-    
+
     # Generate report (report uses is_god_alive() without grace)
     report = generate_report(s)
     report["action"] = action
-    
+
     reports_dir = LOOP / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     (reports_dir / "latest.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
-    
+
     # Markdown
     hb_age = report["god"].get("heartbeat_age_seconds")
     hb_str = f"{hb_age:.0f}s ago" if hb_age is not None else "—"
-    
+
     md = f"""# Hermes Report — {report['timestamp'][:19]}Z
 
 | Field | Value |
@@ -180,6 +206,7 @@ def main():
 """
     (reports_dir / "latest.md").write_text(md)
     return report
+
 
 if __name__ == "__main__":
     r = main()

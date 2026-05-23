@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import text
 
@@ -13,6 +14,7 @@ from memoryos_lite.v3_contracts import (
     ApprovalState,
     ArchivalMemory,
     ArchiveAttachment,
+    ArchiveEligibilityScope,
     KernelTraceEvent,
     SourceRef,
     SourceType,
@@ -165,12 +167,63 @@ class SimpleToolExecutionManager:
                     },
                 )
             )
+        verification = self.verify(request, memory_id=memory.id, archive_id=memory.archive_id)
         return ToolExecutionResult(
             tool_name=request.tool_name,
             ok=True,
             result={"memory_id": memory.id, "archive_id": memory.archive_id},
             source_refs=source_refs,
+            verification=verification,
         )
+
+    def verify(
+        self,
+        request: ToolExecutionRequest,
+        *,
+        memory_id: str | None = None,
+        archive_id: str | None = None,
+    ) -> dict[str, Any]:
+        if request.tool_name != "archive_write":
+            return {}
+        memory_id = memory_id or str(request.arguments.get("memory_id") or "")
+        archive_id = archive_id or str(
+            request.arguments.get("archive_id") or request.session_id
+        )
+        passage_id = f"apsg_{memory_id}" if memory_id else None
+        history = self.store.list_archival_memory_history(memory_id) if memory_id else []
+        passages = self.store.list_archival_passages(archive_id=archive_id)
+        attachments = self.store.list_archive_attachments(
+            scope_type="session",
+            scope_id=request.session_id,
+        )
+        eligibility = self.store.list_archival_passages_for_scope(
+            ArchiveEligibilityScope(session_id=request.session_id)
+        )
+        eligible_passage_ids = {passage.id for passage in eligibility.eligible_passages}
+        passage_found = passage_id is not None and any(
+            passage.id == passage_id for passage in passages
+        )
+        session_attachment_found = any(
+            attachment.archive_id == archive_id for attachment in attachments
+        )
+        eligible_for_session = passage_id is not None and passage_id in eligible_passage_ids
+        history_found = bool(history)
+        ok = (
+            history_found
+            and passage_found
+            and session_attachment_found
+            and eligible_for_session
+        )
+        return {
+            "status": "verified" if ok else "failed",
+            "memory_id": memory_id,
+            "archive_id": archive_id,
+            "passage_id": passage_id,
+            "history_found": history_found,
+            "passage_found": passage_found,
+            "session_attachment_found": session_attachment_found,
+            "eligible_for_session": eligible_for_session,
+        }
 
 
 @dataclass
@@ -303,6 +356,9 @@ class SimpleAgentStepRunner:
                                 **approval.metadata,
                                 "policy_reason": decision.reason,
                                 "matched_rule_ids": list(decision.matched_rule_ids),
+                                "request_fingerprint": self._request_fingerprint(
+                                    tool_request
+                                ),
                             }
                         }
                     )
@@ -351,6 +407,39 @@ class SimpleAgentStepRunner:
                 )
                 sequence += 1
                 if tool_result.ok:
+                    verification = tool_result.verification
+                    if (
+                        not verification
+                        and tool_request.tool_name == "archive_write"
+                        and hasattr(self.tool_execution_manager, "verify")
+                    ):
+                        verification = self.tool_execution_manager.verify(
+                            tool_request,
+                            memory_id=tool_result.result.get("memory_id"),
+                            archive_id=tool_result.result.get("archive_id"),
+                        )
+                        tool_result = tool_result.model_copy(
+                            update={"verification": verification}
+                        )
+                    if verification:
+                        trace.append(
+                            self._trace(
+                                step_id=step_id,
+                                session_id=request.session_id,
+                                sequence=sequence,
+                                event_type="tool_verified",
+                                payload={
+                                    "tool_name": tool_request.tool_name,
+                                    "ok": verification.get("status") == "verified",
+                                    "approval_id": tool_request.approval_id,
+                                    "verification": verification,
+                                },
+                                approval_id=tool_request.approval_id,
+                            )
+                        )
+                        sequence += 1
+                    if verification and verification.get("status") != "verified":
+                        continue
                     message = self._tool_result_message(
                         session_id=request.session_id,
                         request=tool_request,
@@ -403,6 +492,16 @@ class SimpleAgentStepRunner:
             )
         if pending.get("requested_action") != request.arguments:
             return None, self._replay_error(request, "requested action mismatch")
+        metadata = pending.get("metadata", {})
+        expected_fingerprint = metadata.get("request_fingerprint")
+        if (
+            expected_fingerprint is not None
+            and expected_fingerprint != self._request_fingerprint(request)
+        ):
+            return None, self._replay_error(request, "request fingerprint mismatch")
+        expected_tool_call_id = metadata.get("tool_call_id")
+        if expected_tool_call_id is not None:
+            return None, self._replay_error(request, "tool_call_id mismatch")
         return pending, None
 
     def _find_pending_approval(self, approval_id: str | None) -> dict | None:
@@ -463,6 +562,19 @@ class SimpleAgentStepRunner:
         }
 
     @staticmethod
+    def _request_fingerprint(request: ToolExecutionRequest) -> str:
+        payload = {
+            "session_id": request.session_id,
+            "tool_name": request.tool_name,
+            "arguments": request.arguments,
+            "source_refs": [
+                source_ref.model_dump(mode="json", exclude={"approval_id"})
+                for source_ref in request.source_refs
+            ],
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
     def _tool_result_message(
         *,
         session_id: str,
@@ -482,6 +594,7 @@ class SimpleAgentStepRunner:
                 "approval_id": request.approval_id,
                 "ok": result.ok,
                 "result": result.result,
+                "verification": result.verification,
                 "memory_id": memory_id,
             },
         )

@@ -1,3 +1,5 @@
+import json
+
 from sqlalchemy import text
 
 from memoryos_lite.agent_kernel import (
@@ -18,6 +20,7 @@ from memoryos_lite.v3_contracts import (
     SourceRef,
     SourceType,
     ToolExecutionRequest,
+    ToolExecutionResult,
     ToolPolicyRule,
 )
 
@@ -135,6 +138,7 @@ def test_kernel_denies_archive_write_without_execution_or_memory_write(tmp_path)
     assert "tool_policy_decision" in event_types
     assert "tool_denied" in event_types
     assert "tool_executed" not in event_types
+    assert "tool_verified" not in event_types
     denied = next(event for event in result.trace if event.event_type == "tool_denied")
     assert denied.payload["tool_name"] == "archive_write"
     assert denied.payload["ok"] is False
@@ -166,9 +170,41 @@ def test_kernel_denies_unknown_tool_as_result_without_executor_call(tmp_path):
     event_types = [event.event_type for event in result.trace]
     assert "tool_denied" in event_types
     assert "tool_executed" not in event_types
+    assert "tool_verified" not in event_types
     denied = next(event for event in result.trace if event.event_type == "tool_denied")
     assert "no matching tool policy rule" in denied.payload["error"]
     assert store.list_messages("ses_1") == []
+    assert _archival_memory_count(store) == 0
+
+
+def test_kernel_denies_unsupported_memory_tools_without_verification_or_write(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    runner = SimpleAgentStepRunner(
+        store=store,
+        tool_execution_manager=SimpleToolExecutionManager(store=store),
+    )
+
+    for tool_name in ["core_memory_append", "core_memory_replace"]:
+        result = runner.run_step(
+            _request(),
+            tool_requests=[
+                ToolExecutionRequest(
+                    session_id="ses_1",
+                    tool_name=tool_name,
+                    arguments={"label": "human", "content": "must not be written"},
+                    source_refs=[_source_ref()],
+                )
+            ],
+        )
+
+        event_types = [event.event_type for event in result.trace]
+        assert "tool_denied" in event_types
+        assert "tool_executed" not in event_types
+        assert "tool_verified" not in event_types
+        assert store.list_messages("ses_1") == []
+        assert _archival_memory_count(store) == 0
 
 
 def test_kernel_pauses_when_tool_requires_approval(tmp_path):
@@ -242,6 +278,14 @@ def test_kernel_replays_persisted_approval_after_cold_boundary_once(tmp_path):
     )
 
     assert resumed.continuation == "stop"
+    assert [event.event_type for event in resumed.trace] == [
+        "kernel_step_started",
+        "tool_policy_decision",
+        "approval_granted",
+        "tool_executed",
+        "tool_verified",
+        "kernel_step_completed",
+    ]
     granted = next(event for event in resumed.trace if event.event_type == "approval_granted")
     assert granted.approval_id == approval_id
     assert granted.payload["approval_id"] == approval_id
@@ -253,6 +297,13 @@ def test_kernel_replays_persisted_approval_after_cold_boundary_once(tmp_path):
     assert executed.payload["approval_id"] == approval_id
     assert executed.payload["ok"] is True
     memory_id = executed.payload["result"]["memory_id"]
+    verified = next(event for event in resumed.trace if event.event_type == "tool_verified")
+    assert verified.approval_id == approval_id
+    assert verified.payload["tool_name"] == "archive_write"
+    assert verified.payload["ok"] is True
+    assert verified.payload["verification"]["status"] == "verified"
+    assert verified.payload["verification"]["session_attachment_found"] is True
+    assert verified.payload["verification"]["eligible_for_session"] is True
     assert len(resumed.messages) == 1
     assert resumed.messages[0].role == Role.TOOL
     assert resumed.messages[0].metadata["tool_name"] == "archive_write"
@@ -275,6 +326,7 @@ def test_kernel_replays_persisted_approval_after_cold_boundary_once(tmp_path):
     assert skipped.payload["approval_id"] == approval_id
     assert skipped.payload["reason"] == "approval already executed"
     assert len([event for event in replayed.trace if event.event_type == "tool_executed"]) == 0
+    assert len([event for event in replayed.trace if event.event_type == "tool_verified"]) == 0
     assert _archival_memory_count(second_store) == 1
     assert len([msg for msg in second_store.list_messages("ses_1") if msg.role == Role.TOOL]) == 1
 
@@ -315,9 +367,117 @@ def test_kernel_rejects_unknown_or_mismatched_approval_replay_without_side_effec
         assert denial.payload["reason"]
         assert "approval_granted" not in event_types
         assert "tool_executed" not in event_types
+        assert "tool_verified" not in event_types
         assert _archival_memory_count(reopened) == 0
         assert [msg for msg in reopened.list_messages("ses_1") if msg.role == Role.TOOL] == []
         assert [msg for msg in reopened.list_messages("ses_2") if msg.role == Role.TOOL] == []
+
+
+def test_kernel_rejects_replay_without_original_request_binding(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    first = _approval_runner(store).run_step(_request(), tool_requests=[_archive_request()])
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    assert approval_id is not None
+
+    with store.db() as db:
+        row = db.execute(
+            text(
+                """
+                select id, payload_json from trace_events
+                where event_type = 'approval_pending'
+                """
+            )
+        ).one()
+        trace_id, payload_json = row
+        payload = json.loads(payload_json)
+        payload["payload"]["metadata"]["request_fingerprint"] = "original-fingerprint"
+        payload["payload"]["metadata"]["tool_call_id"] = "tool_call_original"
+        db.execute(
+            text(
+                """
+                update trace_events
+                set payload_json = :payload_json
+                where id = :trace_id
+                """
+            ),
+            {"payload_json": json.dumps(payload), "trace_id": trace_id},
+        )
+
+    reopened = create_store(settings)
+    result = _approval_runner(reopened).run_step(
+        _request(),
+        tool_requests=[_archive_request(approval_id=approval_id)],
+    )
+
+    event_types = [event.event_type for event in result.trace]
+    assert "approval_replay_denied" in event_types
+    denial = next(event for event in result.trace if event.event_type == "approval_replay_denied")
+    assert denial.payload["approval_id"] == approval_id
+    assert "fingerprint" in denial.payload["reason"] or "tool_call" in denial.payload["reason"]
+    assert "approval_granted" not in event_types
+    assert "tool_executed" not in event_types
+    assert "tool_verified" not in event_types
+    assert _archival_memory_count(reopened) == 0
+    assert [msg for msg in reopened.list_messages("ses_1") if msg.role == Role.TOOL] == []
+
+
+class _UnverifiableArchiveWriteExecutionManager(SimpleToolExecutionManager):
+    def execute(self, request: ToolExecutionRequest) -> ToolExecutionResult:
+        if request.tool_name == "archive_write":
+            return ToolExecutionResult(
+                tool_name=request.tool_name,
+                ok=True,
+                result={"memory_id": "amem_missing", "archive_id": request.session_id},
+                source_refs=list(request.source_refs),
+            )
+        return super().execute(request)
+
+
+def test_kernel_emits_negative_verification_when_execution_is_not_store_visible(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    runner = SimpleAgentStepRunner(
+        store=store,
+        tool_policy_engine=SimpleToolPolicyEngine(
+            rules=[
+                ToolPolicyRule(
+                    id="allow_archive_write",
+                    tool_name="archive_write",
+                    effect="allow",
+                    reason="allowed for verification failure test",
+                )
+            ]
+        ),
+        tool_execution_manager=_UnverifiableArchiveWriteExecutionManager(store=store),
+    )
+
+    result = runner.run_step(
+        _request(),
+        tool_requests=[_archive_request(content="execution-only fact")],
+    )
+
+    event_types = [event.event_type for event in result.trace]
+    assert "tool_executed" in event_types
+    assert "tool_verified" in event_types
+    verified = next(event for event in result.trace if event.event_type == "tool_verified")
+    assert verified.payload["tool_name"] == "archive_write"
+    assert verified.payload["ok"] is False
+    assert verified.payload["verification"]["status"] == "failed"
+    assert verified.payload["verification"]["history_found"] is False
+    assert verified.payload["verification"]["passage_found"] is False
+    assert verified.payload["verification"]["session_attachment_found"] is False
+    assert verified.payload["verification"]["eligible_for_session"] is False
+    assert not any(
+        event.event_type == "tool_verified" and event.payload.get("ok") is True
+        for event in result.trace
+    )
+    assert _archival_memory_count(store) == 0
+    assert [msg for msg in store.list_messages("ses_1") if msg.role == Role.TOOL] == []
 
 
 def test_kernel_tool_result_message_is_visible_to_later_v3_context(tmp_path):

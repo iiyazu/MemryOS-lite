@@ -15,5 +15,6 @@ htmlcov/
 .idea/
 .vscode/
 .claude/
+.superpowers/
 benchmarks/locomo/*.json
 benchmarks/longmemeval/*.json

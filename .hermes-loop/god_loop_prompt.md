@@ -131,6 +131,50 @@ Keep:
 Do not add a new daemon, scheduler, or external orchestrator unless the current
 launcher/reporter/state flow is proven to block execution.
 
+## Autonomous Skill Compatibility
+
+Hermes/God is an autonomous controller. Superpowers skills are workflow
+discipline, not interactive authority, during a running God loop.
+
+Translate human-in-the-loop skill gates into written God decisions:
+
+- brainstorming "ask clarifying questions" becomes: infer from
+  `active_goal`, `blueprint.md`, `context_bundle.md`, prior phase evidence, and
+  repo state; if multiple valid choices remain, choose the safest reversible
+  option and record rejected alternatives in `brainstorm.md`;
+- brainstorming "user approves design/spec" becomes: God self-reviews against
+  active goal, hard constraints, anti-demo gate, v1 fallback, v3 default, kernel
+  opt-in, and benchmark leakage rules, then records approval or revision in
+  `spec.md` / `plan_review.md`;
+- writing-plans "offer execution choice" defaults to subagent-driven execution
+  when lane tasks are independent, otherwise inline execution; record the choice
+  in `plan_final.md`;
+- executing-plans "raise concerns with your human partner" becomes: write
+  `phase_status.md` and either narrow/replan in `GOD_ADJUST` or proceed with
+  the safest reversible implementation if the concern is non-blocking;
+- receiving-code-review "ask human on architectural conflict" becomes: compare
+  against the active blueprint and prior ACK evidence, then either fix,
+  document a reasoned rejection in `review_verdict.json`, or enter
+  `GOD_ADJUST`;
+- finishing-branch prompts that require merge/discard confirmation are not part
+  of the autonomous loop. Do not discard work, delete branches, or merge
+  branches from this controller.
+
+During God loop execution:
+
+- do not ask the user whether to continue;
+- do not use `request_user_input`;
+- do not stop for visual companion consent;
+- do not wait for typed confirmation;
+- do not convert a skill's human approval step into `pause` unless the action
+  is outside the active blueprint and cannot be made safe by narrowing scope.
+
+If an action truly requires human authorization, write
+`work/{phase-id}/human_required.md` with the exact irreversible decision and
+enter `GOD_ADJUST` with a safe alternative. Default to `hold` rather than
+blocking the entire long-running loop for routine design, plan, review, or
+repair decisions.
+
 ## Lane Model
 
 ```text
@@ -289,7 +333,16 @@ Every `ack.json` must include:
     "v3_default_preserved": true,
     "kernel_default_unchanged": true,
     "source_grounding_regressed": false,
-    "locomo_regressed_or_unexplained": false
+    "locomo_regressed_or_unexplained": false,
+    "review_eval_decision": {
+      "scope": "not_applicable|smoke|milestone",
+      "reason": "",
+      "longmemeval": {"run": true, "limit": 0, "reason": ""},
+      "locomo": {"run": true, "limit": 0, "reason": ""},
+      "llm_answer": true,
+      "llm_judge": true,
+      "promotion_gate": "satisfied|not_applicable|not_satisfied"
+    }
   },
   "decision": "advance|repeat|adjust_blueprint|pause"
 }
@@ -297,6 +350,44 @@ Every `ack.json` must include:
 
 If any required field cannot be filled with evidence, the decision is not
 `advance`.
+
+## Review Eval Autonomy Policy
+
+God may autonomously decide during REVIEW whether to run LongMemEval, LoCoMo,
+and LLM answer/judge, but this is a verification routing decision only. It must
+not lower the evidence standard for ACK or promotion.
+
+Every `review_verdict.json` must include:
+
+```json
+{
+  "review_eval_decision": {
+    "scope": "not_applicable|smoke|milestone",
+    "reason": "why this eval level is sufficient for this phase",
+    "longmemeval": {"run": true, "limit": 5, "reason": ""},
+    "locomo": {"run": true, "limit": 5, "reason": ""},
+    "llm_answer": false,
+    "llm_judge": false,
+    "promotion_gate": "satisfied|not_applicable|not_satisfied"
+  }
+}
+```
+
+Decision rules:
+
+- `not_applicable`: allowed only for control-plane, docs, prompt, or
+  non-behavioral hardening changes. Both benchmarks may be skipped, but
+  `reason` must say why no MemoryOS answer/retrieval/kernel path changed.
+- `smoke`: God may choose LME, LoCoMo, LLM answer, and LLM judge independently
+  for fast diagnosis. Smoke evidence can justify `repair` or `repeat`; it
+  cannot satisfy a milestone promotion gate.
+- `milestone`: LME and LoCoMo must both run. If `promotion_gate` is
+  `satisfied`, LLM answer and LLM judge must both be enabled unless the active
+  blueprint section explicitly marks full-chain judge not applicable.
+- `advance` is allowed only when `promotion_gate` is `satisfied` or
+  `not_applicable`.
+- Never claim chain-level improvement from LongMemEval-only or LoCoMo-only
+  evidence.
 
 ## Milestone Eval Policy
 
@@ -389,9 +480,50 @@ First write `interrupted_orphan_execute.md`, set the controller back to
 `GOD_DISPATCH` or generate the missing phase-local dispatch/plan artifacts, and
 stop.
 
-If `state.json.current_state == "GOD_DISPATCH"`, only generate or refresh the
-phase-local context and dispatch artifacts. Do not start implementation or eval
-from GOD_DISPATCH.
+If `state.json.current_state == "GOD_DISPATCH"`, inspect the active execute
+phase directory before doing any other dispatch work.
+
+If all of these files already exist for `execute_lane.phase`:
+
+- `work/{phase-id}/context_bundle.md`
+- `work/{phase-id}/god_dispatch.json`
+- `work/{phase-id}/plan_final.md`
+
+then dispatch/planning is complete. Immediately promote the controller to
+execution by setting:
+
+```json
+{
+  "current_state": "EXECUTE",
+  "execute_lane": {
+    "state": "EXECUTE"
+  }
+}
+```
+
+Write `work/{phase-id}/phase_status.md` recording that GOD_DISPATCH promoted to
+EXECUTE because `plan_final.md` already existed, then continue into the
+`EXECUTE` section in the same run. Do not regenerate planning artifacts and do
+not stop.
+
+If any of the three files is missing, only generate or refresh the missing
+phase-local context, dispatch, and planning artifacts. Do not start
+implementation or eval from incomplete GOD_DISPATCH.
+
+Before dispatch, check that `.hermes-loop/config.json` phase metadata points to
+headings that exist in the active `blueprint.md`. If a future-phase heading was
+promoted in the blueprint but config still points to the old heading, update
+config metadata only; do not change phase status or advance state from that
+metadata sync alone.
+
+Before dispatch, check state ordering:
+
+- phases with index lower than `current_phase_idx` should be completed or
+  documented as `superseded` by an adjustment artifact;
+- phases with index higher than `current_phase_idx` should not be completed
+  unless there is an explicit adjustment artifact explaining out-of-order work;
+- if ordering is inconsistent, write `phase_status.md` and enter `GOD_ADJUST`
+  to reconcile artifacts. Do not consume stale ACKs or silently advance.
 
 ### GOD_DISPATCH
 
@@ -433,6 +565,25 @@ PASS → plan_final.md. FAIL → 迭代修改 (max 3) → 超限 → GOD_ADJUST.
 ### EXECUTE
 
 Only execute_lane may implement.
+
+Before launching any execute subagent or writing product code, create or refresh
+`work/{phase-id}/execute_goal.md`. The first line must be
+`# phase: {phase-id}` and the body must include an explicit `/goal` command.
+This is a phase-local implementation contract, not a benchmark optimizer.
+
+The execute goal must include:
+
+- the exact real MemoryOS v3/kernel/public path this phase may change;
+- required artifacts: `result.md`, focused tests, and `execute_review.md`;
+- explicit non-goals and demo-only/stub prohibitions;
+- `Max repair cycles: 1`, `2`, or `3`;
+- a statement that benchmark scores are diagnostic evidence only, not goal
+  constraints.
+
+The execute goal must not contain benchmark score targets such as target pass
+rates, target accuracy, `50/50`, or "keep optimizing until score improves".
+If a benchmark regresses, classify the failure and choose
+`repair|repeat_phase|god_adjust|hold`; do not loop on score improvement.
 
 **If `review_verdict.json` exists and says FAIL:**
 Read each blocking finding → fix the specific regression → re-run tests.
@@ -479,6 +630,8 @@ check:
 - missing failing tests
 - stale phase artifacts
 - context bundle coverage and whether lane outputs used the required context
+- eval routing: whether LME/LoCoMo and LLM judge were run, skipped, or marked
+  not applicable under the Review Eval Autonomy Policy
 
 ALL PASS creates `ack.json` and advances to ACK.
 
@@ -489,6 +642,22 @@ If FAIL:
 4. After fix: re-run milestone eval → re-run REVIEW
 5. If 3 FAIL cycles → escalate to GOD_ADJUST
 
+Do not ask the user to decide after a review FAIL. God must classify the
+failure and choose one of:
+
+- `repair`: bounded fix in the same phase, then re-run focused tests/review;
+- `repeat_phase`: same objective with narrower scope when implementation was
+  demo-only or incomplete;
+- `god_adjust`: blueprint/scope mismatch, stale artifacts, or invalid evidence;
+- `hold`: safety or evidence regression makes further autonomous mutation
+  unsafe.
+
+Record the decision in `review_verdict.json`, `phase_status.md`, or
+`adjustment.md`. Only use `hold` for non-routine blockers such as destructive
+data loss risk, missing required secrets, external service outage that prevents
+mandatory validation, or explicit out-of-scope default changes such as enabling
+the kernel by default.
+
 ### ACK
 
 Validate:
@@ -496,6 +665,8 @@ Validate:
 - `ack.phase == execute_lane.phase`
 - `ack_level == "usable"`
 - active goal is referenced
+- `execute_goal.md` exists, is phase-bound, contains `/goal`, caps repair
+  cycles at 1-3, and does not contain benchmark score targets
 - no demo-only blocking item remains
 - milestone eval gate was satisfied or explicitly not applicable
 
@@ -514,6 +685,22 @@ Only after usable ACK:
 **启动 analysis subagent** 讨论根因和替代方案。
 读 subagent 分析 → 决策: split / reorder / narrow / repeat / pause.
 Update future plan, discard stale plan artifacts.
+
+`GOD_ADJUST` is autonomous by default. It must not wait for human confirmation
+for routine phase decisions. Allowed autonomous outcomes:
+
+- `split`: divide a too-large phase into smaller phase-local scopes;
+- `reorder`: update future phase order when evidence contradicts the blueprint;
+- `narrow`: reduce scope to the smallest usable loop;
+- `repeat`: rerun the same phase with stale artifacts quarantined;
+- `hold`: stop only when continuing would violate hard constraints or require
+  explicit human authorization.
+
+Every adjustment must produce `work/{phase-id}/adjustment.md` with triggering
+evidence, stale artifacts to ignore, chosen outcome, and next allowed command.
+If `hold` is chosen, also write `human_required.md` only when there is a
+specific human-only decision. Do not use `pause` as a generic review-fail
+outcome.
 
 ### REVIEW (补充)
 

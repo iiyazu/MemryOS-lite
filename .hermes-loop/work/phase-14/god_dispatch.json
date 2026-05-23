@@ -2,11 +2,11 @@
   "phase": "phase-14",
   "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
   "state": {
-    "current_state": "GOD_DISPATCH",
+    "current_state": "EXECUTE",
     "current_phase_idx": 14,
     "execute_lane": {
       "phase": "phase-14",
-      "state": "GOD_DISPATCH"
+      "state": "EXECUTE"
     },
     "plan_lane": {
       "phase": "phase-15",
@@ -19,7 +19,8 @@
   "context_bundle": {
     "path": "work/phase-14/context_bundle.md",
     "repo_path": ".hermes-loop/work/phase-14/context_bundle.md",
-    "summary": "Phase 14 should audit the opt-in kernel memory-action loop, keep archive_write as the baseline unless RED evidence shows broader tools are needed, and add explicit post-action verification without changing defaults. Parallel benchmark gates must use isolated DATA_DIR values."
+    "sha256": "32136bfb88748adf5d819faa438ac43105691298531d623e8b8b7953f72ed91a",
+    "summary": "Phase 14 should audit the opt-in kernel memory-action loop, keep archive_write as the baseline unless RED evidence shows broader tools are needed, and add explicit post-action verification without changing defaults. Current MemoryOS kernel still lacks a tool_verified trace after approved archive_write. Letta reference boundary is approval/tool-call identity plus structured tool returns routed through managers. Parallel benchmark gates must use isolated DATA_DIR values. Refreshed for EXECUTE on 2026-05-24; phase ordering is coherent with phase-11 superseded, phase-13 completed, and phase-14 in progress. Bootstrap safety is satisfied because context_bundle.md, god_dispatch.json, and plan_final.md all exist."
   },
   "objective": "Define the smallest credible Letta-style kernel memory-action loop audit that proves durable write, replay integrity, and post-action verification without enabling the v3 kernel by default.",
   "scope": [
@@ -53,8 +54,18 @@
     "tests/test_agent_kernel.py",
     "tests/test_memory_lifecycle.py",
     "tests/test_context_composer.py",
+    "tests/test_public_benchmarks.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/block.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/memory.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/archive.py",
+    "/home/iiyatu/projects/python/letta/letta/schemas/passage.py",
+    "/home/iiyatu/projects/python/letta/letta/services/block_manager.py",
+    "/home/iiyatu/projects/python/letta/letta/services/archive_manager.py",
+    "/home/iiyatu/projects/python/letta/letta/services/passage_manager.py",
+    "/home/iiyatu/projects/python/letta/letta/services/tool_executor/tool_execution_manager.py",
     "/home/iiyatu/projects/python/letta/letta/services/tool_executor/core_tool_executor.py",
-    "/home/iiyatu/projects/python/letta/letta/agents/letta_agent_v3.py"
+    "/home/iiyatu/projects/python/letta/letta/agents/letta_agent_v3.py",
+    "/home/iiyatu/projects/python/letta/letta/services/context_window_calculator/context_window_calculator.py"
   ],
   "failing_tests_required_before_implementation": [
     "Add a kernel test that currently fails because successful archive_write does not yet emit an explicit post-action verification trace.",

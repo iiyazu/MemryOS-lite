@@ -1,0 +1,111 @@
+{
+  "phase": "phase-14",
+  "ack_level": "usable",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-14/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "implemented_chain": {
+    "ingest": "not_applicable",
+    "store": "changed",
+    "retrieval": "verified",
+    "context_composer": "verified",
+    "answer_projection": "not_applicable",
+    "kernel_loop": "changed",
+    "public_eval": "changed"
+  },
+  "real_path_wired": true,
+  "demo_only_or_stub_remaining": [],
+  "failing_tests_added_before_fix": [
+    "tests/test_agent_kernel.py::test_kernel_replays_persisted_approval_after_cold_boundary_once",
+    "tests/test_agent_kernel.py::test_kernel_rejects_replay_without_original_request_binding",
+    "tests/test_agent_kernel.py::test_kernel_emits_negative_verification_when_execution_is_not_store_visible",
+    "tests/test_public_benchmarks.py::test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled"
+  ],
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_agent_kernel.py -q",
+      "result": "11 passed in 17.94s"
+    },
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_kernel_trace_remains_default_off tests/test_public_benchmarks.py::test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled -q",
+      "result": "2 passed in 6.87s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "470 passed, 1 warning in 619.87s"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed!"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider tests/test_agent_kernel.py tests/test_public_benchmarks.py::test_public_benchmark_kernel_trace_remains_default_off tests/test_public_benchmarks.py::test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled -q",
+      "result": "13 passed in 14.91s"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_public_benchmarks.py::test_public_benchmark_explicit_v1_fallback_has_no_v3_case_context -q",
+      "result": "3 passed in 2.78s"
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 uv run ruff check src/memoryos_lite/agent_kernel.py src/memoryos_lite/v3_contracts.py tests/test_agent_kernel.py tests/test_public_benchmarks.py",
+      "result": "All checks passed!"
+    }
+  ],
+  "case_level_eval": {
+    "longmemeval": {
+      "limit": 0,
+      "llm_answer": false,
+      "llm_judge": false,
+      "pass_fail": "not_applicable: no default LongMemEval retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [],
+      "evidence_hit_answer_fail": [],
+      "judge_questionable": []
+    },
+    "locomo": {
+      "limit": 0,
+      "llm_answer": false,
+      "llm_judge": false,
+      "pass_fail": "not_applicable: no default LoCoMo retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [],
+      "evidence_hit_answer_fail": [],
+      "judge_questionable": []
+    }
+  },
+  "review_verdict": {
+    "overfitting_risk": "low",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false,
+    "review_eval_decision": {
+      "scope": "smoke",
+      "reason": "Phase 14 changed only the opt-in MEMORYOS_AGENT_KERNEL=v1 kernel memory-action verification path. Focused kernel and public trace smoke tests exercise the real MemoryOS v3/public path. Default LongMemEval/LoCoMo retrieval, answer projection, judge behavior, and scoring did not change, so milestone public eval is not applicable and no benchmark-quality movement is claimed.",
+      "longmemeval": {
+        "run": false,
+        "limit": 0,
+        "reason": "No default LongMemEval retrieval, answer, judge, or scoring path changed; phase evidence is focused opt-in kernel trace verification."
+      },
+      "locomo": {
+        "run": false,
+        "limit": 0,
+        "reason": "No default LoCoMo retrieval, answer, judge, or scoring path changed; focused synthetic public-kernel smoke was rerun through pytest."
+      },
+      "llm_answer": false,
+      "llm_judge": false,
+      "promotion_gate": "not_applicable"
+    }
+  },
+  "decision": "advance"
+}

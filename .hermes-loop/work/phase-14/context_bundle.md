@@ -98,17 +98,17 @@ Non-goals:
 
 ## State Snapshot
 
-From `.hermes-loop/state.json` at this refresh:
+From `.hermes-loop/state.json` at this execute refresh:
 
-- `current_state = GOD_DISPATCH`;
+- `current_state = EXECUTE`;
 - `current_phase_idx = 14`;
 - `execute_lane.phase = phase-14`;
-- `execute_lane.state = GOD_DISPATCH`;
+- `execute_lane.state = EXECUTE`;
 - `plan_lane.phase = phase-15`;
 - `plan_lane.state = PLAN_STORM`;
 - `research_lane.phases = []`;
 - `review_lane.active = false`;
-- `phase-11.status = in_progress`;
+- `phase-11.status = superseded`;
 - `phase-12.status = completed`;
 - `phase-13.status = completed`;
 - `phase-14.status = in_progress`;
@@ -117,10 +117,29 @@ From `.hermes-loop/state.json` at this refresh:
 - `phase-17.status = pending`;
 - `phase-18.status = pending`.
 
-Because `current_state` is `GOD_DISPATCH`, God may generate or refresh only
-phase-local context and dispatch artifacts. Do not run tests, evals, `uv`,
-`pytest`, `ruff`, or implementation commands until the controller enters the
-execute lane.
+Controller refresh note, `2026-05-24T00:00:00+08:00`:
+
+- `work/phase-14/god_dispatch.json`, `brainstorm.md`, `spec.md`, `plan.md`,
+  `plan_review.md`, `plan_final.md`, `research.md`, and phase-14 amendment
+  drafts already exist and are phase-bound to `phase-14`;
+- `work/phase-14/ack.json`, `review_verdict.json`, and `result.md` are still
+  absent, so no stale completion artifact was consumed;
+- root state now says `current_state = EXECUTE`; phase bootstrap safety is
+  satisfied because `context_bundle.md`, `god_dispatch.json`, and
+  `plan_final.md` all exist for `phase-14`;
+- this refresh confirmed current `src/memoryos_lite/agent_kernel.py` and
+  `tests/test_agent_kernel.py` still have the minimal durable sequence around
+  approved `archive_write`:
+  `approval_pending -> approval_granted -> tool_executed`, with no
+  `tool_verified` trace event or test expectation yet;
+- Letta reference refresh confirmed the relevant boundary remains tool-call
+  identity, approval response validation, structured tool returns, and manager
+  routed memory mutation; MemoryOS should borrow that contract without adding
+  Letta as a dependency.
+
+Earlier `GOD_DISPATCH` records remain historical only. The active controller
+state is now `EXECUTE`, so phase-14 may proceed with TDD implementation from
+`plan_final.md`.
 
 ## Active Blueprint Sections
 
@@ -133,7 +152,7 @@ Use `.hermes-loop/blueprint.md` as the active blueprint. Relevant sections:
 - `Full-Chain LLM Judge Gates`;
 - `Phase 13 - Core Memory Lifecycle`;
 - `Phase 14 - Opt-In Kernel Memory Action Verification`;
-- `Phase 15 - Diagnostic Kernel Maintenance Planner`;
+- `Phase 15 - Hybrid Tool Selection And Diagnostic Maintenance Planner`;
 - `Phase 16 - Kernel Maintenance Tool Surface`;
 - `Phase 17 - LoCoMo Maintenance Repair Eval`;
 - `Phase 18 - Benchmark Governance And Promotion`.
@@ -141,8 +160,9 @@ Use `.hermes-loop/blueprint.md` as the active blueprint. Relevant sections:
 Promoted amendment source:
 
 - `.hermes-loop/work/phase-8/blueprint_amendment.md`;
-- `.hermes-loop/work/phase-8/blueprint_promotion.md`.
-- `.hermes-loop/work/phase-14/blueprint_amendment.md`.
+- `.hermes-loop/work/phase-8/blueprint_promotion.md`;
+- `.hermes-loop/work/phase-14/blueprint_amendment.md`;
+- `.hermes-loop/work/phase-14/kernel_graduation_blueprint_amendment.md`.
 
 The phase-8 amendment is already promoted into the root blueprint. It remains
 the rationale for conservative benchmark language, visible pass-to-fail lists,
