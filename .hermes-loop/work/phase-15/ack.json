@@ -1,0 +1,125 @@
+{
+  "phase": "phase-15",
+  "ack_level": "usable",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-15/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "implemented_chain": {
+    "ingest": "not_applicable",
+    "store": "verified",
+    "retrieval": "verified",
+    "context_composer": "verified",
+    "answer_projection": "not_applicable",
+    "kernel_loop": "changed",
+    "public_eval": "changed"
+  },
+  "real_path_wired": true,
+  "demo_only_or_stub_remaining": [],
+  "failing_tests_added_before_fix": [
+    "tests/test_agent_kernel.py::test_kernel_generates_candidate_trace_before_selection",
+    "tests/test_agent_kernel.py::test_kernel_denies_selector_non_candidate_without_policy_or_execution",
+    "tests/test_agent_kernel.py::test_kernel_selector_timeout_falls_back_to_noop_without_mutation",
+    "tests/test_agent_kernel.py::test_kernel_selector_unavailable_fails_closed_without_policy_or_mutation",
+    "tests/test_agent_kernel.py::test_kernel_denies_malformed_selector_output_before_policy_or_mutation",
+    "tests/test_agent_kernel.py::test_kernel_denies_selector_choice_missing_provenance_before_policy_or_mutation",
+    "tests/test_agent_kernel.py::test_kernel_selected_request_carries_selection_origin_and_candidate_reason",
+    "tests/test_agent_kernel.py::test_kernel_rejects_approval_replay_with_tampered_tool_call_id",
+    "tests/test_agent_kernel.py::test_kernel_rejects_approval_replay_missing_tool_call_id",
+    "tests/test_public_benchmarks.py::test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled",
+    "tests/test_public_benchmarks.py::test_planner_proposal_excludes_eval_gold_and_is_proposal_only",
+    "tests/test_public_benchmarks.py::test_planner_without_model_visible_evidence_yields_diagnostic_only_denial",
+    "tests/test_public_benchmarks.py::test_planner_eval_sidecar_does_not_change_proposal_shape",
+    "tests/test_public_benchmarks.py::test_public_report_emits_planner_artifacts_without_planner_tool_execution"
+  ],
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py -q",
+      "result": "61 passed in 44.15s"
+    },
+    {
+      "command": "uv run pytest tests/test_agent_kernel.py -q",
+      "result": "28 passed in 28.48s"
+    },
+    {
+      "command": "uv run pytest tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags -q",
+      "result": "2 passed in 0.02s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "499 passed, 1 warning in 629.09s"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed!"
+    },
+    {
+      "command": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge --run-id phase15_locomo5_repair_structural_20260523T211111Z",
+      "result": "5 rows, 0 pass / 5 fail, projected no-LLM structural smoke; planner fields present; gold_fields_used=false; no planner tool_executed events"
+    }
+  ],
+  "case_level_eval": {
+    "longmemeval": {
+      "limit": 0,
+      "llm_answer": false,
+      "llm_judge": false,
+      "pass_fail": "not_applicable: no LongMemEval retrieval, context, answer, judge, or scoring path changed; not run for this structural phase",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [],
+      "evidence_hit_answer_fail": [],
+      "judge_questionable": []
+    },
+    "locomo": {
+      "limit": 5,
+      "llm_answer": false,
+      "llm_judge": false,
+      "pass_fail": "0/5 projected no-LLM structural smoke; answer_mode=projected; judge_status=not_run; no benchmark-quality improvement claim",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [
+        "conv-26_qa_003",
+        "conv-26_qa_004",
+        "conv-26_qa_005"
+      ],
+      "evidence_hit_answer_fail": [
+        "conv-26_qa_001",
+        "conv-26_qa_002"
+      ],
+      "judge_questionable": []
+    }
+  },
+  "review_verdict": {
+    "verdict": "PASS",
+    "overfitting_risk": "low",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false,
+    "review_eval_decision": {
+      "scope": "smoke",
+      "reason": "Phase 15 changed the opt-in kernel selection boundary and additive public report artifacts only. Default retrieval, context composition, answer projection, judge behavior, and public scoring were not broadened, so the fixed no-LLM LoCoMo structural replay is sufficient for this phase ACK and milestone promotion is not applicable.",
+      "longmemeval": {
+        "run": false,
+        "limit": 0,
+        "reason": "No default LongMemEval path changed; not needed for this structural phase."
+      },
+      "locomo": {
+        "run": true,
+        "limit": 5,
+        "reason": "Planner report artifacts are in scope; fixed no-LLM structural replay verified report shape and non-execution."
+      },
+      "llm_answer": false,
+      "llm_judge": false,
+      "promotion_gate": "not_applicable"
+    }
+  },
+  "decision": "advance"
+}

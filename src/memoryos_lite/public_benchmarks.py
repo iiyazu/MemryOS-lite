@@ -17,6 +17,11 @@ from memoryos_lite.evals import BaselineOutput, _expand_baselines, _run_baseline
 from memoryos_lite.llm_judge import LLMJudge
 from memoryos_lite.public_case_diagnostics import build_case_diagnostics
 from memoryos_lite.public_case_movement import load_public_case_movement
+from memoryos_lite.public_maintenance_planner import (
+    EvalGoldSidecar,
+    ModelVisiblePlannerInput,
+    build_maintenance_artifact,
+)
 from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
@@ -149,6 +154,9 @@ class PublicBenchmarkResult:
     movement_status: str = "new_case_no_baseline"
     answer_support_status: str = "unknown"
     judge_status: str = "unknown"
+    model_visible_planner_input: dict[str, Any] = field(default_factory=dict)
+    eval_gold_sidecar: dict[str, Any] = field(default_factory=dict)
+    maintenance_proposal: dict[str, Any] = field(default_factory=dict)
 
     def to_report(self) -> dict[str, object]:
         data = asdict(self)
@@ -673,6 +681,27 @@ def _to_public_result(
         baseline_verdict=baseline_verdict,
         movement_baseline_source=movement_baseline_source,
     )
+    planner_input = _model_visible_planner_input(
+        question=public_case.case.question,
+        answer=answer,
+        case_diagnostics=case_diagnostics,
+        answer_evidence=answer_evidence_payload,
+        component_drop_counts=output.v3_component_drop_counts,
+        kernel_trace_events=output.kernel_trace_events,
+    )
+    eval_sidecar = EvalGoldSidecar(
+        case_id=public_case.case.case_id,
+        expected_answer=public_case.expected_answer,
+        expected_source_ids=public_case.expected_source_ids,
+        verdict=verdict,
+        judge_status=str(case_diagnostics["judge_status"]),
+        failure_class=str(case_diagnostics["failure_class"]),
+        movement_status=str(case_diagnostics["movement_status"]),
+    )
+    maintenance_artifact = build_maintenance_artifact(
+        model_visible=planner_input,
+        eval_sidecar=eval_sidecar,
+    )
     return PublicBenchmarkResult(
         benchmark=public_case.benchmark,
         baseline=baseline,
@@ -780,7 +809,66 @@ def _to_public_result(
         movement_status=str(case_diagnostics["movement_status"]),
         answer_support_status=str(case_diagnostics["answer_support_status"]),
         judge_status=str(case_diagnostics["judge_status"]),
+        model_visible_planner_input=planner_input.model_dump(mode="json"),
+        eval_gold_sidecar=eval_sidecar.model_dump(mode="json"),
+        maintenance_proposal=maintenance_artifact.proposal.model_dump(mode="json"),
     )
+
+
+def _model_visible_planner_input(
+    *,
+    question: str,
+    answer: str,
+    case_diagnostics: dict[str, Any],
+    answer_evidence: list[dict[str, Any]],
+    component_drop_counts: dict[str, int],
+    kernel_trace_events: list[dict[str, Any]],
+) -> ModelVisiblePlannerInput:
+    safe_drop_counts = _int_mapping(
+        component_drop_counts or case_diagnostics.get("component_drop_counts")
+    )
+    return ModelVisiblePlannerInput(
+        question=question,
+        rendered_answer=answer,
+        selected_context_ids=_string_list(case_diagnostics.get("selected_context_ids")),
+        final_context_trace_source_ids=_string_list(
+            case_diagnostics.get("final_context_trace_source_ids")
+        ),
+        rendered_evidence_ids=_string_list(case_diagnostics.get("rendered_evidence_ids")),
+        answer_evidence=answer_evidence,
+        cited_source_ids=_string_list(case_diagnostics.get("cited_source_ids")),
+        unsupported_citation_ids=_string_list(
+            case_diagnostics.get("unsupported_citation_ids")
+        ),
+        citation_contract_status=str(
+            case_diagnostics.get("citation_contract_status") or "unknown"
+        ),
+        archival_eligibility=_dict_value(case_diagnostics.get("archival_eligibility")),
+        component_drop_counts=safe_drop_counts,
+        kernel_trace_events=kernel_trace_events,
+    )
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    if isinstance(value, str):
+        return [value]
+    return []
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _int_mapping(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): item
+        for key, item in value.items()
+        if isinstance(item, int) and not isinstance(item, bool)
+    }
 
 
 def _role_from_text(value: str) -> Role:

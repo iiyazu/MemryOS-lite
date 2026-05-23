@@ -7,6 +7,11 @@ from memoryos_lite.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
 from memoryos_lite.config import Settings
 from memoryos_lite.evals import BaselineOutput
 from memoryos_lite.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
+from memoryos_lite.public_maintenance_planner import (
+    EvalGoldSidecar,
+    ModelVisiblePlannerInput,
+    build_maintenance_artifact,
+)
 from memoryos_lite.v3_contracts import (
     ArchivalPassage,
     ArchiveAttachment,
@@ -3336,10 +3341,14 @@ def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
     kernel_trace_events = report["kernel_trace_events"]
     assert [event["event_type"] for event in kernel_trace_events] == [
         "kernel_step_started",
+        "tool_candidates_generated",
+        "tool_selected",
         "tool_policy_decision",
         "approval_pending",
         "kernel_step_completed",
         "kernel_step_started",
+        "tool_candidates_generated",
+        "tool_selected",
         "tool_policy_decision",
         "approval_granted",
         "tool_executed",
@@ -3359,6 +3368,19 @@ def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
         for event in kernel_trace_events
         if event["event_type"] == "approval_pending"
     )
+    selected_events = [
+        event
+        for event in kernel_trace_events
+        if event["event_type"] == "tool_selected"
+    ]
+    assert len(selected_events) == 2
+    assert pending_event["payload"]["metadata"]["tool_call_id"] == (
+        selected_events[0]["payload"]["tool_call_id"]
+    )
+    assert selected_events[1]["payload"]["tool_call_id"] == (
+        selected_events[0]["payload"]["tool_call_id"]
+    )
+    assert all(event["payload"]["candidate_reason"] for event in selected_events)
     approval_id = pending_event["approval_id"]
     assert approval_id.startswith("approval_")
     assert pending_event["payload"]["approval_id"] == approval_id
@@ -3405,3 +3427,170 @@ def test_public_benchmark_runs_kernel_step_when_v3_kernel_enabled(tmp_path):
         "retrieval_miss",
         "context_missing_evidence",
     }
+
+
+def _model_visible_planner_input(
+    *,
+    answer_evidence: list[dict[str, object]] | None = None,
+    selected_context_ids: list[str] | None = None,
+    rendered_evidence_ids: list[str] | None = None,
+    cited_source_ids: list[str] | None = None,
+    final_context_trace_source_ids: list[str] | None = None,
+    unsupported_citation_ids: list[str] | None = None,
+    citation_contract_status: str = "supported_cited_answer",
+):
+    default_source_ids = ["msg_selected"]
+    return ModelVisiblePlannerInput(
+        question="What is recorded?",
+        rendered_answer="MemoryOS Lite [msg_selected]",
+        selected_context_ids=(
+            default_source_ids if selected_context_ids is None else selected_context_ids
+        ),
+        final_context_trace_source_ids=(
+            default_source_ids
+            if final_context_trace_source_ids is None
+            else final_context_trace_source_ids
+        ),
+        rendered_evidence_ids=(
+            default_source_ids if rendered_evidence_ids is None else rendered_evidence_ids
+        ),
+        answer_evidence=(
+            [{"id": "msg_selected", "text": "MemoryOS Lite"}]
+            if answer_evidence is None
+            else answer_evidence
+        ),
+        cited_source_ids=default_source_ids if cited_source_ids is None else cited_source_ids,
+        unsupported_citation_ids=(
+            [] if unsupported_citation_ids is None else unsupported_citation_ids
+        ),
+        citation_contract_status=citation_contract_status,
+        archival_eligibility={},
+        component_drop_counts={},
+        kernel_trace_events=[],
+    )
+
+
+def _eval_gold_sidecar(
+    *,
+    verdict: str = "fail",
+    judge_status: str = "judge_fail",
+    failure_class: str = "retrieval_miss",
+    movement_status: str = "unchanged_fail",
+):
+    return EvalGoldSidecar(
+        case_id="case_gold",
+        expected_answer="gold answer must not leak",
+        expected_source_ids=["msg_gold"],
+        verdict=verdict,
+        judge_status=judge_status,
+        failure_class=failure_class,
+        movement_status=movement_status,
+    )
+
+
+def test_planner_proposal_excludes_eval_gold_and_is_proposal_only():
+    artifact = build_maintenance_artifact(
+        model_visible=_model_visible_planner_input(),
+        eval_sidecar=_eval_gold_sidecar(),
+    )
+
+    serialized_proposal = artifact.proposal.model_dump_json()
+    assert artifact.proposal.execution_mode == "proposal_only"
+    assert artifact.proposal.gold_fields_used is False
+    assert "gold answer must not leak" not in serialized_proposal
+    assert "msg_gold" not in serialized_proposal
+    assert "msg_selected" in serialized_proposal
+
+
+def test_planner_without_model_visible_evidence_yields_diagnostic_only_denial():
+    artifact = build_maintenance_artifact(
+        model_visible=_model_visible_planner_input(
+            answer_evidence=[],
+            selected_context_ids=[],
+            rendered_evidence_ids=[],
+            cited_source_ids=[],
+            final_context_trace_source_ids=[],
+            citation_contract_status="no_cited_evidence",
+        ),
+        eval_sidecar=_eval_gold_sidecar(),
+    )
+
+    assert artifact.proposal.proposal_type == "diagnostic_only_denial"
+    assert artifact.proposal.execution_mode == "proposal_only"
+    assert artifact.proposal.tool_name is None
+    assert artifact.proposal.arguments == {}
+    assert artifact.proposal.source_refs == []
+    assert artifact.proposal.gold_fields_used is False
+    assert artifact.proposal.denial_reason
+
+
+def test_planner_eval_sidecar_does_not_change_proposal_shape():
+    model_visible = _model_visible_planner_input(
+        citation_contract_status="supported_cited_answer"
+    )
+    baseline_artifact = build_maintenance_artifact(
+        model_visible=model_visible,
+        eval_sidecar=_eval_gold_sidecar(
+            verdict="fail",
+            judge_status="judge_fail",
+            failure_class="evidence_hit_answer_fail",
+            movement_status="unchanged_fail",
+        ),
+    )
+    sidecar_artifact = build_maintenance_artifact(
+        model_visible=model_visible,
+        eval_sidecar=_eval_gold_sidecar(
+            verdict="pass",
+            judge_status="judge_pass",
+            failure_class="retrieval_miss",
+            movement_status="unchanged_pass",
+        ),
+    )
+
+    assert sidecar_artifact.eval_sidecar.judge_status == "judge_pass"
+    assert sidecar_artifact.eval_sidecar.failure_class == "retrieval_miss"
+    assert sidecar_artifact.proposal == baseline_artifact.proposal
+    serialized_arguments = json.dumps(
+        sidecar_artifact.proposal.arguments,
+        sort_keys=True,
+    )
+    assert "judge_pass" not in serialized_arguments
+    assert "retrieval_miss" not in serialized_arguments
+    assert "msg_gold" not in serialized_arguments
+    assert "gold answer must not leak" not in serialized_arguments
+
+
+def test_public_report_emits_planner_artifacts_without_planner_tool_execution(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_planner_report",
+        text="The planner marker is MemoryOS Lite.",
+        question="What is the planner marker?",
+        answer="MemoryOS Lite",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-planner-report-test",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    report = results[0].to_report()
+    assert report["model_visible_planner_input"]["question"] == (
+        "What is the planner marker?"
+    )
+    assert report["eval_gold_sidecar"]["expected_answer"] == "MemoryOS Lite"
+    assert report["eval_gold_sidecar"]["expected_source_ids"] == [
+        "sample_planner_report_qa_001:sample_planner_report:D1:1"
+    ]
+    assert report["maintenance_proposal"]["execution_mode"] == "proposal_only"
+    assert report["maintenance_proposal"]["gold_fields_used"] is False
+    assert all(
+        event["event_type"] != "tool_executed"
+        for event in report["kernel_trace_events"]
+    )

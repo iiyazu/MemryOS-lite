@@ -574,6 +574,7 @@ REQUIRED_V3_ADAPTERS: dict[str, str] = {
 
 
 ToolPolicyEffect = Literal["allow", "deny", "require_approval"]
+ToolSelectionOrigin = Literal["deterministic", "llm", "fallback"]
 
 
 class ToolPolicyRule(BaseModel):
@@ -600,6 +601,29 @@ class ToolPolicyDecision(BaseModel):
             raise ValueError("allow decisions require an explicit matched rule")
         if self.effect == "require_approval" and not self.requires_approval:
             raise ValueError("require_approval decisions must set requires_approval")
+        return self
+
+
+class ToolCandidate(BaseModel):
+    tool_call_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    tool_name: str = Field(min_length=1)
+    arguments: dict[str, Any]
+    source_refs: list[SourceRef] = Field(default_factory=list)
+    approval_id: str | None = None
+    candidate_reason: str = Field(min_length=1)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolSelectionChoice(BaseModel):
+    tool_call_id: str | None = None
+    selection_origin: ToolSelectionOrigin
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_noop_reason(self) -> ToolSelectionChoice:
+        if self.tool_call_id is None and not self.reason.strip():
+            raise ValueError("no-op selections require a reason")
         return self
 
 
@@ -636,6 +660,9 @@ class ToolExecutionRequest(BaseModel):
     arguments: dict[str, Any]
     source_refs: list[SourceRef] = Field(default_factory=list)
     approval_id: str | None = None
+    tool_call_id: str | None = None
+    selection_origin: ToolSelectionOrigin | None = None
+    candidate_reason: str | None = None
 
 
 class ToolExecutionResult(BaseModel):
@@ -708,9 +735,12 @@ __all__ = [
     "ToolExecutionManager",
     "ToolExecutionRequest",
     "ToolExecutionResult",
+    "ToolCandidate",
     "ToolPolicyDecision",
     "ToolPolicyEngine",
     "ToolPolicyRule",
+    "ToolSelectionChoice",
+    "ToolSelectionOrigin",
     "V3_FUTURE_TABLES",
     "V3_KEEP_TABLES",
     "V3_NO_NEW_TARGETS",

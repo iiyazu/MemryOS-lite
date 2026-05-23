@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from sqlalchemy import text
 
 from memoryos_lite.agent_kernel import (
@@ -8,6 +9,7 @@ from memoryos_lite.agent_kernel import (
     SimpleToolExecutionManager,
     SimpleToolPolicyEngine,
 )
+from memoryos_lite.agent_tool_selection import ToolSelectionBoundary
 from memoryos_lite.config import Settings
 from memoryos_lite.context_composer import V3ContextComposer
 from memoryos_lite.engine import MemoryOSService
@@ -22,6 +24,7 @@ from memoryos_lite.v3_contracts import (
     ToolExecutionRequest,
     ToolExecutionResult,
     ToolPolicyRule,
+    ToolSelectionChoice,
 )
 
 
@@ -47,6 +50,7 @@ def _archive_request(
     approval_id: str | None = None,
     session_id: str = "ses_1",
     tool_name: str = "archive_write",
+    tool_call_id: str | None = None,
 ) -> ToolExecutionRequest:
     return ToolExecutionRequest(
         session_id=session_id,
@@ -54,10 +58,11 @@ def _archive_request(
         arguments={"content": content, "memory_type": "fact"},
         source_refs=[_source_ref(session_id)],
         approval_id=approval_id,
+        tool_call_id=tool_call_id,
     )
 
 
-def _approval_runner(store):
+def _approval_runner(store, *, tool_selection_boundary=None):
     return SimpleAgentStepRunner(
         store=store,
         tool_policy_engine=SimpleToolPolicyEngine(
@@ -72,6 +77,7 @@ def _approval_runner(store):
         ),
         approval_gate=ApprovalGateV1(),
         tool_execution_manager=SimpleToolExecutionManager(store=store),
+        tool_selection_boundary=tool_selection_boundary,
     )
 
 
@@ -86,6 +92,406 @@ def _trace_payloads(store, session_id: str, event_type: str) -> list[dict]:
         for trace in store.list_traces(session_id)
         if trace.event_type == event_type
     ]
+
+
+def _pending_tool_call_id(trace) -> str:
+    pending = next(event for event in trace if event.event_type == "approval_pending")
+    tool_call_id = pending.payload["metadata"]["tool_call_id"]
+    assert tool_call_id.startswith("toolcall_")
+    return tool_call_id
+
+
+def _candidate_ids(candidate_payload: dict) -> set[str]:
+    candidates = candidate_payload["candidates"]
+    return {candidate["tool_call_id"] for candidate in candidates}
+
+
+class _NonCandidateSelector:
+    def select(self, request, candidates):
+        return ToolSelectionChoice(
+            tool_call_id="toolcall_not_declared",
+            selection_origin="llm",
+            reason="attempted invented tool selection",
+        )
+
+
+class _TimeoutSelector:
+    def select(self, request, candidates):
+        raise TimeoutError("selector timeout")
+
+
+class _UnavailableSelector:
+    def select(self, request, candidates):
+        raise RuntimeError("selector provider unavailable")
+
+
+class _MalformedSelector:
+    def select(self, request, candidates):
+        return "toolcall_not_a_choice_object"
+
+
+class _MissingProvenanceSelector:
+    def select(self, request, candidates):
+        return {"tool_call_id": candidates[0].tool_call_id, "selection_origin": "llm"}
+
+
+class _NoopSelector:
+    def select(self, request, candidates):
+        return ToolSelectionChoice(
+            tool_call_id=None,
+            selection_origin="llm",
+            reason="selector declined all candidates",
+        )
+
+
+def test_tool_selection_boundary_reports_unsupported_input_without_runner():
+    boundary = ToolSelectionBoundary()
+
+    resolution = boundary.resolve(
+        _request(),
+        [
+            ToolExecutionRequest(
+                session_id="ses_1",
+                tool_name="unknown_tool",
+                arguments={"content": "ignored"},
+            )
+        ],
+    )
+
+    assert resolution.candidates == []
+    assert resolution.selected_request is None
+    assert resolution.denied is True
+    assert resolution.rejected_inputs == [
+        {
+            "tool_name": "unknown_tool",
+            "reason": "unsupported tool for K2 selection",
+        }
+    ]
+    assert resolution.selection_payload["selection_origin"] == "fallback"
+    assert "unsupported" in resolution.selection_payload["reason"]
+
+
+def test_tool_selection_boundary_preserves_approval_bound_candidate_without_source_refs():
+    boundary = ToolSelectionBoundary()
+    tool_request = ToolExecutionRequest(
+        session_id="ses_1",
+        tool_name="archive_write",
+        arguments={"content": "approved by replay", "memory_type": "fact"},
+        approval_id="approval_1",
+        tool_call_id="toolcall_1",
+    )
+
+    resolution = boundary.resolve(_request(), [tool_request])
+
+    assert resolution.denied is False
+    assert resolution.selected_request is not None
+    assert resolution.selected_request.approval_id == "approval_1"
+    assert resolution.selected_request.tool_call_id == "toolcall_1"
+    assert resolution.selected_request.source_refs == []
+    assert resolution.selection_payload["tool_call_id"] == "toolcall_1"
+    assert resolution.candidates[0].constraints["requires_source_refs_or_approval"] is True
+
+
+@pytest.mark.parametrize(
+    ("selector", "reason_fragment"),
+    [
+        (_NonCandidateSelector(), "candidate"),
+        (_TimeoutSelector(), "timeout"),
+        (_MalformedSelector(), "malformed"),
+        (_MissingProvenanceSelector(), "provenance"),
+        (_NoopSelector(), "declined"),
+    ],
+)
+def test_tool_selection_boundary_fail_closed_selector_outputs_without_runner(
+    selector,
+    reason_fragment,
+):
+    boundary = ToolSelectionBoundary(selector=selector)
+
+    resolution = boundary.resolve(_request(), [_archive_request()])
+
+    assert resolution.selected_request is None
+    assert resolution.denied is True
+    assert resolution.selection_payload["tool_call_id"] in {
+        None,
+        "toolcall_not_declared",
+    }
+    assert reason_fragment in resolution.selection_payload["reason"]
+
+
+def test_tool_selection_boundary_denies_duplicate_candidate_ids_without_runner():
+    boundary = ToolSelectionBoundary()
+
+    resolution = boundary.resolve(
+        _request(),
+        [
+            _archive_request(tool_call_id="toolcall_duplicate"),
+            _archive_request(content="second fact", tool_call_id="toolcall_duplicate"),
+        ],
+    )
+
+    assert resolution.selected_request is None
+    assert resolution.denied is True
+    assert resolution.selection_payload["tool_call_id"] == "toolcall_duplicate"
+    assert "duplicate" in resolution.selection_payload["reason"]
+
+
+def test_kernel_generates_candidate_trace_before_selection(tmp_path):
+    store = create_store(Settings(data_dir=tmp_path / ".memoryos"))
+    store.reset()
+
+    result = _approval_runner(store).run_step(
+        _request(),
+        tool_requests=[_archive_request()],
+    )
+
+    event_types = [event.event_type for event in result.trace]
+    assert event_types[:4] == [
+        "kernel_step_started",
+        "tool_candidates_generated",
+        "tool_selected",
+        "tool_policy_decision",
+    ]
+    generated = next(
+        event for event in result.trace if event.event_type == "tool_candidates_generated"
+    )
+    candidates = generated.payload["candidates"]
+    assert [candidate["tool_name"] for candidate in candidates] == ["archive_write"]
+    candidate = candidates[0]
+    assert candidate["tool_call_id"].startswith("toolcall_")
+    assert candidate["candidate_reason"]
+    assert candidate["constraints"]
+    selected = next(event for event in result.trace if event.event_type == "tool_selected")
+    assert selected.payload["selection_origin"] == "deterministic"
+    assert selected.payload["candidate_reason"]
+    assert selected.payload["tool_call_id"] in _candidate_ids(generated.payload)
+    durable_generated = _trace_payloads(store, "ses_1", "tool_candidates_generated")
+    durable_selected = _trace_payloads(store, "ses_1", "tool_selected")
+    assert len(durable_generated) == 1
+    assert len(durable_selected) == 1
+    assert durable_generated[0]["payload"]["candidates"] == candidates
+    assert durable_selected[0]["payload"]["tool_call_id"] == selected.payload["tool_call_id"]
+    assert durable_selected[0]["payload"]["selection_origin"] == "deterministic"
+    assert (
+        durable_selected[0]["payload"]["candidate_reason"]
+        == selected.payload["candidate_reason"]
+    )
+
+
+def test_kernel_denies_selector_non_candidate_without_policy_or_execution(tmp_path):
+    store = create_store(Settings(data_dir=tmp_path / ".memoryos"))
+    store.reset()
+    runner = _approval_runner(
+        store,
+        tool_selection_boundary=ToolSelectionBoundary(selector=_NonCandidateSelector()),
+    )
+
+    result = runner.run_step(_request(), tool_requests=[_archive_request()])
+
+    event_types = [event.event_type for event in result.trace]
+    assert "tool_candidates_generated" in event_types
+    assert "tool_selection_denied" in event_types
+    generated = next(
+        event for event in result.trace if event.event_type == "tool_candidates_generated"
+    )
+    denial = next(event for event in result.trace if event.event_type == "tool_selection_denied")
+    assert "toolcall_not_declared" not in _candidate_ids(generated.payload)
+    assert denial.payload["tool_call_id"] == "toolcall_not_declared"
+    assert "candidate" in denial.payload["reason"]
+    assert "tool_policy_decision" not in event_types
+    assert "tool_denied" not in event_types
+    assert "tool_executed" not in event_types
+    durable_generated = _trace_payloads(store, "ses_1", "tool_candidates_generated")
+    durable_denied = _trace_payloads(store, "ses_1", "tool_selection_denied")
+    assert len(durable_generated) == 1
+    assert durable_generated[0]["payload"]["candidates"] == generated.payload["candidates"]
+    assert len(durable_denied) == 1
+    assert durable_denied[0]["payload"]["tool_call_id"] == "toolcall_not_declared"
+    assert "candidate" in durable_denied[0]["payload"]["reason"]
+    assert _archival_memory_count(store) == 0
+
+
+def test_kernel_selector_timeout_falls_back_to_noop_without_mutation(tmp_path):
+    store = create_store(Settings(data_dir=tmp_path / ".memoryos"))
+    store.reset()
+    runner = _approval_runner(
+        store,
+        tool_selection_boundary=ToolSelectionBoundary(selector=_TimeoutSelector()),
+    )
+
+    result = runner.run_step(_request(), tool_requests=[_archive_request()])
+
+    denial = next(event for event in result.trace if event.event_type == "tool_selection_denied")
+    assert denial.payload["selection_origin"] == "fallback"
+    assert "timeout" in denial.payload["reason"]
+    assert "tool_policy_decision" not in [event.event_type for event in result.trace]
+    assert "tool_denied" not in [event.event_type for event in result.trace]
+    assert _archival_memory_count(store) == 0
+
+
+def test_kernel_selector_unavailable_fails_closed_without_policy_or_mutation(tmp_path):
+    store = create_store(Settings(data_dir=tmp_path / ".memoryos"))
+    store.reset()
+    runner = _approval_runner(
+        store,
+        tool_selection_boundary=ToolSelectionBoundary(selector=_UnavailableSelector()),
+    )
+
+    result = runner.run_step(_request(), tool_requests=[_archive_request()])
+
+    event_types = [event.event_type for event in result.trace]
+    assert "tool_candidates_generated" in event_types
+    assert "tool_selection_denied" in event_types
+    denial = next(event for event in result.trace if event.event_type == "tool_selection_denied")
+    assert denial.payload["selection_origin"] == "fallback"
+    assert "unavailable" in denial.payload["reason"]
+    assert "tool_policy_decision" not in event_types
+    assert "approval_pending" not in event_types
+    assert "tool_executed" not in event_types
+    durable_denied = _trace_payloads(store, "ses_1", "tool_selection_denied")
+    assert len(durable_denied) == 1
+    assert "unavailable" in durable_denied[0]["payload"]["reason"]
+    assert _archival_memory_count(store) == 0
+    assert [msg for msg in store.list_messages("ses_1") if msg.role == Role.TOOL] == []
+
+
+def test_kernel_denies_malformed_selector_output_before_policy_or_mutation(tmp_path):
+    store = create_store(Settings(data_dir=tmp_path / ".memoryos"))
+    store.reset()
+    runner = _approval_runner(
+        store,
+        tool_selection_boundary=ToolSelectionBoundary(selector=_MalformedSelector()),
+    )
+
+    result = runner.run_step(_request(), tool_requests=[_archive_request()])
+
+    event_types = [event.event_type for event in result.trace]
+    assert "tool_candidates_generated" in event_types
+    assert "tool_selection_denied" in event_types
+    denial = next(event for event in result.trace if event.event_type == "tool_selection_denied")
+    assert "malformed" in denial.payload["reason"] or "invalid" in denial.payload["reason"]
+    assert "tool_policy_decision" not in event_types
+    assert "tool_denied" not in event_types
+    assert "tool_executed" not in event_types
+    assert _trace_payloads(store, "ses_1", "tool_selection_denied")
+    assert _archival_memory_count(store) == 0
+    assert [msg for msg in store.list_messages("ses_1") if msg.role == Role.TOOL] == []
+
+
+def test_kernel_denies_selector_choice_missing_provenance_before_policy_or_mutation(tmp_path):
+    store = create_store(Settings(data_dir=tmp_path / ".memoryos"))
+    store.reset()
+    runner = _approval_runner(
+        store,
+        tool_selection_boundary=ToolSelectionBoundary(selector=_MissingProvenanceSelector()),
+    )
+
+    result = runner.run_step(_request(), tool_requests=[_archive_request()])
+
+    event_types = [event.event_type for event in result.trace]
+    assert "tool_candidates_generated" in event_types
+    assert "tool_selection_denied" in event_types
+    denial = next(event for event in result.trace if event.event_type == "tool_selection_denied")
+    assert "provenance" in denial.payload["reason"]
+    assert "tool_policy_decision" not in event_types
+    assert "tool_denied" not in event_types
+    assert "tool_executed" not in event_types
+    assert _trace_payloads(store, "ses_1", "tool_selection_denied")
+    assert _archival_memory_count(store) == 0
+    assert [msg for msg in store.list_messages("ses_1") if msg.role == Role.TOOL] == []
+
+
+def test_kernel_selected_request_carries_selection_origin_and_candidate_reason(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    first = _approval_runner(store).run_step(_request(), tool_requests=[_archive_request()])
+    pending = next(event for event in first.trace if event.event_type == "approval_pending")
+    tool_call_id = _pending_tool_call_id(first.trace)
+
+    resumed = _approval_runner(create_store(settings)).run_step(
+        _request(),
+        tool_requests=[
+            _archive_request(
+                approval_id=pending.approval_id,
+                tool_call_id=tool_call_id,
+            )
+        ],
+    )
+
+    selected = next(event for event in resumed.trace if event.event_type == "tool_selected")
+    assert selected.payload["tool_call_id"] == tool_call_id
+    assert selected.payload["selection_origin"] == "deterministic"
+    assert selected.payload["candidate_reason"]
+    assert selected.payload["tool_call_id"] in _candidate_ids(
+        next(
+            event.payload
+            for event in resumed.trace
+            if event.event_type == "tool_candidates_generated"
+        )
+    )
+    assert "approval_granted" in [event.event_type for event in resumed.trace]
+
+
+def test_kernel_rejects_approval_replay_with_tampered_tool_call_id(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    first = _approval_runner(store).run_step(_request(), tool_requests=[_archive_request()])
+    pending = next(event for event in first.trace if event.event_type == "approval_pending")
+    approval_id = pending.approval_id
+    assert approval_id is not None
+    assert _pending_tool_call_id(first.trace).startswith("toolcall_")
+
+    reopened = create_store(settings)
+    result = _approval_runner(reopened).run_step(
+        _request(),
+        tool_requests=[
+            _archive_request(
+                approval_id=approval_id,
+                tool_call_id="toolcall_tampered",
+            )
+        ],
+    )
+
+    event_types = [event.event_type for event in result.trace]
+    assert "approval_replay_denied" in event_types
+    denial = next(event for event in result.trace if event.event_type == "approval_replay_denied")
+    assert denial.payload["approval_id"] == approval_id
+    assert "tool_call" in denial.payload["reason"]
+    assert "approval_granted" not in event_types
+    assert "tool_executed" not in event_types
+    assert "tool_verified" not in event_types
+    assert _archival_memory_count(reopened) == 0
+    assert [msg for msg in reopened.list_messages("ses_1") if msg.role == Role.TOOL] == []
+
+
+def test_kernel_rejects_approval_replay_missing_tool_call_id(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    first = _approval_runner(store).run_step(_request(), tool_requests=[_archive_request()])
+    pending = next(event for event in first.trace if event.event_type == "approval_pending")
+    approval_id = pending.approval_id
+    assert approval_id is not None
+    assert _pending_tool_call_id(first.trace).startswith("toolcall_")
+
+    reopened = create_store(settings)
+    result = _approval_runner(reopened).run_step(
+        _request(),
+        tool_requests=[_archive_request(approval_id=approval_id)],
+    )
+
+    event_types = [event.event_type for event in result.trace]
+    assert "approval_replay_denied" in event_types
+    denial = next(event for event in result.trace if event.event_type == "approval_replay_denied")
+    assert denial.payload["approval_id"] == approval_id
+    assert "tool_call" in denial.payload["reason"]
+    assert "approval_granted" not in event_types
+    assert "tool_executed" not in event_types
+    assert "tool_verified" not in event_types
+    assert _archival_memory_count(reopened) == 0
+    assert [msg for msg in reopened.list_messages("ses_1") if msg.role == Role.TOOL] == []
 
 
 def test_kernel_persists_trace_and_stops_without_tool_requests(tmp_path):
@@ -168,11 +574,14 @@ def test_kernel_denies_unknown_tool_as_result_without_executor_call(tmp_path):
     )
 
     event_types = [event.event_type for event in result.trace]
-    assert "tool_denied" in event_types
+    assert "tool_candidates_generated" in event_types
+    assert "tool_selection_denied" in event_types
+    assert "tool_policy_decision" not in event_types
+    assert "tool_denied" not in event_types
     assert "tool_executed" not in event_types
     assert "tool_verified" not in event_types
-    denied = next(event for event in result.trace if event.event_type == "tool_denied")
-    assert "no matching tool policy rule" in denied.payload["error"]
+    denied = next(event for event in result.trace if event.event_type == "tool_selection_denied")
+    assert "unsupported tool for K2 selection" in denied.payload["reason"]
     assert store.list_messages("ses_1") == []
     assert _archival_memory_count(store) == 0
 
@@ -200,7 +609,9 @@ def test_kernel_denies_unsupported_memory_tools_without_verification_or_write(tm
         )
 
         event_types = [event.event_type for event in result.trace]
-        assert "tool_denied" in event_types
+        assert "tool_selection_denied" in event_types
+        assert "tool_policy_decision" not in event_types
+        assert "tool_denied" not in event_types
         assert "tool_executed" not in event_types
         assert "tool_verified" not in event_types
         assert store.list_messages("ses_1") == []
@@ -242,6 +653,8 @@ def test_kernel_pauses_when_tool_requires_approval(tmp_path):
     assert any(event.event_type == "approval_pending" for event in result.trace)
     assert [trace.event_type for trace in store.list_traces("ses_1")] == [
         "kernel_step_started",
+        "tool_candidates_generated",
+        "tool_selected",
         "tool_policy_decision",
         "approval_pending",
         "kernel_step_completed",
@@ -257,6 +670,7 @@ def test_kernel_replays_persisted_approval_after_cold_boundary_once(tmp_path):
         event.approval_id for event in first.trace if event.event_type == "approval_pending"
     )
     assert approval_id is not None
+    tool_call_id = _pending_tool_call_id(first.trace)
 
     reopened = create_store(settings)
     pending_payloads = _trace_payloads(reopened, "ses_1", "approval_pending")
@@ -269,17 +683,20 @@ def test_kernel_replays_persisted_approval_after_cold_boundary_once(tmp_path):
     assert pending["payload"]["requested_action"]["content"] == "approved archival fact"
     assert pending["payload"]["source_refs"][0]["source_id"] == "msg_1"
     assert pending["payload"]["metadata"]["policy_reason"] == "approval required"
+    assert pending["payload"]["metadata"]["tool_call_id"] == tool_call_id
     assert _archival_memory_count(reopened) == 0
     assert reopened.list_messages("ses_1") == []
 
     resumed = _approval_runner(reopened).run_step(
         _request(),
-        tool_requests=[_archive_request(approval_id=approval_id)],
+        tool_requests=[_archive_request(approval_id=approval_id, tool_call_id=tool_call_id)],
     )
 
     assert resumed.continuation == "stop"
     assert [event.event_type for event in resumed.trace] == [
         "kernel_step_started",
+        "tool_candidates_generated",
+        "tool_selected",
         "tool_policy_decision",
         "approval_granted",
         "tool_executed",
@@ -318,7 +735,7 @@ def test_kernel_replays_persisted_approval_after_cold_boundary_once(tmp_path):
     second_store = create_store(settings)
     replayed = _approval_runner(second_store).run_step(
         _request(),
-        tool_requests=[_archive_request(approval_id=approval_id)],
+        tool_requests=[_archive_request(approval_id=approval_id, tool_call_id=tool_call_id)],
     )
     event_types = [event.event_type for event in replayed.trace]
     assert "tool_replay_skipped" in event_types
@@ -340,12 +757,25 @@ def test_kernel_rejects_unknown_or_mismatched_approval_replay_without_side_effec
         event.approval_id for event in first.trace if event.event_type == "approval_pending"
     )
     assert approval_id is not None
+    tool_call_id = _pending_tool_call_id(first.trace)
 
     invalid_requests = [
-        _archive_request(approval_id="approval_missing"),
-        _archive_request(approval_id=approval_id, session_id="ses_2"),
-        _archive_request(approval_id=approval_id, tool_name="unknown_tool"),
-        _archive_request(approval_id=approval_id, content="tampered archival fact"),
+        _archive_request(approval_id="approval_missing", tool_call_id=tool_call_id),
+        _archive_request(
+            approval_id=approval_id,
+            session_id="ses_2",
+            tool_call_id=tool_call_id,
+        ),
+        _archive_request(
+            approval_id=approval_id,
+            tool_name="unknown_tool",
+            tool_call_id=tool_call_id,
+        ),
+        _archive_request(
+            approval_id=approval_id,
+            content="tampered archival fact",
+            tool_call_id=tool_call_id,
+        ),
     ]
 
     for tool_request in invalid_requests:
@@ -355,15 +785,27 @@ def test_kernel_rejects_unknown_or_mismatched_approval_replay_without_side_effec
             tool_requests=[tool_request],
         )
         event_types = [event.event_type for event in result.trace]
-        assert "approval_replay_denied" in event_types or "approval_replay_error" in event_types
-        denial = next(
-            event
-            for event in result.trace
-            if event.event_type in {"approval_replay_denied", "approval_replay_error"}
-        )
-        assert denial.payload["approval_id"] == tool_request.approval_id
-        assert denial.payload["session_id"] == tool_request.session_id
-        assert denial.payload["tool_name"] == tool_request.tool_name
+        if tool_request.tool_name != "archive_write":
+            assert "tool_selection_denied" in event_types
+            assert "approval_replay_denied" not in event_types
+            assert "tool_policy_decision" not in event_types
+            denial = next(
+                event
+                for event in result.trace
+                if event.event_type == "tool_selection_denied"
+            )
+            assert "unsupported tool for K2 selection" in denial.payload["reason"]
+        else:
+            assert (
+                "approval_replay_denied" in event_types
+                or "approval_replay_error" in event_types
+            )
+            denial = next(
+                event
+                for event in result.trace
+                if event.event_type in {"approval_replay_denied", "approval_replay_error"}
+            )
+            assert denial.payload["approval_id"] == tool_request.approval_id
         assert denial.payload["reason"]
         assert "approval_granted" not in event_types
         assert "tool_executed" not in event_types
@@ -382,6 +824,7 @@ def test_kernel_rejects_replay_without_original_request_binding(tmp_path):
         event.approval_id for event in first.trace if event.event_type == "approval_pending"
     )
     assert approval_id is not None
+    tool_call_id = _pending_tool_call_id(first.trace)
 
     with store.db() as db:
         row = db.execute(
@@ -395,7 +838,7 @@ def test_kernel_rejects_replay_without_original_request_binding(tmp_path):
         trace_id, payload_json = row
         payload = json.loads(payload_json)
         payload["payload"]["metadata"]["request_fingerprint"] = "original-fingerprint"
-        payload["payload"]["metadata"]["tool_call_id"] = "tool_call_original"
+        payload["payload"]["metadata"]["tool_call_id"] = tool_call_id
         db.execute(
             text(
                 """
@@ -410,14 +853,14 @@ def test_kernel_rejects_replay_without_original_request_binding(tmp_path):
     reopened = create_store(settings)
     result = _approval_runner(reopened).run_step(
         _request(),
-        tool_requests=[_archive_request(approval_id=approval_id)],
+        tool_requests=[_archive_request(approval_id=approval_id, tool_call_id=tool_call_id)],
     )
 
     event_types = [event.event_type for event in result.trace]
     assert "approval_replay_denied" in event_types
     denial = next(event for event in result.trace if event.event_type == "approval_replay_denied")
     assert denial.payload["approval_id"] == approval_id
-    assert "fingerprint" in denial.payload["reason"] or "tool_call" in denial.payload["reason"]
+    assert "fingerprint" in denial.payload["reason"]
     assert "approval_granted" not in event_types
     assert "tool_executed" not in event_types
     assert "tool_verified" not in event_types
@@ -489,11 +932,12 @@ def test_kernel_tool_result_message_is_visible_to_later_v3_context(tmp_path):
         event.approval_id for event in first.trace if event.event_type == "approval_pending"
     )
     assert approval_id is not None
+    tool_call_id = _pending_tool_call_id(first.trace)
 
     reopened = create_store(settings)
     resumed = _approval_runner(reopened).run_step(
         _request(),
-        tool_requests=[_archive_request(approval_id=approval_id)],
+        tool_requests=[_archive_request(approval_id=approval_id, tool_call_id=tool_call_id)],
     )
     memory_id = next(
         event.payload["result"]["memory_id"]
@@ -535,11 +979,18 @@ def test_kernel_archive_write_becomes_same_session_archival_context_item(tmp_pat
         event.approval_id for event in first.trace if event.event_type == "approval_pending"
     )
     assert approval_id is not None
+    tool_call_id = _pending_tool_call_id(first.trace)
 
     reopened = create_store(settings)
     resumed = _approval_runner(reopened).run_step(
         _request(session.id),
-        tool_requests=[_archive_request(approval_id=approval_id, session_id=session.id)],
+        tool_requests=[
+            _archive_request(
+                approval_id=approval_id,
+                session_id=session.id,
+                tool_call_id=tool_call_id,
+            )
+        ],
     )
     memory_id = next(
         event.payload["result"]["memory_id"]

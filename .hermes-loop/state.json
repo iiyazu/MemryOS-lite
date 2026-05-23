@@ -1,15 +1,15 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 15,
+  "current_phase_idx": 16,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-15",
+    "phase": "phase-16",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-16",
+    "phase": "phase-17",
     "state": "PLAN_STORM"
   },
   "research_lane": {
@@ -609,14 +609,45 @@
       "id": "phase-15",
       "name": "Hybrid Tool Selection And Diagnostic Maintenance Planner",
       "target_state": "hybrid-selection-and-diagnostic-planner-ready",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-23T21:36:00Z",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-15/context_bundle.md",
+            "ack": "work/phase-15/ack.json",
+            "review": "work/phase-15/reviews/phase15_review_after_repair.md",
+            "review_verdict": "work/phase-15/review_verdict.json",
+            "reflection": "work/phase-15/reflect_phase-15.md",
+            "tests_passed": 499,
+            "checks_passed": 7,
+            "case_level_eval": {
+              "longmemeval": "not applicable: no default LongMemEval retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed",
+              "locomo": "5-case projected no-LLM structural smoke: 0/5; retrieval_miss=conv-26_qa_003,conv-26_qa_004,conv-26_qa_005; evidence_hit_answer_fail=conv-26_qa_001,conv-26_qa_002; gold_fields_used=false; no planner tool_executed events"
+            },
+            "real_path_wired": true,
+            "structural_kernel_and_planner_smoke_only": true,
+            "no_benchmark_improvement_claim": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "source_grounding_regressed": false,
+            "locomo_regressed_or_unexplained": false,
+            "review_eval_scope": "smoke",
+            "promotion_gate": "not_applicable",
+            "next_phase_scope": "Phase 16 should add only registered, policy-gated, service-backed maintenance tools through the K2 boundary; preserve proposal-only smoke as non-promotion evidence."
+          },
+          "commit": null
+        }
+      ]
     },
     {
       "id": "phase-16",
       "name": "Kernel Maintenance Tool Surface",
       "target_state": "kernel-maintenance-tools-usable",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": []
     },
     {
@@ -634,5 +665,5 @@
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-23T19:07:44Z"
+  "last_updated": "2026-05-23T21:36:00Z"
 }

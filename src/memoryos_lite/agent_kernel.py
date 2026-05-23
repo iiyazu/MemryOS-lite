@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from memoryos_lite.agent_tool_selection import ToolSelectionBoundary
 from memoryos_lite.schemas import Message, Role, TraceEvent, new_id, utc_now
 from memoryos_lite.store import MemoryStore
 from memoryos_lite.v3_contracts import (
@@ -232,6 +233,7 @@ class SimpleAgentStepRunner:
     tool_policy_engine: SimpleToolPolicyEngine = field(default_factory=SimpleToolPolicyEngine)
     approval_gate: ApprovalGateV1 = field(default_factory=ApprovalGateV1)
     tool_execution_manager: SimpleToolExecutionManager | None = None
+    tool_selection_boundary: ToolSelectionBoundary = field(default_factory=ToolSelectionBoundary)
 
     def run_step(
         self,
@@ -256,7 +258,50 @@ class SimpleAgentStepRunner:
         continuation = "stop"
         sequence = 2
         messages = []
-        for tool_request in tool_requests or []:
+        selected_requests: list[ToolExecutionRequest] = []
+        if tool_requests:
+            tool_selection_boundary = self.tool_selection_boundary or ToolSelectionBoundary()
+            resolution = tool_selection_boundary.resolve(request, tool_requests)
+            trace.append(
+                self._trace(
+                    step_id=step_id,
+                    session_id=request.session_id,
+                    sequence=sequence,
+                    event_type="tool_candidates_generated",
+                    payload={
+                        "candidates": [
+                            candidate.model_dump(mode="json")
+                            for candidate in resolution.candidates
+                        ],
+                        "rejected_inputs": resolution.rejected_inputs,
+                    },
+                )
+            )
+            sequence += 1
+            if resolution.selected_request is None:
+                trace.append(
+                    self._trace(
+                        step_id=step_id,
+                        session_id=request.session_id,
+                        sequence=sequence,
+                        event_type="tool_selection_denied",
+                        payload=resolution.selection_payload,
+                    )
+                )
+                sequence += 1
+            else:
+                trace.append(
+                    self._trace(
+                        step_id=step_id,
+                        session_id=request.session_id,
+                        sequence=sequence,
+                        event_type="tool_selected",
+                        payload=resolution.selection_payload,
+                    )
+                )
+                sequence += 1
+                selected_requests = [resolution.selected_request]
+        for tool_request in selected_requests:
             replay_pending: dict | None = None
             if tool_request.approval_id:
                 replay_pending, replay_error = self._pending_approval_for_replay(
@@ -282,7 +327,10 @@ class SimpleAgentStepRunner:
                     session_id=request.session_id,
                     sequence=sequence,
                     event_type="tool_policy_decision",
-                    payload=decision.model_dump(mode="json"),
+                    payload={
+                        **decision.model_dump(mode="json"),
+                        **self._selected_call_metadata(tool_request),
+                    },
                 )
             )
             sequence += 1
@@ -302,6 +350,7 @@ class SimpleAgentStepRunner:
                             "tool_name": tool_request.tool_name,
                             "ok": False,
                             "error": decision.reason,
+                            **self._selected_call_metadata(tool_request),
                             "decision": decision.model_dump(mode="json"),
                             "result": tool_result.model_dump(mode="json"),
                         },
@@ -324,6 +373,7 @@ class SimpleAgentStepRunner:
                                     "approval_id": tool_request.approval_id,
                                     "session_id": tool_request.session_id,
                                     "tool_name": tool_request.tool_name,
+                                    **self._selected_call_metadata(tool_request),
                                     "reason": "approval already executed",
                                 },
                                 approval_id=tool_request.approval_id,
@@ -346,6 +396,10 @@ class SimpleAgentStepRunner:
                             "policy_reason": replay_pending.get("metadata", {}).get(
                                 "policy_reason"
                             ),
+                            **self._selected_call_metadata(tool_request),
+                            "request_fingerprint": self._request_fingerprint(
+                                tool_request
+                            ),
                         },
                     )
                 else:
@@ -356,6 +410,7 @@ class SimpleAgentStepRunner:
                                 **approval.metadata,
                                 "policy_reason": decision.reason,
                                 "matched_rule_ids": list(decision.matched_rule_ids),
+                                **self._selected_call_metadata(tool_request),
                                 "request_fingerprint": self._request_fingerprint(
                                     tool_request
                                 ),
@@ -394,6 +449,7 @@ class SimpleAgentStepRunner:
                 payload = {
                     **tool_result.model_dump(mode="json"),
                     "approval_id": tool_request.approval_id,
+                    **self._selected_call_metadata(tool_request),
                 }
                 trace.append(
                     self._trace(
@@ -432,6 +488,7 @@ class SimpleAgentStepRunner:
                                     "tool_name": tool_request.tool_name,
                                     "ok": verification.get("status") == "verified",
                                     "approval_id": tool_request.approval_id,
+                                    **self._selected_call_metadata(tool_request),
                                     "verification": verification,
                                 },
                                 approval_id=tool_request.approval_id,
@@ -493,15 +550,17 @@ class SimpleAgentStepRunner:
         if pending.get("requested_action") != request.arguments:
             return None, self._replay_error(request, "requested action mismatch")
         metadata = pending.get("metadata", {})
+        expected_tool_call_id = metadata.get("tool_call_id")
+        if not request.tool_call_id:
+            return None, self._replay_error(request, "tool_call_id missing")
+        if expected_tool_call_id != request.tool_call_id:
+            return None, self._replay_error(request, "tool_call_id mismatch")
         expected_fingerprint = metadata.get("request_fingerprint")
         if (
             expected_fingerprint is not None
             and expected_fingerprint != self._request_fingerprint(request)
         ):
             return None, self._replay_error(request, "request fingerprint mismatch")
-        expected_tool_call_id = metadata.get("tool_call_id")
-        if expected_tool_call_id is not None:
-            return None, self._replay_error(request, "tool_call_id mismatch")
         return pending, None
 
     def _find_pending_approval(self, approval_id: str | None) -> dict | None:
@@ -557,8 +616,17 @@ class SimpleAgentStepRunner:
             "approval_id": request.approval_id,
             "session_id": request.session_id,
             "tool_name": request.tool_name,
+            **SimpleAgentStepRunner._selected_call_metadata(request),
             "reason": reason,
             "requested_action": request.arguments,
+        }
+
+    @staticmethod
+    def _selected_call_metadata(request: ToolExecutionRequest) -> dict[str, Any]:
+        return {
+            "tool_call_id": request.tool_call_id,
+            "selection_origin": request.selection_origin,
+            "candidate_reason": request.candidate_reason,
         }
 
     @staticmethod
@@ -567,6 +635,9 @@ class SimpleAgentStepRunner:
             "session_id": request.session_id,
             "tool_name": request.tool_name,
             "arguments": request.arguments,
+            "tool_call_id": request.tool_call_id,
+            "selection_origin": request.selection_origin,
+            "candidate_reason": request.candidate_reason,
             "source_refs": [
                 source_ref.model_dump(mode="json", exclude={"approval_id"})
                 for source_ref in request.source_refs
@@ -592,6 +663,7 @@ class SimpleAgentStepRunner:
             metadata={
                 "tool_name": request.tool_name,
                 "approval_id": request.approval_id,
+                **SimpleAgentStepRunner._selected_call_metadata(request),
                 "ok": result.ok,
                 "result": result.result,
                 "verification": result.verification,

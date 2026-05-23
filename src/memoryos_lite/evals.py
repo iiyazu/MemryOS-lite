@@ -770,15 +770,17 @@ def _run_baseline(
             kernel_trace_events = [
                 event.model_dump(mode="json") for event in step.trace
             ]
-            approval_id = next(
+            pending_event = next(
                 (
-                    event.approval_id
+                    event
                     for event in step.trace
                     if event.event_type == "approval_pending" and event.approval_id
                 ),
                 None,
             )
-            if step.continuation == "pause" and approval_id:
+            if step.continuation == "pause" and pending_event is not None:
+                approval_id = pending_event.approval_id
+                tool_call_id = pending_event.payload["metadata"]["tool_call_id"]
                 resumed = service.agent_kernel.run_step(
                     AgentStepRequest(
                         session_id=context_session.id,
@@ -789,7 +791,12 @@ def _run_baseline(
                         context=v3_context_package,
                     ),
                     tool_requests=[
-                        tool_request.model_copy(update={"approval_id": approval_id})
+                        tool_request.model_copy(
+                            update={
+                                "approval_id": approval_id,
+                                "tool_call_id": tool_call_id,
+                            }
+                        )
                     ],
                 )
                 kernel_trace_events.extend(
