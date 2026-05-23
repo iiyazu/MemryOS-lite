@@ -2,26 +2,24 @@
   "phase": "phase-14",
   "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
   "state": {
-    "current_state": "ACK",
-    "current_phase_idx": 13,
+    "current_state": "GOD_DISPATCH",
+    "current_phase_idx": 14,
     "execute_lane": {
-      "phase": "phase-13",
-      "state": "ACK"
+      "phase": "phase-14",
+      "state": "GOD_DISPATCH"
     },
     "plan_lane": {
-      "phase": "phase-14",
+      "phase": "phase-15",
       "state": "PLAN_STORM"
     },
     "research_lane": {
-      "phases": [
-        "phase-14"
-      ]
+      "phases": []
     }
   },
   "context_bundle": {
     "path": "work/phase-14/context_bundle.md",
     "repo_path": ".hermes-loop/work/phase-14/context_bundle.md",
-    "summary": "Phase 14 should audit the opt-in kernel memory-action loop, keep archive_write as the baseline unless RED evidence shows broader tools are needed, and add explicit post-action verification without changing defaults."
+    "summary": "Phase 14 should audit the opt-in kernel memory-action loop, keep archive_write as the baseline unless RED evidence shows broader tools are needed, and add explicit post-action verification without changing defaults. Parallel benchmark gates must use isolated DATA_DIR values."
   },
   "objective": "Define the smallest credible Letta-style kernel memory-action loop audit that proves durable write, replay integrity, and post-action verification without enabling the v3 kernel by default.",
   "scope": [

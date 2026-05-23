@@ -6,9 +6,9 @@ Active goal: Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent 
 
 ## Current Controller Reading
 
-- `.hermes-loop/state.json` currently has `current_state = ACK`.
-- `execute_lane.phase = phase-13`, `execute_lane.state = ACK`.
-- `plan_lane.phase = phase-14`, `plan_lane.state = PLAN_STORM`.
+- `.hermes-loop/state.json` currently has `current_state = GOD_DISPATCH`.
+- `execute_lane.phase = phase-14`, `execute_lane.state = GOD_DISPATCH`.
+- `plan_lane.phase = phase-15`, `plan_lane.state = PLAN_STORM`.
 - `phase-14` has no `ack.json`, `review_verdict.json`, or `result.md`.
 
 ## Work Completed In This Pass
@@ -22,13 +22,15 @@ Active goal: Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent 
 - Wrote `work/phase-14/plan.md`.
 - Wrote `work/phase-14/plan_review.md` with PASS.
 - Promoted the reviewed plan to `work/phase-14/plan_final.md`.
-- Updated the root blueprint and `state.json` to carry the post-phase-13
-  kernel-maintenance sequence forward as phases 15-18.
+- Updated the root blueprint with the post-phase-13 kernel-maintenance sequence
+  and the parallel eval store-isolation rule.
+- Added `work/phase-13/reflect_phase-13.md` to record the narrow blueprint
+  amendment trigger from the phase-13 ACK.
 
 ## Safe Boundary
 
-No `src/`, `tests/`, `docs/`, `.memoryos/`, benchmark reports, or `state.json`
-were modified in this pass.
+No `src/`, `tests/`, `docs/`, `.memoryos/`, benchmark reports, or runtime log
+artifacts were modified in this pass.
 
 Do not execute phase-14 code changes until the controller promotes phase 14
 into the execute lane. Once promoted, execute from
@@ -36,7 +38,8 @@ into the execute lane. Once promoted, execute from
 
 ## Next Safe Action
 
-Run phase-14 execute-lane TDD from `plan_final.md`:
+Run phase-14 execute-lane TDD from `plan_final.md` once the controller enters
+the execute lane:
 
 1. add the failing `tool_verified` tests;
 2. implement archive-write verification and trace emission;

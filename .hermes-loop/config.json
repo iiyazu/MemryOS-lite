@@ -103,26 +103,47 @@
     },
     {
       "id": "phase-14",
-      "name": "Agent Memory Loop",
+      "name": "Opt-In Kernel Memory Action Verification",
       "target_state": "agent-loop-memory-usable",
       "plan_file": "blueprint.md",
-      "blueprint_heading": "Phase 14 - Agent Memory Loop"
+      "blueprint_heading": "Phase 14 - Opt-In Kernel Memory Action Verification"
     },
     {
       "id": "phase-15",
+      "name": "Diagnostic Kernel Maintenance Planner",
+      "target_state": "diagnostic-maintenance-planner-ready",
+      "plan_file": "blueprint.md",
+      "blueprint_heading": "Phase 15 - Diagnostic Kernel Maintenance Planner"
+    },
+    {
+      "id": "phase-16",
+      "name": "Kernel Maintenance Tool Surface",
+      "target_state": "kernel-maintenance-tools-usable",
+      "plan_file": "blueprint.md",
+      "blueprint_heading": "Phase 16 - Kernel Maintenance Tool Surface"
+    },
+    {
+      "id": "phase-17",
+      "name": "LoCoMo Maintenance Repair Eval",
+      "target_state": "locomo-maintenance-repair-measured",
+      "plan_file": "blueprint.md",
+      "blueprint_heading": "Phase 17 - LoCoMo Maintenance Repair Eval"
+    },
+    {
+      "id": "phase-18",
       "name": "Benchmark Governance And Promotion",
       "target_state": "governed-promotion-ready",
       "plan_file": "blueprint.md",
-      "blueprint_heading": "Phase 15 - Benchmark Governance And Promotion"
+      "blueprint_heading": "Phase 18 - Benchmark Governance And Promotion"
     }
   ],
   "max_retries_per_phase": 3,
   "model": "gpt-5.5",
   "test_command": "uv run pytest -q",
   "benchmark_commands": [
-    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge",
-    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge",
-    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge",
-    "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge"
+    "DATA_DIR=.hermes-loop/work/${PHASE_ID:-manual}/eval_${RUN_ID:-run}_longmemeval MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge",
+    "DATA_DIR=.hermes-loop/work/${PHASE_ID:-manual}/eval_${RUN_ID:-run}_locomo MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge",
+    "DATA_DIR=.hermes-loop/work/${PHASE_ID:-manual}/eval_${RUN_ID:-run}_longmemeval MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge",
+    "DATA_DIR=.hermes-loop/work/${PHASE_ID:-manual}/eval_${RUN_ID:-run}_locomo MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 30 --llm-answer --llm-judge"
   ]
 }

@@ -382,6 +382,11 @@ Mandatory rules:
 - **LongMemEval and LoCoMo eval commands must run in parallel**
   (separate background processes). Do not run them sequentially — this
   doubles wall-clock time.
+- Parallel public benchmark gates and smokes must use isolated `DATA_DIR`
+  values per benchmark and run id. Reports from a shared default `.memoryos`
+  store are invalid for promotion if either parallel process crashes,
+  cross-contaminates sessions, or cannot prove store isolation. Record each
+  `DATA_DIR` and report path in the phase result.
 
 - no projected/no-LLM report can satisfy a quality gate;
 - every quality gate command must explicitly include `--llm-answer` and

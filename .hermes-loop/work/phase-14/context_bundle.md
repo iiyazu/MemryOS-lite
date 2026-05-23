@@ -25,11 +25,12 @@ Target chain components:
 
 ## Why This Phase Exists Now
 
-`state.json` currently has phase 13 in `ACK` and phase 14 in `PLAN_STORM`.
+`state.json` currently has phase 14 in `GOD_DISPATCH`.
 Phase 13 completed the core-memory lifecycle: source-backed promotions update
 live core blocks in place, preserve history, enforce read-only boundaries, and
 render through the v3 composer. Phase 12 already proved the archival/RAG bridge
-for same-session attached archive passages.
+for same-session attached archive passages. Phase 13 reflection added a narrow
+root eval-isolation amendment for future parallel benchmark gates.
 
 The opt-in kernel path still has a narrower contract than the Letta-style loop:
 it can request approval, resume approval, run `archive_write`, and persist tool
@@ -99,27 +100,27 @@ Non-goals:
 
 From `.hermes-loop/state.json` at this refresh:
 
-- `current_state = ACK`;
-- `current_phase_idx = 13`;
-- `execute_lane.phase = phase-13`;
-- `execute_lane.state = ACK`;
-- `plan_lane.phase = phase-14`;
+- `current_state = GOD_DISPATCH`;
+- `current_phase_idx = 14`;
+- `execute_lane.phase = phase-14`;
+- `execute_lane.state = GOD_DISPATCH`;
+- `plan_lane.phase = phase-15`;
 - `plan_lane.state = PLAN_STORM`;
-- `research_lane.phases = ["phase-14"]`;
+- `research_lane.phases = []`;
 - `review_lane.active = false`;
 - `phase-11.status = in_progress`;
 - `phase-12.status = completed`;
 - `phase-13.status = completed`;
-- `phase-14.status = pending`;
+- `phase-14.status = in_progress`;
 - `phase-15.status = pending`;
 - `phase-16.status = pending`;
 - `phase-17.status = pending`;
 - `phase-18.status = pending`.
 
-Because this is phase-14 plan-lane work, do not write `src/`, `tests/`,
-`alembic/`, or active docs while drafting. Only `work/phase-14/` planning
-artifacts may be written until the phase becomes execute-lane work with a
-reviewed `plan_final.md`.
+Because `current_state` is `GOD_DISPATCH`, God may generate or refresh only
+phase-local context and dispatch artifacts. Do not run tests, evals, `uv`,
+`pytest`, `ruff`, or implementation commands until the controller enters the
+execute lane.
 
 ## Active Blueprint Sections
 
@@ -157,6 +158,7 @@ MemoryOS:
 - `.hermes-loop/work/phase-13/result.md`;
 - `.hermes-loop/work/phase-13/ack.json`;
 - `.hermes-loop/work/phase-13/review_verdict.json`;
+- `.hermes-loop/work/phase-13/reflect_phase-13.md`;
 - `.hermes-loop/work/phase-11/case_matrix.md`;
 - `.hermes-loop/work/phase-11/review_verdict.json`;
 - `docs/known-issues.md`;
@@ -231,6 +233,10 @@ Phase 13 public smokes were structural and not promotion evidence:
 - LongMemEval 5 projected/no-judge v3 smoke: `1 pass / 4 fail`;
 - LoCoMo 5 projected/no-judge v3 smoke: `0 pass / 5 fail`;
 - kernel trace events remained empty because the default kernel was off.
+
+Phase 13 reflection recorded a narrow root eval-isolation amendment for
+parallel public benchmark gates and smokes. Do not use shared default
+`.memoryos` stores for parallel promotion evidence.
 
 ## Pass-To-Fail Risks
 

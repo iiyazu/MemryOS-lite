@@ -1,21 +1,19 @@
 {
   "version": "2.0",
-  "current_state": "ACK",
-  "current_phase_idx": 13,
+  "current_state": "GOD_DISPATCH",
+  "current_phase_idx": 14,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-13",
-    "state": "ACK"
+    "phase": "phase-14",
+    "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-14",
+    "phase": "phase-15",
     "state": "PLAN_STORM"
   },
   "research_lane": {
-    "phases": [
-      "phase-14"
-    ]
+    "phases": []
   },
   "review_lane": {
     "active": false,
@@ -525,13 +523,39 @@
       "name": "Core Memory Lifecycle",
       "target_state": "core-memory-lifecycle-usable",
       "status": "completed",
-      "state_history": []
+      "state_history": [
+        {
+          "completed_at": "2026-05-23T16:35:25Z",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-13/context_bundle.md",
+            "review": "work/phase-13/reviews/codex-review.md",
+            "reflection": "work/phase-13/reflect_phase-13.md",
+            "tests_passed": 451,
+            "checks_passed": 5,
+            "case_level_eval": {
+              "longmemeval": "5-case full-chain LLM judge smoke: 5/5; answer_mode=llm; judge_status=judge_pass; source_hit=5/5",
+              "locomo": "5-case full-chain LLM judge smoke: 4/5; answer_mode=llm; judge_status=judge_pass/judge_fail; source_hit=2/5"
+            },
+            "real_path_wired": true,
+            "no_benchmark_improvement_claim": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "source_grounding_regressed": false,
+            "locomo_regressed_or_unexplained": false,
+            "eval_isolation_required": true
+          },
+          "commit": "2fe0d7d"
+        }
+      ]
     },
     {
       "id": "phase-14",
       "name": "Opt-In Kernel Memory Action Verification",
       "target_state": "agent-loop-memory-usable",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": []
     },
     {
@@ -563,5 +587,5 @@
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-23T16:22:54+00:00"
+  "last_updated": "2026-05-23T16:35:25Z"
 }

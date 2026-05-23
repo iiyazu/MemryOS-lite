@@ -61,3 +61,13 @@ uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_kernel_trac
 - This amendment does not enable the kernel by default.
 - This amendment does not claim benchmark improvement.
 - This amendment preserves the explicit `v1` fallback and `v3` default.
+
+## Additional Eval Isolation Amendment
+
+Triggered by phase-13 reflection evidence.
+
+Parallel public benchmark gates and smokes must use isolated `DATA_DIR`
+values per benchmark and run id. Reports from a shared default `.memoryos`
+store are invalid for promotion if either parallel process crashes,
+cross-contaminates sessions, or cannot prove store isolation. Record each
+`DATA_DIR` and report path in the phase result.

@@ -2,3 +2,14 @@ codex_output.log
 heartbeat.log
 run.lock
 crash.log
+reports/
+resume_prompt.md
+work/manual_*/
+work/**/logs/
+work/**/eval_runs/
+work/**/shards/
+work/**/stale/
+work/**/current_repeat_run_ts.txt
+work/**/eval_heartbeat*.json
+work/**/eval_heartbeat*.md
+work/**/phase-*_status.md
