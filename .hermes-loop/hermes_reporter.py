@@ -237,8 +237,18 @@ def start_god() -> bool:
     return False
 
 
+def read_legacy_report_state() -> dict:
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
 def main():
-    s = json.loads(STATE_FILE.read_text())
+    s = read_legacy_report_state()
 
     done = s.get("current_state") == "DONE"
     god_alive = is_god_alive()

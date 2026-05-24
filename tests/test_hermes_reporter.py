@@ -126,6 +126,27 @@ def test_reporter_refreshes_master_status_when_legacy_done(tmp_path: Path, monke
     assert latest["master"]["counts"]["mergeable"] == 0
 
 
+def test_reporter_handles_master_active_without_legacy_state_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reporter = load_reporter_module()
+    loop = tmp_path / ".hermes-loop"
+    state_file = loop / "state.json"
+    write_json(loop / "master_state.json", base_master_state_for_reporter())
+
+    monkeypatch.setattr(reporter, "LOOP", loop)
+    monkeypatch.setattr(reporter, "PROJECT", tmp_path)
+    monkeypatch.setattr(reporter, "LAUNCHER", loop / "god_launcher.sh")
+    monkeypatch.setattr(reporter, "STATE_FILE", state_file)
+    monkeypatch.setattr(reporter, "LOCK_FILE", loop / "run.lock")
+    monkeypatch.setattr(reporter, "start_god", lambda: False)
+
+    report = reporter.main()
+
+    assert report["master"]["activation_state"] == "master_active"
+    assert (loop / "master_status.json").exists()
+
+
 def test_latest_markdown_surfaces_master_review_queue(
     tmp_path: Path,
     monkeypatch,
