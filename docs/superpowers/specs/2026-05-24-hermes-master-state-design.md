@@ -118,7 +118,8 @@ treated as active controller metadata after migration.
         "merge_approval_request": ".hermes-loop/approvals/feature-id/merge_approval_request.json",
         "merge_approval": ".hermes-loop/approvals/feature-id/merge_approval.json",
         "post_merge_verification": ".hermes-loop/approvals/feature-id/post_merge_verification.json",
-        "merge_decision": ".hermes-loop/approvals/feature-id/merge_decision.json"
+        "merge_decision": ".hermes-loop/approvals/feature-id/merge_decision.json",
+        "next_action": ".hermes-loop/approvals/feature-id/next_action.json"
       },
       "merge": {
         "status": "ready_for_master_review",
@@ -172,11 +173,11 @@ merge state.
 
 `master_state.decisions[]` is an append-only index of Master decision artifacts.
 It may summarize decision type, feature id, state transition, artifact path, and
-digest. It is not an independent decision source. The authoritative artifacts are
-`master_review.json`, `integrated_tests.json`, `merge_approval_request.json`,
-`merge_approval.json`, `post_merge_verification.json`, and
-`merge_decision.json`; if the index disagrees with an artifact, the feature is
-blocked until repaired.
+digest. It is not an independent decision source. The authoritative artifacts
+are `master_review.json`, `integrated_tests.json`,
+`merge_approval_request.json`, `merge_approval.json`,
+`post_merge_verification.json`, `merge_decision.json`, and `next_action.json`.
+If the index disagrees with an artifact, the feature is blocked until repaired.
 
 ### Master Blueprint And Prompts
 
@@ -347,6 +348,11 @@ Rules:
   `held_after_merge`.
 - `held_after_merge` must not contribute to merged counts or merged summaries
   until a later revert or repair-forward decision closes it.
+- `reverted_after_merge` enters `held` as a closed non-merged state and must not
+  contribute to merged counts.
+- `repair_forward_open` keeps the original feature in `held` and requires a
+  linked repair feature in `active_lanes`.
+- `manual_hold` remains in `held`.
 - `merge.status` must not be ahead of feature state.
 - `features[]` and `queues` must be consistent.
 
@@ -501,6 +507,8 @@ Approval artifacts live outside feature-local work directories:
 - `.hermes-loop/approvals/<feature-id>/merge_approval.json`
 - `.hermes-loop/approvals/<feature-id>/merge_decision.json`
 - `.hermes-loop/approvals/<feature-id>/post_merge_verification.json`
+- `.hermes-loop/approvals/<feature-id>/next_action.json`
+- `.hermes-loop/approvals/<feature-id>/next_action_verification.json`
 
 The `approvals/` tree is Master/external-owned. Slave Gods may read approval
 state if needed, but may not create, edit, move, or delete approval artifacts.
@@ -794,8 +802,13 @@ Required next-action artifact schema:
   "repair_feature_id": null,
   "repair_lane_ref": null,
   "manual_hold_ref": null,
+  "manual_hold_digest": null,
+  "actor": "maintainer-or-automation-id",
+  "actor_type": "master_god|human|trusted_automation",
+  "provenance_ref": ".hermes-loop/approvals/feature-id/next_action_verification.json",
+  "provenance_digest": "sha256:next-action-provenance-digest",
   "verification_refs": [
-    ".hermes-loop/approvals/feature-id/revert_verification.json"
+    ".hermes-loop/approvals/feature-id/next_action_verification.json"
   ],
   "verification_digests": [
     "sha256:next-action-verification-digest"
@@ -819,7 +832,9 @@ Closure rules:
   until the repair lane completes its own Master review and merge gates.
 - `manual_hold` closes only the emergency post-merge failure state; it records
   `feature.state=manual_hold` and `merge.status=manual_hold`, remains in `held`,
-  and requires external maintainer provenance.
+  and requires external maintainer provenance. For `manual_hold`, `actor`,
+  `actor_type=human|trusted_automation`, `manual_hold_ref`,
+  `manual_hold_digest`, `provenance_ref`, and `provenance_digest` are required.
 
 ## Migration
 
@@ -954,6 +969,11 @@ status:
 - Plain `held` or `rejected` with `blocked_gate=post_merge_verification` is
   invalid; use `held_after_merge` once a merge commit reaches the target branch.
 - Missing or failed next-action closure artifact keeps `held_after_merge` open.
+- Missing registry path or authoritative-index coverage for `next_action.json`
+  blocks closure of `held_after_merge`.
+- `repair_forward_open` without a linked repair lane in `active_lanes` is
+  invalid.
+- `manual_hold` without manual hold digest and external provenance is invalid.
 - Missing, malformed, digest-mismatched, conditionally invalid, or inconsistent
   `merge_decision`: feature cannot be marked merged.
 - GitHub unavailable: degrade to local-only and keep local gates.
@@ -991,6 +1011,9 @@ Add `tests/test_hermes_master_state.py` for:
   `.hermes-loop/master/features/<feature-id>/`, are Master-owned, and reject
   Slave-authored or feature-local copies as active gate evidence;
 - `master_state.features[].artifacts` includes `post_merge_verification`;
+- `master_state.features[].artifacts` includes `next_action`;
+- `master_state.decisions[]` authoritative artifact list includes
+  `next_action.json`;
 - `master_review.json` records feature id, branch/base/head/target, status,
   recorded_by, source artifact refs, artifact digests, findings, and policy
   checks;
@@ -1046,6 +1069,11 @@ Add `tests/test_hermes_master_state.py` for:
 - next-action closure updates `feature.state` and `merge.status` to
   `reverted_after_merge`, `repair_forward_open`, or `manual_hold` according to
   the action, and none of those closure states count as merged;
+- `reverted_after_merge` and `manual_hold` map to `held`; `repair_forward_open`
+  keeps the original feature in `held` and requires a linked repair lane in
+  `active_lanes`;
+- `manual_hold` next-action artifacts require `manual_hold_ref`,
+  `manual_hold_digest`, actor, actor type, provenance ref, and provenance digest;
 - malformed `merge.status` ahead of feature state is blocked;
 - invalid or unexpectedly inactive `master_state.json` blocks active execution
   instead of falling back to legacy state;
