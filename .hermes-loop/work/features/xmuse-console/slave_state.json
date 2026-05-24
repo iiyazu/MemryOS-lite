@@ -1,0 +1,26 @@
+{
+  "artifacts": {
+    "ack": "work/features/xmuse-console/ack.json",
+    "integrated_tests": ".hermes-loop/master/features/xmuse-console/integrated_tests.json",
+    "master_review": ".hermes-loop/master/features/xmuse-console/master_review.json",
+    "merge_approval": ".hermes-loop/approvals/xmuse-console/merge_approval.json",
+    "merge_approval_request": ".hermes-loop/approvals/xmuse-console/merge_approval_request.json",
+    "merge_decision": ".hermes-loop/approvals/xmuse-console/merge_decision.json",
+    "next_action": ".hermes-loop/approvals/xmuse-console/next_action.json",
+    "post_merge_verification": ".hermes-loop/approvals/xmuse-console/post_merge_verification.json",
+    "result": "work/features/xmuse-console/result.md",
+    "review_verdict": "work/features/xmuse-console/review_verdict.json"
+  },
+  "feature_id": "xmuse-console",
+  "last_updated": "2026-05-24T14:02:10Z",
+  "mode": "feature_local_single_god",
+  "runner": {
+    "agent_id": "slave-god-xmuse-console",
+    "endpoint": null,
+    "protocol": "hermes-local",
+    "task_id": null,
+    "type": "local_codex"
+  },
+  "state": "planned",
+  "version": "1.0"
+}
