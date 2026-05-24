@@ -92,3 +92,90 @@ def test_master_state_accepts_pending_inactive_state():
 
     assert result["valid"] is True
     assert result["errors"] == []
+
+
+def test_active_controller_uses_master_state_when_active(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    state = base_master_state()
+    write_json(loop / "master_state.json", state)
+
+    result = hardening.resolve_active_controller(loop)
+
+    assert result["source"] == "master"
+    assert result["execution_allowed"] is True
+    assert result["state"]["activation_state"] == "master_active"
+
+
+def test_active_controller_blocks_invalid_master_without_legacy_fallback(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    bad = base_master_state()
+    bad["activation_state"] = "master_pending"
+    bad["active"] = True
+    write_json(loop / "master_state.json", bad)
+    write_json(loop / "state.json", {"current_state": "DONE"})
+
+    result = hardening.resolve_active_controller(loop)
+
+    assert result["source"] == "blocked"
+    assert result["execution_allowed"] is False
+    assert "active must be false unless activation_state is master_active" in result["errors"]
+
+
+def test_active_controller_allows_legacy_before_master_exists(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_json(loop / "state.json", {"current_state": "DONE", "current_phase_idx": 18})
+
+    result = hardening.resolve_active_controller(loop)
+
+    assert result["source"] == "legacy_root"
+    assert result["execution_allowed"] is True
+    assert result["state"]["current_state"] == "DONE"
+
+
+def test_active_controller_never_executes_isolated_legacy_without_audit(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_json(
+        loop / "legacy" / "root-loop" / "state.json",
+        {"current_state": "DONE", "current_phase_idx": 18},
+    )
+
+    result = hardening.resolve_active_controller(loop)
+
+    assert result["source"] == "legacy_isolated"
+    assert result["execution_allowed"] is False
+    assert result["errors"] == ["isolated legacy root-loop is audit-only"]
+
+
+def test_active_controller_can_read_isolated_legacy_for_explicit_audit(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_json(
+        loop / "legacy" / "root-loop" / "state.json",
+        {"current_state": "DONE", "current_phase_idx": 18},
+    )
+
+    result = hardening.resolve_active_controller(loop, audit=True)
+
+    assert result["source"] == "legacy_isolated"
+    assert result["execution_allowed"] is False
+    assert result["state"]["current_state"] == "DONE"
+
+
+def test_active_controller_reports_pending_master_as_prepare(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    pending = base_master_state()
+    pending["activation_state"] = "master_pending"
+    pending["active"] = False
+    write_json(loop / "master_state.json", pending)
+    write_json(loop / "state.json", {"current_state": "DONE", "current_phase_idx": 18})
+
+    result = hardening.resolve_active_controller(loop)
+
+    assert result["source"] == "master_pending"
+    assert result["execution_allowed"] is False
+    assert result["legacy_source"] == str(loop / "state.json")
