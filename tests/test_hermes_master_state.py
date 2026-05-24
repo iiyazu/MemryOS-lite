@@ -179,3 +179,81 @@ def test_active_controller_reports_pending_master_as_prepare(tmp_path):
     assert result["source"] == "master_pending"
     assert result["execution_allowed"] is False
     assert result["legacy_source"] == str(loop / "state.json")
+
+
+def write_legacy_inputs(loop: Path) -> None:
+    write_json(loop / "state.json", {"current_state": "DONE", "current_phase_idx": 18})
+    write_json(
+        loop / "feature_lanes.json",
+        {
+            "version": "1.0",
+            "features": [
+                {
+                    "id": "v1-quarantine",
+                    "name": "v1 Quarantine",
+                    "state": "ready_for_master_review",
+                    "branch": "feature/v1-quarantine",
+                    "target_branch": "main",
+                    "worktree": "../memoryOS-v1-quarantine",
+                    "artifacts": {
+                        "result": ".hermes-loop/work/features/v1-quarantine/result.md",
+                        "ack": ".hermes-loop/work/features/v1-quarantine/ack.json",
+                        "review_verdict": ".hermes-loop/work/features/v1-quarantine/review_verdict.json",
+                    },
+                    "merge": {"status": "ready_for_master_review", "target_branch": "main"},
+                },
+                {
+                    "id": "archive-rag",
+                    "name": "Archive RAG",
+                    "state": "planned",
+                    "branch": "feature/archive-rag",
+                    "target_branch": "main",
+                    "worktree": "../memoryOS-archive-rag",
+                    "artifacts": {},
+                    "merge": {"status": "planned", "target_branch": "main"},
+                },
+            ],
+        },
+    )
+    write_json(loop / "config.json", {"phases": [], "reporter": {"enabled": True}})
+    (loop / "blueprint.md").write_text("# Legacy Blueprint\n")
+    (loop / "blueprint.zh.md").write_text("# Legacy Blueprint ZH\n")
+    (loop / "god_loop_prompt.md").write_text("legacy prompt reads state.json\n")
+    write_json(loop / "contracts" / "god_dispatch_template.json", {"legacy": True})
+
+
+def test_prepare_master_migration_generates_pending_master_files(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_legacy_inputs(loop)
+
+    result = hardening.prepare_master_migration(loop)
+
+    assert result["status"] == "prepared"
+    master_state = json.loads((loop / "master_state.json").read_text())
+    assert master_state["activation_state"] == "master_pending"
+    assert master_state["active"] is False
+    assert [feature["id"] for feature in master_state["features"]] == ["v1-quarantine", "archive-rag"]
+    assert (
+        master_state["features"][0]["slave_state_path"]
+        == ".hermes-loop/work/features/v1-quarantine/slave_state.json"
+    )
+    assert (loop / "master_blueprint.md").exists()
+    assert (loop / "master_config.json").exists()
+    assert (loop / "prompts" / "master_god_prompt.md").exists()
+    assert (loop / "prompts" / "slave_god_prompt.md").exists()
+    assert (loop / "contracts" / "master_dispatch_template.json").exists()
+    assert (loop / "contracts" / "slave_dispatch_template.json").exists()
+    assert (loop / "work" / "features" / "v1-quarantine" / "slave_state.json").exists()
+    assert (loop / "approvals").is_dir()
+    assert (loop / "state.json").exists()
+
+
+def test_prepare_master_migration_does_not_synthesize_merge_approval(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_legacy_inputs(loop)
+
+    hardening.prepare_master_migration(loop)
+
+    assert not (loop / "approvals" / "v1-quarantine" / "merge_approval.json").exists()

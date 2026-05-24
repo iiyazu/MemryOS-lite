@@ -277,6 +277,175 @@ def resolve_active_controller(loop_root: str | Path, *, audit: bool = False) -> 
     }
 
 
+def _project_relative(path: Path) -> str:
+    return str(path).replace("\\", "/")
+
+
+def _master_feature_from_legacy(feature: dict[str, Any]) -> dict[str, Any]:
+    feature_id = feature["id"]
+    artifacts = feature.get("artifacts", {})
+    merge = feature.get("merge", {})
+    target_branch = feature.get("target_branch", merge.get("target_branch", "main"))
+    return {
+        "id": feature_id,
+        "name": feature.get("name", feature_id),
+        "state": feature.get("state", "planned"),
+        "branch": feature.get("branch", f"feature/{feature_id}"),
+        "target_branch": target_branch,
+        "worktree": feature.get("worktree", f"../memoryOS-{feature_id}"),
+        "slave_state_path": f".hermes-loop/work/features/{feature_id}/slave_state.json",
+        "slave_god": {
+            "owner": f"slave-god-{feature_id}",
+            "mode": "feature_local_single_god",
+            "last_reported_at": "",
+        },
+        "blueprint_path": f".hermes-loop/work/features/{feature_id}/blueprint.md",
+        "artifacts": {
+            "result": artifacts.get("result", f".hermes-loop/work/features/{feature_id}/result.md"),
+            "ack": artifacts.get("ack", f".hermes-loop/work/features/{feature_id}/ack.json"),
+            "review_verdict": artifacts.get(
+                "review_verdict",
+                f".hermes-loop/work/features/{feature_id}/review_verdict.json",
+            ),
+            "integrated_tests": f".hermes-loop/master/features/{feature_id}/integrated_tests.json",
+            "master_review": f".hermes-loop/master/features/{feature_id}/master_review.json",
+            "merge_approval_request": f".hermes-loop/approvals/{feature_id}/merge_approval_request.json",
+            "merge_approval": f".hermes-loop/approvals/{feature_id}/merge_approval.json",
+            "post_merge_verification": f".hermes-loop/approvals/{feature_id}/post_merge_verification.json",
+            "merge_decision": f".hermes-loop/approvals/{feature_id}/merge_decision.json",
+            "next_action": f".hermes-loop/approvals/{feature_id}/next_action.json",
+        },
+        "merge": {
+            "status": merge.get("status", feature.get("state", "planned")),
+            "target_branch": target_branch,
+            "strategy": "no_ff_merge_commit",
+            "github_pr": merge.get("github_pr"),
+        },
+        "policy_flags": {
+            "requires_integrated_tests": True,
+            "requires_explicit_merge_approval": True,
+            "allows_github_evidence": True,
+        },
+        "risk": feature.get("risk", {"level": "medium", "notes": []}),
+    }
+
+
+def _empty_master_queues() -> dict[str, list[str]]:
+    return {name: [] for name in sorted(MASTER_QUEUE_NAMES)}
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def derive_master_queues(master_state: dict[str, Any]) -> dict[str, Any]:
+    queues = _empty_master_queues()
+    for feature in master_state.get("features", []):
+        feature_id = feature["id"]
+        state = feature.get("state")
+        if state == "planned":
+            queues["planning_queue"].append(feature_id)
+        elif state == "ready_for_master_review":
+            queues["master_review_queue"].append(feature_id)
+        elif state in {"active", "executing", "review"}:
+            queues["active_lanes"].append(feature_id)
+        elif state in {"held", "held_after_merge", "reverted_after_merge", "repair_forward_open", "manual_hold"}:
+            queues["held"].append(feature_id)
+        elif state == "merged":
+            queues["merged"].append(feature_id)
+        elif state == "blocked":
+            queues["blocked"].append(feature_id)
+    return {"queues": queues, "errors": []}
+
+
+def prepare_master_migration(loop_root: str | Path) -> dict[str, Any]:
+    loop = Path(loop_root)
+    legacy_state = json.loads((loop / "state.json").read_text(encoding="utf-8"))
+    legacy_lanes_path = loop / "feature_lanes.json"
+    legacy_lanes = (
+        json.loads(legacy_lanes_path.read_text(encoding="utf-8"))
+        if legacy_lanes_path.exists()
+        else {"features": []}
+    )
+    features = [_master_feature_from_legacy(feature) for feature in legacy_lanes.get("features", [])]
+
+    master_state = {
+        "version": "1.0",
+        "mode": "master_control",
+        "activation_state": "master_pending",
+        "active": False,
+        "history_baseline": ".hermes-loop/history/main_loop_phase0_18.json",
+        "legacy_root_loop": ".hermes-loop/legacy/root-loop/",
+        "master_blueprint": ".hermes-loop/master_blueprint.md",
+        "master_config": ".hermes-loop/master_config.json",
+        "prompts": {
+            "master": ".hermes-loop/prompts/master_god_prompt.md",
+            "slave": ".hermes-loop/prompts/slave_god_prompt.md",
+        },
+        "dispatch_contracts": {
+            "master": ".hermes-loop/contracts/master_dispatch_template.json",
+            "slave": ".hermes-loop/contracts/slave_dispatch_template.json",
+        },
+        "master_policy": {
+            "v1_fallback_preserved": True,
+            "kernel_opt_in_preserved": True,
+            "no_benchmark_score_targets": True,
+            "same_slice_repair_smoke_not_promotion": True,
+        },
+        "features": features,
+        "queues": derive_master_queues({"features": features})["queues"],
+        "decisions": [],
+        "integration": {"legacy_state": legacy_state},
+        "github": {"enabled": False},
+        "last_updated": "2026-05-24T00:00:00Z",
+    }
+
+    _write_json(loop / "master_state.json", master_state)
+    (loop / "master_blueprint.md").write_text(
+        "# Hermes Master Blueprint\n\n"
+        "Master is the only active controller after activation. "
+        "Legacy root-loop files are audit history.\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        loop / "master_config.json",
+        {"version": "1.0", "allowed_target_branches": ["main"], "merge_strategy": "no_ff_merge_commit"},
+    )
+    (loop / "prompts" / "master_god_prompt.md").parent.mkdir(parents=True, exist_ok=True)
+    (loop / "prompts" / "master_god_prompt.md").write_text(
+        "Read master_state.json, master_config.json, master_blueprint.md, and master dispatch contract before acting.\n",
+        encoding="utf-8",
+    )
+    (loop / "prompts" / "slave_god_prompt.md").write_text(
+        "Read assigned feature registry entry, slave prompt, slave dispatch contract, slave_state.json, and feature blueprint.\n",
+        encoding="utf-8",
+    )
+    _write_json(loop / "contracts" / "master_dispatch_template.json", {"version": "1.0", "role": "master_god"})
+    _write_json(loop / "contracts" / "slave_dispatch_template.json", {"version": "1.0", "role": "slave_god"})
+
+    for feature in features:
+        feature_id = feature["id"]
+        _write_json(
+            loop / "work" / "features" / feature_id / "slave_state.json",
+            {
+                "version": "1.0",
+                "feature_id": feature_id,
+                "mode": "feature_local_single_god",
+                "state": feature["state"],
+                "artifacts": feature["artifacts"],
+                "last_updated": "2026-05-24T00:00:00Z",
+            },
+        )
+        (loop / "work" / "features" / feature_id / "blueprint.md").parent.mkdir(parents=True, exist_ok=True)
+        (loop / "work" / "features" / feature_id / "blueprint.md").touch(exist_ok=True)
+        (loop / "master" / "features" / feature_id).mkdir(parents=True, exist_ok=True)
+        (loop / "approvals" / feature_id).mkdir(parents=True, exist_ok=True)
+
+    validation = validate_master_state(master_state)
+    return {"status": "prepared" if validation["valid"] else "blocked", "validation": validation}
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.tmp")
