@@ -173,7 +173,8 @@ merge state.
 `master_state.decisions[]` is an append-only index of Master decision artifacts.
 It may summarize decision type, feature id, state transition, artifact path, and
 digest. It is not an independent decision source. The authoritative artifacts are
-`master_review.json`, `merge_approval_request.json`, `merge_approval.json`, and
+`master_review.json`, `integrated_tests.json`, `merge_approval_request.json`,
+`merge_approval.json`, `post_merge_verification.json`, and
 `merge_decision.json`; if the index disagrees with an artifact, the feature is
 blocked until repaired.
 
@@ -638,13 +639,13 @@ These ancestry rules apply to `merge_strategy=no_ff_merge_commit`; squash,
 rebase, fast-forward-only, and host-specific PR merge strategies are invalid for
 this design.
 
-Required final decision schema:
+Required final decision schema for `decision=merged`:
 
 ```json
 {
   "version": "1.0",
   "feature_id": "feature-id",
-  "decision": "merged|held|rejected",
+  "decision": "merged",
   "final_state": "merged",
   "approved_head": "abcdef123456",
   "target_branch": "main",
@@ -667,11 +668,41 @@ Required final decision schema:
 }
 ```
 
-For `decision=merged`, `merge_commit` or `github_pr` is required. For
-`decision=held` or `decision=rejected`, the artifact must include reasons and
-must not advance the feature to `merged`. Approval request, approval, and
-post-merge verification digests must match the current artifact contents when
-Master records the final decision.
+For `decision=merged`, `merge_commit` is required. `github_pr` is optional
+supporting metadata and cannot replace `merge_commit`. Approval request,
+approval, and post-merge verification digests must match the current artifact
+contents when Master records the final decision.
+
+Required final decision schema for `decision=held` or `decision=rejected`:
+
+```json
+{
+  "version": "1.0",
+  "feature_id": "feature-id",
+  "decision": "held|rejected",
+  "final_state": "held|rejected",
+  "blocked_gate": "master_review|integrated_tests|approval|merge_execution|post_merge_verification|policy",
+  "reasons": [
+    "Human-readable reason tied to evidence."
+  ],
+  "target_branch": "main",
+  "approved_head": null,
+  "merge_strategy": "no_ff_merge_commit",
+  "existing_evidence_refs": [
+    ".hermes-loop/master/features/feature-id/master_review.json"
+  ],
+  "existing_evidence_digests": [
+    "sha256:existing-evidence-digest"
+  ],
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T00:00:00Z"
+}
+```
+
+For `decision=held` or `decision=rejected`, `reasons[]` and `blocked_gate` are
+required, evidence refs/digests are optional but must match if present, and
+`final_state=merged`, `merge_commit`, and post-merge verification refs are
+forbidden.
 
 ## Migration
 
@@ -795,8 +826,8 @@ status:
   provenance check is unverifiable and cannot be merged.
 - Missing, malformed, or failed `post_merge_verification`: feature cannot be
   marked merged.
-- Missing, malformed, digest-mismatched, or inconsistent `merge_decision`:
-  feature cannot be marked merged.
+- Missing, malformed, digest-mismatched, conditionally invalid, or inconsistent
+  `merge_decision`: feature cannot be marked merged.
 - GitHub unavailable: degrade to local-only and keep local gates.
 
 ## Testing
@@ -860,9 +891,12 @@ Add `tests/test_hermes_master_state.py` for:
 - `merge_approval.json` must live under `.hermes-loop/approvals/<feature-id>/`
   and must include verified signed approval, trusted git signature, GitHub
   review/check, signed commit/tag, or CI artifact evidence;
-- `merge_decision.json` records final state, approved head, merge commit or PR,
+- `merge_decision.json` for `decision=merged` requires `merge_commit` plus
   approval refs/digests, approval request refs/digests, and post-merge
-  verification refs/digests;
+  verification refs/digests; `github_pr` is optional metadata only;
+- `merge_decision.json` for `decision=held|rejected` requires `blocked_gate`
+  and `reasons[]`, allows existing evidence refs/digests, and forbids
+  `final_state=merged`, `merge_commit`, and post-merge verification refs;
 - `post_merge_verification.json` records target branch, pre/post HEAD, merge
   commit, ancestry check, verification commands, result artifact digests, and
   status;
