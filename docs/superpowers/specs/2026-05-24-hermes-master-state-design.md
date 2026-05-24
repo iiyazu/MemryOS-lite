@@ -117,12 +117,13 @@ treated as active controller metadata after migration.
         "master_review": ".hermes-loop/master/features/feature-id/master_review.json",
         "merge_approval_request": ".hermes-loop/approvals/feature-id/merge_approval_request.json",
         "merge_approval": ".hermes-loop/approvals/feature-id/merge_approval.json",
+        "post_merge_verification": ".hermes-loop/approvals/feature-id/post_merge_verification.json",
         "merge_decision": ".hermes-loop/approvals/feature-id/merge_decision.json"
       },
       "merge": {
         "status": "ready_for_master_review",
         "target_branch": "main",
-        "strategy": "no_ff_or_pr",
+        "strategy": "no_ff_merge_commit",
         "github_pr": null
       },
       "policy_flags": {
@@ -281,6 +282,8 @@ Master may autonomously:
 - queue a feature for merge when gates are met;
 - write `merge_approval_request.json` when a feature is ready for explicit
   approval;
+- write `post_merge_verification.json` after an approved merge attempt;
+- write `merge_decision.json` after merge execution or hold/reject;
 - write Master decisions with evidence.
 
 Master may not autonomously:
@@ -340,6 +343,18 @@ Rules:
   post-merge verification.
 - `merge.status` must not be ahead of feature state.
 - `features[]` and `queues` must be consistent.
+
+## Merge Strategy
+
+The initial Master control plane supports one merge strategy:
+
+- `no_ff_merge_commit`: merge the approved feature head into the target branch
+  with a merge commit. The approved feature head must remain an ancestor of the
+  post-merge target branch head.
+
+Squash merge, rebase merge, fast-forward-only merge, and any PR-host-specific
+strategy are out of scope for this design. They must be rejected unless a later
+design adds explicit strategy values, schemas, and verification rules.
 
 ## Hybrid Git / GitHub Collaboration
 
@@ -469,10 +484,10 @@ intends to request for merge approval.
 ## Merge Approval Contract
 
 `merge_approval.json` is an explicit authorization artifact, not another Master
-decision. It cannot be created or modified by a Slave God, and Master may only
-create `merge_approval_request.json`. A valid approval must come from a human
-maintainer or trusted repository automation outside both the Master and Slave
-execution loops.
+decision. It cannot be created or modified by Master or a Slave God. Master may
+create `merge_approval_request.json`, `post_merge_verification.json`, and
+`merge_decision.json`. A valid approval must come from a human maintainer or
+trusted repository automation outside both the Master and Slave execution loops.
 
 Approval artifacts live outside feature-local work directories:
 
@@ -507,7 +522,7 @@ Required request schema:
   "master_review_digest": "sha256:master-review-json-canonical-digest",
   "integrated_tests_ref": ".hermes-loop/master/features/feature-id/integrated_tests.json",
   "integrated_tests_digest": "sha256:integrated-tests-json-canonical-digest",
-  "merge_strategy": "no_ff_or_pr",
+  "merge_strategy": "no_ff_merge_commit",
   "policy_snapshot_ref": ".hermes-loop/master_state.json#features/feature-id",
   "policy_snapshot_digest": "sha256:policy-snapshot-json-canonical-digest",
   "request_digest": "sha256:request-json-canonical-digest"
@@ -539,7 +554,7 @@ Required approval schema:
   "master_review_digest": "sha256:master-review-json-canonical-digest",
   "integrated_tests_ref": ".hermes-loop/master/features/feature-id/integrated_tests.json",
   "integrated_tests_digest": "sha256:integrated-tests-json-canonical-digest",
-  "merge_strategy": "no_ff_or_pr",
+  "merge_strategy": "no_ff_merge_commit",
   "policy_snapshot_ref": ".hermes-loop/master_state.json#features/feature-id",
   "policy_snapshot_digest": "sha256:policy-snapshot-json-canonical-digest",
   "verification": {
@@ -619,6 +634,9 @@ For `status=passed`, `post_merge_head` must be on `target_branch`,
 `approved_head` must be an ancestor of `post_merge_head`, and each required
 verification command must have `status=passed` plus an artifact digest. Failed or
 missing post-merge verification prevents `merge_decision.decision=merged`.
+These ancestry rules apply to `merge_strategy=no_ff_merge_commit`; squash,
+rebase, fast-forward-only, and host-specific PR merge strategies are invalid for
+this design.
 
 Required final decision schema:
 
@@ -630,7 +648,7 @@ Required final decision schema:
   "final_state": "merged",
   "approved_head": "abcdef123456",
   "target_branch": "main",
-  "merge_strategy": "no_ff_or_pr",
+  "merge_strategy": "no_ff_merge_commit",
   "merge_commit": "fedcba654321",
   "github_pr": null,
   "approval_ref": ".hermes-loop/approvals/feature-id/merge_approval.json",
@@ -765,6 +783,8 @@ status:
   cannot enter merge queue.
 - Master review and integrated-test evidence with branch, base commit, head
   commit, or target branch mismatches cannot enter merge queue.
+- Unsupported merge strategy, including squash, rebase, fast-forward-only, or
+  host-specific PR strategy, cannot enter merge queue.
 - Missing, malformed, or digest-mismatched `merge_approval_request`: feature
   cannot be merged.
 - Changed master review, integrated-test, or policy snapshot contents after
@@ -811,6 +831,7 @@ Add `tests/test_hermes_master_state.py` for:
 - `master_review.json` and `integrated_tests.json` live under
   `.hermes-loop/master/features/<feature-id>/`, are Master-owned, and reject
   Slave-authored or feature-local copies as active gate evidence;
+- `master_state.features[].artifacts` includes `post_merge_verification`;
 - `master_review.json` records feature id, branch/base/head/target, status,
   recorded_by, source artifact refs, artifact digests, findings, and policy
   checks;
@@ -830,6 +851,8 @@ Add `tests/test_hermes_master_state.py` for:
   snapshot digests from the approval request;
 - `approved_commit`, `base_commit`, `approved_range`, and `target_branch` must
   all match the approval request and actual merge input;
+- only `merge_strategy=no_ff_merge_commit` is accepted; squash, rebase,
+  fast-forward-only, and host-specific PR strategies are rejected;
 - `merge_approval.json` rejects missing actor, wrong commit range, wrong target
   branch, stale test/review refs, self-signed Master approval, and Slave-authored
   approval;
