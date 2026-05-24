@@ -1,0 +1,67 @@
+{
+  "feature_id": "xmuse-console",
+  "ack_level": "partial",
+  "branch": "feat/xmuse-console",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-console",
+  "head": "f6466902c85c0f6b17f94f47f37a2c3dc37d346f",
+  "head_ref": "feat/xmuse-console@f6466902c85c0f6b17f94f47f37a2c3dc37d346f",
+  "committed": true,
+  "worktree_clean": true,
+  "no_write_operation_added": true,
+  "xmuse_enabled_default": false,
+  "xmuse_opt_in_env": "MEMORYOS_XMUSE_ENABLED=1",
+  "local_only": true,
+  "redaction_default": "redacted",
+  "local_sensitive_fields_redacted_by_default": true,
+  "v3_default_preserved": true,
+  "v1_fallback_preserved": true,
+  "v2_recall_pipeline_opt_in_preserved": true,
+  "kernel_default_unchanged": true,
+  "sqlite_authority_unchanged": true,
+  "benchmark_improvement_claim": false,
+  "review_eval_decision": {
+    "implemented_feature_path": "PASS",
+    "promotion_gate": "FAIL",
+    "reason": "Full repository mypy gate failed outside xmuse scope."
+  },
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_xmuse_snapshot.py tests/test_xmuse_adapter.py tests/test_xmuse_api.py -q",
+      "result": "RED before implementation: collection failed because memoryos_lite.xmuse did not exist"
+    },
+    {
+      "command": "uv run pytest tests/test_xmuse_adapter.py tests/test_xmuse_snapshot.py tests/test_xmuse_api.py tests/test_xmuse_frontend.py tests/test_api.py -q",
+      "result": "21 passed in 10.53s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "614 passed, 1 warning in 1282.92s"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed"
+    },
+    {
+      "command": "uv run mypy src/memoryos_lite/xmuse src/memoryos_lite/api/xmuse.py src/memoryos_lite/config.py",
+      "result": "Success: no issues found in 4 source files"
+    },
+    {
+      "command": "uv run mypy src",
+      "result": "failed: 89 errors in 12 non-xmuse files"
+    }
+  ],
+  "fixture_scenarios": [
+    "healthy",
+    "conflict",
+    "missing_master_state",
+    "damaged_optional",
+    "runtime",
+    "path_like"
+  ],
+  "known_limitations": [
+    "Static console shell has lightweight Python file-content tests rather than a browser component test runner.",
+    "Full repository mypy remains failing in non-xmuse files and blocks a strict usable/PASS ACK."
+  ],
+  "updated_at": "2026-05-24T16:36:46Z"
+}

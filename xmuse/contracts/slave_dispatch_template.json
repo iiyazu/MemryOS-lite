@@ -1,0 +1,119 @@
+{
+  "role": "slave_god",
+  "version": "1.0",
+  "runner_policy": {
+    "command": "codex exec --yolo",
+    "approval_policy": "never",
+    "launcher": "xmuse/codex_node_launcher.sh",
+    "nodes": [
+      "slave",
+      "plan",
+      "execute",
+      "review"
+    ],
+    "skip_human_confirmation": true,
+    "human_gate_exceptions": [
+      "external merge approval",
+      "edits outside assigned worktree",
+      "destructive cleanup",
+      "deletion of unrelated user work",
+      "gate lowering"
+    ]
+  },
+  "required_inputs": [
+    "assigned master_state.features[] entry",
+    "xmuse/prompts/slave_god_prompt.md",
+    "xmuse/contracts/slave_dispatch_template.json",
+    "xmuse/work/features/<feature-id>/slave_state.json",
+    "xmuse/work/features/<feature-id>/blueprint.md",
+    "assigned feature branch",
+    "assigned feature worktree"
+  ],
+  "allowed_writes": [
+    "xmuse/work/features/<feature-id>/context_bundle.md",
+    "xmuse/work/features/<feature-id>/brainstorm.md",
+    "xmuse/work/features/<feature-id>/feature_amendment_proposal.json",
+    "xmuse/work/features/<feature-id>/execute_goal.md",
+    "xmuse/work/features/<feature-id>/plan.md",
+    "xmuse/work/features/<feature-id>/plan_final.md",
+    "xmuse/work/features/<feature-id>/result.md",
+    "xmuse/work/features/<feature-id>/execute_review.md",
+    "xmuse/work/features/<feature-id>/review_verdict.json",
+    "xmuse/work/features/<feature-id>/ack.json",
+    "xmuse/work/features/<feature-id>/slave_state.json",
+    "assigned feature worktree src/tests/docs files"
+  ],
+  "forbidden_actions": [
+    "Do not edit master_state.json.",
+    "Do not edit master_status files.",
+    "Do not write Master-owned review or integrated test artifacts.",
+    "Do not write approval artifacts.",
+    "Do not merge branches.",
+    "Do not modify another feature worktree.",
+    "Do not modify the target branch directly.",
+    "Do not enable kernel by default.",
+    "Do not remove v1 fallback.",
+    "Do not optimize toward benchmark score targets.",
+    "Do not stop feature-local repair merely because ACK or review failed."
+  ],
+  "required_artifacts": [
+    "context_bundle",
+    "feature_amendment_proposal",
+    "plan_final",
+    "execute_goal",
+    "result",
+    "execute_review",
+    "review_verdict",
+    "ack",
+    "slave_state"
+  ],
+  "gates": {
+    "feature_boundary": [
+      "feature_id matches assigned lane",
+      "writes stay within assigned worktree or feature-local work directory",
+      "artifacts include feature_id",
+      "branch and worktree are recorded"
+    ],
+    "plan_execute_review": [
+      "plan writes only planning artifacts",
+      "execute modifies only assigned feature worktree",
+      "review is read-only except feature-local review output"
+    ],
+    "execute_goal": [
+      "execute_goal.md exists before code changes",
+      "execute_goal.md is feature-bound with # feature: <feature-id>",
+      "execute_goal.md contains an explicit /goal command",
+      "execute_goal.md names real paths and required artifacts",
+      "execute_goal.md forbids demo-only and stub-only completion",
+      "execute_goal.md states benchmark scores are diagnostic evidence only, not goal constraints",
+      "execute_goal.md includes Max repair cycles: 1-3",
+      "execute_goal.md does not contain benchmark score targets or pass-rate targets"
+    ],
+    "feature_amendment_proposal": [
+      "proposal is feature-local evidence only",
+      "proposal does not edit master_state.json",
+      "proposal does not write xmuse/master/amendments/",
+      "proposal preserves v1 fallback, kernel opt-in, no benchmark score targets, and no_gate_lowering"
+    ],
+    "autonomous_repair": [
+      "FAIL review or non-usable ACK triggers feature-local repair unless blocker is outside Slave authority",
+      "repair iterations cite concrete engineering blockers",
+      "repair states remain feature-local: repairing, reworking, feature_blocked, or active_repair",
+      "benchmark and eval output may diagnose regressions or missing evidence but cannot be score targets"
+    ],
+    "usable_ack": [
+      "ack_level usable",
+      "result exists",
+      "review_verdict PASS",
+      "verification commands recorded",
+      "v3 default preserved",
+      "v1 fallback preserved",
+      "kernel default unchanged"
+    ]
+  },
+  "node_prompts": {
+    "plan": "xmuse/prompts/plan_agent.md",
+    "execute": "xmuse/prompts/execute_agent.md",
+    "review": "xmuse/prompts/review_agent.md"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "feature_id": "benchmark-layer-organization",
+  "verdict": "FAIL",
+  "reviewed_at": "2026-05-24T16:06:24Z",
+  "branch": "feat/benchmark-layer-organization",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-benchmark-layer-organization",
+  "head": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc",
+  "implemented_slice": "signed recall packet member neighbor offsets propagated through recall pipeline and v3 final context trace metadata",
+  "passes_bounded_slice_review": true,
+  "passes_full_blueprint_review": false,
+  "blockers": [
+    "Full blueprint Phase 2-4 coverage was not completed in this bounded Slave turn.",
+    "Full regression gate `uv run pytest -q` was not rerun after this change.",
+    "`uv run mypy src` was not run after this change.",
+    "`uv run memoryos eval run --case-set hard --baseline memoryos_lite` was not run after this change.",
+    "Public LongMemEval 50 and LoCoMo 50 LLM answer/judge comparison evals were not run after this change, so no case-level movement can be claimed."
+  ],
+  "invariants": {
+    "v3_default_preserved": true,
+    "v1_fallback_preserved": true,
+    "recall_pipeline_v2_opt_in_preserved": true,
+    "agent_kernel_default_unchanged": true,
+    "sqlite_authority_preserved": true
+  },
+  "leakage_checks": {
+    "benchmark_specific_hacks": false,
+    "case_id_rules": false,
+    "hard_coded_answers": false,
+    "expected_source_shortcuts": false,
+    "archive_rag_scope_touched": false
+  },
+  "verification": [
+    {
+      "command": "uv run pytest tests/test_episode_retrieval.py::test_recall_searcher_records_signed_packet_member_offsets tests/test_recall_pipeline.py::test_recall_pipeline_exposes_signed_packet_member_offsets tests/test_context_composer.py::test_v3_composer_final_trace_preserves_signed_packet_member_offsets -q",
+      "result": "3 passed in 3.36s after implementation; 3 failed with missing packet_member_neighbor_offsets before implementation"
+    },
+    {
+      "command": "uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py -q",
+      "result": "19 passed in 10.81s"
+    },
+    {
+      "command": "uv run pytest tests/test_context_composer.py -q",
+      "result": "14 passed in 29.55s"
+    },
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py tests/test_diagnostic_report.py -q",
+      "result": "91 passed in 131.00s (0:02:11)"
+    },
+    {
+      "command": "uv run ruff check src/memoryos_lite/retrieval/episode_searcher.py src/memoryos_lite/retrieval/recall_pipeline.py tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_context_composer.py",
+      "result": "All checks passed!"
+    }
+  ]
+}

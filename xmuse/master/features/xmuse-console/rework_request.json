@@ -1,0 +1,32 @@
+{
+  "artifact_refs": {
+    "ack": "work/features/xmuse-console/ack.json",
+    "result": "work/features/xmuse-console/result.md",
+    "review_verdict": "work/features/xmuse-console/review_verdict.json"
+  },
+  "benchmark_policy": "eval output may diagnose regressions or missing evidence but is not a score target",
+  "decision": "request_rework",
+  "dispatch_status": "rework_required",
+  "engineering_blockers": [
+    "feature-local ACK or review requires autonomous Slave repair"
+  ],
+  "expected_next_evidence": [
+    "updated result.md",
+    "usable ack.json or explicit re-scope proposal",
+    "PASS review_verdict.json or concrete remaining engineering blockers"
+  ],
+  "feature_id": "xmuse-console",
+  "head_commit": "f6466902c85c0f6b17f94f47f37a2c3dc37d346f",
+  "next_state": "repairing",
+  "policy_preserved": {
+    "kernel_opt_in_preserved": true,
+    "no_benchmark_score_targets": true,
+    "no_gate_lowering": true,
+    "v1_fallback_preserved": true
+  },
+  "previous_state": "active",
+  "recorded_at": "2026-05-24T17:38:35Z",
+  "recorded_by": "master-god",
+  "request_id": "xmuse-console-rework-20260524T173835Z",
+  "version": "1.0"
+}

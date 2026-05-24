@@ -1,0 +1,77 @@
+{
+  "feature_id": "memoryos-redis-cache-probe",
+  "recorded_by": "master-god",
+  "status": "passed",
+  "recorded_at": "2026-05-24T17:00:15Z",
+  "branch": "feat/memoryos-redis-cache-probe",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "base_commit": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+  "target_base_commit": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+  "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
+  "integration_branch": "tmp/memoryos-redis-cache-probe-integration",
+  "integration_worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration",
+  "integration_commit": "9d99bb8326d065770345bb14b174006ece9bbcb0",
+  "target_head_at_recording": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+  "worktree_clean": true,
+  "ignored_test_fixtures": [
+    ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json"
+  ],
+  "commands": [
+    {
+      "command": "git worktree add -b tmp/memoryos-redis-cache-probe-integration /home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration feat/phase-2.5-3-retrieval-agent",
+      "phase": "integration_setup",
+      "status": "passed",
+      "summary": "Created integration worktree from target base 4c4712df763c652952a8066060bdb8bb4b37ba0b"
+    },
+    {
+      "command": "git merge --no-ff --no-edit feat/memoryos-redis-cache-probe",
+      "phase": "integration_merge",
+      "status": "passed",
+      "summary": "Created integration merge commit 9d99bb8326d065770345bb14b174006ece9bbcb0"
+    },
+    {
+      "command": "python3 -m py_compile src/memoryos_lite/cache/__init__.py src/memoryos_lite/config.py",
+      "phase": "static_check",
+      "status": "passed",
+      "summary": "No compile errors"
+    },
+    {
+      "command": "uv run ruff check src/memoryos_lite/config.py src/memoryos_lite/cache tests/test_config.py tests/test_memory_cache.py",
+      "phase": "static_check",
+      "status": "passed",
+      "summary": "All checks passed!"
+    },
+    {
+      "command": "uv run mypy src/memoryos_lite/cache src/memoryos_lite/config.py",
+      "phase": "static_check",
+      "status": "passed",
+      "summary": "Success: no issues found in 2 source files"
+    },
+    {
+      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
+      "phase": "focused_feature_and_invariant_check",
+      "status": "passed",
+      "summary": "17 passed in 1.24s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "phase": "full_integrated_suite",
+      "status": "passed",
+      "summary": "610 passed, 1 warning in 811.88s"
+    }
+  ],
+  "policy_checks": {
+    "v3_default_preserved": true,
+    "v1_fallback_preserved": true,
+    "recall_v2_opt_in_preserved": true,
+    "kernel_default_unchanged": true,
+    "sqlite_authority_preserved": true,
+    "redis_default_off_preserved": true,
+    "benchmark_improvement_claim": false
+  },
+  "stale_against_current_target_head": false,
+  "merge_readiness_blockers": [
+    "external merge approval is absent",
+    "master_config.allowed_target_branches currently does not include feat/phase-2.5-3-retrieval-agent"
+  ]
+}

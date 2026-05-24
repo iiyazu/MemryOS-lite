@@ -1,0 +1,1330 @@
+{
+  "activation_state": "master_active",
+  "active": true,
+  "decisions": [
+    {
+      "decision": "accepted_for_external_approval",
+      "feature_id": "v1-quarantine",
+      "integrated_tests": "xmuse/master/features/v1-quarantine/integrated_tests.json",
+      "master_review": "xmuse/master/features/v1-quarantine/master_review.json",
+      "merge_blocked_until": "external_merge_approval_and_fresh_target_gate",
+      "next_action": "xmuse/approvals/v1-quarantine/next_action.json",
+      "recorded_at": "2026-05-24T11:37:59Z",
+      "recorded_by": "master-god"
+    },
+    {
+      "current_target_head": "d1d36d55bd2564f177f946f1ec5da209b448dd22",
+      "decision": "merge_held",
+      "feature_id": "v1-quarantine",
+      "integrated_tests_base_commit": "920237bd6082b905b847c5738b52f36070d5697a",
+      "merge_approval_request": "xmuse/approvals/v1-quarantine/merge_approval_request.json",
+      "merge_blocked_until": "external_merge_approval_and_fresh_target_gate",
+      "reason": "external approval is absent and integrated test base_commit is stale against current target HEAD",
+      "recorded_at": "2026-05-24T12:52:21Z",
+      "recorded_by": "master-god"
+    },
+    {
+      "active_registry_action": "removed_from_features",
+      "decision": "archived_to_history",
+      "feature_id": "v1-quarantine",
+      "history_path": "xmuse/history/features/v1-quarantine",
+      "reason": "v1 quarantine is historical baseline work and should no longer occupy active Master feature lanes.",
+      "recorded_at": "2026-05-24T14:30:00Z",
+      "recorded_by": "master-god"
+    },
+    {
+      "agent_id": "019e5a08-83da-7330-b827-47676f711351",
+      "baseline": {
+        "fixture_restored": ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json",
+        "focused_replay_after_restore": "5 passed in 1.02s",
+        "full_pytest_initial": "593 passed, 3 failed, 1 warning; failures caused by missing ignored replay fixture",
+        "worktree_clean": false
+      },
+      "branch": "feat/archive-rag",
+      "decision": "slave_dispatched",
+      "feature_id": "archive-rag",
+      "recorded_at": "2026-05-24T12:52:21Z",
+      "recorded_by": "master-god",
+      "target_base_commit": "d1d36d55bd2564f177f946f1ec5da209b448dd22",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag"
+    },
+    {
+      "agent_id": "019e5a08-83da-7330-b827-47676f711351",
+      "decision": "blocked_after_slave_shutdown",
+      "feature_id": "archive-rag",
+      "missing_artifacts": [
+        "result",
+        "ack",
+        "review_verdict"
+      ],
+      "next_action": "relaunch archive-rag Slave from context_bundle/plan_final for bounded execution, verification, review_verdict, and usable/non-usable ACK",
+      "previous_agent_status": "running",
+      "reason": "Slave did not return final result/ack/review artifacts after bounded waits and was shut down; final audit found the feature worktree clean with no persisted implementation changes.",
+      "recorded_at": "2026-05-24T13:30:47Z",
+      "recorded_by": "master-god",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag",
+      "worktree_clean": true,
+      "worktree_head": "203a9c2ad7d6a62f0ef6e3bf6e7c4842d267269a"
+    },
+    {
+      "ack": "xmuse/work/features/archive-rag/ack.json",
+      "artifact_digests": {
+        "ack": "sha256:0293c288e316adc4eb98a0b11506ebd8ac99e93aad92746b13c41be6e4a1b27f",
+        "execute_review": "sha256:4c4b910bf17076bb63101aa2f10f97e1512ac7803a258a6ff9c8e26aafbdab30",
+        "result": "sha256:7ab53b5f2cc09bfc79ed59e31775d7401ae130b245f0b78a3da1bc09a7339609",
+        "review_verdict": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c"
+      },
+      "blocking_findings": [
+        "uv run mypy src fails with 82 errors in 11 files",
+        "hard eval reports accuracy/source_hit 0.56/0.56 instead of stated 1.00/1.00 baseline"
+      ],
+      "decision": "hold_after_slave_blocked_ack",
+      "feature_id": "archive-rag",
+      "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
+      "next_action": "bounded repair or re-scope; do not enter Master review until usable ACK and PASS review_verdict exist",
+      "reason": "Slave ACK is blocked and feature-local review verdict is FAIL; Master review prerequisites are not satisfied.",
+      "recorded_at": "2026-05-24T15:19:41Z",
+      "recorded_by": "master-god",
+      "result": "xmuse/work/features/archive-rag/result.md",
+      "review_verdict": "xmuse/work/features/archive-rag/review_verdict.json"
+    },
+    {
+      "active_registry_action": "no_active_feature; v1-quarantine archived to xmuse/history/features/v1-quarantine",
+      "current_target_head": "8646f3b920100e450585f0e7c8d9168b9163733b",
+      "decision": "stale_gate_discarded_after_archive",
+      "feature_id": "v1-quarantine",
+      "merge_decision": "not_mergeable",
+      "reason": "Fresh integration attempts completed against target heads that changed during execution; the lane was then archived out of active master_state.features, so no active merge readiness can be claimed.",
+      "recorded_at": "2026-05-24T15:19:41Z",
+      "recorded_by": "master-god",
+      "stale_integration_attempts": [
+        {
+          "fixture_restored_check": "tests/test_public_failure_replay.py -> 5 passed",
+          "full_pytest_after_restore": "597 passed, 1 warning in 780.24s",
+          "full_pytest_initial": "3 failed, 594 passed, 1 warning due to missing ignored replay fixture",
+          "integration_branch": "tmp/v1-quarantine-integration-r3",
+          "integration_commit": "3b14ada3b62c2c3d5b951e378a1d757cd0110319",
+          "stale_against_current_target_head": true,
+          "target_base_commit": "4aac0119100ec93c89f23ea754f6c1580f1c45af"
+        },
+        {
+          "full_pytest_after_restore": "597 passed, 1 warning in 779.99s",
+          "integration_branch": "tmp/v1-quarantine-integration-r4",
+          "integration_commit": "1e796d99d99d8f30674081dbb7657504a73f4ff8",
+          "stale_against_current_target_head": true,
+          "target_base_commit": "30191954cc6cc77a5019fe4d49b1eb8a2a0e8d1a"
+        }
+      ]
+    },
+    {
+      "blueprint": "xmuse/work/features/memoryos-redis-cache-probe/blueprint.md",
+      "decision": "planned_lane_registered",
+      "feature_id": "memoryos-redis-cache-probe",
+      "next_action": "create or confirm isolated worktree before dispatching a Slave",
+      "reason": "User selected Redis performance exploration as the next feature to solidify. The lane is scoped as an optional, default-off cache probe with SQLite remaining authoritative.",
+      "recorded_at": "2026-05-24T16:10:00Z",
+      "recorded_by": "master-god"
+    },
+    {
+      "agent_id": "019e5ab4-0639-72b0-9b5f-e944ee423e14",
+      "baseline": {
+        "fixture_restored": ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json",
+        "focused_replay_after_restore": "tests/test_public_failure_replay.py -> 5 passed",
+        "full_pytest_initial": "593 passed, 3 failed, 1 warning; failures caused by missing ignored replay fixture .memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json",
+        "worktree_clean_before_dispatch": true
+      },
+      "branch": "feat/xmuse-console",
+      "control_plane": "active_root_checkout",
+      "control_plane_note": "Active Master control-plane artifacts were supplied from /home/iiyatu/projects/python/memoryOS because the feature worktree contains a stale committed master_state.json.",
+      "decision": "slave_dispatched",
+      "feature_id": "xmuse-console",
+      "merge_blocked_until": "usable_ack_pass_review_master_review_integrated_tests_external_approval_and_fresh_target_gate",
+      "recorded_at": "2026-05-24T15:57:47Z",
+      "recorded_by": "master-god",
+      "target_base_commit": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-console"
+    },
+    {
+      "agent_id": "019e5ab4-879e-78d1-ac46-9fc631f0b9cc",
+      "baseline": {
+        "fixture_restored": ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json",
+        "focused_replay_after_restore": "tests/test_public_failure_replay.py -> 5 passed",
+        "full_pytest_initial": "593 passed, 3 failed, 1 warning; failures caused by missing ignored replay fixture .memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json",
+        "worktree_clean_before_dispatch": true
+      },
+      "branch": "feat/benchmark-layer-organization",
+      "control_plane": "active_root_checkout",
+      "control_plane_note": "Active Master control-plane artifacts were supplied from /home/iiyatu/projects/python/memoryOS because the feature worktree contains a stale committed master_state.json and lacks tracked benchmark feature-local files.",
+      "decision": "slave_dispatched",
+      "feature_id": "benchmark-layer-organization",
+      "merge_blocked_until": "usable_ack_pass_review_master_review_integrated_tests_external_approval_and_fresh_target_gate",
+      "recorded_at": "2026-05-24T15:57:47Z",
+      "recorded_by": "master-god",
+      "target_base_commit": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-benchmark-layer-organization"
+    },
+    {
+      "ack": "xmuse/work/features/benchmark-layer-organization/ack.json",
+      "artifact_digests": {
+        "ack": "sha256:946a964ae9ee8fb33212a01c1cf2ac32b8e9bea57d1466bfe2566e0c35443b1b",
+        "execute_review": "sha256:735c9dc8cceda953015e1d7b646dd90d0c9b5f265f792393fd39e0b1c64eb227",
+        "result": "sha256:d118bc75b6832b67c414b7d678c96c091aa79e2409a716d2175c16be4fe2a2c5",
+        "review_verdict": "sha256:ed7a6abee0ae34e72c3313780aa4e19d6faca194322535549b86e83785b605fc"
+      },
+      "blocking_findings": [
+        "ack_level is partial rather than usable",
+        "review_verdict is FAIL",
+        "full blueprint Phase 2-4 coverage incomplete",
+        "full regression gate uv run pytest -q not rerun after feature changes",
+        "uv run mypy src not run after feature changes",
+        "hard eval and public LongMemEval/LoCoMo comparison evals not run; no benchmark movement claim allowed"
+      ],
+      "decision": "blocked_after_slave_partial_ack",
+      "feature_id": "benchmark-layer-organization",
+      "head_commit": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc",
+      "implemented_slice": "signed recall packet member neighbor offsets propagated through recall pipeline and v3 final context trace metadata",
+      "next_action": "bounded repair or explicit re-scope; do not enter Master review until usable ACK and PASS review_verdict exist",
+      "reason": "Slave ACK is partial and feature-local review verdict is FAIL; Master review prerequisites are not satisfied.",
+      "recorded_at": "2026-05-24T16:08:30Z",
+      "recorded_by": "master-god",
+      "result": "xmuse/work/features/benchmark-layer-organization/result.md",
+      "review_verdict": "xmuse/work/features/benchmark-layer-organization/review_verdict.json"
+    },
+    {
+      "agent_id": "019e5ace-efd1-7c52-b512-4f001c396161",
+      "baseline": {
+        "dirty_paths_before_dispatch": [
+          "pyproject.toml",
+          "src/memoryos_lite/config.py",
+          "uv.lock",
+          "src/memoryos_lite/cache/__init__.py",
+          "tests/test_config.py",
+          "tests/test_memory_cache.py",
+          "src/memoryos_lite/cache/__pycache__/__init__.cpython-311.pyc"
+        ],
+        "fixture_restored": ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json",
+        "full_pytest_with_ignored_fixture_restored": "596 passed, 1 warning in 1315.81s",
+        "worktree_clean_before_dispatch": false
+      },
+      "branch": "feat/memoryos-redis-cache-probe",
+      "control_plane": "active_root_checkout",
+      "control_plane_note": "Active Master control-plane artifacts were supplied from /home/iiyatu/projects/python/memoryOS because the feature worktree contains a stale committed master_state.json and lacks tracked redis feature-local files.",
+      "decision": "slave_dispatched",
+      "dispatch_note": "Feature worktree had existing feature-scoped dirty changes before Slave dispatch; Slave was instructed to audit/adopt/repair rather than discard them and not to treat the full-suite result as a clean baseline for those changes.",
+      "feature_id": "memoryos-redis-cache-probe",
+      "merge_blocked_until": "usable_ack_pass_review_master_review_integrated_tests_external_approval_and_fresh_target_gate",
+      "recorded_at": "2026-05-24T16:26:22Z",
+      "recorded_by": "master-god",
+      "target_base_commit": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe"
+    },
+    {
+      "decision": "state_reconciled",
+      "feature_id": "archive-rag",
+      "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
+      "new_dispatch_status": "rework_required",
+      "new_state": "repairing",
+      "previous_dispatch_status": "blocked_ack",
+      "previous_state": "blocked",
+      "reason": "feature-local ACK or review requires autonomous Slave repair",
+      "recorded_at": "2026-05-24T17:38:35Z",
+      "recorded_by": "master-god"
+    },
+    {
+      "decision": "state_reconciled",
+      "feature_id": "xmuse-console",
+      "head_commit": "f6466902c85c0f6b17f94f47f37a2c3dc37d346f",
+      "new_dispatch_status": "rework_required",
+      "new_state": "repairing",
+      "previous_dispatch_status": "running",
+      "previous_state": "active",
+      "reason": "feature-local ACK or review requires autonomous Slave repair",
+      "recorded_at": "2026-05-24T17:38:35Z",
+      "recorded_by": "master-god"
+    },
+    {
+      "decision": "state_reconciled",
+      "feature_id": "benchmark-layer-organization",
+      "head_commit": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc",
+      "new_dispatch_status": "rework_required",
+      "new_state": "repairing",
+      "previous_dispatch_status": "partial_ack_fail_review",
+      "previous_state": "blocked",
+      "reason": "feature-local ACK or review requires autonomous Slave repair",
+      "recorded_at": "2026-05-24T17:38:35Z",
+      "recorded_by": "master-god"
+    },
+    {
+      "decision": "state_reconciled",
+      "feature_id": "memoryos-redis-cache-probe",
+      "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
+      "new_dispatch_status": "approval_required",
+      "new_state": "approval_blocked",
+      "previous_dispatch_status": "running",
+      "previous_state": "active",
+      "reason": "feature passed Slave/Master evidence but awaits external approval",
+      "recorded_at": "2026-05-24T17:38:35Z",
+      "recorded_by": "master-god"
+    },
+    {
+      "blast_radius": [
+        "control_plane_only",
+        "package_boundary_change",
+        "status_projection_change",
+        "hardening_shim_change"
+      ],
+      "blueprint": "xmuse/work/features/xmuse-core-state-extraction/blueprint.md",
+      "constraints": [
+        "no_slave_active_state_mutation",
+        "compatibility_before_switch",
+        "staged_activation_required",
+        "rollback_required",
+        "no_product_code_dependency",
+        "ordinary_lanes_must_not_be_blocked"
+      ],
+      "decision": "planned_lane_registered",
+      "feature_class": "control_plane_migration",
+      "feature_id": "xmuse-core-state-extraction",
+      "migration_stage": "migration_pending",
+      "next_action": "create or confirm isolated worktree before dispatching a Slave; do not implement from the main runtime checkout",
+      "reason": "User requested registration after blueprint review for xmuse frameworkization state/status core extraction.",
+      "recorded_at": "2026-05-24T17:57:44Z",
+      "recorded_by": "master-god"
+    }
+  ],
+  "dispatch_contracts": {
+    "master": "xmuse/contracts/master_dispatch_template.json",
+    "slave": "xmuse/contracts/slave_dispatch_template.json"
+  },
+  "features": [
+    {
+      "artifacts": {
+        "ack": "work/features/archive-rag/ack.json",
+        "integrated_tests": "xmuse/master/features/archive-rag/integrated_tests.json",
+        "master_review": "xmuse/master/features/archive-rag/master_review.json",
+        "merge_approval": "xmuse/approvals/archive-rag/merge_approval.json",
+        "merge_approval_request": "xmuse/approvals/archive-rag/merge_approval_request.json",
+        "merge_decision": "xmuse/approvals/archive-rag/merge_decision.json",
+        "next_action": "xmuse/approvals/archive-rag/next_action.json",
+        "post_merge_verification": "xmuse/approvals/archive-rag/post_merge_verification.json",
+        "result": "work/features/archive-rag/result.md",
+        "review_verdict": "work/features/archive-rag/review_verdict.json"
+      },
+      "blueprint_path": "xmuse/work/features/archive-rag/blueprint.md",
+      "branch": "feat/archive-rag",
+      "id": "archive-rag",
+      "merge": {
+        "github_pr": null,
+        "status": "not_requested",
+        "strategy": "no_ff_merge_commit",
+        "target_branch": "feat/phase-2.5-3-retrieval-agent"
+      },
+      "name": "Archive RAG Boundary",
+      "policy_flags": {
+        "allows_github_evidence": true,
+        "requires_explicit_merge_approval": true,
+        "requires_integrated_tests": true
+      },
+      "risk": {
+        "level": "medium",
+        "notes": [
+          "2026-05-24T14:14:25Z: Slave produced result/ack/review artifacts and self-review verdict FAIL. Current blockers are `uv run mypy src` failing with 82 errors in 11 files and hard eval reporting accuracy/source_hit 0.56/0.56 instead of the stated 1.00/1.00 baseline.",
+          "2026-05-24T14:14:25Z: Slave produced blocked ACK and review verdict FAIL at ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02; blockers are `uv run mypy src` failing with 82 errors in 11 files and hard eval reporting accuracy/source_hit 0.56/0.56. Master review is not allowed until a usable ACK and PASS review verdict exist.",
+          "2026-05-24T17:38:35Z: Master reconcile set state=repairing, dispatch_status=rework_required; feature-local ACK or review requires autonomous Slave repair."
+        ]
+      },
+      "slave_god": {
+        "dispatch_agent_id": "019e5a08-83da-7330-b827-47676f711351",
+        "dispatch_status": "rework_required",
+        "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
+        "last_reported_at": "2026-05-24T17:38:35Z",
+        "mode": "feature_local_single_god",
+        "owner": "slave-god-archive-rag"
+      },
+      "slave_state_path": "xmuse/work/features/archive-rag/slave_state.json",
+      "state": "repairing",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag"
+    },
+    {
+      "artifacts": {
+        "ack": "work/features/xmuse-console/ack.json",
+        "integrated_tests": "xmuse/master/features/xmuse-console/integrated_tests.json",
+        "master_review": "xmuse/master/features/xmuse-console/master_review.json",
+        "merge_approval": "xmuse/approvals/xmuse-console/merge_approval.json",
+        "merge_approval_request": "xmuse/approvals/xmuse-console/merge_approval_request.json",
+        "merge_decision": "xmuse/approvals/xmuse-console/merge_decision.json",
+        "next_action": "xmuse/approvals/xmuse-console/next_action.json",
+        "post_merge_verification": "xmuse/approvals/xmuse-console/post_merge_verification.json",
+        "result": "work/features/xmuse-console/result.md",
+        "review_verdict": "work/features/xmuse-console/review_verdict.json"
+      },
+      "blueprint_path": "xmuse/work/features/xmuse-console/blueprint.md",
+      "branch": "feat/xmuse-console",
+      "id": "xmuse-console",
+      "merge": {
+        "github_pr": null,
+        "status": "not_requested",
+        "strategy": "no_ff_merge_commit",
+        "target_branch": "feat/phase-2.5-3-retrieval-agent"
+      },
+      "name": "xmuse Loop Console",
+      "policy_flags": {
+        "allows_github_evidence": true,
+        "requires_explicit_merge_approval": true,
+        "requires_integrated_tests": true
+      },
+      "risk": {
+        "level": "medium",
+        "notes": [
+          "Read-only control-plane UI exposes local paths, branch state, PID/lock health, and runtime facts; implementation must remain opt-in, local-only, and redaction-aware.",
+          "2026-05-24T15:19:41Z: Planned lane has no feature worktree at /home/iiyatu/projects/python/memoryOS-xmuse-console; dispatch is blocked until Master creates/confirms the isolated worktree.",
+          "2026-05-24T15:57:47Z: Slave dispatched on feat/xmuse-console at 4c4712df763c652952a8066060bdb8bb4b37ba0b; initial full pytest failed only on missing ignored replay fixture, and focused replay passed after fixture restore. Master control-plane inputs were provided from the active root checkout.",
+          "2026-05-24T15:57:47Z: Merge readiness remains blocked until usable ACK, PASS slave review, Master review, integrated tests, explicit external approval, and a fresh target-head gate. master_config.allowed_target_branches currently does not include feat/phase-2.5-3-retrieval-agent.",
+          "2026-05-24T17:38:35Z: Master reconcile set state=repairing, dispatch_status=rework_required; feature-local ACK or review requires autonomous Slave repair."
+        ]
+      },
+      "slave_god": {
+        "dispatch_agent_id": "019e5ab4-0639-72b0-9b5f-e944ee423e14",
+        "dispatch_status": "rework_required",
+        "head_commit": "f6466902c85c0f6b17f94f47f37a2c3dc37d346f",
+        "last_reported_at": "2026-05-24T17:38:35Z",
+        "mode": "feature_local_single_god",
+        "owner": "slave-god-xmuse-console"
+      },
+      "slave_state_path": "xmuse/work/features/xmuse-console/slave_state.json",
+      "state": "repairing",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-console"
+    },
+    {
+      "artifacts": {
+        "ack": "work/features/benchmark-layer-organization/ack.json",
+        "integrated_tests": "xmuse/master/features/benchmark-layer-organization/integrated_tests.json",
+        "master_review": "xmuse/master/features/benchmark-layer-organization/master_review.json",
+        "merge_approval": "xmuse/approvals/benchmark-layer-organization/merge_approval.json",
+        "merge_approval_request": "xmuse/approvals/benchmark-layer-organization/merge_approval_request.json",
+        "merge_decision": "xmuse/approvals/benchmark-layer-organization/merge_decision.json",
+        "next_action": "xmuse/approvals/benchmark-layer-organization/next_action.json",
+        "post_merge_verification": "xmuse/approvals/benchmark-layer-organization/post_merge_verification.json",
+        "result": "work/features/benchmark-layer-organization/result.md",
+        "review_verdict": "work/features/benchmark-layer-organization/review_verdict.json"
+      },
+      "blueprint_path": "xmuse/work/features/benchmark-layer-organization/blueprint.md",
+      "branch": "feat/benchmark-layer-organization",
+      "id": "benchmark-layer-organization",
+      "merge": {
+        "github_pr": null,
+        "status": "not_requested",
+        "strategy": "no_ff_merge_commit",
+        "target_branch": "feat/phase-2.5-3-retrieval-agent"
+      },
+      "name": "Benchmark-Usable Layer Organization",
+      "policy_flags": {
+        "allows_github_evidence": true,
+        "requires_explicit_merge_approval": true,
+        "requires_integrated_tests": true
+      },
+      "risk": {
+        "level": "medium",
+        "notes": [
+          "LoCoMo-first retrieval/layer diagnostics work may touch shared recall, composer, public benchmark, and diagnostics paths. It must not use archive-rag artifacts as implementation input or introduce benchmark-specific hacks.",
+          "2026-05-24T15:19:41Z: Planned lane has no feature worktree at /home/iiyatu/projects/python/memoryOS-benchmark-layer-organization; dispatch is blocked until Master creates/confirms the isolated worktree.",
+          "2026-05-24T15:57:47Z: Slave dispatched on feat/benchmark-layer-organization at 4c4712df763c652952a8066060bdb8bb4b37ba0b; initial full pytest failed only on missing ignored replay fixture, and focused replay passed after fixture restore. Master control-plane inputs were provided from the active root checkout.",
+          "2026-05-24T15:57:47Z: Merge readiness remains blocked until usable ACK, PASS slave review, Master review, integrated tests, explicit external approval, and a fresh target-head gate. master_config.allowed_target_branches currently does not include feat/phase-2.5-3-retrieval-agent.",
+          "2026-05-24T16:08:30Z: Slave produced a partial ACK and FAIL review verdict at 3b2a9730e8eb6cd1466ba42516083df5fbb723dc after a bounded Phase 0/1 diagnostic slice. Master review is blocked until usable ACK and PASS review_verdict exist.",
+          "2026-05-24T16:08:30Z: No LongMemEval/LoCoMo or hard-eval movement is claimed; focused tests and ruff passed, but full-suite, mypy, hard eval, and public comparison eval gates remain incomplete.",
+          "2026-05-24T17:38:35Z: Master reconcile set state=repairing, dispatch_status=rework_required; feature-local ACK or review requires autonomous Slave repair."
+        ]
+      },
+      "slave_god": {
+        "dispatch_agent_id": "019e5ab4-879e-78d1-ac46-9fc631f0b9cc",
+        "dispatch_status": "rework_required",
+        "head_commit": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc",
+        "last_reported_at": "2026-05-24T17:38:35Z",
+        "mode": "feature_local_single_god",
+        "owner": "slave-god-benchmark-layer-organization"
+      },
+      "slave_state_path": "xmuse/work/features/benchmark-layer-organization/slave_state.json",
+      "state": "repairing",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-benchmark-layer-organization"
+    },
+    {
+      "artifacts": {
+        "ack": "work/features/memoryos-redis-cache-probe/ack.json",
+        "integrated_tests": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+        "master_review": "xmuse/master/features/memoryos-redis-cache-probe/master_review.json",
+        "merge_approval": "xmuse/approvals/memoryos-redis-cache-probe/merge_approval.json",
+        "merge_approval_request": "xmuse/approvals/memoryos-redis-cache-probe/merge_approval_request.json",
+        "merge_decision": "xmuse/approvals/memoryos-redis-cache-probe/merge_decision.json",
+        "next_action": "xmuse/approvals/memoryos-redis-cache-probe/next_action.json",
+        "post_merge_verification": "xmuse/approvals/memoryos-redis-cache-probe/post_merge_verification.json",
+        "result": "work/features/memoryos-redis-cache-probe/result.md",
+        "review_verdict": "work/features/memoryos-redis-cache-probe/review_verdict.json"
+      },
+      "blueprint_path": "xmuse/work/features/memoryos-redis-cache-probe/blueprint.md",
+      "branch": "feat/memoryos-redis-cache-probe",
+      "id": "memoryos-redis-cache-probe",
+      "merge": {
+        "github_pr": null,
+        "status": "not_requested",
+        "strategy": "no_ff_merge_commit",
+        "target_branch": "feat/phase-2.5-3-retrieval-agent"
+      },
+      "name": "MemoryOS Redis Cache Probe",
+      "policy_flags": {
+        "allows_github_evidence": true,
+        "requires_explicit_merge_approval": true,
+        "requires_integrated_tests": true
+      },
+      "risk": {
+        "level": "medium",
+        "notes": [
+          "Performance optimization touches shared recall/context paths and must remain optional, default-off, and deterministic without Redis.",
+          "Redis must never become authoritative; SQLite remains the source of truth for messages, episodes, pages, memory blocks, archive records, traces, and eval reports.",
+          "Planned lane has no feature worktree at /home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe; dispatch is blocked until Master creates/confirms the isolated worktree.",
+          "2026-05-24T16:26:22Z: Slave dispatched on feat/memoryos-redis-cache-probe at 4c4712df763c652952a8066060bdb8bb4b37ba0b after full pytest with restored ignored replay fixture passed 596/596; however worktree was dirty before dispatch with feature-scoped Redis cache changes and generated __pycache__, so Slave must audit/reconcile and rerun focused verification.",
+          "2026-05-24T16:26:22Z: Redis must remain optional/default-off/derived-cache-only; merge readiness remains blocked until usable ACK, PASS review, Master review, integrated tests, explicit external approval, and fresh target gate.",
+          "2026-05-24T17:38:35Z: Master reconcile set state=approval_blocked, dispatch_status=approval_required; feature passed Slave/Master evidence but awaits external approval."
+        ]
+      },
+      "slave_god": {
+        "dispatch_agent_id": "019e5ace-efd1-7c52-b512-4f001c396161",
+        "dispatch_status": "approval_required",
+        "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
+        "last_reported_at": "2026-05-24T17:38:35Z",
+        "mode": "feature_local_single_god",
+        "owner": "slave-god-memoryos-redis-cache-probe"
+      },
+      "slave_state_path": "xmuse/work/features/memoryos-redis-cache-probe/slave_state.json",
+      "state": "approval_blocked",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe"
+    },
+    {
+      "artifacts": {
+        "ack": "work/features/xmuse-core-state-extraction/ack.json",
+        "integrated_tests": "xmuse/master/features/xmuse-core-state-extraction/integrated_tests.json",
+        "master_review": "xmuse/master/features/xmuse-core-state-extraction/master_review.json",
+        "merge_approval": "xmuse/approvals/xmuse-core-state-extraction/merge_approval.json",
+        "merge_approval_request": "xmuse/approvals/xmuse-core-state-extraction/merge_approval_request.json",
+        "merge_decision": "xmuse/approvals/xmuse-core-state-extraction/merge_decision.json",
+        "next_action": "xmuse/approvals/xmuse-core-state-extraction/next_action.json",
+        "post_merge_verification": "xmuse/approvals/xmuse-core-state-extraction/post_merge_verification.json",
+        "result": "work/features/xmuse-core-state-extraction/result.md",
+        "review_verdict": "work/features/xmuse-core-state-extraction/review_verdict.json"
+      },
+      "blueprint_path": "xmuse/work/features/xmuse-core-state-extraction/blueprint.md",
+      "branch": "feat/xmuse-core-state-extraction",
+      "feature_class": "control_plane_migration",
+      "id": "xmuse-core-state-extraction",
+      "merge": {
+        "github_pr": null,
+        "locked_until": "migration_active_master_review_integrated_tests_external_approval_fresh_target_gate",
+        "status": "not_requested",
+        "strategy": "no_ff_merge_commit",
+        "target_branch": "feat/phase-2.5-3-retrieval-agent"
+      },
+      "migration": {
+        "activation_owner": "master-god",
+        "active_state_mutation_allowed_for_slave": false,
+        "rollback_required": true,
+        "runtime_dir_remains_non_package": true,
+        "runtime_package_name": "xmuse_core",
+        "stage": "migration_pending"
+      },
+      "name": "Xmuse Core State Extraction",
+      "policy_flags": {
+        "allows_github_evidence": true,
+        "control_plane_migration": true,
+        "product_code_change_allowed": false,
+        "requires_control_plane_merge_quarantine": true,
+        "requires_dry_run_validator": true,
+        "requires_explicit_merge_approval": true,
+        "requires_integrated_tests": true,
+        "requires_staged_activation": true
+      },
+      "risk": {
+        "level": "medium",
+        "notes": [
+          "2026-05-24T17:57:44Z: Registered as a control_plane_migration lane from blueprint-only review. Slave must not mutate active state, approvals, Master artifacts, product code, or ordinary lane semantics before Master activation.",
+          "Primary risks are status/merge-gate coupling, runtime xmuse import shadowing, reporter smoke side effects, and double-source maintenance while extracting helpers from hermes_hardening.py."
+        ]
+      },
+      "slave_god": {
+        "dispatch_status": "not_dispatched",
+        "last_reported_at": "",
+        "mode": "feature_local_single_god",
+        "owner": "slave-god-xmuse-core-state-extraction"
+      },
+      "slave_state_path": "xmuse/work/features/xmuse-core-state-extraction/slave_state.json",
+      "state": "planned",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-core-state-extraction"
+    }
+  ],
+  "github": {
+    "enabled": false
+  },
+  "history_baseline": "xmuse/history/main_loop_phase0_18.json",
+  "integration": {
+    "legacy_state": {
+      "current_phase_idx": 19,
+      "current_state": "DONE",
+      "execute_lane": {
+        "phase": null,
+        "state": "DONE"
+      },
+      "last_updated": "2026-05-24T04:48:06.175483+00:00",
+      "max_review_iterations": 3,
+      "phases": [
+        {
+          "id": "phase-0",
+          "name": "Baseline Freeze + Architecture Decision",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "checks_passed": 5,
+                "files_created": [
+                  "docs/memory-v3-architecture.md",
+                  "docs/memory-v3-glossary.md"
+                ],
+                "no_py_modified": true,
+                "spec_checklist_all": true,
+                "tests_passed": 311
+              },
+              "commit": "d770b8e",
+              "completed_at": "2026-05-20T19:00:00+00:00"
+            },
+            {
+              "ack_evidence": {
+                "ack_level": "usable",
+                "case_level_eval": {
+                  "locomo": "0/5 projected no-LLM smoke",
+                  "longmemeval": "1/5 projected no-LLM smoke"
+                },
+                "checks_passed": 6,
+                "context_bundle": "work/phase-0/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "no_behavior_changes": true,
+                "reflection": "work/phase-0/reflect_phase-0.md",
+                "review": "work/phase-0/reviews/codex-review-rerun.md",
+                "tests_passed": 355
+              },
+              "commit": "a381237",
+              "completed_at": "2026-05-22T03:08:42+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "legacy-stable"
+        },
+        {
+          "id": "phase-1",
+          "name": "Memory v3 Contracts",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "benchmark_scores": {},
+                "checks_passed": 4,
+                "spec_checklist_all": true,
+                "tests_passed": 324
+              },
+              "commit": "2eae118",
+              "completed_at": "2026-05-20T19:00:00+00:00"
+            },
+            {
+              "ack_evidence": {
+                "ack_level": "usable",
+                "case_level_eval": {
+                  "locomo": "unchanged Phase 0 projected no-LLM smoke: 0/5",
+                  "longmemeval": "unchanged Phase 0 projected no-LLM smoke: 1/5"
+                },
+                "checks_passed": 6,
+                "context_bundle": "work/phase-1/context_bundle.md",
+                "dirty_active_control_files_quarantined": true,
+                "kernel_default_unchanged": true,
+                "no_behavior_changes": true,
+                "no_blueprint_adjustment": true,
+                "reflection": "work/phase-1/reflect_phase-1.md",
+                "review": "work/phase-1/reviews/codex-review-rerun.md"
+              },
+              "commit": null,
+              "completed_at": "2026-05-22T04:21:05+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "legacy-stable"
+        },
+        {
+          "id": "phase-2",
+          "name": "Evidence Harness And Failure Taxonomy",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "benchmark_scores": {
+                  "hard_eval": {
+                    "accuracy": "1.00/1.00",
+                    "cases": 16,
+                    "source_accuracy": "1.00/1.00"
+                  },
+                  "locomo_limit10_v2": {
+                    "episode_source_hit_at_10": "5/10",
+                    "planned_evidence_source_hit_at_5": "5/10"
+                  },
+                  "longmemeval_limit10_v2": {
+                    "episode_source_hit_at_10": "8/10",
+                    "planned_evidence_source_hit_at_5": "8/10"
+                  }
+                },
+                "checks_passed": 6,
+                "spec_checklist_all": true,
+                "tests_passed": 329
+              },
+              "commit": "52c467c",
+              "completed_at": "2026-05-20T19:00:00+00:00"
+            },
+            {
+              "ack_evidence": {
+                "ack_level": "usable",
+                "case_level_eval": {
+                  "locomo": "30 full-chain LLM judge: 7 pass / 23 fail; retrieval_miss=11; context_missing_evidence=10; unsupported_answer=9",
+                  "longmemeval": "30 full-chain LLM judge: 18 pass / 12 fail; retrieval_miss=3; context_missing_evidence=12; unsupported_answer=15"
+                },
+                "checks_passed": 3,
+                "context_bundle": "work/phase-2/context_bundle.md",
+                "diagnostic_only": true,
+                "kernel_default_unchanged": true,
+                "no_benchmark_improvement_claim": true,
+                "reflection": "work/phase-2/reflect_phase-2.md",
+                "review": "work/phase-2/reviews/codex-review.md",
+                "tests_passed": 366
+              },
+              "commit": "ed7c84b",
+              "completed_at": "2026-05-22T06:26:27+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "bench-diagnostic"
+        },
+        {
+          "id": "phase-3",
+          "name": "Core Memory Blocks",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "benchmark_scores": {},
+                "checks_passed": 6,
+                "spec_checklist_all": true,
+                "tests_passed": 337
+              },
+              "commit": "44eb040",
+              "completed_at": "2026-05-21T09:00:00+00:00"
+            },
+            {
+              "ack_evidence": {
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "10 projected no-LLM v3 smoke: 0/10; retrieval_miss=5; context_missing_evidence=1; evidence_hit_answer_fail=4; movement=new_case_no_baseline",
+                  "longmemeval": "10 projected no-LLM v3 smoke: 3/10; retrieval_miss=2; context_missing_evidence=3; evidence_hit_answer_fail=2; movement=new_case_no_baseline"
+                },
+                "checks_passed": 7,
+                "context_bundle": "work/phase-3/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "no_benchmark_improvement_claim": true,
+                "real_path_wired": true,
+                "reflection": "work/phase-3/reflect_phase-3.md",
+                "review": "work/phase-3/reviews/codex-review-phase-3.md",
+                "tests_passed": 372,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": "420c727",
+              "completed_at": "2026-05-22T08:07:38+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "shadow-write"
+        },
+        {
+          "id": "phase-4",
+          "name": "Archive And Passage Scope",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "benchmark_scores": {},
+                "checks_passed": 1,
+                "spec_checklist_all": true,
+                "tests_passed": 343
+              },
+              "commit": "7580e1d",
+              "completed_at": "2026-05-21T20:00:00+00:00"
+            },
+            {
+              "ack_evidence": {
+                "ack": "work/phase-4/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "blueprint_amendment_required": false,
+                "case_level_eval": {
+                  "locomo": "30 full-chain LLM judge: 0 pass / 30 fail; retrieval_miss=11; context_missing_evidence=10; evidence_hit_answer_fail=9; movement=new_case_no_baseline",
+                  "longmemeval": "30 full-chain LLM judge: 17 pass / 13 fail; retrieval_miss=3; context_missing_evidence=12; evidence_hit_answer_fail=4; movement=new_case_no_baseline"
+                },
+                "checks_passed": 4,
+                "context_bundle": "work/phase-4/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "next_phase_scope": "Phase 5 should start narrow around LoCoMo temporal/session context accounting and query-to-evidence-to-final-context traceability",
+                "no_benchmark_improvement_claim": true,
+                "real_path_wired": true,
+                "reflection": "work/phase-4/reflect_phase-4.md",
+                "review": "work/phase-4/reviews/codex-review.md",
+                "review_verdict": "work/phase-4/review_verdict.json",
+                "tests_passed": 378,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": null,
+              "completed_at": "2026-05-22T10:49:54+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "archive-scope-usable"
+        },
+        {
+          "id": "phase-5",
+          "name": "Context Composer And Accounting",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "benchmark_scores": {},
+                "checks_passed": 1,
+                "spec_checklist_all": true,
+                "tests_passed": 346
+              },
+              "commit": "7580e1d",
+              "completed_at": "2026-05-21T19:47:16+08:00"
+            },
+            {
+              "ack_evidence": {
+                "ack": "work/phase-5/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "blueprint_amendment_required": false,
+                "case_level_eval": {
+                  "locomo": "30 full-chain LLM judge: 7 pass / 23 fail; fail_to_pass=0; pass_to_fail=0; retrieval_miss=11; context_missing_evidence=10; unsupported_answer=9",
+                  "longmemeval": "30 full-chain LLM judge: 18 pass / 12 fail; fail_to_pass=0; pass_to_fail=0; retrieval_miss=3; context_missing_evidence=12; unsupported_answer=15"
+                },
+                "checks_passed": 4,
+                "context_bundle": "work/phase-5/context_bundle.md",
+                "diagnostic_scope_only": true,
+                "kernel_default_unchanged": true,
+                "next_phase_scope": "Phase 6 should execute answer projection and citation contract work using Phase 5 final-context trace/accounting evidence.",
+                "no_benchmark_improvement_claim": true,
+                "real_path_wired": true,
+                "reflection": "work/phase-5/reflect_phase-5.md",
+                "review": "work/phase-5/reviews/codex-review.md",
+                "review_verdict": "work/phase-5/review_verdict.json",
+                "tests_passed": 388,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": "f8e629a",
+              "completed_at": "2026-05-22T14:29:45+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "composer-usable"
+        },
+        {
+          "id": "phase-6",
+          "name": "Answer Projection And Citation Contract",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "benchmark_scores": {},
+                "checks_passed": 2,
+                "spec_checklist_all": true,
+                "tests_passed": 351
+              },
+              "commit": "648813d",
+              "completed_at": "2026-05-21T20:49:21+08:00"
+            },
+            {
+              "ack_evidence": {
+                "ack": "work/phase-6/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "30 full-chain LLM judge: 18 pass / 12 fail; fail_to_pass=11; pass_to_fail=0; retrieval_miss=9; evidence_hit_answer_fail=5; conv-26_qa_028 unchanged_pass with D7:5/D7:9 source overlap",
+                  "longmemeval": "30 full-chain LLM judge: 29 pass / 1 fail; fail_to_pass=11; pass_to_fail=0; retrieval_miss=0; evidence_hit_answer_fail=1"
+                },
+                "checks_passed": 6,
+                "context_bundle": "work/phase-6/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "kernel_trace_nonempty_rows": 0,
+                "next_phase_scope": "Phase 7 may proceed only as opt-in kernel/tool work; continue separating LoCoMo retrieval misses from answer quality.",
+                "real_path_wired": true,
+                "reflection": "work/phase-6/reflect_phase-6.md",
+                "review": "work/phase-6/reviews/phase6_review.md",
+                "review_verdict": "work/phase-6/review_verdict.json",
+                "tests_passed": 396,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": null,
+              "completed_at": "2026-05-22T19:55:00+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "answer-grounded"
+        },
+        {
+          "id": "phase-7",
+          "name": "Kernel, Tool, Approval, And Memory Mutation Loop",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "benchmark_scores": {
+                  "hard_eval": {
+                    "accuracy": "1.00/1.00",
+                    "cases": 16,
+                    "source_accuracy": "1.00/1.00"
+                  },
+                  "v3_locomo_limit10": {
+                    "memory_arch": "v3",
+                    "v3_diagnostics_present": true
+                  },
+                  "v3_longmemeval_limit10": {
+                    "memory_arch": "v3",
+                    "v3_diagnostics_present": true
+                  }
+                },
+                "checks_passed": 5,
+                "spec_checklist_all": true,
+                "tests_passed": 352
+              },
+              "commit": "95a7fda",
+              "completed_at": "2026-05-21T21:24:23+08:00"
+            },
+            {
+              "ack_evidence": {
+                "ack": "work/phase-7/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "5 no-LLM opt-in kernel smoke: 0 pass / 5 fail; structured kernel_trace_events=5/5; retrieval_miss=4; evidence_hit_answer_fail=1",
+                  "longmemeval": "5 no-LLM opt-in kernel smoke: 1 pass / 4 fail; structured kernel_trace_events=5/5; evidence_hit_answer_fail=4"
+                },
+                "checks_passed": 5,
+                "context_bundle": "work/phase-7/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "next_phase_scope": "Phase 8 should make a promotion or next-blueprint decision from larger full-chain LongMemEval and LoCoMo evidence; do not treat kernel trace presence as answer-quality success.",
+                "no_answer_quality_claim": true,
+                "real_path_wired": true,
+                "reflection": "work/phase-7/reflect_phase-7.md",
+                "review": "work/phase-7/reviews/codex-review-current.md",
+                "review_verdict": "work/phase-7/review_verdict.json",
+                "tests_passed": 400,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": null,
+              "completed_at": "2026-05-22T21:52:06+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "kernel-opt-in-usable"
+        },
+        {
+          "id": "phase-8",
+          "name": "Promotion Gate And Next Blueprint Decision",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "benchmark_scores": {
+                  "hard_eval": {
+                    "accuracy": "1.00/1.00",
+                    "cases": 16,
+                    "source_accuracy": "1.00/1.00"
+                  },
+                  "v3_public_smoke": {
+                    "locomo": "memory_arch/v3_layer_counts/v3_budget_decisions/v3_diagnostics present",
+                    "longmemeval": "memory_arch/v3_layer_counts/v3_budget_decisions/v3_diagnostics present"
+                  }
+                },
+                "checks_passed": 2,
+                "decision": "defer",
+                "spec_checklist_all": true,
+                "tests_passed": 352
+              },
+              "commit": "7f19edb",
+              "completed_at": "2026-05-21T21:39:03+08:00"
+            },
+            {
+              "ack_evidence": {
+                "ack": "work/phase-8/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "50 full-chain LLM judge: 30 pass / 20 fail; fail_to_pass=0; pass_to_fail=0; retrieval_miss=12; evidence_hit_answer_fail=8; judge_questionable=1",
+                  "longmemeval": "50 full-chain LLM judge: 47 pass / 3 fail; fail_to_pass=0; pass_to_fail=0; retrieval_miss=2; evidence_hit_answer_fail=1"
+                },
+                "checks_passed": 5,
+                "context_bundle": "work/phase-8/context_bundle.md",
+                "decision": "adjust_blueprint",
+                "kernel_default_unchanged": true,
+                "next_loop": "Targeted LoCoMo reliability loop from work/phase-8/blueprint_amendment.md and work/phase-8/next_blueprint_candidate.md",
+                "no_benchmark_promotion_claim": true,
+                "phase_decision": "continue_targeted",
+                "real_path_wired": true,
+                "reflection": "work/phase-8/reflect_phase-8.md",
+                "review": "work/phase-8/reviews/codex-review-current.md",
+                "review_verdict": "work/phase-8/review_verdict.json",
+                "tests_passed": 410,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": null,
+              "completed_at": "2026-05-23T01:39:27+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "promotion-decision"
+        },
+        {
+          "id": "phase-9",
+          "name": "Evidence Closure And Failure Replay",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "ack": "work/phase-9/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "phase-8 50-case baseline consumed and replayed: 30 pass / 20 fail; 20 failed replay JSONs; path classes session_localization_miss=9, retrieval_miss=3, temporal_date_miss=4, evidence_rendered_answer_fails=3, refusal_despite_evidence=1; judge_questionable=conv-26_qa_015 tracked separately",
+                  "longmemeval": "phase-8 50-case baseline consumed, not rerun in diagnostic-only phase: 47 pass / 3 fail"
+                },
+                "checks_passed": 5,
+                "context_bundle": "work/phase-9/context_bundle.md",
+                "diagnostic_only": true,
+                "kernel_default_unchanged": true,
+                "next_phase_hypothesis": "Target LoCoMo session-localization recall reliability first; keep source/judge separation explicit.",
+                "no_benchmark_improvement_claim": true,
+                "phase_binding_enforced": true,
+                "real_path_wired": true,
+                "reflection": "work/phase-9/reflect_phase-9.md",
+                "review": "work/phase-9/reviews/codex-review-phase-9.md",
+                "review_verdict": "work/phase-9/review_verdict.json",
+                "tests_passed": 415,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": "b06eea3",
+              "completed_at": "2026-05-23T02:48:49+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "failure-replay-ready"
+        },
+        {
+          "id": "phase-10",
+          "name": "Recall Memory Reliability",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "ack": "work/phase-10/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "30 full-chain LLM judge: 20 pass / 10 fail; fail_to_pass=conv-26_qa_011,conv-26_qa_012; pass_to_fail=0; remaining retrieval_miss=6; remaining evidence_hit_answer_fail=4; primary session-localization signal=conv-26_qa_011",
+                  "longmemeval": "30 full-chain LLM judge: 29 pass / 1 fail; fail_to_pass=0; pass_to_fail=0; evidence_hit_answer_fail=51a45a95"
+                },
+                "checks_passed": 5,
+                "context_bundle": "work/phase-10/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "locomo_regressed_or_unexplained": false,
+                "next_phase_hypothesis": "Evidence handoff/context selection should trace expected sources through indexed -> retrieved -> selected -> rendered -> cited -> judged; do not repeat broad recall unless handoff diagnostics prove recall evidence is missing or misleading.",
+                "phase_binding_enforced": true,
+                "real_path_wired": true,
+                "reflection": "work/phase-10/reflect_phase-10.md",
+                "review": "work/phase-10/reviews/codex-review-phase-10.md",
+                "review_verdict": "work/phase-10/review_verdict.json",
+                "source_grounding_regressed": false,
+                "tests_passed": 419,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": "7da574c",
+              "completed_at": "2026-05-23T06:26:28+08:00"
+            }
+          ],
+          "status": "completed",
+          "target_state": "recall-evidence-reliable"
+        },
+        {
+          "id": "phase-11",
+          "name": "Evidence Handoff And Context Selection",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "ack_level": "not_acked",
+                "adjustment": "work/phase-11/adjustment.md",
+                "decision": "superseded",
+                "reason": "Phase 11 review failed and requested repeat_phase; later phase-12 and phase-13 ACKed narrower work advanced the active path.",
+                "review_verdict": "work/phase-11/review_verdict.json",
+                "superseded_by": [
+                  "phase-12",
+                  "phase-13"
+                ]
+              },
+              "commit": null,
+              "completed_at": "2026-05-24T00:00:00Z"
+            }
+          ],
+          "status": "completed",
+          "target_state": "evidence-handoff-reliable"
+        },
+        {
+          "id": "phase-12",
+          "name": "Archival/RAG Memory Unification",
+          "state_history": [],
+          "status": "completed",
+          "target_state": "archival-rag-usable"
+        },
+        {
+          "id": "phase-13",
+          "name": "Core Memory Lifecycle",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "5-case full-chain LLM judge smoke: 4/5; answer_mode=llm; judge_status=judge_pass/judge_fail; source_hit=2/5",
+                  "longmemeval": "5-case full-chain LLM judge smoke: 5/5; answer_mode=llm; judge_status=judge_pass; source_hit=5/5"
+                },
+                "checks_passed": 5,
+                "context_bundle": "work/phase-13/context_bundle.md",
+                "eval_isolation_required": true,
+                "kernel_default_unchanged": true,
+                "locomo_regressed_or_unexplained": false,
+                "no_benchmark_improvement_claim": true,
+                "real_path_wired": true,
+                "reflection": "work/phase-13/reflect_phase-13.md",
+                "review": "work/phase-13/reviews/codex-review.md",
+                "source_grounding_regressed": false,
+                "tests_passed": 451,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": "2fe0d7d",
+              "completed_at": "2026-05-23T16:35:25Z"
+            }
+          ],
+          "status": "completed",
+          "target_state": "core-memory-lifecycle-usable"
+        },
+        {
+          "id": "phase-14",
+          "name": "Opt-In Kernel Memory Action Verification",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "ack": "work/phase-14/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "not applicable: no default LoCoMo retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed",
+                  "longmemeval": "not applicable: no default LongMemEval retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed"
+                },
+                "checks_passed": 7,
+                "context_bundle": "work/phase-14/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "locomo_regressed_or_unexplained": false,
+                "next_phase_scope": "Phase 15 should start with K2 hybrid tool selection before any executable diagnostic maintenance planner work.",
+                "no_benchmark_improvement_claim": true,
+                "promotion_gate": "not_applicable",
+                "real_path_wired": true,
+                "reflection": "work/phase-14/reflect_phase-14.md",
+                "review": "work/phase-14/reviews/codex-review-phase-14.md",
+                "review_eval_scope": "smoke",
+                "review_verdict": "work/phase-14/review_verdict.json",
+                "source_grounding_regressed": false,
+                "structural_kernel_smoke_only": true,
+                "tests_passed": 470,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": null,
+              "completed_at": "2026-05-23T19:07:44Z"
+            }
+          ],
+          "status": "completed",
+          "target_state": "agent-loop-memory-usable"
+        },
+        {
+          "id": "phase-15",
+          "name": "Hybrid Tool Selection And Diagnostic Maintenance Planner",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "ack": "work/phase-15/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "case_level_eval": {
+                  "locomo": "5-case projected no-LLM structural smoke: 0/5; retrieval_miss=conv-26_qa_003,conv-26_qa_004,conv-26_qa_005; evidence_hit_answer_fail=conv-26_qa_001,conv-26_qa_002; gold_fields_used=false; no planner tool_executed events",
+                  "longmemeval": "not applicable: no default LongMemEval retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed"
+                },
+                "checks_passed": 7,
+                "context_bundle": "work/phase-15/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "locomo_regressed_or_unexplained": false,
+                "next_phase_scope": "Phase 16 should add only registered, policy-gated, service-backed maintenance tools through the K2 boundary; preserve proposal-only smoke as non-promotion evidence.",
+                "no_benchmark_improvement_claim": true,
+                "promotion_gate": "not_applicable",
+                "real_path_wired": true,
+                "reflection": "work/phase-15/reflect_phase-15.md",
+                "review": "work/phase-15/reviews/phase15_review_after_repair.md",
+                "review_eval_scope": "smoke",
+                "review_verdict": "work/phase-15/review_verdict.json",
+                "source_grounding_regressed": false,
+                "structural_kernel_and_planner_smoke_only": true,
+                "tests_passed": 499,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": null,
+              "completed_at": "2026-05-23T21:36:00Z"
+            }
+          ],
+          "status": "completed",
+          "target_state": "hybrid-selection-and-diagnostic-planner-ready"
+        },
+        {
+          "id": "phase-16",
+          "name": "Kernel Maintenance Tool Surface",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "ack": "work/phase-16/ack.json",
+                "ack_level": "usable",
+                "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+                "blueprint_adjustment": "none",
+                "case_level_eval": {
+                  "locomo": "5-case projected no-LLM structural smoke: 0/5; retrieval_miss=conv-26_qa_003,conv-26_qa_004,conv-26_qa_005; evidence_hit_answer_fail=conv-26_qa_001,conv-26_qa_002; default-off traces empty; opt-in traces length 14 per case",
+                  "longmemeval": "not applicable: no default LongMemEval retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed"
+                },
+                "checks_passed": 8,
+                "context_bundle": "work/phase-16/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "locomo_regressed_or_unexplained": false,
+                "next_phase_scope": "Phase 17 should run K4 LoCoMo maintenance repair measurement with same-slice full-chain evidence, isolated repair-smoke writes, and clean held-out or clean-store validation before any quality claim.",
+                "no_benchmark_improvement_claim": true,
+                "promotion_gate": "not_applicable",
+                "real_path_wired": true,
+                "reflection": "work/phase-16/reflect_phase-16.md",
+                "review": "work/phase-16/reviews/codex-review-after-repair.md",
+                "review_eval_scope": "smoke",
+                "review_verdict": "work/phase-16/review_verdict.json",
+                "source_grounding_regressed": false,
+                "structural_kernel_tool_smoke_only": true,
+                "tests_passed": 520,
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": null,
+              "completed_at": "2026-05-24T00:19:24Z"
+            }
+          ],
+          "status": "completed",
+          "target_state": "kernel-maintenance-tools-usable"
+        },
+        {
+          "id": "phase-17",
+          "name": "LoCoMo Maintenance Repair Eval",
+          "state_history": [
+            {
+              "ack_evidence": {
+                "ack": "work/phase-17/ack.json",
+                "ack_level": "usable",
+                "blueprint_adjustment": "none",
+                "context_bundle": "work/phase-17/context_bundle.md",
+                "kernel_default_unchanged": true,
+                "locomo_r3": "8 pass / 2 fail baseline and repair smoke; fail_to_pass=0; pass_to_fail=0; source_miss_judge_pass=4; same-slice diagnostic only",
+                "reflection": "work/phase-17/reflect_phase-17.md",
+                "result": "work/phase-17/result.md",
+                "review": "work/phase-17/reviews/codex-review-r2.md",
+                "tests": "536 passed, 1 warning; ruff passed",
+                "v1_fallback_preserved": true,
+                "v3_default_preserved": true
+              },
+              "commit": "4aa404b",
+              "completed_at": "2026-05-24T03:47:56Z"
+            }
+          ],
+          "status": "completed",
+          "target_state": "locomo-maintenance-repair-measured"
+        },
+        {
+          "id": "phase-18",
+          "name": "Benchmark Governance And Promotion",
+          "state_history": [],
+          "status": "completed",
+          "target_state": "governed-promotion-ready"
+        }
+      ],
+      "plan_lane": {
+        "phase": null,
+        "state": "DONE"
+      },
+      "research_lane": {
+        "phases": []
+      },
+      "review_lane": {
+        "active": false,
+        "phase": null,
+        "reviewers": []
+      },
+      "started_at": "2026-05-20T00:00:00Z",
+      "version": "2.0"
+    }
+  },
+  "last_updated": "2026-05-24T17:57:44Z",
+  "legacy_root_loop": "xmuse/legacy/root-loop/",
+  "master_blueprint": "xmuse/master_blueprint.md",
+  "master_config": "xmuse/master_config.json",
+  "master_policy": {
+    "kernel_opt_in_preserved": true,
+    "no_benchmark_score_targets": true,
+    "same_slice_repair_smoke_not_promotion": true,
+    "v1_fallback_preserved": true
+  },
+  "mode": "master_control",
+  "prompts": {
+    "master": "xmuse/prompts/master_god_prompt.md",
+    "slave": "xmuse/prompts/slave_god_prompt.md"
+  },
+  "queues": {
+    "active_lanes": [
+      "archive-rag",
+      "xmuse-console",
+      "benchmark-layer-organization"
+    ],
+    "blocked": [],
+    "held": [
+      "memoryos-redis-cache-probe"
+    ],
+    "master_review_queue": [],
+    "merge_queue": [],
+    "merged": [],
+    "planning_queue": [
+      "xmuse-core-state-extraction"
+    ]
+  },
+  "version": "1.0"
+}

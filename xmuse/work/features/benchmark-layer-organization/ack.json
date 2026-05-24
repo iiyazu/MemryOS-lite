@@ -1,0 +1,60 @@
+{
+  "feature_id": "benchmark-layer-organization",
+  "ack_level": "partial",
+  "status": "bounded_slice_complete_full_blueprint_incomplete",
+  "branch": "feat/benchmark-layer-organization",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-benchmark-layer-organization",
+  "head": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc",
+  "head_ref": "3b2a973 feat: expose signed recall packet offsets",
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_episode_retrieval.py::test_recall_searcher_records_signed_packet_member_offsets tests/test_recall_pipeline.py::test_recall_pipeline_exposes_signed_packet_member_offsets tests/test_context_composer.py::test_v3_composer_final_trace_preserves_signed_packet_member_offsets -q",
+      "result": "3 failed before implementation with missing packet_member_neighbor_offsets; 3 passed in 3.36s after implementation"
+    },
+    {
+      "command": "uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py -q",
+      "result": "19 passed in 10.81s"
+    },
+    {
+      "command": "uv run pytest tests/test_context_composer.py -q",
+      "result": "14 passed in 29.55s"
+    },
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py tests/test_diagnostic_report.py -q",
+      "result": "91 passed in 131.00s (0:02:11)"
+    },
+    {
+      "command": "uv run ruff check src/memoryos_lite/retrieval/episode_searcher.py src/memoryos_lite/retrieval/recall_pipeline.py tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_context_composer.py",
+      "result": "All checks passed!"
+    },
+    {
+      "command": "uv run python - <<'PY'\nfrom memoryos_lite.config import Settings\ns = Settings()\nprint('resolved_memory_arch', s.resolved_memory_arch)\nprint('resolved_recall_pipeline', s.resolved_recall_pipeline)\nprint('resolved_agent_kernel', s.resolved_agent_kernel)\nprint('v1_fallback', Settings(memoryos_memory_arch='v1').resolved_memory_arch)\nPY",
+      "result": "resolved_memory_arch v3; resolved_recall_pipeline v1; resolved_agent_kernel off; v1_fallback v1"
+    }
+  ],
+  "v3_default_preserved": true,
+  "v1_fallback_preserved": true,
+  "recall_pipeline_v2_opt_in_preserved": true,
+  "kernel_default_unchanged": true,
+  "sqlite_authority_preserved": true,
+  "benchmark_improvement_claim": false,
+  "locomo_longmemeval_decision": {
+    "locomo": "not_run_no_score_or_case_movement_claim",
+    "longmemeval": "not_run_regression_guard_pending"
+  },
+  "review_eval_decision": {
+    "review_verdict": "FAIL",
+    "reason": "bounded diagnostic slice passed focused verification, but full blueprint and public eval gates are incomplete"
+  },
+  "artifacts": {
+    "context_bundle": "xmuse/work/features/benchmark-layer-organization/context_bundle.md",
+    "brainstorm": "xmuse/work/features/benchmark-layer-organization/brainstorm.md",
+    "plan_final": "xmuse/work/features/benchmark-layer-organization/plan_final.md",
+    "result": "xmuse/work/features/benchmark-layer-organization/result.md",
+    "execute_review": "xmuse/work/features/benchmark-layer-organization/execute_review.md",
+    "review_verdict": "xmuse/work/features/benchmark-layer-organization/review_verdict.json",
+    "ack": "xmuse/work/features/benchmark-layer-organization/ack.json",
+    "slave_state": "xmuse/work/features/benchmark-layer-organization/slave_state.json"
+  }
+}

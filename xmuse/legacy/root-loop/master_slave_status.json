@@ -1,0 +1,114 @@
+{
+  "ok": true,
+  "state": "loaded",
+  "path": "xmuse/feature_lanes.json",
+  "master_god": {
+    "role": "integration_owner",
+    "authority": [
+      "create slave feature lanes",
+      "summarize feature ACK/review/result artifacts",
+      "require integrated tests before merge",
+      "decide merge timing",
+      "hold or reject unsafe feature work"
+    ],
+    "merge_policy": "usable_ack_pass_review_clean_worktree_integrated_tests",
+    "forbidden_merge_claims": [
+      "same-slice repair smoke as promotion evidence",
+      "LongMemEval-only chain-level improvement",
+      "benchmark score target as /goal"
+    ]
+  },
+  "features": [
+    {
+      "id": "v1-quarantine",
+      "name": "V1 Legacy ContextBuilder Quarantine",
+      "state": "ready_for_master_review",
+      "slave_god": {
+        "role": "feature_owner",
+        "mode": "completed_isolated_worktree",
+        "blueprint": "work/features/v1-quarantine/result.md"
+      },
+      "branch": "chore/v1-quarantine",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-v1-quarantine",
+      "merge": {
+        "status": "ready_for_master_review",
+        "target_branch": "feat/phase-2.5-3-retrieval-agent",
+        "strategy": "git_worktree",
+        "requires_integrated_tests": true
+      },
+      "merge_status": "ready_for_master_review",
+      "reviewable": true,
+      "mergeable": false,
+      "blockers": [],
+      "warnings": [],
+      "artifact_gate": {
+        "ok": true,
+        "blockers": [],
+        "paths": {
+          "ack": "xmuse/work/features/v1-quarantine/ack.json",
+          "review_verdict": "xmuse/work/features/v1-quarantine/review_verdict.json",
+          "result": "xmuse/work/features/v1-quarantine/result.md"
+        }
+      },
+      "integrated_tests_gate": {
+        "ok": true,
+        "blockers": [],
+        "paths": {}
+      },
+      "git_status_short": "",
+      "project_root": "/home/iiyatu/projects/python/memoryOS"
+    },
+    {
+      "id": "archive-rag",
+      "name": "Archive RAG Boundary",
+      "state": "planned",
+      "slave_god": {
+        "role": "feature_owner",
+        "mode": "planned",
+        "blueprint": "work/features/archive-rag/blueprint.md"
+      },
+      "branch": "feat/archive-rag",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag",
+      "merge": {
+        "status": "not_requested",
+        "target_branch": "feat/phase-2.5-3-retrieval-agent",
+        "strategy": "git_worktree",
+        "requires_integrated_tests": true
+      },
+      "merge_status": "not_requested",
+      "reviewable": false,
+      "mergeable": false,
+      "blockers": [],
+      "warnings": [],
+      "artifact_gate": {
+        "ok": true,
+        "blockers": [],
+        "paths": {}
+      },
+      "integrated_tests_gate": {
+        "ok": true,
+        "blockers": [],
+        "paths": {}
+      },
+      "git_status_short": null,
+      "project_root": "/home/iiyatu/projects/python/memoryOS"
+    }
+  ],
+  "master_review_queue": [
+    {
+      "id": "v1-quarantine",
+      "branch": "chore/v1-quarantine",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-v1-quarantine",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "strategy": "git_worktree"
+    }
+  ],
+  "merge_queue": [],
+  "blockers": [],
+  "counts": {
+    "features": 2,
+    "reviewable": 1,
+    "mergeable": 0,
+    "blocked": 0
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "activation_state": "master_active",
+  "counts": {
+    "blocked": 0,
+    "held": 1,
+    "mergeable": 0,
+    "merged": 0,
+    "reviewable": 0,
+    "total": 5
+  },
+  "errors": [],
+  "queues": {
+    "active_lanes": [
+      "archive-rag",
+      "xmuse-console",
+      "benchmark-layer-organization"
+    ],
+    "blocked": [],
+    "held": [
+      "memoryos-redis-cache-probe"
+    ],
+    "master_review_queue": [],
+    "merge_queue": [],
+    "merged": [],
+    "planning_queue": [
+      "xmuse-core-state-extraction"
+    ]
+  },
+  "source": "xmuse/master_state.json",
+  "version": "1.0"
+}
