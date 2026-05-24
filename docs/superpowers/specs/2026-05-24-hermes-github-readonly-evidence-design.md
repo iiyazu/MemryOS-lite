@@ -83,6 +83,10 @@ Extend `.hermes-loop/master_config.json` with a `github` object:
     "enabled": false,
     "repo": "owner/repo",
     "remote": "origin",
+    "allowed_target_branches": [
+      "main",
+      "feat/phase-2.5-3-retrieval-agent"
+    ],
     "token_env": "GITHUB_TOKEN",
     "required_review_state": "APPROVED",
     "required_check_conclusions": ["success"],
@@ -94,6 +98,13 @@ Extend `.hermes-loop/master_config.json` with a `github` object:
 When `github.enabled` is false, Master must keep the current local-only gate
 behavior. When true, Master may require GitHub evidence for features whose
 policy flags allow or require it.
+
+`master_config.allowed_target_branches` remains the local merge target allowlist.
+`master_config.github.allowed_target_branches` is the GitHub PR base allowlist.
+During the current rollout it must include the active Hermes target branch
+`feat/phase-2.5-3-retrieval-agent`; otherwise GitHub evidence for current lanes
+must be rejected as branch-policy mismatched. A future production rollout may
+shrink both allowlists back to protected branches such as `main`.
 
 ## Feature Lane Schema
 
@@ -170,7 +181,8 @@ Minimum schema:
       "user": "reviewer-login",
       "state": "APPROVED",
       "commit_id": "feature-head-sha",
-      "submitted_at": "2026-05-24T00:00:00Z"
+      "submitted_at": "2026-05-24T00:00:00Z",
+      "is_latest_for_reviewer": true
     }
   ],
   "check_runs": [
@@ -201,22 +213,88 @@ conditions hold:
 - PR repo matches `master_config.github.repo`.
 - PR head ref matches the feature branch.
 - PR base ref matches the target branch.
+- PR base ref is in `master_config.github.allowed_target_branches`.
 - PR head SHA matches the local feature branch HEAD or the declared feature
   head commit.
-- Review state matches `required_review_state`.
-- Review `commit_id` matches PR head SHA.
+- PR base SHA matches the Master integrated-test `base_commit`.
+- PR base SHA matches the current local target branch HEAD. If it does not,
+  Master must hold the feature and refresh integrated tests before merge.
+- Review validity is computed from the GitHub review event stream, not by
+  selecting any single approved review in isolation.
+- Every required review id must exist, have state `APPROVED`, match PR head
+  SHA, and remain the latest non-comment review for that reviewer on that head.
+- If any later review by the same reviewer on the same head is
+  `CHANGES_REQUESTED` or another non-approval state, that reviewer no longer
+  contributes approval.
+- If project policy requires N approvals, the N approvals must be valid after
+  applying latest-review-per-reviewer semantics.
 - Required check runs are completed with allowed conclusions.
 - Check run head SHA matches PR head SHA.
 - Evidence was fetched by Master after the PR reached that head SHA.
+
+GitHub evidence may prove that an external reviewer or CI system exists and
+approved the current PR head. It does not by itself prove that the reviewer
+authorized the exact Hermes merge request digest. Exact request authorization
+remains the job of `merge_approval.json`.
+
+Review selection is explicit. `required_review_ids` are fixed by the feature
+merge entry or by `merge_approval_request.json`; Master must not silently pick
+any convenient approval from the PR event stream. If `required_review_ids` is
+empty and project policy requires approvals, Master may compute candidate
+approvals from latest-review-per-reviewer state, but it must write the selected
+review ids into the approval request before external approval is granted.
 
 GitHub evidence does not replace:
 
 - local Slave ACK;
 - local Slave PASS review;
 - Master review;
+- `.hermes-loop/approvals/<feature-id>/merge_approval_request.json`;
+- `.hermes-loop/approvals/<feature-id>/merge_approval.json`;
+- merge approval request digest validation;
+- `master_review_digest`, `integrated_tests_digest`, and policy snapshot digest
+  checks in the approval contract;
 - local integrated tests;
 - fresh target-head gate;
 - post-merge verification.
+
+## Approval Artifact Binding
+
+GitHub read-only evidence is verification evidence for the existing Hermes
+approval artifact. It must not directly replace `merge_approval.json`.
+
+The approved shape is:
+
+```text
+merge_approval_request.json
+  -> binds feature id, target branch, head/base commits, master review digest,
+     integrated tests digest, and policy snapshot digest
+
+github_evidence.json
+  -> proves GitHub PR/review/check provenance for the same feature head and
+     target base
+
+merge_approval.json
+  -> references both the request digest and github_evidence digest
+```
+
+`merge_approval.json` must include a verification reference like:
+
+```json
+{
+  "verification": {
+    "method": "github_readonly_evidence",
+    "github_evidence_ref": ".hermes-loop/master/features/archive-rag/github_evidence.json",
+    "github_evidence_digest": "sha256:evidence-digest",
+    "request_digest": "sha256:request-digest"
+  }
+}
+```
+
+Master must validate that the current file digest of `github_evidence_ref`
+matches `github_evidence_digest`, and that the current request digest matches
+`request_digest`. If any referenced artifact has changed since approval, the
+feature returns to hold.
 
 ## API Boundary
 
@@ -249,8 +327,11 @@ No test should require live GitHub network access.
 - API timeout: block only if GitHub evidence is required.
 - PR head SHA mismatch: block.
 - Review not bound to current head SHA: block.
+- Required review id missing, stale, or superseded by a later non-approval
+  review from the same reviewer: block.
 - Check run incomplete or failed: block.
-- Target branch changed after evidence fetch: hold and refresh integrated tests.
+- PR base SHA does not match integrated-test base commit or current target HEAD:
+  hold and refresh integrated tests.
 
 ## Security And Authority
 
@@ -270,7 +351,10 @@ Tests should cover:
 - config parsing with GitHub enabled;
 - valid PR evidence;
 - PR head SHA mismatch;
+- PR base SHA mismatch against integrated-test base commit;
 - review approval tied to an old commit;
+- approved review superseded by later changes-requested review;
+- required review id missing from the fetched review stream;
 - missing or failed check run;
 - optional GitHub evidence not blocking local-only features;
 - required GitHub evidence blocking when unavailable;
