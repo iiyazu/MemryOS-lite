@@ -911,6 +911,54 @@ def test_master_slave_summary_allows_missing_registry(tmp_path: Path) -> None:
     assert summary["master_review_queue"] == []
 
 
+def test_master_state_supersedes_legacy_feature_lanes(tmp_path: Path) -> None:
+    hardening = load_hardening_module()
+    loop = tmp_path / ".hermes-loop"
+    loop.mkdir()
+    write_json(loop / "feature_lanes.json", {"features": [{"id": "legacy-only", "state": "ready_for_merge"}]})
+    write_json(
+        loop / "master_state.json",
+        {
+            "version": "1.0",
+            "mode": "master_control",
+            "activation_state": "master_active",
+            "active": True,
+            "history_baseline": ".hermes-loop/history/main_loop_phase0_18.json",
+            "legacy_root_loop": ".hermes-loop/legacy/root-loop/",
+            "master_blueprint": ".hermes-loop/master_blueprint.md",
+            "master_config": ".hermes-loop/master_config.json",
+            "prompts": {
+                "master": ".hermes-loop/prompts/master_god_prompt.md",
+                "slave": ".hermes-loop/prompts/slave_god_prompt.md",
+            },
+            "dispatch_contracts": {
+                "master": ".hermes-loop/contracts/master_dispatch_template.json",
+                "slave": ".hermes-loop/contracts/slave_dispatch_template.json",
+            },
+            "master_policy": {},
+            "features": [],
+            "queues": {
+                "planning_queue": [],
+                "active_lanes": [],
+                "master_review_queue": [],
+                "merge_queue": [],
+                "held": [],
+                "blocked": [],
+                "merged": [],
+            },
+            "decisions": [],
+            "integration": {},
+            "github": {},
+            "last_updated": "2026-05-24T00:00:00Z",
+        },
+    )
+
+    summary = hardening.summarize_master_slave_control(loop)
+
+    assert summary["source"] == ".hermes-loop/master_state.json"
+    assert summary["counts"]["total"] == 0
+
+
 def test_master_slave_summary_queues_ready_feature_for_master_review_only(
     tmp_path: Path,
 ) -> None:

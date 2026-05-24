@@ -1442,6 +1442,34 @@ def summarize_master_slave_control(
     project_root: str | Path | None = None,
 ) -> dict[str, Any]:
     loop = Path(loop_root)
+    controller = resolve_active_controller(loop)
+    if controller["source"] == "master":
+        status = write_master_status(loop, controller["state"])
+        return {
+            "ok": not status["errors"],
+            "source": ".hermes-loop/master_state.json",
+            "path": ".hermes-loop/master_state.json",
+            "counts": status["counts"],
+            "queues": status["queues"],
+            "errors": status["errors"],
+            "features": controller["state"].get("features", []),
+            "master_review_queue": status["queues"].get("master_review_queue", []),
+            "merge_queue": status["queues"].get("merge_queue", []),
+            "blockers": status["errors"],
+        }
+    if controller["source"] == "blocked":
+        return {
+            "ok": False,
+            "source": "blocked",
+            "path": controller.get("path"),
+            "counts": {"total": 0, "reviewable": 0, "mergeable": 0, "held": 0, "blocked": 1, "merged": 0},
+            "queues": {"blocked": ["master_state"]},
+            "errors": controller.get("errors", []),
+            "features": [],
+            "master_review_queue": [],
+            "merge_queue": [],
+            "blockers": controller.get("errors", []),
+        }
     registry = load_feature_lanes(loop)
     if not registry.get("ok"):
         return {
