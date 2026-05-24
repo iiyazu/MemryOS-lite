@@ -1,0 +1,21 @@
+{
+  "feature": "v1-quarantine",
+  "ack_level": "usable",
+  "branch": "chore/v1-quarantine",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-v1-quarantine",
+  "commit": "053281c",
+  "summary": "Legacy v1 ContextBuilder was moved behind a dedicated legacy_context module while preserving compatibility aliases and fallback behavior.",
+  "verification_commands": [
+    "python3 -m py_compile src/memoryos_lite/engine.py src/memoryos_lite/legacy_context.py",
+    "uv run ruff check .",
+    "uv run pytest tests/test_engine.py -q -k 'v1_context_builder_is_quarantined or context_builder' -> 12 passed, 28 deselected",
+    "uv run pytest tests/test_evidence_integration.py -q -> 8 passed",
+    "uv run pytest tests/test_context_composer.py tests/test_memory_lifecycle.py -q -> 22 passed",
+    "uv run pytest tests/test_item_retrieval.py tests/test_public_benchmarks_items.py -q -> 19 passed",
+    "uv run mypy src/memoryos_lite/legacy_context.py -> Success"
+  ],
+  "v3_default_preserved": true,
+  "v1_fallback_preserved": true,
+  "kernel_default_unchanged": true,
+  "benchmark_improvement_claim": false
+}

@@ -1,0 +1,29 @@
+{
+  "feature": "v1-quarantine",
+  "verdict": "PASS",
+  "decision": "ready_for_master_review",
+  "review_artifact": null,
+  "blocking_findings": [],
+  "v1_fallback_preserved": true,
+  "v3_default_preserved": true,
+  "kernel_default_unchanged": true,
+  "source_grounding_regressed": false,
+  "locomo_regressed_or_unexplained": false,
+  "review_eval_decision": {
+    "scope": "not_applicable",
+    "reason": "Control-plane and module-boundary quarantine only. No default retrieval, answer, kernel, benchmark, or eval path was intentionally changed.",
+    "longmemeval": {
+      "run": false,
+      "limit": 0,
+      "reason": "No product behavior or benchmark path changed."
+    },
+    "locomo": {
+      "run": false,
+      "limit": 0,
+      "reason": "No product behavior or benchmark path changed."
+    },
+    "llm_answer": false,
+    "llm_judge": false,
+    "promotion_gate": "not_applicable"
+  }
+}
