@@ -385,6 +385,22 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _active_template_text(relative_path: str, fallback: str) -> str:
+    template_path = Path(__file__).resolve().parent / relative_path
+    if template_path.exists():
+        return template_path.read_text(encoding="utf-8")
+    return fallback
+
+
+def _active_template_json(relative_path: str, fallback: dict[str, Any]) -> dict[str, Any]:
+    template_path = Path(__file__).resolve().parent / relative_path
+    if template_path.exists():
+        payload = json.loads(template_path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            return payload
+    return fallback
+
+
 def derive_master_queues(
     master_state: dict[str, Any], *, loop_root: str | Path | None = None
 ) -> dict[str, Any]:
@@ -549,21 +565,34 @@ def prepare_master_migration(loop_root: str | Path) -> dict[str, Any]:
     )
     (loop / "prompts" / "master_god_prompt.md").parent.mkdir(parents=True, exist_ok=True)
     (loop / "prompts" / "master_god_prompt.md").write_text(
-        "Read master_state.json, master_config.json, master_blueprint.md, "
-        "and master dispatch contract before acting.\n",
+        _active_template_text(
+            "prompts/master_god_prompt.md",
+            "Read master_state.json, master_config.json, master_blueprint.md, "
+            "and master dispatch contract before acting.\n",
+        ),
         encoding="utf-8",
     )
     (loop / "prompts" / "slave_god_prompt.md").write_text(
-        "Read assigned feature registry entry, slave prompt, slave dispatch contract, "
-        "slave_state.json, and feature blueprint.\n",
+        _active_template_text(
+            "prompts/slave_god_prompt.md",
+            "Read assigned feature registry entry, slave prompt, slave dispatch contract, "
+            "slave_state.json, and feature blueprint.\n",
+        ),
         encoding="utf-8",
     )
     _write_json(
         loop / "contracts" / "master_dispatch_template.json",
-        {"version": "1.0", "role": "master_god"},
+        _active_template_json(
+            "contracts/master_dispatch_template.json",
+            {"version": "1.0", "role": "master_god"},
+        ),
     )
     _write_json(
-        loop / "contracts" / "slave_dispatch_template.json", {"version": "1.0", "role": "slave_god"}
+        loop / "contracts" / "slave_dispatch_template.json",
+        _active_template_json(
+            "contracts/slave_dispatch_template.json",
+            {"version": "1.0", "role": "slave_god"},
+        ),
     )
 
     for feature in features:

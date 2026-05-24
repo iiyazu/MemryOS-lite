@@ -976,6 +976,80 @@ def test_launcher_uses_master_prompt_and_master_state_after_migration():
     assert "contracts/god_dispatch_template.json" not in launcher
 
 
+def test_master_and_slave_prompts_define_active_multi_god_authority():
+    master_prompt = (PROJECT / ".hermes-loop" / "prompts" / "master_god_prompt.md").read_text()
+    slave_prompt = (PROJECT / ".hermes-loop" / "prompts" / "slave_god_prompt.md").read_text()
+
+    assert "Master God" in master_prompt
+    assert "master_state.json" in master_prompt
+    assert "manage Slave Gods" in master_prompt
+    assert "external merge approval" in master_prompt
+    assert "must not merge" in master_prompt
+
+    assert "Slave God" in slave_prompt
+    assert "root God authority inside one feature boundary" in slave_prompt
+    assert "plan/execute/review" in slave_prompt
+    assert "must not edit master_state.json" in slave_prompt
+    assert "ack.json" in slave_prompt
+
+
+def test_plan_execute_review_prompts_are_active_feature_local_nodes():
+    prompts = {
+        name: (PROJECT / ".hermes-loop" / "prompts" / name).read_text()
+        for name in ("plan_agent.md", "execute_agent.md", "review_agent.md")
+    }
+
+    for prompt in prompts.values():
+        assert "DEPRECATED" not in prompt
+        assert "feature-local" in prompt
+        assert "slave_state.json" in prompt
+
+    assert "writes only planning artifacts" in prompts["plan_agent.md"]
+    assert "may modify only the assigned feature worktree" in prompts["execute_agent.md"]
+    assert "read-only" in prompts["review_agent.md"]
+
+
+def test_master_and_slave_dispatch_contracts_are_substantive():
+    master = json.loads(
+        (PROJECT / ".hermes-loop" / "contracts" / "master_dispatch_template.json").read_text()
+    )
+    slave = json.loads(
+        (PROJECT / ".hermes-loop" / "contracts" / "slave_dispatch_template.json").read_text()
+    )
+
+    assert master["role"] == "master_god"
+    assert slave["role"] == "slave_god"
+    for payload in (master, slave):
+        assert payload["version"] == "1.0"
+        assert payload["required_inputs"]
+        assert payload["allowed_writes"]
+        assert payload["forbidden_actions"]
+        assert payload["required_artifacts"]
+
+    assert "master_review" in master["gates"]
+    assert "merge" in master["gates"]
+    assert "feature_boundary" in slave["gates"]
+    assert "usable_ack" in slave["gates"]
+
+
+def test_prepare_master_migration_seeds_substantive_prompts_and_contracts(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_legacy_inputs(loop)
+
+    result = hardening.prepare_master_migration(loop)
+
+    master_prompt = (loop / "prompts" / "master_god_prompt.md").read_text()
+    slave_prompt = (loop / "prompts" / "slave_god_prompt.md").read_text()
+    master_contract = json.loads((loop / "contracts" / "master_dispatch_template.json").read_text())
+    slave_contract = json.loads((loop / "contracts" / "slave_dispatch_template.json").read_text())
+    assert result["status"] == "prepared"
+    assert "manage Slave Gods" in master_prompt
+    assert "root God authority inside one feature boundary" in slave_prompt
+    assert master_contract["required_inputs"]
+    assert slave_contract["required_inputs"]
+
+
 def test_prepare_then_activate_preserves_feature_statuses(tmp_path):
     hardening = load_hardening()
     loop = tmp_path / ".hermes-loop"

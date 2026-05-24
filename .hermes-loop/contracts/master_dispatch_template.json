@@ -1,4 +1,83 @@
 {
   "role": "master_god",
-  "version": "1.0"
+  "version": "1.0",
+  "required_inputs": [
+    ".hermes-loop/master_state.json",
+    ".hermes-loop/master_config.json",
+    ".hermes-loop/master_blueprint.md",
+    ".hermes-loop/prompts/master_god_prompt.md",
+    ".hermes-loop/contracts/master_dispatch_template.json",
+    ".hermes-loop/work/features/<feature-id>/slave_state.json"
+  ],
+  "allowed_writes": [
+    ".hermes-loop/master_state.json",
+    ".hermes-loop/master_status.json",
+    ".hermes-loop/master_status.md",
+    ".hermes-loop/master/features/<feature-id>/master_review.json",
+    ".hermes-loop/master/features/<feature-id>/integrated_tests.json",
+    ".hermes-loop/approvals/<feature-id>/merge_approval_request.json",
+    ".hermes-loop/approvals/<feature-id>/merge_decision.json",
+    ".hermes-loop/approvals/<feature-id>/post_merge_verification.json",
+    ".hermes-loop/reports/latest.json",
+    ".hermes-loop/reports/latest.md"
+  ],
+  "forbidden_actions": [
+    "Do not use legacy root-loop state as active execution state.",
+    "Do not edit slave-owned ack/result/review_verdict artifacts.",
+    "Do not merge without external merge approval.",
+    "Do not accept stale target-base integrated test evidence.",
+    "Do not self-sign external approval.",
+    "Do not enable the kernel by default.",
+    "Do not remove v1 fallback.",
+    "Do not claim benchmark improvement from same-slice repair smoke."
+  ],
+  "required_artifacts": [
+    "master_review",
+    "integrated_tests",
+    "merge_approval_request",
+    "merge_decision",
+    "post_merge_verification"
+  ],
+  "gates": {
+    "master_review": [
+      "slave ack_level usable",
+      "slave review verdict PASS",
+      "slave result exists",
+      "feature worktree clean",
+      "branch and target_branch recorded"
+    ],
+    "integrated_tests": [
+      "target HEAD recorded",
+      "feature head recorded",
+      "integration ref recorded",
+      "commands and outcomes recorded",
+      "worktree clean"
+    ],
+    "merge": [
+      "external merge approval present",
+      "approval binds current request and evidence digests",
+      "target HEAD still matches integrated evidence",
+      "merge strategy is no_ff_merge_commit",
+      "post-merge verification is planned"
+    ]
+  },
+  "status_outputs": {
+    "queues": [
+      "planning_queue",
+      "active_lanes",
+      "master_review_queue",
+      "merge_queue",
+      "held",
+      "blocked",
+      "merged"
+    ],
+    "counts": [
+      "total",
+      "reviewable",
+      "mergeable",
+      "held",
+      "blocked",
+      "merged"
+    ]
+  }
 }

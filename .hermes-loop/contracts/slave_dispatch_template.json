@@ -1,4 +1,73 @@
 {
   "role": "slave_god",
-  "version": "1.0"
+  "version": "1.0",
+  "required_inputs": [
+    "assigned master_state.features[] entry",
+    ".hermes-loop/prompts/slave_god_prompt.md",
+    ".hermes-loop/contracts/slave_dispatch_template.json",
+    ".hermes-loop/work/features/<feature-id>/slave_state.json",
+    ".hermes-loop/work/features/<feature-id>/blueprint.md",
+    "assigned feature branch",
+    "assigned feature worktree"
+  ],
+  "allowed_writes": [
+    ".hermes-loop/work/features/<feature-id>/context_bundle.md",
+    ".hermes-loop/work/features/<feature-id>/brainstorm.md",
+    ".hermes-loop/work/features/<feature-id>/plan.md",
+    ".hermes-loop/work/features/<feature-id>/plan_final.md",
+    ".hermes-loop/work/features/<feature-id>/result.md",
+    ".hermes-loop/work/features/<feature-id>/execute_review.md",
+    ".hermes-loop/work/features/<feature-id>/review_verdict.json",
+    ".hermes-loop/work/features/<feature-id>/ack.json",
+    ".hermes-loop/work/features/<feature-id>/slave_state.json",
+    "assigned feature worktree src/tests/docs files"
+  ],
+  "forbidden_actions": [
+    "Do not edit master_state.json.",
+    "Do not edit master_status files.",
+    "Do not write Master-owned review or integrated test artifacts.",
+    "Do not write approval artifacts.",
+    "Do not merge branches.",
+    "Do not modify another feature worktree.",
+    "Do not modify the target branch directly.",
+    "Do not enable kernel by default.",
+    "Do not remove v1 fallback.",
+    "Do not optimize toward benchmark score targets."
+  ],
+  "required_artifacts": [
+    "context_bundle",
+    "plan_final",
+    "result",
+    "execute_review",
+    "review_verdict",
+    "ack",
+    "slave_state"
+  ],
+  "gates": {
+    "feature_boundary": [
+      "feature_id matches assigned lane",
+      "writes stay within assigned worktree or feature-local work directory",
+      "artifacts include feature_id",
+      "branch and worktree are recorded"
+    ],
+    "plan_execute_review": [
+      "plan writes only planning artifacts",
+      "execute modifies only assigned feature worktree",
+      "review is read-only except feature-local review output"
+    ],
+    "usable_ack": [
+      "ack_level usable",
+      "result exists",
+      "review_verdict PASS",
+      "verification commands recorded",
+      "v3 default preserved",
+      "v1 fallback preserved",
+      "kernel default unchanged"
+    ]
+  },
+  "node_prompts": {
+    "plan": ".hermes-loop/prompts/plan_agent.md",
+    "execute": ".hermes-loop/prompts/execute_agent.md",
+    "review": ".hermes-loop/prompts/review_agent.md"
+  }
 }
