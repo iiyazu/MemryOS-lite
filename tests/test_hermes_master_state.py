@@ -893,3 +893,25 @@ def test_launcher_uses_master_prompt_and_master_state_after_migration():
     assert "contracts/master_dispatch_template.json" in launcher
     assert "god_loop_prompt.md" not in launcher
     assert "contracts/god_dispatch_template.json" not in launcher
+
+
+def test_prepare_then_activate_preserves_feature_statuses(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_legacy_inputs(loop)
+
+    prepare = hardening.prepare_master_migration(loop)
+    activate = hardening.activate_master_migration(loop)
+    controller = hardening.resolve_active_controller(loop)
+    status = hardening.write_master_status(loop, controller["state"])
+
+    assert prepare["status"] == "prepared"
+    assert activate["status"] == "activated"
+    assert controller["source"] == "master"
+    assert status["counts"]["reviewable"] == 1
+    assert status["counts"]["mergeable"] == 0
+    assert status["queues"]["master_review_queue"] == ["v1-quarantine"]
+    assert status["queues"]["planning_queue"] == ["archive-rag"]
+    assert (loop / "legacy" / "root-loop" / "state.json").exists()
+    assert (loop / "master_status.json").exists()
+    assert (loop / "master_status.md").exists()
