@@ -153,6 +153,9 @@ def active_job_liveness() -> str:
         return "missing"
     if state == "running":
         return "running"
+    if state == "exited_or_missing":
+        module.complete_active_job(LOOP, exit_code=143, status="failed")
+        return "not_running"
     if state in {"completed", "failed", "exited_or_missing", "stalled", "invalid"}:
         return "not_running"
     return "unknown"

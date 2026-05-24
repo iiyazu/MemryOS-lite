@@ -738,6 +738,30 @@ def test_launcher_records_and_completes_active_codex_job() -> None:
     assert 'wait "$CODEX_PID"' in launcher
 
 
+def test_launcher_heartbeat_exits_with_launcher_parent() -> None:
+    launcher = (Path(__file__).resolve().parents[1] / ".hermes-loop" / "god_launcher.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "LAUNCHER_PID=$$" in launcher
+    assert 'while kill -0 "$LAUNCHER_PID" 2>/dev/null; do' in launcher
+    assert "trap cleanup EXIT" in launcher
+    assert "trap 'exit 129' HUP" in launcher
+    assert "trap 'exit 143' TERM" in launcher
+
+
+def test_launcher_marks_active_job_failed_on_premature_exit() -> None:
+    launcher = (Path(__file__).resolve().parents[1] / ".hermes-loop" / "god_launcher.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ACTIVE_JOB_WRITTEN=1" in launcher
+    assert "ACTIVE_JOB_COMPLETED=1" in launcher
+    assert "complete_active_job" in launcher
+    assert 'status="failed"' in launcher
+    assert "exit_code=143" in launcher
+
+
 def test_hermes_gitignore_covers_runtime_control_artifacts() -> None:
     gitignore = (Path(__file__).resolve().parents[1] / ".hermes-loop" / ".gitignore").read_text(
         encoding="utf-8"

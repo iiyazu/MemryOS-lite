@@ -17,13 +17,55 @@ fi
 : > "$LOCKFILE"
 echo "pid=$$ run_id=$(date -Iseconds)" > "$LOCKFILE"
 
-cleanup() { kill "${HB_PID:-}" 2>/dev/null; wait "${HB_PID:-}" 2>/dev/null; }
+LAUNCHER_PID=$$
+ACTIVE_JOB_WRITTEN=0
+ACTIVE_JOB_COMPLETED=0
+CODEX_PID=""
+
+complete_active_job_if_needed() {
+    if [ "$ACTIVE_JOB_WRITTEN" = "1" ] && [ "$ACTIVE_JOB_COMPLETED" != "1" ]; then
+        local status="failed"
+        local exit_code=143
+        python3 - "$exit_code" "$status" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+loop = Path(".hermes-loop")
+module_path = loop / "hermes_hardening.py"
+spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec is not None and spec.loader is not None
+spec.loader.exec_module(module)
+module.complete_active_job(
+    loop,
+    exit_code=int(sys.argv[1]),
+    status=sys.argv[2],
+)
+PY
+    fi
+}
+
+cleanup() {
+    complete_active_job_if_needed
+    if [ -n "${CODEX_PID:-}" ]; then
+        kill "$CODEX_PID" 2>/dev/null || true
+        wait "$CODEX_PID" 2>/dev/null || true
+    fi
+    if [ -n "${HB_PID:-}" ]; then
+        kill "$HB_PID" 2>/dev/null || true
+        wait "$HB_PID" 2>/dev/null || true
+    fi
+}
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Parallel heartbeat writer — writes every 30s independent of Codex
 (
     n=0
-    while true; do
+    while kill -0 "$LAUNCHER_PID" 2>/dev/null; do
         n=$((n+1))
         echo "GOD alive$(printf '%02d' $n) $(date -u -Iseconds)" >> "$HBFILE"
         sleep 30
@@ -120,6 +162,7 @@ module.write_active_job(
     idle_timeout_seconds=int(sys.argv[5]),
 )
 PY
+    ACTIVE_JOB_WRITTEN=1
     wait "$CODEX_PID"
     CODEX_EXIT=$?
     if [ "$CODEX_EXIT" -eq 0 ]; then
@@ -144,5 +187,6 @@ module.complete_active_job(
     status=sys.argv[2],
 )
 PY
+    ACTIVE_JOB_COMPLETED=1
 } >> "$CODEX_OUTPUT" 2>&1
 exit "$CODEX_EXIT"
