@@ -1064,6 +1064,46 @@ def test_master_slave_summary_requires_integrated_tests_for_all_merge_requests(
     assert "archive-rag: missing integrated_tests artifact path" in summary["blockers"]
 
 
+def test_master_slave_summary_blocks_merge_status_ahead_of_feature_state(
+    tmp_path: Path,
+) -> None:
+    hardening = load_hardening_module()
+    loop = tmp_path / ".hermes-loop"
+    feature_dir = loop / "work" / "features" / "archive-rag"
+    feature_dir.mkdir(parents=True)
+    write_json(
+        feature_dir / "integrated_tests.json",
+        {"status": "passed", "commands": ["uv run pytest -q"]},
+    )
+    write_json(
+        loop / "feature_lanes.json",
+        {
+            "features": [
+                {
+                    "id": "archive-rag",
+                    "state": "planned",
+                    "artifacts": {
+                        "integrated_tests": "work/features/archive-rag/integrated_tests.json",
+                    },
+                    "merge": {
+                        "status": "ready_for_merge",
+                        "target_branch": "main",
+                    },
+                }
+            ]
+        },
+    )
+
+    summary = hardening.summarize_master_slave_control(loop, project_root=tmp_path)
+
+    assert summary["ok"] is False
+    assert summary["merge_queue"] == []
+    assert "archive-rag: merge status is ahead of feature state" in summary["blockers"]
+    assert "archive-rag: merge-ready feature requires branch" in summary["blockers"]
+    assert "archive-rag: merge-ready feature requires worktree" in summary["blockers"]
+    assert "archive-rag: missing ack artifact path" in summary["blockers"]
+
+
 def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Path) -> None:
     hardening = load_hardening_module()
     loop = tmp_path / ".hermes-loop"

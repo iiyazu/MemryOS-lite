@@ -401,12 +401,26 @@ def classify_feature_lane(
         blockers.append("slave_god must be an object")
         slave_god = {}
 
+    merge = feature.get("merge", {})
+    if not isinstance(merge, dict):
+        merge = {}
+        blockers.append("merge must be an object")
+    merge_status = str(merge.get("status") or state).lower()
+    gate_requested = (
+        state in FEATURE_PASS_STATES | {"merge_requested"}
+        or merge_status in TARGET_BRANCH_STATES
+    )
+    if merge_status in MERGE_REQUEST_STATES and state not in MERGE_REQUEST_STATES:
+        blockers.append("merge status is ahead of feature state")
+    if merge_status in MASTER_REVIEW_STATES and state not in MASTER_REVIEW_STATES:
+        blockers.append("master review status is ahead of feature state")
+
     branch = feature.get("branch")
     worktree = feature.get("worktree")
-    if state in FEATURE_PASS_STATES | {"merge_requested"} and not isinstance(branch, str):
+    if gate_requested and not isinstance(branch, str):
         blockers.append("merge-ready feature requires branch")
     worktree_path = Path(worktree) if isinstance(worktree, str) and worktree else None
-    if state in FEATURE_PASS_STATES | {"merge_requested"}:
+    if gate_requested:
         if worktree_path is None:
             blockers.append("merge-ready feature requires worktree")
         elif not worktree_path.exists():
@@ -416,7 +430,7 @@ def classify_feature_lane(
     if not isinstance(artifacts, dict):
         artifacts = {}
         blockers.append("artifacts must be an object")
-    if state in FEATURE_PASS_STATES | {"merge_requested"}:
+    if gate_requested:
         artifact_gate = _artifact_gate(loop, artifacts)
     else:
         artifact_gate = {
@@ -426,11 +440,6 @@ def classify_feature_lane(
         }
     blockers.extend(artifact_gate["blockers"])
 
-    merge = feature.get("merge", {})
-    if not isinstance(merge, dict):
-        merge = {}
-        blockers.append("merge must be an object")
-    merge_status = str(merge.get("status") or state).lower()
     target_branch = str(merge.get("target_branch") or "").strip()
     if merge_status in MERGE_REQUEST_STATES and not target_branch:
         blockers.append("merge target_branch is required")

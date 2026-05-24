@@ -70,6 +70,16 @@ RAG feature lanes.
      there was no pending multi-god work.
    - Fix: reporter markdown now includes `reviewable` count.
 
+8. `merge.status` could bypass feature-state gates.
+   - Root cause: branch, worktree, ACK, review, and result gates were keyed to
+     `feature.state`, while `mergeable` was keyed to `merge.status`.
+   - Impact: a malformed lane with `state=planned` and
+     `merge.status=ready_for_merge` could bypass core readiness gates if
+     integrated tests were present.
+   - Fix: readiness gates now trigger when either feature state or merge status
+     requests review/merge, and merge status is blocked when it is ahead of the
+     feature state.
+
 ## Status After Fixes
 
 - Phase-18 ACK gate: pass.
