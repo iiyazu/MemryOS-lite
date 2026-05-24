@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -146,6 +148,79 @@ def test_reporter_handles_master_active_without_legacy_state_file(
     assert report["master"]["activation_state"] == "master_active"
     assert (loop / "master_status.json").exists()
     assert not (loop / "master_slave_status.json").exists()
+
+
+def test_god_alive_rejects_exited_active_job_even_with_fresh_heartbeat(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reporter = load_reporter_module()
+    loop = tmp_path / ".hermes-loop"
+    loop.mkdir()
+    lock_file = loop / "run.lock"
+    lock_file.write_text(f"pid={os.getpid()} run_id=test\n", encoding="utf-8")
+    heartbeat_ts = datetime.now(UTC).isoformat()
+    (loop / "heartbeat.log").write_text(f"GOD alive01 {heartbeat_ts}\n")
+    write_json(
+        loop / "active_job.json",
+        {
+            "pid": 999999999,
+            "phase_id": "master-control",
+            "prompt_file": ".hermes-loop/prompts/master_god_prompt.md",
+            "attempt": 1,
+            "output_path": "codex_output.log",
+            "idle_timeout_seconds": 10800,
+            "started_at": "2026-05-24T11:48:12Z",
+            "status": "running",
+        },
+    )
+
+    monkeypatch.setattr(reporter, "LOOP", loop)
+    monkeypatch.setattr(reporter, "LOCK_FILE", lock_file)
+    assert reporter.is_god_alive() is False
+
+
+def test_reporter_restarts_when_active_job_is_stale_despite_fresh_heartbeat(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reporter = load_reporter_module()
+    loop = tmp_path / ".hermes-loop"
+    loop.mkdir()
+    state_file = loop / "state.json"
+    lock_file = loop / "run.lock"
+    lock_file.write_text(f"pid={os.getpid()} run_id=test\n", encoding="utf-8")
+    heartbeat_ts = datetime.now(UTC).isoformat()
+    (loop / "heartbeat.log").write_text(f"GOD alive01 {heartbeat_ts}\n")
+    write_json(loop / "master_state.json", base_master_state_for_reporter())
+    write_json(
+        loop / "active_job.json",
+        {
+            "pid": 999999999,
+            "phase_id": "master-control",
+            "prompt_file": ".hermes-loop/prompts/master_god_prompt.md",
+            "attempt": 1,
+            "output_path": "codex_output.log",
+            "idle_timeout_seconds": 10800,
+            "started_at": "2026-05-24T11:48:12Z",
+            "status": "running",
+        },
+    )
+    starts = {"count": 0}
+
+    def start_god() -> bool:
+        starts["count"] += 1
+        return True
+
+    monkeypatch.setattr(reporter, "LOOP", loop)
+    monkeypatch.setattr(reporter, "PROJECT", tmp_path)
+    monkeypatch.setattr(reporter, "LAUNCHER", loop / "god_launcher.sh")
+    monkeypatch.setattr(reporter, "STATE_FILE", state_file)
+    monkeypatch.setattr(reporter, "LOCK_FILE", lock_file)
+    monkeypatch.setattr(reporter, "start_god", start_god)
+
+    report = reporter.main()
+
+    assert starts["count"] == 1
+    assert report["action"] == "started_ok"
 
 
 def test_latest_markdown_surfaces_master_review_queue(

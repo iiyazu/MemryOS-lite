@@ -139,9 +139,31 @@ def lock_status() -> str:
         return "unknown"
 
 
+def active_job_liveness() -> str:
+    """Return active Codex job liveness from active_job.json, if available."""
+    module, error = _load_hardening_module()
+    if error:
+        return "unknown"
+    try:
+        status = module.classify_active_job(LOOP)
+    except Exception:
+        return "unknown"
+    state = str(status.get("state") or "")
+    if state == "missing":
+        return "missing"
+    if state == "running":
+        return "running"
+    if state in {"completed", "failed", "exited_or_missing", "stalled", "invalid"}:
+        return "not_running"
+    return "unknown"
+
+
 def is_god_alive(grace_period: bool = False) -> bool:
     """God is alive if lock PID exists AND (heartbeat fresh OR in grace period)."""
     if lock_status() != "ok":
+        return False
+    active_job = active_job_liveness()
+    if active_job == "not_running":
         return False
     hb = LOOP / "heartbeat.log"
     if not hb.exists():
