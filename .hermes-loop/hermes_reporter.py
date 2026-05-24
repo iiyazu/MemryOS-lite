@@ -227,6 +227,7 @@ def main():
         md += (
             "\n"
             f"Master/slave features: {counts.get('features', 0)} total, "
+            f"{counts.get('reviewable', 0)} reviewable, "
             f"{counts.get('mergeable', 0)} mergeable, "
             f"{counts.get('blocked', 0)} blocked.\n"
         )

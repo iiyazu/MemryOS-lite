@@ -437,8 +437,10 @@ def classify_feature_lane(
     if merge_status in MASTER_REVIEW_STATES and not target_branch:
         blockers.append("master review target_branch is required")
 
-    requires_integrated_tests = bool(merge.get("requires_integrated_tests"))
-    if requires_integrated_tests and merge_status in MERGE_REQUEST_STATES:
+    requires_integrated_tests = merge_status in MERGE_REQUEST_STATES or bool(
+        merge.get("requires_integrated_tests")
+    )
+    if merge_status in MERGE_REQUEST_STATES:
         integrated_tests_gate = _integrated_tests_gate(loop, artifacts)
         blockers.extend(integrated_tests_gate["blockers"])
         artifact_gate["paths"].update(integrated_tests_gate["paths"])

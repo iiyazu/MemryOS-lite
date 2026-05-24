@@ -54,13 +54,30 @@ RAG feature lanes.
      `ready_for_merge` and `merge_requested` enter `merge_queue` only after
      required integrated-test evidence is present and passing.
 
+6. Integrated-test evidence could still be skipped by omission.
+   - Root cause: integrated tests were checked only when a feature explicitly
+     set `merge.requires_integrated_tests=true`.
+   - Impact: a feature could enter `ready_for_merge` without integrated-test
+     evidence by omitting or disabling that flag, despite the master policy.
+   - Fix: all merge request states now require passing `integrated_tests`
+     artifact evidence. The per-feature flag no longer weakens the master
+     merge policy.
+
+7. Reporter summary hid master review work.
+   - Root cause: `reports/latest.md` summarized only mergeable and blocked
+     counts.
+   - Impact: a feature in `master_review_queue` could make the report look like
+     there was no pending multi-god work.
+   - Fix: reporter markdown now includes `reviewable` count.
+
 ## Status After Fixes
 
 - Phase-18 ACK gate: pass.
 - Phase-18 review eval decision gate: pass.
 - State phase order gate: pass.
 - Master/slave registry: loaded, two feature lanes, one reviewable
-  (`v1-quarantine`), zero mergeable, zero blockers.
+  (`v1-quarantine`), zero mergeable, zero blockers; merge queue remains empty
+  until integrated-test evidence is present.
 
 No benchmark improvement, promotion, or chain-level improvement is claimed from
 these fixes.

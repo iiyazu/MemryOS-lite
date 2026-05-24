@@ -56,3 +56,42 @@ def test_done_state_refreshes_latest_report_without_starting_god(
     assert latest["execute_lane"] == {"phase": None, "state": "DONE"}
     assert latest["phases"] == [{"id": "phase-18", "name": "Governance", "status": "completed"}]
     assert "Action| done" in latest_md
+
+
+def test_latest_markdown_surfaces_master_review_queue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    reporter = load_reporter_module()
+    loop = tmp_path / ".hermes-loop"
+    loop.mkdir()
+    state_file = loop / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "current_state": "DONE",
+                "execute_lane": {"phase": None, "state": "DONE"},
+                "plan_lane": {"phase": None, "state": "DONE"},
+                "research_lane": {"phases": []},
+                "phases": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(reporter, "LOOP", loop)
+    monkeypatch.setattr(reporter, "PROJECT", tmp_path)
+    monkeypatch.setattr(reporter, "LAUNCHER", loop / "god_launcher.sh")
+    monkeypatch.setattr(reporter, "STATE_FILE", state_file)
+    monkeypatch.setattr(reporter, "LOCK_FILE", loop / "run.lock")
+    monkeypatch.setattr(
+        reporter,
+        "master_slave_report",
+        lambda: {"counts": {"features": 1, "reviewable": 1, "mergeable": 0, "blocked": 0}},
+    )
+
+    reporter.main()
+
+    latest_md = (loop / "reports" / "latest.md").read_text(encoding="utf-8")
+    assert "1 reviewable" in latest_md
+    assert "0 mergeable" in latest_md
