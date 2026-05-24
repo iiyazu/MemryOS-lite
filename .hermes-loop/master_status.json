@@ -2,8 +2,8 @@
   "activation_state": "master_active",
   "counts": {
     "blocked": 0,
-    "held": 0,
-    "mergeable": 1,
+    "held": 1,
+    "mergeable": 0,
     "merged": 0,
     "reviewable": 0,
     "total": 2
@@ -12,11 +12,11 @@
   "queues": {
     "active_lanes": [],
     "blocked": [],
-    "held": [],
-    "master_review_queue": [],
-    "merge_queue": [
+    "held": [
       "v1-quarantine"
     ],
+    "master_review_queue": [],
+    "merge_queue": [],
     "merged": [],
     "planning_queue": [
       "archive-rag"

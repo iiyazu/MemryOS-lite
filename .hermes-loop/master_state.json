@@ -6,11 +6,11 @@
       "feature_id": "v1-quarantine",
       "recorded_at": "2026-05-24T11:37:59Z",
       "recorded_by": "master-god",
-      "decision": "accepted_for_merge_gate",
+      "decision": "accepted_for_external_approval",
       "master_review": ".hermes-loop/master/features/v1-quarantine/master_review.json",
       "integrated_tests": ".hermes-loop/master/features/v1-quarantine/integrated_tests.json",
       "next_action": ".hermes-loop/approvals/v1-quarantine/next_action.json",
-      "merge_blocked_until": "external_merge_approval"
+      "merge_blocked_until": "external_merge_approval_and_fresh_target_gate"
     }
   ],
   "dispatch_contracts": {
@@ -56,7 +56,7 @@
         "owner": "slave-god-v1-quarantine"
       },
       "slave_state_path": ".hermes-loop/work/features/v1-quarantine/slave_state.json",
-      "state": "ready_for_merge",
+      "state": "held",
       "target_branch": "feat/phase-2.5-3-retrieval-agent",
       "worktree": "/home/iiyatu/projects/python/memoryOS-v1-quarantine"
     },
@@ -847,11 +847,11 @@
   "queues": {
     "active_lanes": [],
     "blocked": [],
-    "held": [],
-    "master_review_queue": [],
-    "merge_queue": [
+    "held": [
       "v1-quarantine"
     ],
+    "master_review_queue": [],
+    "merge_queue": [],
     "merged": [],
     "planning_queue": [
       "archive-rag"
