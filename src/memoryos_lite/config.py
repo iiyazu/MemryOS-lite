@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -46,11 +47,28 @@ class Settings(BaseSettings):
     memoryos_rerank_enabled: bool = False
     memoryos_llm_timeout_s: float = 60.0
     memoryos_qdrant_timeout_s: float = 10.0
+    memoryos_redis_url: str | None = None
+    memoryos_cache_namespace: str = "memoryos:v1"
+    memoryos_cache_default_ttl_s: int = 300
     agent_max_tool_turns: int = 10
     qdrant_url: str | None = None
     qdrant_collection: str = "memoryos_pages"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
+
+    @field_validator("memoryos_cache_default_ttl_s")
+    @classmethod
+    def validate_cache_default_ttl(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("MEMORYOS_CACHE_DEFAULT_TTL_S must be positive")
+        return value
+
+    @field_validator("memoryos_cache_namespace")
+    @classmethod
+    def validate_cache_namespace(cls, value: str) -> str:
+        if not value.strip(":").strip():
+            raise ValueError("MEMORYOS_CACHE_NAMESPACE must not be empty")
+        return value
 
     @property
     def resolved_evidence_representation(self) -> str:
