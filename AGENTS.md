@@ -106,8 +106,10 @@ Current baseline docs:
 - `docs/known-issues.md`
 - `docs/agentic-memory-roadmap-zh.md`
 - `docs/agent-answer-diagnostics.md`
+- `docs/implementation-history-summary.md`
 
-Historical implementation specs/plans live under `docs/superpowers/`.
+Historical implementation specs/plans were summarized into
+`docs/implementation-history-summary.md`.
 
 ## Conventions
 

@@ -1,7 +1,8 @@
 # MemoryOS Lite Source Guide
 
 This guide maps the current codebase. It intentionally avoids historical phase
-notes; implementation history lives under `docs/superpowers/`.
+notes; implementation history is summarized in
+`docs/implementation-history-summary.md`.
 
 ## Top-Level Flow
 

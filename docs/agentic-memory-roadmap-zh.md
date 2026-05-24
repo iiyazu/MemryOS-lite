@@ -1,7 +1,7 @@
 # Agentic Memory Roadmap
 
-本文记录当前后续路线。历史阶段记录已从基线文档中移除，保留在
-`docs/superpowers/` 的 spec/plan 中。
+本文记录当前后续路线。历史阶段记录已从基线文档中移除，并压缩为
+`docs/implementation-history-summary.md`。
 
 ## 当前基线
 

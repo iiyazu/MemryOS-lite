@@ -1,6 +1,0 @@
-./.hermes-loop/work/phase-8/logs/phase8_lme50_20260522T151605Z.log
-./.hermes-loop/work/phase-8/logs/phase8_locomo50_20260522T151605Z.log
-./.memoryos/evals/phase8_lme50_20260522T151605Z_longmemeval.json
-./.memoryos/evals/phase8_lme50_20260522T151605Z_longmemeval.partial.json
-./.memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json
-./.memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.partial.json

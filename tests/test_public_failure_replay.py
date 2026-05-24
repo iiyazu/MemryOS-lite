@@ -14,7 +14,7 @@ from memoryos_lite.public_failure_replay import (
 )
 
 REPORT_PATH = Path(".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json")
-CONTEXT_BUNDLE = ".hermes-loop/work/phase-9/context_bundle.md"
+CONTEXT_BUNDLE = "tests/fixtures/public_failure_replay/phase9_context_bundle.md"
 
 REQUIRED_REPLAY_FIELDS = {
     "phase",
