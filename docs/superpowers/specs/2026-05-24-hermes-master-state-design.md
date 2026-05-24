@@ -342,6 +342,11 @@ Rules:
 - `merge_queue` does not mean merged.
 - `merged` requires `merge_approval`, merge execution evidence, and
   post-merge verification.
+- `held_after_merge` enters `held`, not `merged` or `blocked`.
+- For `held_after_merge`, `feature.state` and `merge.status` must both be
+  `held_after_merge`.
+- `held_after_merge` must not contribute to merged counts or merged summaries
+  until a later revert or repair-forward decision closes it.
 - `merge.status` must not be ahead of feature state.
 - `features[]` and `queues` must be consistent.
 
@@ -613,6 +618,7 @@ Required post-merge verification schema:
   "post_merge_head": "fedcba654321",
   "merge_commit": "fedcba654321",
   "merge_strategy": "no_ff_merge_commit",
+  "merge_execution_status": "passed",
   "github_pr": null,
   "approval_ref": ".hermes-loop/approvals/feature-id/merge_approval.json",
   "approval_digest": "sha256:merge-approval-json-canonical-digest",
@@ -636,11 +642,14 @@ Required post-merge verification schema:
 }
 ```
 
-`status` may be `passed` or `failed`. For `status=passed`,
-`post_merge_head` must be on `target_branch`,
-`approved_head` must be an ancestor of `post_merge_head`, and each required
-verification command must have `status=passed` plus an artifact digest. Failed or
-missing post-merge verification prevents `merge_decision.decision=merged`.
+`status` may be `passed` or `failed`. `merge_execution_status` must be `passed`
+for every post-merge verification artifact: `post_merge_head` must be on
+`target_branch`, `merge_commit` must identify the merge commit on that branch,
+and `approved_head` must be an ancestor of `post_merge_head`. For
+`status=passed`, each required verification command must have `status=passed`
+plus an artifact digest. For `status=failed`, merge execution evidence must
+still pass; only one or more verification commands may fail. Failed or missing
+post-merge verification prevents `merge_decision.decision=merged`.
 `approval_ref`, `approval_digest`, `approval_request_ref`,
 `approval_request_digest`, and `merge_strategy=no_ff_merge_commit` are required
 for every post-merge verification artifact.
@@ -743,6 +752,7 @@ Required final decision schema for `decision=held_after_merge`:
   "failed_post_merge_verification_ref": ".hermes-loop/approvals/feature-id/post_merge_verification.json",
   "failed_post_merge_verification_digest": "sha256:failed-post-merge-verification-json-canonical-digest",
   "next_action": "revert|repair_forward|manual_hold",
+  "next_action_ref": ".hermes-loop/approvals/feature-id/next_action.json",
   "recorded_by": "master-god",
   "recorded_at": "2026-05-24T00:00:00Z"
 }
@@ -753,6 +763,63 @@ but post-merge verification failed or is incomplete. It must record the
 `merge_commit`, failed post-merge verification ref/digest, approval
 ref/digest, approval request ref/digest, and a `next_action` of `revert`,
 `repair_forward`, or `manual_hold`. It must not be reported as `merged`.
+
+`next_action` has closure requirements:
+
+- `revert` requires a revert artifact with revert commit, target branch,
+  reverted merge commit, verification command refs/digests, and `status=passed`.
+- `repair_forward` requires a new repair feature lane or worktree ref, target
+  branch, starting commit, and a Master decision linking the repair lane back to
+  the failed merge.
+- `manual_hold` requires external hold approval or maintainer reason, actor,
+  timestamp, and provenance ref/digest.
+
+Until the required next-action artifact exists and passes its own verification,
+the feature remains in `held` with `feature.state=held_after_merge` and
+`merge.status=held_after_merge`.
+
+Required next-action artifact schema:
+
+```json
+{
+  "version": "1.0",
+  "feature_id": "feature-id",
+  "action": "revert|repair_forward|manual_hold",
+  "status": "passed|accepted",
+  "held_after_merge_ref": ".hermes-loop/approvals/feature-id/merge_decision.json",
+  "held_after_merge_digest": "sha256:held-after-merge-decision-digest",
+  "target_branch": "main",
+  "reverted_merge_commit": "fedcba654321",
+  "revert_commit": "012345abcdef",
+  "repair_feature_id": null,
+  "repair_lane_ref": null,
+  "manual_hold_ref": null,
+  "verification_refs": [
+    ".hermes-loop/approvals/feature-id/revert_verification.json"
+  ],
+  "verification_digests": [
+    "sha256:next-action-verification-digest"
+  ],
+  "recorded_by": "master-god|external_maintainer",
+  "recorded_at": "2026-05-24T00:00:00Z"
+}
+```
+
+Fields that do not apply to the selected `action` may be null. The closure rules
+below define which fields are required for each action.
+
+Closure rules:
+
+- `revert` closes `held_after_merge` only when `revert_commit` is present,
+  verifies cleanly, and records `feature.state=reverted_after_merge` and
+  `merge.status=reverted_after_merge`. It must not count as merged.
+- `repair_forward` closes the original feature's `held_after_merge` only by
+  opening a linked repair lane; the original feature remains non-merged with
+  `feature.state=repair_forward_open` and `merge.status=repair_forward_open`
+  until the repair lane completes its own Master review and merge gates.
+- `manual_hold` closes only the emergency post-merge failure state; it records
+  `feature.state=manual_hold` and `merge.status=manual_hold`, remains in `held`,
+  and requires external maintainer provenance.
 
 ## Migration
 
@@ -879,8 +946,14 @@ status:
 - Failed or incomplete post-merge verification after a merge commit reaches the
   target branch must produce `merge_decision.decision=held_after_merge`, not
   `merged` or plain `held`.
+- `held_after_merge` belongs to the `held` queue and must not be counted as
+  merged.
+- Failed post-merge verification with `merge_execution_status` other than
+  `passed` is invalid; use a plain held/rejected merge execution failure before
+  a merge commit reaches the target branch.
 - Plain `held` or `rejected` with `blocked_gate=post_merge_verification` is
   invalid; use `held_after_merge` once a merge commit reaches the target branch.
+- Missing or failed next-action closure artifact keeps `held_after_merge` open.
 - Missing, malformed, digest-mismatched, conditionally invalid, or inconsistent
   `merge_decision`: feature cannot be marked merged.
 - GitHub unavailable: degrade to local-only and keep local gates.
@@ -924,6 +997,8 @@ Add `tests/test_hermes_master_state.py` for:
 - `integrated_tests.json` records feature id, branch/base/head/target, status,
   recorded_by, command results, artifact refs/digests, and clean-worktree state;
 - queue derivation and queue consistency;
+- `held_after_merge` maps to the `held` queue, sets feature state and
+  `merge.status` to `held_after_merge`, and does not affect merged counts;
 - `ready_for_master_review` not mergeable;
 - Master review, merge queue, and actual merge gates require different evidence
   sets;
@@ -955,12 +1030,22 @@ Add `tests/test_hermes_master_state.py` for:
   and post-merge verification refs;
 - `merge_decision.json` for `decision=held_after_merge` requires merge commit,
   failed post-merge verification ref/digest, approval refs/digests, approval
-  request refs/digests, and `next_action`;
+  request refs/digests, `next_action`, and `next_action_ref`;
 - `post_merge_verification.json` records target branch, pre/post HEAD, merge
-  commit, merge strategy, approval refs/digests, approval request refs/digests,
-  ancestry check, verification commands, result artifact digests, and status;
+  commit, merge strategy, merge execution status, approval refs/digests,
+  approval request refs/digests, ancestry check, verification commands, result
+  artifact digests, and status;
 - failed `post_merge_verification.json` after a merge commit reaches the target
   branch produces `held_after_merge`, not plain `held` or `rejected`;
+- failed `post_merge_verification.json` must still have
+  `merge_execution_status=passed`, valid target/head/ancestor evidence, and a
+  valid merge commit;
+- `held_after_merge.next_action=revert` requires revert commit plus verification;
+  `repair_forward` requires a new repair lane/ref; `manual_hold` requires
+  external hold approval or reason with provenance;
+- next-action closure updates `feature.state` and `merge.status` to
+  `reverted_after_merge`, `repair_forward_open`, or `manual_hold` according to
+  the action, and none of those closure states count as merged;
 - malformed `merge.status` ahead of feature state is blocked;
 - invalid or unexpectedly inactive `master_state.json` blocks active execution
   instead of falling back to legacy state;
