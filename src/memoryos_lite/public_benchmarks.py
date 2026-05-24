@@ -22,9 +22,19 @@ from memoryos_lite.public_maintenance_planner import (
     ModelVisiblePlannerInput,
     build_maintenance_artifact,
 )
+from memoryos_lite.public_repair_smoke import (
+    archive_artifacts_from_kernel_trace,
+    build_executable_repair_proposal,
+    build_repair_smoke_comparison_summary,
+)
 from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
+from memoryos_lite.v3_contracts import (
+    AgentStepRequest,
+    ContextPackageV3,
+    message_to_log_entry,
+)
 
 _REFUSAL_MARKERS = (
     "insufficient retrieved evidence",
@@ -157,6 +167,7 @@ class PublicBenchmarkResult:
     model_visible_planner_input: dict[str, Any] = field(default_factory=dict)
     eval_gold_sidecar: dict[str, Any] = field(default_factory=dict)
     maintenance_proposal: dict[str, Any] = field(default_factory=dict)
+    repair_smoke: dict[str, Any] = field(default_factory=dict)
 
     def to_report(self) -> dict[str, object]:
         data = asdict(self)
@@ -191,11 +202,37 @@ def run_public_benchmark(
     llm_judge: bool = False,
     isolated: bool = True,
     comparison_report_paths: list[Path] | None = None,
+    repair_smoke_baseline_report_path: Path | None = None,
 ) -> list[PublicBenchmarkResult]:
+    expanded_baselines = _expand_baselines(baselines)
+    _validate_repair_smoke_request(
+        settings=settings,
+        benchmark=benchmark,
+        baselines=expanded_baselines,
+        repair_smoke_baseline_report_path=repair_smoke_baseline_report_path,
+    )
     public_cases = load_public_benchmark_cases(benchmark, data_path, limit=limit)
     comparison = load_public_case_movement(comparison_report_paths or [])
-    answerer = PublicAnswerer(settings) if llm_answer else None
-    judge = LLMJudge(settings) if llm_judge else None
+    repair_smoke_report_rows = _load_repair_smoke_report_rows(
+        repair_smoke_baseline_report_path
+    )
+    repair_smoke_rows = _index_repair_smoke_rows(repair_smoke_report_rows)
+    provider_errors: list[dict[str, str]] = []
+    answerer = None
+    if llm_answer:
+        try:
+            answerer = PublicAnswerer(settings)
+        except Exception as exc:
+            provider_errors.append({"stage": "answerer_init", "error": str(exc)})
+    judge = None
+    if llm_judge:
+        try:
+            judge = LLMJudge(settings)
+        except Exception as exc:
+            provider_errors.append({"stage": "judge_init", "error": str(exc)})
+    if provider_errors:
+        answerer = None
+        judge = None
     eval_root = settings.memoryos_eval_data_dir or settings.data_dir / "eval_runs"
     run_dir = eval_root / run_id
     run_settings = settings.model_copy(
@@ -231,15 +268,25 @@ def run_public_benchmark(
         )
 
     for public_case in public_cases:
-        for baseline in _expand_baselines(baselines):
+        for baseline in expanded_baselines:
             start = time.perf_counter()
+            pre_context_hook = _repair_smoke_pre_context_hook(
+                repair_smoke_rows.get(
+                    (public_case.benchmark, baseline, public_case.case.case_id)
+                )
+            )
+            baseline_kwargs: dict[str, Any] = {
+                "budget_override": run_settings.rot_safe_budget,
+            }
+            if pre_context_hook is not None:
+                baseline_kwargs["pre_context_hook"] = pre_context_hook
             output = _run_baseline(
                 baseline,
                 public_case.case,
                 public_case.messages,
                 service,
                 run_settings,
-                budget_override=run_settings.rot_safe_budget,
+                **baseline_kwargs,
             )
             answer_evidence = _answer_evidence_from_output(output)
             answer = _public_projected_answer_with_citations(output.answer, output.sources)
@@ -252,6 +299,13 @@ def run_public_benchmark(
                     )
                 except Exception as exc:
                     answer_error = f"answer_error: {exc}"
+                    provider_errors.append(
+                        {
+                            "stage": "answer",
+                            "case_id": public_case.case.case_id,
+                            "error": answer_error,
+                        }
+                    )
                     answer = ""
             latency_ms = int((time.perf_counter() - start) * 1000)
             if judge is not None:
@@ -270,6 +324,13 @@ def run_public_benchmark(
                     except Exception as exc:
                         verdict_label = "error"
                         reasoning = f"judge_error: {exc}"
+                        provider_errors.append(
+                            {
+                                "stage": "judge",
+                                "case_id": public_case.case.case_id,
+                                "error": reasoning,
+                            }
+                        )
                         expected_present = []
                         expected_missing = list(public_case.case.expected_facts)
             else:
@@ -335,7 +396,194 @@ def run_public_benchmark(
         json.dumps([result.to_report() for result in results], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if repair_smoke_baseline_report_path is not None:
+        summary_path = (
+            report_dir
+            / f"{run_id}_{benchmark.lower()}_repair_smoke_summary.json"
+        )
+        summary = build_repair_smoke_comparison_summary(
+            repair_smoke_report_rows,
+            [result.to_report() for result in results],
+            llm_answer=llm_answer,
+            llm_judge=llm_judge,
+            provider_errors=provider_errors,
+        )
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     return results
+
+
+def _validate_repair_smoke_request(
+    *,
+    settings: Settings,
+    benchmark: str,
+    baselines: list[str],
+    repair_smoke_baseline_report_path: Path | None,
+) -> None:
+    if repair_smoke_baseline_report_path is None:
+        return
+    if settings.resolved_agent_kernel != "v1":
+        raise ValueError("repair smoke requires MEMORYOS_AGENT_KERNEL=v1")
+    if benchmark.strip().lower() != "locomo":
+        raise ValueError("repair smoke requires benchmark locomo")
+    if settings.resolved_memory_arch != "v3":
+        raise ValueError("repair smoke requires MEMORYOS_MEMORY_ARCH=v3")
+    if baselines != ["memoryos_lite"]:
+        raise ValueError("repair smoke requires expanded baseline memoryos_lite")
+
+
+def _load_repair_smoke_report_rows(
+    report_path: Path | None,
+) -> list[dict[str, Any]]:
+    if report_path is None:
+        return []
+    rows = json.loads(report_path.read_text(encoding="utf-8"))
+    if not isinstance(rows, list):
+        raise ValueError("repair smoke baseline report must be a JSON list")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _index_repair_smoke_rows(
+    rows: list[dict[str, Any]],
+) -> dict[tuple[str, str, str], dict[str, Any]]:
+    keyed_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        benchmark = row.get("benchmark")
+        baseline = row.get("baseline")
+        case_id = row.get("case_id")
+        if isinstance(benchmark, str) and isinstance(baseline, str) and isinstance(case_id, str):
+            keyed_rows[(benchmark, baseline, case_id)] = row
+    return keyed_rows
+
+
+def _repair_smoke_pre_context_hook(row: dict[str, Any] | None):
+    if row is None:
+        return None
+
+    def hook(
+        service: MemoryOSService,
+        case: EvalCase,
+        messages: list[Message],
+        source_session: Any,
+        context_session: Any,
+    ) -> dict[str, object]:
+        aliases = _repair_source_aliases(row)
+        proposal = build_executable_repair_proposal(row, source_id_aliases=aliases)
+        metadata: dict[str, object] = {
+            "enabled": True,
+            "executable": proposal.executable,
+            "denial_reason": proposal.denial_reason,
+            "data_dir": str(service.settings.data_dir),
+            "aliased_source_ids": list(aliases.values()),
+            "archive_artifacts": [],
+            "executed_tool_names": [],
+            "kernel_trace_events": [],
+        }
+        if not proposal.executable or proposal.tool_request is None:
+            return metadata
+        if service.agent_kernel is None:
+            metadata["denial_reason"] = "agent kernel is not enabled"
+            return metadata
+
+        tool_request = proposal.tool_request.model_copy(
+            update={"session_id": context_session.id}
+        )
+        step_request = AgentStepRequest(
+            session_id=context_session.id,
+            input_messages=[
+                message_to_log_entry(message)
+                for message in service.store.list_messages(source_session.id)
+            ],
+            context=ContextPackageV3(
+                session_id=context_session.id,
+                task=case.question,
+                metadata={"repair_smoke": True},
+            ),
+        )
+        step = service.agent_kernel.run_step(step_request, tool_requests=[tool_request])
+        trace_events = [event.model_dump(mode="json") for event in step.trace]
+        pending_event = next(
+            (
+                event
+                for event in step.trace
+                if event.event_type == "approval_pending" and event.approval_id
+            ),
+            None,
+        )
+        if step.continuation == "pause" and pending_event is not None:
+            resumed = service.agent_kernel.run_step(
+                step_request,
+                tool_requests=[
+                    tool_request.model_copy(
+                        update={
+                            "approval_id": pending_event.approval_id,
+                            "tool_call_id": pending_event.payload["metadata"][
+                                "tool_call_id"
+                            ],
+                        }
+                    )
+                ],
+            )
+            trace_events.extend(event.model_dump(mode="json") for event in resumed.trace)
+
+        metadata["kernel_trace_events"] = trace_events
+        metadata["archive_artifacts"] = archive_artifacts_from_kernel_trace(trace_events)
+        metadata["executed_tool_names"] = [
+            str(event["payload"]["tool_name"])
+            for event in trace_events
+            if event.get("event_type") == "tool_executed"
+            and isinstance(event.get("payload"), dict)
+            and event["payload"].get("ok") is True
+        ]
+        return metadata
+
+    return hook
+
+
+def _repair_source_aliases(row: dict[str, Any]) -> dict[str, str]:
+    source_ids: list[str] = []
+    model_visible = row.get("model_visible_planner_input")
+    if isinstance(model_visible, dict):
+        for key in (
+            "selected_context_ids",
+            "final_context_trace_source_ids",
+            "rendered_evidence_ids",
+            "cited_source_ids",
+            "unsupported_citation_ids",
+        ):
+            values = model_visible.get(key)
+            if isinstance(values, list):
+                source_ids.extend(value for value in values if isinstance(value, str))
+        answer_evidence = model_visible.get("answer_evidence")
+        if isinstance(answer_evidence, list):
+            for item in answer_evidence:
+                if not isinstance(item, dict):
+                    continue
+                evidence_id = item.get("id") or item.get("evidence_id")
+                if isinstance(evidence_id, str):
+                    source_ids.append(evidence_id)
+                nested_source_ids = item.get("source_ids")
+                if isinstance(nested_source_ids, str):
+                    source_ids.append(nested_source_ids)
+                elif isinstance(nested_source_ids, list):
+                    source_ids.extend(
+                        value for value in nested_source_ids if isinstance(value, str)
+                    )
+    proposal = row.get("maintenance_proposal")
+    if isinstance(proposal, dict):
+        source_refs = proposal.get("source_refs")
+        if isinstance(source_refs, list):
+            for source_ref in source_refs:
+                if isinstance(source_ref, dict) and isinstance(source_ref.get("source_id"), str):
+                    source_ids.append(source_ref["source_id"])
+
+    aliases: dict[str, str] = {}
+    for source_id in source_ids:
+        if source_id not in aliases:
+            aliases[source_id] = f"repair_msg_{len(aliases) + 1:03d}"
+    return aliases
 
 
 def _load_longmemeval(data: Any) -> list[PublicBenchmarkCase]:
@@ -812,7 +1060,22 @@ def _to_public_result(
         model_visible_planner_input=planner_input.model_dump(mode="json"),
         eval_gold_sidecar=eval_sidecar.model_dump(mode="json"),
         maintenance_proposal=maintenance_artifact.proposal.model_dump(mode="json"),
+        repair_smoke=_repair_smoke_report(output.repair_smoke),
     )
+
+
+def _repair_smoke_report(repair_smoke: dict[str, object]) -> dict[str, object]:
+    if repair_smoke:
+        return repair_smoke
+    return {
+        "enabled": False,
+        "executable": False,
+        "denial_reason": "repair smoke baseline report not provided",
+        "aliased_source_ids": [],
+        "archive_artifacts": [],
+        "executed_tool_names": [],
+        "kernel_trace_events": [],
+    }
 
 
 def _model_visible_planner_input(

@@ -2,6 +2,8 @@ import builtins
 import importlib
 import json
 
+import pytest
+
 import memoryos_lite.public_benchmarks as public_benchmarks
 from memoryos_lite.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
 from memoryos_lite.config import Settings
@@ -3558,6 +3560,1164 @@ def test_planner_eval_sidecar_does_not_change_proposal_shape():
     assert "retrieval_miss" not in serialized_arguments
     assert "msg_gold" not in serialized_arguments
     assert "gold answer must not leak" not in serialized_arguments
+
+
+def test_repair_smoke_denies_gold_fields_in_executable_tool_request():
+    from memoryos_lite.public_repair_smoke import build_executable_repair_proposal
+
+    row = {
+        "benchmark": "locomo",
+        "baseline": "memoryos_lite",
+        "case_id": "case_gold_qa_001",
+        "model_visible_planner_input": _model_visible_planner_input().model_dump(
+            mode="json"
+        ),
+        "eval_gold_sidecar": _eval_gold_sidecar().model_dump(mode="json"),
+        "maintenance_proposal": {
+            "proposal_type": "archive_write",
+            "execution_mode": "proposal_only",
+            "tool_name": "archive_write",
+            "gold_fields_used": False,
+            "arguments": {
+                "content": "gold answer must not leak",
+                "reason": "repair retrieval_miss unchanged_fail case_gold_qa_001",
+            },
+            "source_refs": [{"source_type": "message", "source_id": "msg_gold"}],
+        },
+    }
+
+    proposal = build_executable_repair_proposal(
+        row,
+        source_id_aliases={"msg_selected": "repair_msg_001"},
+    )
+
+    assert proposal.executable is False
+    assert proposal.denial_reason is not None
+    assert (
+        "gold" in proposal.denial_reason
+        or "forbidden" in proposal.denial_reason
+    )
+    assert proposal.tool_request is None
+
+
+def test_repair_smoke_rewrites_model_visible_source_refs_to_repair_store_ids():
+    from memoryos_lite.public_repair_smoke import build_executable_repair_proposal
+
+    source_id = "conv-26_qa_001:conv-26:D1:1"
+    model_visible = _model_visible_planner_input(
+        selected_context_ids=[source_id],
+        rendered_evidence_ids=[source_id],
+        cited_source_ids=[source_id],
+        final_context_trace_source_ids=[source_id],
+        answer_evidence=[{"id": source_id, "text": "visible evidence"}],
+    )
+    row = {
+        "benchmark": "locomo",
+        "baseline": "memoryos_lite",
+        "case_id": "conv-26_qa_001",
+        "model_visible_planner_input": model_visible.model_dump(mode="json"),
+        "eval_gold_sidecar": _eval_gold_sidecar().model_dump(mode="json"),
+        "maintenance_proposal": {
+            "proposal_type": "archive_write",
+            "execution_mode": "proposal_only",
+            "tool_name": "archive_write",
+            "gold_fields_used": False,
+            "arguments": {
+                "content": "Visible answer from selected context.",
+                "reason": "model-visible repair smoke",
+            },
+            "source_refs": [
+                {"source_type": "message", "source_id": source_id},
+            ],
+        },
+    }
+
+    proposal = build_executable_repair_proposal(
+        row,
+        source_id_aliases={source_id: "repair_msg_001"},
+    )
+
+    assert proposal.executable is True
+    assert proposal.tool_request is not None
+    serialized = proposal.tool_request.model_dump_json()
+    assert "conv-26_qa_001" not in serialized
+    assert "repair_msg_001" in serialized
+
+
+def test_repair_smoke_rewrites_argument_source_ids_before_forbidden_value_scan():
+    from memoryos_lite.public_repair_smoke import build_executable_repair_proposal
+
+    source_id = "conv-26_qa_001:conv-26:D1:1"
+    model_visible = _model_visible_planner_input(
+        selected_context_ids=[source_id],
+        rendered_evidence_ids=[source_id],
+        cited_source_ids=[source_id],
+        final_context_trace_source_ids=[source_id],
+        answer_evidence=[{"id": source_id, "text": "visible evidence"}],
+    )
+    row = {
+        "benchmark": "locomo",
+        "baseline": "memoryos_lite",
+        "case_id": "conv-26_qa_001",
+        "model_visible_planner_input": model_visible.model_dump(mode="json"),
+        "eval_gold_sidecar": EvalGoldSidecar(
+            case_id="conv-26_qa_001",
+            expected_answer="gold answer must not leak",
+            expected_source_ids=[source_id],
+            verdict="fail",
+            judge_status="judge_fail",
+            failure_class="retrieval_miss",
+            movement_status="unchanged_fail",
+        ).model_dump(mode="json"),
+        "maintenance_proposal": {
+            "proposal_type": "archive_write",
+            "execution_mode": "proposal_only",
+            "tool_name": "archive_write",
+            "gold_fields_used": False,
+            "arguments": {
+                "content": f"Visible note from selected context [{source_id}].",
+                "evidence_source_ids": [source_id],
+            },
+            "source_refs": [
+                {"source_type": "message", "source_id": source_id},
+            ],
+        },
+    }
+
+    proposal = build_executable_repair_proposal(
+        row,
+        source_id_aliases={source_id: "repair_msg_001"},
+    )
+
+    assert proposal.executable is True
+    assert proposal.tool_request is not None
+    serialized = proposal.tool_request.model_dump_json()
+    assert source_id not in serialized
+    assert "conv-26_qa_001" not in serialized
+    assert "repair_msg_001" in serialized
+
+
+def test_public_repair_smoke_executes_phase16_kernel_tools_before_v3_context(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_repair",
+        text="Alice records the repair marker.",
+        question="What marker does Alice record?",
+        answer="repair marker",
+    )
+    baseline_report = tmp_path / "baseline.json"
+    baseline_report.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "sample_repair_qa_001",
+                    "model_visible_planner_input": {
+                        "question": "What marker does Alice record?",
+                        "rendered_answer": "Alice records the repair marker.",
+                        "selected_context_ids": [
+                            "sample_repair_qa_001:sample_repair:D1:1"
+                        ],
+                        "final_context_trace_source_ids": [
+                            "sample_repair_qa_001:sample_repair:D1:1"
+                        ],
+                        "rendered_evidence_ids": [
+                            "sample_repair_qa_001:sample_repair:D1:1"
+                        ],
+                        "answer_evidence": [
+                            {"id": "sample_repair_qa_001:sample_repair:D1:1"}
+                        ],
+                        "cited_source_ids": [
+                            "sample_repair_qa_001:sample_repair:D1:1"
+                        ],
+                        "unsupported_citation_ids": [],
+                        "citation_contract_status": "supported_cited_answer",
+                        "archival_eligibility": {},
+                        "component_drop_counts": {},
+                        "kernel_trace_events": [],
+                    },
+                    "eval_gold_sidecar": {
+                        "case_id": "sample_repair_qa_001",
+                        "expected_answer": "repair marker",
+                        "expected_source_ids": [
+                            "sample_repair_qa_001:sample_repair:D1:1"
+                        ],
+                        "verdict": "fail",
+                        "judge_status": "judge_fail",
+                        "failure_class": "retrieval_miss",
+                        "movement_status": "unchanged_fail",
+                    },
+                    "maintenance_proposal": {
+                        "proposal_type": "archive_write",
+                        "execution_mode": "proposal_only",
+                        "tool_name": "archive_write",
+                        "arguments": {
+                            "content": "Alice records a model-visible context note."
+                        },
+                        "source_refs": [
+                            {
+                                "source_type": "message",
+                                "source_id": "sample_repair_qa_001:sample_repair:D1:1",
+                            }
+                        ],
+                        "gold_fields_used": False,
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_agent_kernel="v1",
+    )
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-smoke-real-path",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+        repair_smoke_baseline_report_path=baseline_report,
+    )
+
+    report = results[0].to_report()
+    assert report["repair_smoke"]["enabled"] is True
+    assert report["repair_smoke"]["executed_tool_names"] == ["archive_write"]
+    serialized_repair = json.dumps(report["repair_smoke"], sort_keys=True)
+    assert "repair marker" not in serialized_repair
+    assert "sample_repair_qa_001:sample_repair:D1:1" not in serialized_repair
+    assert "repair_msg_" in serialized_repair
+    assert "tool_executed" in [
+        event["event_type"] for event in report["repair_smoke"]["kernel_trace_events"]
+    ]
+    assert report["v3_context"]["metadata"]["archival_eligibility"][
+        "eligible_archive_ids"
+    ]
+
+
+def test_public_repair_smoke_requires_explicit_kernel_opt_in_and_baseline_report(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_repair_opt_in",
+        text="Alice records a repair opt-in marker.",
+        question="What does Alice record?",
+        answer="repair opt-in marker",
+    )
+    source_id = "sample_repair_opt_in_qa_001:sample_repair_opt_in:D1:1"
+    baseline_report = tmp_path / "baseline.json"
+    baseline_report.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "sample_repair_opt_in_qa_001",
+                    "model_visible_planner_input": {
+                        "question": "What does Alice record?",
+                        "rendered_answer": "Alice records a repair opt-in marker.",
+                        "selected_context_ids": [source_id],
+                        "final_context_trace_source_ids": [source_id],
+                        "rendered_evidence_ids": [source_id],
+                        "answer_evidence": [{"id": source_id}],
+                        "cited_source_ids": [source_id],
+                        "unsupported_citation_ids": [],
+                        "citation_contract_status": "supported_cited_answer",
+                        "archival_eligibility": {},
+                        "component_drop_counts": {},
+                        "kernel_trace_events": [],
+                    },
+                    "eval_gold_sidecar": {
+                        "case_id": "sample_repair_opt_in_qa_001",
+                        "expected_answer": "repair opt-in marker",
+                        "expected_source_ids": [source_id],
+                        "verdict": "fail",
+                        "judge_status": "judge_fail",
+                        "failure_class": "retrieval_miss",
+                        "movement_status": "unchanged_fail",
+                    },
+                    "maintenance_proposal": {
+                        "proposal_type": "archive_write",
+                        "execution_mode": "proposal_only",
+                        "tool_name": "archive_write",
+                        "arguments": {
+                            "content": "Alice records a model-visible opt-in note."
+                        },
+                        "source_refs": [
+                            {"source_type": "message", "source_id": source_id}
+                        ],
+                        "gold_fields_used": False,
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    default_results = run_public_benchmark(
+        Settings(data_dir=tmp_path / ".memoryos-default", memoryos_memory_arch="v3"),
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-smoke-disabled",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    disabled_report = default_results[0].to_report()["repair_smoke"]
+    assert disabled_report["enabled"] is False
+    assert disabled_report["executed_tool_names"] == []
+
+    with pytest.raises(ValueError, match="MEMORYOS_AGENT_KERNEL=v1"):
+        run_public_benchmark(
+            Settings(data_dir=tmp_path / ".memoryos-off", memoryos_memory_arch="v3"),
+            benchmark="locomo",
+            data_path=data_path,
+            run_id="repair-smoke-kernel-off",
+            baselines=["memoryos_lite"],
+            llm_answer=False,
+            llm_judge=False,
+            repair_smoke_baseline_report_path=baseline_report,
+        )
+
+    with pytest.raises(ValueError, match="memoryos_lite"):
+        run_public_benchmark(
+            Settings(
+                data_dir=tmp_path / ".memoryos-other-baseline",
+                memoryos_memory_arch="v3",
+                memoryos_agent_kernel="v1",
+            ),
+            benchmark="locomo",
+            data_path=data_path,
+            run_id="repair-smoke-other-baseline",
+            baselines=["sliding_window"],
+            llm_answer=False,
+            llm_judge=False,
+            repair_smoke_baseline_report_path=baseline_report,
+        )
+
+    enabled_results = run_public_benchmark(
+        Settings(
+            data_dir=tmp_path / ".memoryos-on",
+            memoryos_memory_arch="v3",
+            memoryos_agent_kernel="v1",
+        ),
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-smoke-enabled",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+        repair_smoke_baseline_report_path=baseline_report,
+    )
+
+    enabled_report = enabled_results[0].to_report()["repair_smoke"]
+    assert enabled_report["enabled"] is True
+    assert enabled_report["executed_tool_names"] == ["archive_write"]
+
+
+def test_public_repair_smoke_isolated_store_does_not_mutate_default_public_run(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_repair_isolation",
+        text="Alice records an ordinary isolation marker.",
+        question="What marker does Alice record?",
+        answer="ordinary isolation marker",
+    )
+    original_data = data_path.read_text(encoding="utf-8")
+    source_id = "sample_repair_isolation_qa_001:sample_repair_isolation:D1:1"
+    repair_artifact_text = "isolated repair artifact must not leak to default runs"
+    baseline_report = tmp_path / "baseline.json"
+    baseline_report.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "sample_repair_isolation_qa_001",
+                    "model_visible_planner_input": {
+                        "question": "What marker does Alice record?",
+                        "rendered_answer": "Alice records an ordinary isolation marker.",
+                        "selected_context_ids": [source_id],
+                        "final_context_trace_source_ids": [source_id],
+                        "rendered_evidence_ids": [source_id],
+                        "answer_evidence": [{"id": source_id}],
+                        "cited_source_ids": [source_id],
+                        "unsupported_citation_ids": [],
+                        "citation_contract_status": "supported_cited_answer",
+                        "archival_eligibility": {},
+                        "component_drop_counts": {},
+                        "kernel_trace_events": [],
+                    },
+                    "eval_gold_sidecar": {
+                        "case_id": "sample_repair_isolation_qa_001",
+                        "expected_answer": "ordinary isolation marker",
+                        "expected_source_ids": [source_id],
+                        "verdict": "fail",
+                        "judge_status": "judge_fail",
+                        "failure_class": "retrieval_miss",
+                        "movement_status": "unchanged_fail",
+                    },
+                    "maintenance_proposal": {
+                        "proposal_type": "archive_write",
+                        "execution_mode": "proposal_only",
+                        "tool_name": "archive_write",
+                        "arguments": {"content": repair_artifact_text},
+                        "source_refs": [
+                            {"source_type": "message", "source_id": source_id}
+                        ],
+                        "gold_fields_used": False,
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    default_before = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-isolation-default-before",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )[0].to_report()
+    repair_report = run_public_benchmark(
+        settings.model_copy(update={"memoryos_agent_kernel": "v1"}),
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-isolation-explicit",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+        repair_smoke_baseline_report_path=baseline_report,
+    )[0].to_report()
+    default_after = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-isolation-default-after",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )[0].to_report()
+
+    for default_report in (default_before, default_after):
+        assert default_report["repair_smoke"]["enabled"] is False
+        assert default_report["repair_smoke"]["executed_tool_names"] == []
+        assert default_report["repair_smoke"]["kernel_trace_events"] == []
+        assert default_report["kernel_trace_events"] == []
+
+    repair_smoke = repair_report["repair_smoke"]
+    assert repair_smoke["enabled"] is True
+    assert repair_smoke["executed_tool_names"] == ["archive_write"]
+    assert repair_smoke["data_dir"] == str(
+        settings.data_dir / "eval_runs" / "repair-isolation-explicit"
+    )
+    assert "tool_executed" in [
+        event["event_type"] for event in repair_smoke["kernel_trace_events"]
+    ]
+
+    assert data_path.read_text(encoding="utf-8") == original_data
+    assert repair_artifact_text in (
+        settings.data_dir
+        / "eval_runs"
+        / "repair-isolation-explicit"
+        / "memoryos.db"
+    ).read_text(encoding="utf-8", errors="ignore")
+    assert repair_artifact_text not in json.dumps(default_after, sort_keys=True)
+    assert repair_artifact_text not in (
+        settings.data_dir
+        / "eval_runs"
+        / "repair-isolation-default-after"
+        / "memoryos.db"
+    ).read_text(encoding="utf-8", errors="ignore")
+
+
+def test_repair_smoke_archive_artifacts_are_visible_only_when_session_attached(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_repair_visibility",
+        text="Alice records an ordinary visibility note.",
+        question="What archive boundary marker is attached?",
+        answer="ordinary visibility note",
+    )
+    source_id = "sample_repair_visibility_qa_001:sample_repair_visibility:D1:1"
+    repair_archive_text = "attached repair archive boundary marker"
+    baseline_report = tmp_path / "baseline.json"
+    baseline_report.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "sample_repair_visibility_qa_001",
+                    "model_visible_planner_input": {
+                        "question": "What archive boundary marker is attached?",
+                        "rendered_answer": "Alice records an ordinary visibility note.",
+                        "selected_context_ids": [source_id],
+                        "final_context_trace_source_ids": [source_id],
+                        "rendered_evidence_ids": [source_id],
+                        "answer_evidence": [{"id": source_id}],
+                        "cited_source_ids": [source_id],
+                        "unsupported_citation_ids": [],
+                        "citation_contract_status": "supported_cited_answer",
+                        "archival_eligibility": {},
+                        "component_drop_counts": {},
+                        "kernel_trace_events": [],
+                    },
+                    "eval_gold_sidecar": {
+                        "case_id": "sample_repair_visibility_qa_001",
+                        "expected_answer": "ordinary visibility note",
+                        "expected_source_ids": [source_id],
+                        "verdict": "fail",
+                        "judge_status": "judge_fail",
+                        "failure_class": "retrieval_miss",
+                        "movement_status": "unchanged_fail",
+                    },
+                    "maintenance_proposal": {
+                        "proposal_type": "archive_write",
+                        "execution_mode": "proposal_only",
+                        "tool_name": "archive_write",
+                        "arguments": {"content": repair_archive_text},
+                        "source_refs": [
+                            {"source_type": "message", "source_id": source_id}
+                        ],
+                        "gold_fields_used": False,
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+
+    repair_report = run_public_benchmark(
+        settings.model_copy(update={"memoryos_agent_kernel": "v1"}),
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-visibility-attached",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+        repair_smoke_baseline_report_path=baseline_report,
+    )[0].to_report()
+    default_report = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-visibility-default",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+    )[0].to_report()
+
+    repair_smoke = repair_report["repair_smoke"]
+    assert repair_smoke["executed_tool_names"] == ["archive_write"]
+    assert repair_smoke["archive_artifacts"] == [
+        {
+            "archive_id": repair_smoke["archive_artifacts"][0]["archive_id"],
+            "passage_id": repair_smoke["archive_artifacts"][0]["passage_id"],
+            "verification_status": "verified",
+            "session_attachment_found": True,
+            "eligible_for_session": True,
+        }
+    ]
+    artifact = repair_smoke["archive_artifacts"][0]
+    eligibility = repair_report["v3_context"]["metadata"]["archival_eligibility"]
+    assert artifact["archive_id"] in eligibility["eligible_archive_ids"]
+    assert artifact["passage_id"] in eligibility["selected_passage_ids"]
+
+    default_eligibility = default_report["v3_context"]["metadata"][
+        "archival_eligibility"
+    ]
+    assert default_report["repair_smoke"]["enabled"] is False
+    assert artifact["archive_id"] not in default_eligibility["eligible_archive_ids"]
+    assert artifact["passage_id"] not in default_eligibility["selected_passage_ids"]
+    assert repair_archive_text not in json.dumps(default_report, sort_keys=True)
+
+
+def test_repair_smoke_comparison_report_lists_case_level_movement_and_source_metrics(tmp_path):
+    data_path = tmp_path / "locomo_two_cases.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "case_fail_to_pass",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "The repair marker is emerald.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What color is the repair marker?",
+                            "answer": "emerald",
+                            "evidence": ["D1:1"],
+                        }
+                    ],
+                },
+                {
+                    "sample_id": "case_pass_to_fail",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Bob",
+                                "dia_id": "D1:1",
+                                "text": "The ordinary marker is slate.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What color is the missing marker?",
+                            "answer": "violet",
+                            "evidence": ["D9:9"],
+                        }
+                    ],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    baseline_report = tmp_path / "baseline.json"
+    baseline_report.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "case_fail_to_pass_qa_001",
+                    "verdict": "fail",
+                    "source_hit": False,
+                    "planned_evidence_source_hit_at_5": False,
+                    "episode_source_hit_at_10": False,
+                    "model_visible_planner_input": {
+                        "question": "What color is the repair marker?",
+                        "rendered_answer": "The repair marker is emerald.",
+                        "selected_context_ids": [
+                            "case_fail_to_pass_qa_001:case_fail_to_pass:D1:1"
+                        ],
+                        "final_context_trace_source_ids": [
+                            "case_fail_to_pass_qa_001:case_fail_to_pass:D1:1"
+                        ],
+                        "rendered_evidence_ids": [
+                            "case_fail_to_pass_qa_001:case_fail_to_pass:D1:1"
+                        ],
+                        "answer_evidence": [
+                            {
+                                "id": "case_fail_to_pass_qa_001:case_fail_to_pass:D1:1"
+                            }
+                        ],
+                        "cited_source_ids": [
+                            "case_fail_to_pass_qa_001:case_fail_to_pass:D1:1"
+                        ],
+                        "unsupported_citation_ids": [],
+                    },
+                    "eval_gold_sidecar": {
+                        "case_id": "case_fail_to_pass_qa_001",
+                        "expected_answer": "emerald",
+                        "expected_source_ids": [
+                            "case_fail_to_pass_qa_001:case_fail_to_pass:D1:1"
+                        ],
+                        "verdict": "fail",
+                        "judge_status": "judge_fail",
+                        "failure_class": "retrieval_miss",
+                        "movement_status": "unchanged_fail",
+                    },
+                    "maintenance_proposal": {
+                        "proposal_type": "archive_write",
+                        "execution_mode": "proposal_only",
+                        "tool_name": "archive_write",
+                        "arguments": {"content": "Visible non-gold emerald note."},
+                        "source_refs": [
+                            {
+                                "source_type": "message",
+                                "source_id": "case_fail_to_pass_qa_001:case_fail_to_pass:D1:1",
+                            }
+                        ],
+                        "gold_fields_used": False,
+                    },
+                },
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "case_pass_to_fail_qa_001",
+                    "verdict": "pass",
+                    "source_hit": True,
+                    "planned_evidence_source_hit_at_5": True,
+                    "episode_source_hit_at_10": True,
+                    "model_visible_planner_input": {
+                        "question": "What color is the missing marker?",
+                        "rendered_answer": "The ordinary marker is slate.",
+                        "selected_context_ids": [
+                            "case_pass_to_fail_qa_001:case_pass_to_fail:D1:1"
+                        ],
+                        "final_context_trace_source_ids": [
+                            "case_pass_to_fail_qa_001:case_pass_to_fail:D1:1"
+                        ],
+                        "rendered_evidence_ids": [
+                            "case_pass_to_fail_qa_001:case_pass_to_fail:D1:1"
+                        ],
+                        "answer_evidence": [
+                            {
+                                "id": "case_pass_to_fail_qa_001:case_pass_to_fail:D1:1"
+                            }
+                        ],
+                        "cited_source_ids": [
+                            "case_pass_to_fail_qa_001:case_pass_to_fail:D1:1"
+                        ],
+                        "unsupported_citation_ids": [],
+                    },
+                    "eval_gold_sidecar": {
+                        "case_id": "case_pass_to_fail_qa_001",
+                        "expected_answer": "violet",
+                        "expected_source_ids": [
+                            "case_pass_to_fail_qa_001:case_pass_to_fail:D9:9"
+                        ],
+                        "verdict": "pass",
+                        "judge_status": "judge_pass",
+                        "failure_class": "source_miss_judge_pass",
+                        "movement_status": "unchanged_pass",
+                    },
+                    "maintenance_proposal": {
+                        "proposal_type": "archive_write",
+                        "execution_mode": "proposal_only",
+                        "tool_name": "archive_write",
+                        "arguments": {"content": "Visible non-gold slate note."},
+                        "source_refs": [
+                            {
+                                "source_type": "message",
+                                "source_id": "case_pass_to_fail_qa_001:case_pass_to_fail:D1:1",
+                            }
+                        ],
+                        "gold_fields_used": False,
+                    },
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_agent_kernel="v1",
+    )
+
+    run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-comparison-summary",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+        repair_smoke_baseline_report_path=baseline_report,
+    )
+
+    summary_path = (
+        settings.data_dir
+        / "evals"
+        / "repair-comparison-summary_locomo_repair_smoke_summary.json"
+    )
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["same_slice_repair_smoke_only"] is True
+    assert summary["full_chain_gate_status"] == "not_satisfied"
+    assert summary["fail_to_pass"] == ["case_fail_to_pass_qa_001"]
+    assert summary["pass_to_fail"] == ["case_pass_to_fail_qa_001"]
+    assert summary["unchanged_fail"] == []
+    assert summary["unchanged_pass"] == []
+    assert set(summary["failure_classes"]) == {
+        "retrieval_miss",
+        "evidence_hit_answer_fail",
+        "context_missing_evidence",
+        "unsupported_answer",
+        "judge_questionable",
+        "source_miss_judge_pass",
+    }
+    assert summary["failure_classes"]["retrieval_miss"] == [
+        "case_pass_to_fail_qa_001"
+    ]
+    assert summary["source_metric_movement"]["source_hit"]["improved"] == [
+        "case_fail_to_pass_qa_001"
+    ]
+    assert summary["source_metric_movement"]["source_hit"]["regressed"] == [
+        "case_pass_to_fail_qa_001"
+    ]
+    for metric in (
+        "planned_evidence_source_hit_at_5",
+        "episode_source_hit_at_10",
+    ):
+        assert summary["source_metric_movement"][metric]["improved"] == [
+            "case_fail_to_pass_qa_001"
+        ]
+        assert summary["source_metric_movement"][metric]["regressed"] == [
+            "case_pass_to_fail_qa_001"
+        ]
+
+
+def test_repair_smoke_summary_buckets_judge_pass_source_miss_separately():
+    from memoryos_lite.public_repair_smoke import build_repair_smoke_comparison_summary
+
+    baseline_rows = [
+        {
+            "case_id": "judge_pass_source_miss",
+            "verdict": "pass",
+            "source_hit": False,
+            "planned_evidence_source_hit_at_5": False,
+            "episode_source_hit_at_10": False,
+        }
+    ]
+    repair_rows = [
+        {
+            "case_id": "judge_pass_source_miss",
+            "verdict": "pass",
+            "failure_class": "retrieval_miss",
+            "source_hit": False,
+            "planned_evidence_source_hit_at_5": False,
+            "episode_source_hit_at_10": False,
+        }
+    ]
+
+    summary = build_repair_smoke_comparison_summary(
+        baseline_rows,
+        repair_rows,
+        llm_answer=True,
+        llm_judge=True,
+    )
+
+    assert summary["unchanged_pass"] == ["judge_pass_source_miss"]
+    assert summary["failure_classes"]["source_miss_judge_pass"] == [
+        "judge_pass_source_miss"
+    ]
+    assert summary["failure_classes"]["retrieval_miss"] == []
+
+
+def test_repair_smoke_summary_blocks_missing_extra_and_duplicate_baseline_rows():
+    from memoryos_lite.public_repair_smoke import build_repair_smoke_comparison_summary
+
+    baseline_rows = [
+        {
+            "case_id": "duplicate_baseline",
+            "verdict": "pass",
+            "source_hit": True,
+        },
+        {
+            "case_id": "duplicate_baseline",
+            "verdict": "fail",
+            "source_hit": False,
+        },
+        {
+            "case_id": "extra_baseline",
+            "verdict": "pass",
+            "source_hit": True,
+        },
+        {
+            "case_id": "matched_baseline",
+            "verdict": "fail",
+            "source_hit": False,
+        },
+    ]
+    repair_rows = [
+        {
+            "case_id": "duplicate_baseline",
+            "verdict": "fail",
+            "failure_class": "retrieval_miss",
+            "source_hit": False,
+        },
+        {
+            "case_id": "matched_baseline",
+            "verdict": "pass",
+            "failure_class": "supported_cited_answer",
+            "source_hit": True,
+        },
+        {
+            "case_id": "missing_baseline",
+            "verdict": "fail",
+            "failure_class": "retrieval_miss",
+            "source_hit": False,
+        },
+    ]
+
+    summary = build_repair_smoke_comparison_summary(
+        baseline_rows,
+        repair_rows,
+        llm_answer=True,
+        llm_judge=True,
+    )
+
+    assert summary["full_chain_gate_status"] == "blocked_baseline_mismatch"
+    assert "baseline report must contain exactly one row" in summary[
+        "full_chain_gate_reason"
+    ]
+    assert summary["baseline_coverage"] == {
+        "valid": False,
+        "matched_case_ids": ["matched_baseline"],
+        "missing_baseline_case_ids": ["missing_baseline"],
+        "extra_baseline_case_ids": ["extra_baseline"],
+        "duplicate_baseline_case_ids": ["duplicate_baseline"],
+        "duplicate_repair_case_ids": [],
+    }
+    assert summary["fail_to_pass"] == ["matched_baseline"]
+    assert summary["failure_classes"]["retrieval_miss"] == [
+        "duplicate_baseline",
+        "missing_baseline",
+    ]
+
+
+def test_public_repair_smoke_summary_preserves_duplicate_baseline_rows(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="duplicate_baseline_sample",
+        text="The duplicate baseline marker is cinnabar.",
+        question="What is the duplicate baseline marker?",
+        answer="cinnabar",
+    )
+    baseline_row = {
+        "benchmark": "locomo",
+        "baseline": "memoryos_lite",
+        "case_id": "duplicate_baseline_sample_qa_001",
+        "verdict": "fail",
+        "source_hit": False,
+        "planned_evidence_source_hit_at_5": False,
+        "episode_source_hit_at_10": False,
+    }
+    baseline_report = tmp_path / "duplicate_baseline_report.json"
+    baseline_report.write_text(
+        json.dumps([baseline_row, dict(baseline_row)]),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_agent_kernel="v1",
+    )
+
+    run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="duplicate-baseline-summary",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+        repair_smoke_baseline_report_path=baseline_report,
+    )
+
+    summary = json.loads(
+        (
+            settings.data_dir
+            / "evals"
+            / "duplicate-baseline-summary_locomo_repair_smoke_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert summary["full_chain_gate_status"] == "blocked_baseline_mismatch"
+    assert summary["baseline_coverage"]["duplicate_baseline_case_ids"] == [
+        "duplicate_baseline_sample_qa_001"
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure_class",
+    [
+        "evidence_retrieved_not_selected",
+        "evidence_selected_not_rendered",
+        "evidence_rendered_not_answer_evidence",
+    ],
+)
+def test_repair_smoke_summary_maps_context_diagnostic_classes(failure_class):
+    from memoryos_lite.public_repair_smoke import build_repair_smoke_comparison_summary
+
+    baseline_rows = [
+        {
+            "case_id": failure_class,
+            "verdict": "fail",
+            "source_hit": True,
+        }
+    ]
+    repair_rows = [
+        {
+            "case_id": failure_class,
+            "verdict": "fail",
+            "failure_class": failure_class,
+            "source_hit": True,
+        }
+    ]
+
+    summary = build_repair_smoke_comparison_summary(
+        baseline_rows,
+        repair_rows,
+        llm_answer=True,
+        llm_judge=True,
+    )
+
+    assert summary["failure_classes"]["context_missing_evidence"] == [failure_class]
+
+
+def test_no_llm_repair_smoke_report_is_diagnostic_not_full_chain_gate():
+    from memoryos_lite.public_repair_smoke import build_repair_smoke_comparison_summary
+
+    baseline_rows = [
+        {
+            "case_id": "case_no_llm_qa_001",
+            "verdict": "fail",
+            "source_hit": False,
+        }
+    ]
+    repair_rows = [
+        {
+            "case_id": "case_no_llm_qa_001",
+            "verdict": "pass",
+            "answer_mode": "projected",
+            "reasoning": "exact substring match",
+            "source_hit": True,
+        }
+    ]
+
+    no_llm_summary = build_repair_smoke_comparison_summary(
+        baseline_rows,
+        repair_rows,
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    assert no_llm_summary["answer_mode"] == "projected"
+    assert no_llm_summary["judge_mode"] == "heuristic"
+    assert no_llm_summary["full_chain_gate_status"] == "not_satisfied"
+    assert "diagnostic only" in no_llm_summary["full_chain_gate_reason"]
+    assert no_llm_summary["promotion_gate_satisfied"] is False
+    assert no_llm_summary["quality_gate_satisfied"] is False
+
+    provider_blocked_summary = build_repair_smoke_comparison_summary(
+        baseline_rows,
+        repair_rows,
+        llm_answer=True,
+        llm_judge=True,
+        provider_errors=[
+            {
+                "stage": "answerer_init",
+                "error": "OPENAI_API_KEY required for public benchmark answerer",
+            }
+        ],
+    )
+
+    assert (
+        provider_blocked_summary["full_chain_gate_status"]
+        == "blocked_provider_unavailable"
+    )
+    assert "provider unavailable" in provider_blocked_summary["full_chain_gate_reason"]
+    assert provider_blocked_summary["provider_errors"] == [
+        {
+            "stage": "answerer_init",
+            "error": "OPENAI_API_KEY required for public benchmark answerer",
+        }
+    ]
+
+
+def test_full_chain_repair_smoke_provider_blocker_writes_summary(tmp_path):
+    data_path = _write_single_locomo_case(
+        tmp_path,
+        sample_id="sample_provider_blocked",
+        text="Alice records a provider blocker marker.",
+        question="What marker does Alice record?",
+        answer="provider blocker marker",
+    )
+    source_id = "sample_provider_blocked_qa_001:sample_provider_blocked:D1:1"
+    baseline_report = tmp_path / "baseline.json"
+    baseline_report.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "sample_provider_blocked_qa_001",
+                    "model_visible_planner_input": {
+                        "question": "What marker does Alice record?",
+                        "rendered_answer": "Alice records a provider blocker marker.",
+                        "selected_context_ids": [source_id],
+                        "final_context_trace_source_ids": [source_id],
+                        "rendered_evidence_ids": [source_id],
+                        "answer_evidence": [{"id": source_id}],
+                        "cited_source_ids": [source_id],
+                        "unsupported_citation_ids": [],
+                        "citation_contract_status": "supported_cited_answer",
+                        "archival_eligibility": {},
+                        "component_drop_counts": {},
+                        "kernel_trace_events": [],
+                    },
+                    "eval_gold_sidecar": {
+                        "case_id": "sample_provider_blocked_qa_001",
+                        "expected_answer": "provider blocker marker",
+                        "expected_source_ids": [source_id],
+                        "verdict": "fail",
+                        "judge_status": "judge_fail",
+                        "failure_class": "retrieval_miss",
+                        "movement_status": "unchanged_fail",
+                    },
+                    "maintenance_proposal": {
+                        "proposal_type": "archive_write",
+                        "execution_mode": "proposal_only",
+                        "tool_name": "archive_write",
+                        "arguments": {"content": "Alice records a visible note."},
+                        "source_refs": [
+                            {"source_type": "message", "source_id": source_id}
+                        ],
+                        "gold_fields_used": False,
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_agent_kernel="v1",
+        memoryos_llm_provider="openai",
+        openai_api_key=None,
+        deepseek_api_key=None,
+    )
+
+    run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="repair-provider-blocked",
+        baselines=["memoryos_lite"],
+        llm_answer=True,
+        llm_judge=True,
+        repair_smoke_baseline_report_path=baseline_report,
+    )
+
+    summary = json.loads(
+        (
+            settings.data_dir
+            / "evals"
+            / "repair-provider-blocked_locomo_repair_smoke_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert summary["full_chain_gate_status"] == "blocked_provider_unavailable"
+    assert "provider unavailable" in summary["full_chain_gate_reason"]
+    assert summary["provider_errors"] == [
+        {
+            "stage": "answerer_init",
+            "error": "OPENAI_API_KEY required for public benchmark answerer",
+        },
+        {
+            "stage": "judge_init",
+            "error": "OPENAI_API_KEY required for LLM judge",
+        },
+    ]
 
 
 def test_public_report_emits_planner_artifacts_without_planner_tool_execution(tmp_path):

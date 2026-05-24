@@ -1,0 +1,46 @@
+{
+  "phase": "phase-17",
+  "verdict": "PASS",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": "work/phase-17/context_bundle.md",
+  "review_artifact": "work/phase-17/reviews/codex-review-r2.md",
+  "decision": "advance",
+  "blocking_findings": [],
+  "prior_fail_repaired": [
+    {
+      "id": "source_miss_judge_pass_bucket",
+      "evidence": "r3 summary reports source_miss_judge_pass for conv-26_qa_002, conv-26_qa_003, conv-26_qa_004, and conv-26_qa_005."
+    },
+    {
+      "id": "missing_baseline_rows_hidden",
+      "evidence": "baseline_coverage is present; missing, extra, and duplicate rows block with full_chain_gate_status=blocked_baseline_mismatch."
+    },
+    {
+      "id": "dropped_diagnostic_failure_classes",
+      "evidence": "diagnostic classes evidence_retrieved_not_selected, evidence_selected_not_rendered, and evidence_rendered_not_answer_evidence map to context_missing_evidence."
+    }
+  ],
+  "overfitting_risk": "medium",
+  "v1_fallback_preserved": true,
+  "v3_default_preserved": true,
+  "kernel_default_unchanged": true,
+  "source_grounding_regressed": false,
+  "locomo_regressed_or_unexplained": false,
+  "review_eval_decision": {
+    "scope": "smoke",
+    "reason": "Phase 17 changed only the explicit LoCoMo repair-smoke path. A LoCoMo 10 fixed-slice full-chain LLM answer/judge baseline plus explicit kernel repair-smoke rerun is sufficient for this diagnostic repair-measurement ACK. Same-slice repair smoke is not promotion evidence.",
+    "longmemeval": {
+      "run": false,
+      "limit": 0,
+      "reason": "Default v3 retrieval, context composition, and answer behavior were not changed outside explicit LoCoMo repair-smoke mode."
+    },
+    "locomo": {
+      "run": true,
+      "limit": 10,
+      "reason": "Fixed-slice LoCoMo baseline and explicit repair-smoke rerun were required and completed with LLM answer and judge."
+    },
+    "llm_answer": true,
+    "llm_judge": true,
+    "promotion_gate": "not_applicable"
+  }
+}

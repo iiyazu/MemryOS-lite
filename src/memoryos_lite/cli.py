@@ -367,6 +367,13 @@ def eval_public(
         list[str] | None,
         Option("--comparison-report", help="Previous public JSON report for case movement"),
     ] = None,
+    repair_smoke_baseline_report: Annotated[
+        str | None,
+        Option(
+            "--repair-smoke-baseline-report",
+            help="Explicit baseline public JSON report for opt-in LoCoMo repair smoke",
+        ),
+    ] = None,
     isolated: bool = True,
 ) -> None:
     """Run LongMemEval or LoCoMo JSON through the local benchmark adapter."""
@@ -384,6 +391,11 @@ def eval_public(
         llm_judge=llm_judge,
         isolated=isolated,
         comparison_report_paths=[Path(path) for path in comparison_report or []],
+        repair_smoke_baseline_report_path=(
+            Path(repair_smoke_baseline_report)
+            if repair_smoke_baseline_report is not None
+            else None
+        ),
     )
     table = Table(*PUBLIC_TABLE_COLUMNS)
     for row in _public_table_rows(results):

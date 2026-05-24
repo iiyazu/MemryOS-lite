@@ -1,8 +1,9 @@
 import json
 import re
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
+from typing import Any
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
@@ -22,6 +23,11 @@ from memoryos_lite.v3_contracts import (
 )
 
 CASE_COUNT = 8
+
+PreContextHook = Callable[
+    [MemoryOSService, EvalCase, list[Message], Any, Any],
+    dict[str, object],
+]
 
 
 @dataclass
@@ -116,6 +122,7 @@ class BaselineOutput:
     v3_component_drop_counts: dict[str, int] = field(default_factory=dict)
     locomo_neighbor_diagnostics: list[dict[str, object]] = field(default_factory=list)
     kernel_trace_events: list[dict[str, object]] = field(default_factory=list)
+    repair_smoke: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -511,6 +518,7 @@ def _run_baseline(
     service: MemoryOSService,
     settings: Settings,
     budget_override: int | None = None,
+    pre_context_hook: PreContextHook | None = None,
 ) -> BaselineOutput:
     tokenizer = TokenEstimator()
     budget = budget_override if budget_override is not None else 90
@@ -580,6 +588,17 @@ def _run_baseline(
                     message.model_copy(update={"session_id": source_session.id})
                 )
             service.page(source_session.id)
+            repair_smoke = (
+                pre_context_hook(
+                    service,
+                    case,
+                    messages,
+                    source_session,
+                    context_session,
+                )
+                if pre_context_hook is not None
+                else {}
+            )
             all_pages = service.store.list_pages(source_session.id)
             candidate_pages = [page for page in all_pages if page.superseded_by is None]
             candidate_top_k = 5
@@ -894,6 +913,7 @@ def _run_baseline(
                 else None
             ),
             kernel_trace_events=kernel_trace_events,
+            repair_smoke=repair_smoke,
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -1017,6 +1037,7 @@ def _baseline_from_evidence(
     v3_component_drop_counts: dict[str, int] | None = None,
     locomo_neighbor_diagnostics: list[dict[str, object]] | None = None,
     kernel_trace_events: list[dict[str, object]] | None = None,
+    repair_smoke: dict[str, object] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}
@@ -1072,6 +1093,7 @@ def _baseline_from_evidence(
         v3_component_drop_counts=v3_component_drop_counts or {},
         locomo_neighbor_diagnostics=locomo_neighbor_diagnostics or [],
         kernel_trace_events=kernel_trace_events or [],
+        repair_smoke=repair_smoke or {},
     )
 
 
