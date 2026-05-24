@@ -32,14 +32,15 @@ Preserve project constraints:
   - Add pure validation helpers for normalized GitHub evidence.
   - Add optional read-only evidence fetch helpers.
   - Connect required GitHub evidence to `validate_merge_queue_gate()`.
-  - Extend `validate_merge_approval()` to verify `github_review` / `github_check` evidence digest and validity.
+  - Extend `validate_merge_approval()` to bind `github_review` / `github_check`
+    evidence digests without changing existing `signed_approval` semantics.
 
 - Modify `tests/test_hermes_master_state.py`
   - Add fixture builders for GitHub evidence.
   - Test PR lifecycle, SHA binding, review event semantics, check-run validation, approval digest binding, and merge queue blocking.
 
 - Modify `tests/test_hermes_hardening.py`
-  - Add legacy summary tests proving local-only features still work when GitHub is disabled or optional.
+  - Add legacy summary tests proving legacy local-only summaries still work when GitHub is disabled or optional.
 
 - Modify `.hermes-loop/master_config.json`
   - Add disabled-by-default `github` config object.
@@ -364,10 +365,15 @@ def _github_config(master_config: dict[str, Any] | None) -> dict[str, Any]:
     return config
 
 
-def _latest_non_comment_reviews_by_user(reviews: list[Any]) -> dict[str, dict[str, Any]]:
+def _latest_non_comment_reviews_by_user(
+    reviews: list[Any],
+    head_sha: Any,
+) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for review in reviews:
         if not isinstance(review, dict):
+            continue
+        if not _same_commit_ref(review.get("commit_id"), head_sha):
             continue
         state = str(review.get("state", "")).upper()
         if state == "COMMENTED":
@@ -431,7 +437,7 @@ def validate_github_pr_evidence(
     if not _same_commit_ref(base_sha, local_refs.get("target_head")):
         errors.append("PR base SHA does not match current target HEAD")
 
-    latest_by_user = _latest_non_comment_reviews_by_user(reviews)
+    latest_by_user = _latest_non_comment_reviews_by_user(reviews, head_sha)
     review_by_id = {review.get("id"): review for review in reviews if isinstance(review, dict)}
     required_review_ids = merge.get("required_review_ids", [])
     for review_id in required_review_ids:
@@ -520,6 +526,30 @@ def test_github_evidence_rejects_superseded_approval():
     assert "required review id is not latest for reviewer: 987654321" in result["errors"]
 
 
+def test_github_evidence_ignores_later_review_on_different_head():
+    hardening = load_hardening()
+    evidence = github_evidence()
+    evidence["reviews"].append(
+        {
+            "id": 987654322,
+            "user": "reviewer-login",
+            "state": "CHANGES_REQUESTED",
+            "commit_id": "differenthead123",
+            "submitted_at": "2026-05-24T00:10:00Z",
+        }
+    )
+
+    result = hardening.validate_github_pr_evidence(
+        github_config(),
+        github_feature(),
+        evidence,
+        github_local_refs(),
+    )
+
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
 def test_github_evidence_rejects_review_on_old_head():
     hardening = load_hardening()
     evidence = github_evidence()
@@ -559,7 +589,7 @@ def test_github_evidence_rejects_missing_failed_or_stale_check_run():
 Run:
 
 ```bash
-uv run pytest tests/test_hermes_master_state.py::test_github_evidence_rejects_superseded_approval tests/test_hermes_master_state.py::test_github_evidence_rejects_review_on_old_head tests/test_hermes_master_state.py::test_github_evidence_rejects_missing_failed_or_stale_check_run -q
+uv run pytest tests/test_hermes_master_state.py::test_github_evidence_rejects_superseded_approval tests/test_hermes_master_state.py::test_github_evidence_ignores_later_review_on_different_head tests/test_hermes_master_state.py::test_github_evidence_rejects_review_on_old_head tests/test_hermes_master_state.py::test_github_evidence_rejects_missing_failed_or_stale_check_run -q
 ```
 
 Expected: fail if Task 2 validator missed event-stream or check-run details.
@@ -569,7 +599,7 @@ Expected: fail if Task 2 validator missed event-stream or check-run details.
 If any test fails, update only the corresponding block in `validate_github_pr_evidence()`:
 
 ```python
-    latest_by_user = _latest_non_comment_reviews_by_user(reviews)
+    latest_by_user = _latest_non_comment_reviews_by_user(reviews, head_sha)
     review_by_id = {review.get("id"): review for review in reviews if isinstance(review, dict)}
     required_review_ids = merge.get("required_review_ids", [])
     for review_id in required_review_ids:
@@ -611,10 +641,10 @@ and:
 Run:
 
 ```bash
-uv run pytest tests/test_hermes_master_state.py::test_github_evidence_rejects_superseded_approval tests/test_hermes_master_state.py::test_github_evidence_rejects_review_on_old_head tests/test_hermes_master_state.py::test_github_evidence_rejects_missing_failed_or_stale_check_run -q
+uv run pytest tests/test_hermes_master_state.py::test_github_evidence_rejects_superseded_approval tests/test_hermes_master_state.py::test_github_evidence_ignores_later_review_on_different_head tests/test_hermes_master_state.py::test_github_evidence_rejects_review_on_old_head tests/test_hermes_master_state.py::test_github_evidence_rejects_missing_failed_or_stale_check_run -q
 ```
 
-Expected: `3 passed`.
+Expected: `4 passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -691,6 +721,23 @@ def test_github_approval_rejects_changed_evidence_after_approval(tmp_path):
 
     assert result["schema_valid"] is False
     assert "approval verification digest does not match current ref" in result["errors"]
+
+
+def test_signed_approval_does_not_require_local_signature_file(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    bundle = valid_approval_bundle(loop)
+
+    result = hardening.validate_merge_approval(
+        loop,
+        ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        policy_snapshot_digest=bundle["request"]["policy_snapshot_digest"],
+    )
+
+    assert result["schema_valid"] is True
+    assert "approval verification ref cannot be read" not in result["errors"]
+    assert "approval verification digest does not match current ref" not in result["errors"]
 ```
 
 - [ ] **Step 2: Run tests to verify failure**
@@ -698,10 +745,10 @@ def test_github_approval_rejects_changed_evidence_after_approval(tmp_path):
 Run:
 
 ```bash
-uv run pytest tests/test_hermes_master_state.py::test_github_approval_schema_accepts_bound_evidence_digest tests/test_hermes_master_state.py::test_github_approval_rejects_changed_evidence_after_approval -q
+uv run pytest tests/test_hermes_master_state.py::test_github_approval_schema_accepts_bound_evidence_digest tests/test_hermes_master_state.py::test_github_approval_rejects_changed_evidence_after_approval tests/test_hermes_master_state.py::test_signed_approval_does_not_require_local_signature_file -q
 ```
 
-Expected: second test fails because `validate_merge_approval()` currently checks presence of `ref` and `digest`, but not current digest content.
+Expected: second test fails because `validate_merge_approval()` currently checks presence of `ref` and `digest`, but not current GitHub evidence digest content. The signed approval test should continue to pass before and after the change.
 
 - [ ] **Step 3: Implement digest check**
 
@@ -713,10 +760,17 @@ def file_digest_for_ref(loop: Path, ref: str) -> str:
     return file_json_digest(path)
 ```
 
-In `validate_merge_approval()`, after the existing `verification.ref` and `verification.digest` required checks, add:
+In `validate_merge_approval()`, after the existing `verification.ref` and `verification.digest` required checks, add this GitHub-only binding check. Do not apply current local file digest checks to `signed_approval`, `git_signature`, or `ci_artifact`, because existing signed approval fixtures use external refs such as `approval.sig` that are not controller JSON files:
 
 ```python
-    if isinstance(verification, dict) and verification.get("ref") and verification.get("digest"):
+    if (
+        method in {"github_review", "github_check"}
+        and isinstance(verification, dict)
+        and verification.get("ref")
+        and verification.get("digest")
+    ):
+        if not str(verification["ref"]).startswith(".hermes-loop/master/features/"):
+            errors.append("github approval verification ref must be Master-owned")
         try:
             verification_digest = file_digest_for_ref(loop, verification["ref"])
         except Exception:
@@ -724,10 +778,6 @@ In `validate_merge_approval()`, after the existing `verification.ref` and `verif
             errors.append("approval verification ref cannot be read")
         if verification_digest != verification.get("digest"):
             errors.append("approval verification digest does not match current ref")
-
-        if method in {"github_review", "github_check"}:
-            if not str(verification["ref"]).startswith(".hermes-loop/master/features/"):
-                errors.append("github approval verification ref must be Master-owned")
 ```
 
 Keep the final return unchanged:
@@ -743,15 +793,22 @@ Keep the final return unchanged:
     }
 ```
 
+`validate_merge_approval()` remains a schema and digest-binding validator. It
+does not decide that GitHub provenance is merge-valid by itself. The content of
+`github_evidence.json` is validated by `validate_github_pr_evidence()` in the
+merge queue gate in Task 5, where feature branch, target branch, local refs,
+integrated-test base commit, required reviews, and required checks are all
+available.
+
 - [ ] **Step 4: Run tests to verify pass**
 
 Run:
 
 ```bash
-uv run pytest tests/test_hermes_master_state.py::test_github_approval_schema_accepts_bound_evidence_digest tests/test_hermes_master_state.py::test_github_approval_rejects_changed_evidence_after_approval -q
+uv run pytest tests/test_hermes_master_state.py::test_github_approval_schema_accepts_bound_evidence_digest tests/test_hermes_master_state.py::test_github_approval_rejects_changed_evidence_after_approval tests/test_hermes_master_state.py::test_signed_approval_does_not_require_local_signature_file -q
 ```
 
-Expected: `2 passed`.
+Expected: `3 passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -807,6 +864,25 @@ def test_merge_queue_gate_accepts_required_github_evidence(tmp_path, monkeypatch
 
     assert result["valid"] is True
     assert result["errors"] == []
+
+
+def test_merge_queue_gate_reports_missing_github_pr_without_crashing(tmp_path, monkeypatch):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    state = feature_for_gate()
+    feature = state["features"][0]
+    feature.update(github_feature())
+    feature["policy_flags"]["requires_github_evidence"] = True
+    feature["merge"]["github_pr"] = None
+    feature["artifacts"]["github_evidence"] = ".hermes-loop/master/features/v1-quarantine/github_evidence.json"
+    write_gate_artifacts(loop)
+    write_json(loop / "master" / "features" / "v1-quarantine" / "github_evidence.json", github_evidence())
+    monkeypatch.setattr(hardening, "_current_target_head", lambda _loop, _branch: "123456abcdef")
+
+    result = hardening.validate_merge_queue_gate(loop, feature)
+
+    assert result["valid"] is False
+    assert "feature merge.github_pr is required when github evidence is required" in result["errors"]
 ```
 
 - [ ] **Step 2: Run tests to verify failure**
@@ -814,7 +890,7 @@ def test_merge_queue_gate_accepts_required_github_evidence(tmp_path, monkeypatch
 Run:
 
 ```bash
-uv run pytest tests/test_hermes_master_state.py::test_merge_queue_gate_blocks_missing_required_github_evidence tests/test_hermes_master_state.py::test_merge_queue_gate_accepts_required_github_evidence -q
+uv run pytest tests/test_hermes_master_state.py::test_merge_queue_gate_blocks_missing_required_github_evidence tests/test_hermes_master_state.py::test_merge_queue_gate_accepts_required_github_evidence tests/test_hermes_master_state.py::test_merge_queue_gate_reports_missing_github_pr_without_crashing -q
 ```
 
 Expected: first test fails because no GitHub evidence gate exists.
@@ -853,9 +929,13 @@ def _github_evidence_gate(
     evidence = _load_required_json(loop, evidence_ref, [], "github_evidence")
     if not evidence:
         return [f"missing github_evidence: {evidence_ref}"]
+    merge = feature.get("merge", {}) if isinstance(feature.get("merge"), dict) else {}
+    github_pr = merge.get("github_pr") if isinstance(merge.get("github_pr"), dict) else {}
+    if not github_pr:
+        return ["feature merge.github_pr is required when github evidence is required"]
     target_head = _current_target_head(loop, feature.get("target_branch"))
     local_refs = {
-        "feature_head": feature.get("merge", {}).get("github_pr", {}).get("head_sha"),
+        "feature_head": github_pr.get("head_sha"),
         "target_head": target_head,
         "integrated_tests_base_commit": integrated_tests.get("base_commit") if integrated_tests else None,
     }
@@ -875,10 +955,10 @@ In `validate_merge_queue_gate()`, after the existing `if master_review and integ
 Run:
 
 ```bash
-uv run pytest tests/test_hermes_master_state.py::test_merge_queue_gate_blocks_missing_required_github_evidence tests/test_hermes_master_state.py::test_merge_queue_gate_accepts_required_github_evidence -q
+uv run pytest tests/test_hermes_master_state.py::test_merge_queue_gate_blocks_missing_required_github_evidence tests/test_hermes_master_state.py::test_merge_queue_gate_accepts_required_github_evidence tests/test_hermes_master_state.py::test_merge_queue_gate_reports_missing_github_pr_without_crashing -q
 ```
 
-Expected: `2 passed`.
+Expected: `3 passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -1078,13 +1158,14 @@ def fetch_github_pr_evidence(
 ) -> dict[str, Any]:
     github = _github_config(config)
     merge = feature.get("merge", {}) if isinstance(feature.get("merge"), dict) else {}
-    pr_number = merge.get("github_pr", {}).get("number")
-    if not pr_number:
-        raise ValueError("feature merge.github_pr.number is required")
     if not github.get("enabled"):
         raise ValueError("github evidence fetch requires github.enabled=true")
     repo = github.get("repo")
     timeout = int(github.get("request_timeout_seconds", 20))
+    github_pr = merge.get("github_pr") if isinstance(merge.get("github_pr"), dict) else {}
+    pr_number = github_pr.get("number")
+    if not pr_number:
+        raise ValueError("feature merge.github_pr.number is required")
     pr = _run_gh_json(
         [
             "api",
@@ -1127,10 +1208,11 @@ git commit -m "feat: add readonly github evidence fetch helpers"
 
 ---
 
-### Task 7: Legacy Summary Compatibility
+### Task 7: Local-Only Compatibility
 
 **Files:**
 - Modify: `.hermes-loop/hermes_hardening.py`
+- Test: `tests/test_hermes_master_state.py`
 - Test: `tests/test_hermes_hardening.py`
 
 - [ ] **Step 1: Write compatibility tests**
@@ -1186,29 +1268,49 @@ def test_master_slave_summary_ignores_optional_github_evidence_when_disabled(tmp
     assert summary["blockers"] == []
 ```
 
+Append this Master control-plane test to `tests/test_hermes_master_state.py`:
+
+```python
+def test_master_merge_gate_keeps_local_only_flow_when_github_disabled(tmp_path, monkeypatch):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    feature = feature_for_gate()["features"][0]
+    feature["policy_flags"]["allows_github_evidence"] = True
+    feature["policy_flags"]["requires_github_evidence"] = False
+    feature["artifacts"].pop("github_evidence", None)
+    write_gate_artifacts(loop)
+    write_json(loop / "master_config.json", hardening.default_master_config())
+    monkeypatch.setattr(hardening, "_current_target_head", lambda _loop, _branch: "123456abcdef")
+
+    result = hardening.validate_merge_queue_gate(loop, feature)
+
+    assert result["valid"] is True
+    assert result["errors"] == []
+```
+
 - [ ] **Step 2: Run test**
 
 Run:
 
 ```bash
-uv run pytest tests/test_hermes_hardening.py::test_master_slave_summary_ignores_optional_github_evidence_when_disabled -q
+uv run pytest tests/test_hermes_hardening.py::test_master_slave_summary_ignores_optional_github_evidence_when_disabled tests/test_hermes_master_state.py::test_master_merge_gate_keeps_local_only_flow_when_github_disabled -q
 ```
 
-Expected: pass after Tasks 1-6. If it fails, fix only the legacy summary path so optional GitHub evidence remains non-blocking.
+Expected: both tests pass after Tasks 1-6. If only the legacy summary test fails, fix the legacy summary path so optional GitHub evidence remains non-blocking. If the Master gate test fails, fix `validate_merge_queue_gate()` so `github.enabled=false` and `requires_github_evidence=false` do not require `github_evidence.json`.
 
 - [ ] **Step 3: Commit if code changed**
 
 If Step 2 required a code change:
 
 ```bash
-git add .hermes-loop/hermes_hardening.py tests/test_hermes_hardening.py
+git add .hermes-loop/hermes_hardening.py tests/test_hermes_hardening.py tests/test_hermes_master_state.py
 git commit -m "fix: keep optional github evidence non-blocking"
 ```
 
 If only the test was added and passed:
 
 ```bash
-git add tests/test_hermes_hardening.py
+git add tests/test_hermes_hardening.py tests/test_hermes_master_state.py
 git commit -m "test: cover optional github evidence compatibility"
 ```
 
@@ -1288,12 +1390,14 @@ Spec coverage:
 - GitHub disabled by default: Task 1 and Task 7.
 - PR head/base/branch binding: Task 2.
 - PR lifecycle gate: Task 2.
-- Review event-stream semantics: Task 3.
+- Review event-stream semantics on the same PR head: Task 3.
 - Check-run validation: Task 3.
-- GitHub evidence remains approval verification, not approval replacement: Task 4.
+- GitHub approval validation remains digest binding, not standalone merge validity: Task 4.
 - Existing `verification.method/ref/digest` contract preserved: Task 4.
+- Existing `signed_approval` external-ref semantics are preserved: Task 4.
 - Required GitHub evidence can block merge readiness: Task 5.
-- Optional GitHub evidence does not block local-only flows: Task 7.
+- Missing or null `merge.github_pr` is reported as a blocker, not an exception: Task 5.
+- Optional GitHub evidence does not block Master or legacy local-only flows: Task 7.
 - Read-only fetch adapter exists and does not push/approve/merge: Task 6.
 - Local integrated tests remain separate: Tasks 4, 5, and 8.
 
@@ -1309,3 +1413,4 @@ Type consistency:
 - GitHub evidence writer signature is consistently `write_github_evidence(loop_root, feature_id, evidence)`.
 - Approval binding uses existing `verification.method`, `verification.status`, `verification.ref`, and `verification.digest`.
 - `github_review` and `github_check` remain existing provenance methods from `PROVENANCE_METHODS`.
+- Same-head review filtering uses `_latest_non_comment_reviews_by_user(reviews, head_sha)` consistently.
