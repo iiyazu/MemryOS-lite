@@ -729,3 +729,66 @@ def test_merge_decision_validates_post_merge_verification_digest(tmp_path):
 
     assert result["valid"] is False
     assert "post_merge_verification digest mismatch" in result["errors"]
+
+
+def test_ready_for_master_review_is_reviewable_not_mergeable():
+    hardening = load_hardening()
+    state = base_master_state()
+    feature = _master_feature_from_test("v1-quarantine")
+    feature["state"] = "ready_for_master_review"
+    feature["merge"]["status"] = "ready_for_master_review"
+    state["features"] = [feature]
+
+    result = hardening.derive_master_queues(state)
+
+    assert result["queues"]["master_review_queue"] == ["v1-quarantine"]
+    assert result["queues"]["merge_queue"] == []
+    assert result["counts"]["reviewable"] == 1
+    assert result["counts"]["mergeable"] == 0
+
+
+def test_ready_for_merge_without_gate_evidence_is_blocked(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    state = base_master_state()
+    feature = _master_feature_from_test("v1-quarantine")
+    feature["state"] = "ready_for_merge"
+    feature["merge"]["status"] = "ready_for_merge"
+    state["features"] = [feature]
+
+    result = hardening.derive_master_queues(state, loop_root=loop)
+
+    assert result["queues"]["merge_queue"] == []
+    assert result["queues"]["blocked"] == ["v1-quarantine"]
+    assert result["counts"]["mergeable"] == 0
+    assert "merge gate failed for v1-quarantine" in result["errors"][0]
+
+
+def test_merge_status_ahead_of_feature_state_blocks_feature():
+    hardening = load_hardening()
+    state = base_master_state()
+    feature = _master_feature_from_test("v1-quarantine")
+    feature["state"] = "planned"
+    feature["merge"]["status"] = "ready_for_merge"
+    state["features"] = [feature]
+
+    result = hardening.derive_master_queues(state)
+
+    assert result["queues"]["blocked"] == ["v1-quarantine"]
+    assert "merge.status ready_for_merge is ahead of feature.state planned for v1-quarantine" in result["errors"]
+
+
+def test_held_after_merge_maps_to_held_not_merged():
+    hardening = load_hardening()
+    state = base_master_state()
+    feature = _master_feature_from_test("v1-quarantine")
+    feature["state"] = "held_after_merge"
+    feature["merge"]["status"] = "held_after_merge"
+    state["features"] = [feature]
+
+    result = hardening.derive_master_queues(state)
+
+    assert result["queues"]["held"] == ["v1-quarantine"]
+    assert result["queues"]["merged"] == []
+    assert result["counts"]["held"] == 1
+    assert result["counts"]["merged"] == 0

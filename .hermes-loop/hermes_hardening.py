@@ -103,6 +103,23 @@ PROVENANCE_METHODS = {
     "github_check",
     "ci_artifact",
 }
+STATE_RANK = {
+    "planned": 0,
+    "active": 1,
+    "executing": 2,
+    "review": 3,
+    "ready_for_master_review": 4,
+    "ready_for_merge": 5,
+    "merge_requested": 6,
+    "merged": 7,
+    "held": 7,
+    "held_after_merge": 7,
+    "reverted_after_merge": 7,
+    "repair_forward_open": 7,
+    "manual_hold": 7,
+    "blocked": 7,
+    "rejected": 7,
+}
 MASTER_REVIEW_STATES = {"ready_for_master_review"}
 MERGE_REQUEST_STATES = {"ready_for_merge", "merge_requested"}
 TARGET_BRANCH_STATES = MASTER_REVIEW_STATES | MERGE_REQUEST_STATES
@@ -346,24 +363,96 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def derive_master_queues(master_state: dict[str, Any]) -> dict[str, Any]:
+def derive_master_queues(master_state: dict[str, Any], *, loop_root: str | Path | None = None) -> dict[str, Any]:
     queues = _empty_master_queues()
+    errors: list[str] = []
+
     for feature in master_state.get("features", []):
         feature_id = feature["id"]
         state = feature.get("state")
+        merge_status = feature.get("merge", {}).get("status", state)
+
+        if (
+            STATE_RANK.get(merge_status, 99) > STATE_RANK.get(state, -1)
+            and state not in {"ready_for_merge", "merge_requested"}
+        ):
+            queues["blocked"].append(feature_id)
+            errors.append(f"merge.status {merge_status} is ahead of feature.state {state} for {feature_id}")
+            continue
+
         if state == "planned":
             queues["planning_queue"].append(feature_id)
-        elif state == "ready_for_master_review":
-            queues["master_review_queue"].append(feature_id)
         elif state in {"active", "executing", "review"}:
             queues["active_lanes"].append(feature_id)
-        elif state in {"held", "held_after_merge", "reverted_after_merge", "repair_forward_open", "manual_hold"}:
+        elif state == "ready_for_master_review":
+            queues["master_review_queue"].append(feature_id)
+        elif state in {"ready_for_merge", "merge_requested"}:
+            if loop_root is None:
+                queues["blocked"].append(feature_id)
+                errors.append(f"merge gate failed for {feature_id}: loop_root is required")
+                continue
+            gate = validate_merge_queue_gate(loop_root, feature)
+            if gate["valid"]:
+                queues["merge_queue"].append(feature_id)
+            else:
+                queues["blocked"].append(feature_id)
+                errors.append(f"merge gate failed for {feature_id}: " + "; ".join(gate["errors"]))
+        elif state in {"held", "held_after_merge", "reverted_after_merge", "repair_forward_open", "manual_hold", "rejected"}:
             queues["held"].append(feature_id)
         elif state == "merged":
             queues["merged"].append(feature_id)
         elif state == "blocked":
             queues["blocked"].append(feature_id)
-    return {"queues": queues, "errors": []}
+        else:
+            queues["blocked"].append(feature_id)
+            errors.append(f"unknown feature state for {feature_id}: {state}")
+
+    counts = {
+        "total": len(master_state.get("features", [])),
+        "reviewable": len(queues["master_review_queue"]),
+        "mergeable": len(queues["merge_queue"]),
+        "held": len(queues["held"]),
+        "blocked": len(queues["blocked"]),
+        "merged": len(queues["merged"]),
+    }
+    return {"queues": queues, "counts": counts, "errors": errors}
+
+
+def build_master_status(loop_root: str | Path, master_state: dict[str, Any]) -> dict[str, Any]:
+    loop = Path(loop_root)
+    derived = derive_master_queues(master_state, loop_root=loop)
+    return {
+        "version": "1.0",
+        "source": ".hermes-loop/master_state.json",
+        "activation_state": master_state.get("activation_state"),
+        "counts": derived["counts"],
+        "queues": derived["queues"],
+        "errors": derived["errors"],
+    }
+
+
+def _write_master_status_files(status: dict[str, Any], json_path: Path, md_path: Path) -> None:
+    _write_json(json_path, status)
+    lines = [
+        "# Hermes Master Status",
+        "",
+        f"- activation_state: {status['activation_state']}",
+        f"- total: {status['counts']['total']}",
+        f"- reviewable: {status['counts']['reviewable']}",
+        f"- mergeable: {status['counts']['mergeable']}",
+        f"- held: {status['counts']['held']}",
+        f"- blocked: {status['counts']['blocked']}",
+        f"- merged: {status['counts']['merged']}",
+        "",
+    ]
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_master_status(loop_root: str | Path, master_state: dict[str, Any]) -> dict[str, Any]:
+    loop = Path(loop_root)
+    status = build_master_status(loop, master_state)
+    _write_master_status_files(status, loop / MASTER_STATUS_JSON, loop / MASTER_STATUS_MD)
+    return status
 
 
 def prepare_master_migration(loop_root: str | Path) -> dict[str, Any]:
