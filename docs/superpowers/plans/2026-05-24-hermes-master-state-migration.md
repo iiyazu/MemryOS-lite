@@ -2538,6 +2538,15 @@ cat > /tmp/hermes-master-migration-allowlist.txt <<'EOF'
 .hermes-loop/hermes_hardening.py
 .hermes-loop/hermes_reporter.py
 .hermes-loop/god_launcher.sh
+.hermes-loop/state.json
+.hermes-loop/feature_lanes.json
+.hermes-loop/config.json
+.hermes-loop/blueprint.md
+.hermes-loop/blueprint.zh.md
+.hermes-loop/god_loop_prompt.md
+.hermes-loop/master_slave_status.json
+.hermes-loop/master_slave_status.md
+.hermes-loop/contracts/god_dispatch_template.json
 .hermes-loop/master_state.json
 .hermes-loop/master_status.json
 .hermes-loop/master_status.md
@@ -2619,7 +2628,10 @@ allowed = [
     for line in Path("/tmp/hermes-master-migration-allowlist.txt").read_text().splitlines()
     if line.strip()
 ]
-status_lines = subprocess.check_output(["git", "status", "--porcelain"], text=True).splitlines()
+status_lines = subprocess.check_output(
+    ["git", "status", "--porcelain", "--untracked-files=all"],
+    text=True,
+).splitlines()
 changed = []
 for line in status_lines:
     path = line[3:]
@@ -2639,7 +2651,8 @@ PY
 Expected: `git status --short` shows only intended migration files; every
 `test` command exits successfully; no `.active.tmp` staging files remain; active
 legacy files are absent; the allowlist script prints nothing and covers tracked,
-modified, deleted, renamed, and untracked paths.
+modified, deleted, renamed, and untracked files without collapsing untracked
+directories.
 
 - [ ] **Step 7: Run verification after actual migration**
 
@@ -2733,6 +2746,6 @@ git commit -m "feat: migrate hermes to master control plane"
 - [ ] Actual repository migration requires a clean tree and staged diff path allowlist; no broad `git add .hermes-loop` is used.
 - [ ] The plan file itself is committed before the real clean-tree migration preflight.
 - [ ] Activation writes `master_status.{json,md}` through staging files and restores or deletes prior status files on rollback.
-- [ ] Actual migration inspection uses `git status --porcelain`, so unexpected untracked files are checked against the allowlist.
+- [ ] Actual migration inspection uses `git status --porcelain --untracked-files=all`, so unexpected untracked files are checked against the allowlist without directory collapsing.
 - [ ] Actual migration inspection verifies no `.active.tmp` staging files or active legacy control files remain.
 - [ ] MemoryOS product behavior remains unchanged: v3 default, v1 fallback retained, kernel remains opt-in.

@@ -1,0 +1,7 @@
+{
+  "allowed_target_branches": [
+    "main"
+  ],
+  "merge_strategy": "no_ff_merge_commit",
+  "version": "1.0"
+}

@@ -1,0 +1,19 @@
+{
+  "artifacts": {
+    "ack": "work/features/archive-rag/ack.json",
+    "integrated_tests": ".hermes-loop/master/features/archive-rag/integrated_tests.json",
+    "master_review": ".hermes-loop/master/features/archive-rag/master_review.json",
+    "merge_approval": ".hermes-loop/approvals/archive-rag/merge_approval.json",
+    "merge_approval_request": ".hermes-loop/approvals/archive-rag/merge_approval_request.json",
+    "merge_decision": ".hermes-loop/approvals/archive-rag/merge_decision.json",
+    "next_action": ".hermes-loop/approvals/archive-rag/next_action.json",
+    "post_merge_verification": ".hermes-loop/approvals/archive-rag/post_merge_verification.json",
+    "result": "work/features/archive-rag/result.md",
+    "review_verdict": "work/features/archive-rag/review_verdict.json"
+  },
+  "feature_id": "archive-rag",
+  "last_updated": "2026-05-24T00:00:00Z",
+  "mode": "feature_local_single_god",
+  "state": "planned",
+  "version": "1.0"
+}

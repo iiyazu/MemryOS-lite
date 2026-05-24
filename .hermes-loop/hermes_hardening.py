@@ -114,6 +114,7 @@ PROVENANCE_METHODS = {
     "ci_artifact",
 }
 STATE_RANK = {
+    "not_requested": 0,
     "planned": 0,
     "active": 1,
     "executing": 2,

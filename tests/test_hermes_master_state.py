@@ -833,6 +833,21 @@ def test_held_after_merge_maps_to_held_not_merged():
     assert result["counts"]["merged"] == 0
 
 
+def test_not_requested_merge_status_keeps_planned_feature_in_planning_queue():
+    hardening = load_hardening()
+    state = base_master_state()
+    feature = _master_feature_from_test("archive-rag")
+    feature["state"] = "planned"
+    feature["merge"]["status"] = "not_requested"
+    state["features"] = [feature]
+
+    result = hardening.derive_master_queues(state)
+
+    assert result["queues"]["planning_queue"] == ["archive-rag"]
+    assert result["queues"]["blocked"] == []
+    assert result["errors"] == []
+
+
 def test_activate_master_migration_moves_legacy_files_and_marks_master_active(tmp_path):
     hardening = load_hardening()
     loop = tmp_path / ".hermes-loop"
