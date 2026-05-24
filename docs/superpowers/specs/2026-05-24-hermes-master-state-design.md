@@ -114,7 +114,8 @@ treated as active controller metadata after migration.
         "integrated_tests": ".hermes-loop/work/features/feature-id/integrated_tests.json",
         "master_review": ".hermes-loop/work/features/feature-id/master_review.json",
         "merge_approval_request": ".hermes-loop/approvals/feature-id/merge_approval_request.json",
-        "merge_approval": ".hermes-loop/approvals/feature-id/merge_approval.json"
+        "merge_approval": ".hermes-loop/approvals/feature-id/merge_approval.json",
+        "merge_decision": ".hermes-loop/approvals/feature-id/merge_decision.json"
       },
       "merge": {
         "status": "ready_for_master_review",
@@ -348,10 +349,12 @@ Merge queue gate:
 Actual merge gate:
 
 - all merge queue gate evidence;
+- `merge_approval_request` artifact with a stable digest;
 - explicit `merge_approval` artifact;
+- approval provenance verification that is not based only on JSON self-claims;
 - merge execution evidence;
 - post-merge verification evidence;
-- updated Master decision artifact recording final disposition.
+- `merge_decision` artifact recording final disposition.
 
 Optional GitHub evidence:
 
@@ -375,6 +378,7 @@ Approval artifacts live outside feature-local work directories:
 
 - `.hermes-loop/approvals/<feature-id>/merge_approval_request.json`
 - `.hermes-loop/approvals/<feature-id>/merge_approval.json`
+- `.hermes-loop/approvals/<feature-id>/merge_decision.json`
 
 The `approvals/` tree is Master/external-owned. Slave Gods may read approval
 state if needed, but may not create, edit, move, or delete approval artifacts.
@@ -382,12 +386,42 @@ Feature registry entries may reference approval paths, but feature-local
 `work/features/<feature-id>/...` artifacts must not be the write authority for
 approval.
 
-Required schema:
+`merge_approval_request.json` is the request Master creates when a feature is
+ready for external approval.
+
+Required request schema:
+
+```json
+{
+  "version": "1.0",
+  "request_id": "feature-id-20260524T000000Z",
+  "feature_id": "feature-id",
+  "requested_by": "master-god",
+  "requested_at": "2026-05-24T00:00:00Z",
+  "head_commit": "abcdef123456",
+  "base_commit": "123456abcdef",
+  "approved_range": "123456abcdef..abcdef123456",
+  "target_branch": "main",
+  "master_review_ref": ".hermes-loop/work/features/feature-id/master_review.json",
+  "integrated_tests_ref": ".hermes-loop/work/features/feature-id/integrated_tests.json",
+  "merge_strategy": "no_ff_or_pr",
+  "policy_snapshot_ref": ".hermes-loop/master_state.json#features/feature-id",
+  "request_digest": "sha256:request-json-canonical-digest"
+}
+```
+
+`request_digest` is computed from canonical request JSON excluding the
+`request_digest` field. External approval must reference both `request_id` and
+`request_digest`.
+
+Required approval schema:
 
 ```json
 {
   "version": "1.0",
   "feature_id": "feature-id",
+  "request_id": "feature-id-20260524T000000Z",
+  "request_digest": "sha256:request-json-canonical-digest",
   "decision": "approved",
   "actor": "maintainer-or-automation-id",
   "actor_type": "human|trusted_automation",
@@ -399,8 +433,9 @@ Required schema:
   "integrated_tests_ref": ".hermes-loop/work/features/feature-id/integrated_tests.json",
   "merge_strategy": "no_ff_or_pr",
   "verification": {
-    "method": "maintainer_allowlist|git_signature|github_review|github_check|ci_artifact",
-    "ref": "maintainers.json#alice",
+    "method": "signed_approval|git_signature|github_review|github_check|ci_artifact",
+    "ref": "https://github.com/org/repo/pull/123#pullrequestreview-456",
+    "digest": "sha256:external-evidence-digest",
     "status": "verified"
   },
   "constraints": [],
@@ -412,6 +447,8 @@ Rules:
 
 - `decision` must be `approved` for actual merge. `rejected` or `hold` blocks
   merge.
+- `request_id` and `request_digest` must match the current
+  `merge_approval_request.json`.
 - `approved_commit` or `approved_range` must match the feature branch head or
   commit range being merged.
 - `target_branch`, `master_review_ref`, and `integrated_tests_ref` must match
@@ -420,11 +457,44 @@ Rules:
   only when `actor` identifies external repository automation and
   `created_by=external_to_master_and_slave`.
 - `verification.status` must be `verified`.
-- `verification.method` must use at least one locally checkable or API-checkable
-  source configured in `master_config.json`: maintainer allowlist, trusted git
-  signature, GitHub review, GitHub check/run id, signed commit/tag, or CI
-  artifact URL with a recorded digest.
+- `verification.method` must prove provenance with at least one locally
+  checkable or API-checkable source configured in `master_config.json`: signed
+  approval body, trusted git signature, GitHub review, GitHub check/run id,
+  signed commit/tag, or CI artifact URL with a recorded digest.
+- `maintainer_allowlist` is only an authorization filter for actor identity. It
+  cannot be the sole provenance verification method.
 - Missing, stale, mismatched, or Slave-authored approval blocks merge.
+
+`merge_decision.json` is the final Master disposition after merge execution or
+hold/reject.
+
+Required final decision schema:
+
+```json
+{
+  "version": "1.0",
+  "feature_id": "feature-id",
+  "decision": "merged|held|rejected",
+  "final_state": "merged",
+  "approved_head": "abcdef123456",
+  "target_branch": "main",
+  "merge_strategy": "no_ff_or_pr",
+  "merge_commit": "fedcba654321",
+  "github_pr": null,
+  "approval_ref": ".hermes-loop/approvals/feature-id/merge_approval.json",
+  "approval_request_ref": ".hermes-loop/approvals/feature-id/merge_approval_request.json",
+  "integrated_tests_ref": ".hermes-loop/work/features/feature-id/integrated_tests.json",
+  "post_merge_verification_refs": [
+    ".hermes-loop/approvals/feature-id/post_merge_verification.json"
+  ],
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T00:00:00Z"
+}
+```
+
+For `decision=merged`, `merge_commit` or `github_pr` is required. For
+`decision=held` or `decision=rejected`, the artifact must include reasons and
+must not advance the feature to `merged`.
 
 ## Migration
 
@@ -432,7 +502,11 @@ Migration must be staged so Hermes never has a period where no active state
 reader exists. Compatibility readers and launcher support are installed before
 old files move into the legacy directory.
 
-Migration steps:
+Migration has two phases: prepare and activate. The prepare phase adds readers
+and generates all new Master files while legacy remains active. The activate
+phase atomically switches active control to Master files only after validation.
+
+Prepare phase:
 
 1. Add compatibility readers that resolve the active controller state in this
    order:
@@ -443,14 +517,17 @@ Migration steps:
    If `.hermes-loop/master_state.json` exists but is invalid, unreadable, or has
    an abnormal `active=false`, the reader must not silently fall back to legacy
    state for active execution. It must return a blocked/report-only status.
-   Legacy fallback is allowed only before `master_state.json` exists or for
-   explicit migration audit.
-2. Update reporter, hardening helpers, launcher, and God prompts to use the
-   compatibility reader instead of opening `.hermes-loop/state.json`,
-   `.hermes-loop/config.json`, legacy `blueprint.md`, legacy
-   `god_loop_prompt.md`, or the legacy God dispatch template directly.
+   The only allowed inactive Master state is `activation_pending=true` during
+   prepare phase, where legacy remains the active source. Legacy fallback is
+   allowed only before `master_state.json` exists, during explicit prepare-phase
+   activation staging, or for explicit migration audit.
+2. Wire reporter, hardening helpers, launcher, and prompts with compatibility
+   read capability, but keep legacy root-loop files as the active source until
+   generated Master files pass validation. This step must not require missing
+   Master prompts, config, contracts, or state.
 3. Generate `.hermes-loop/master_state.json` from current `.hermes-loop/state.json`
-   and `.hermes-loop/feature_lanes.json`.
+   and `.hermes-loop/feature_lanes.json` with `active=false` or
+   `activation_pending=true`.
 4. Generate `.hermes-loop/master_blueprint.md` from the active Master/Slave
    architecture decisions. Phase0-18 execution ordering remains legacy-only.
 5. Generate `.hermes-loop/prompts/master_god_prompt.md` and
@@ -469,16 +546,22 @@ Migration steps:
 10. Validate `master_state.json`, `master_blueprint.md`, prompts,
    `master_config.json`, dispatch contracts, approval paths, slave states, and
    derived queues before moving legacy files.
-11. Move old active root-loop control files to
+
+Activate phase:
+
+11. Atomically switch active source to Master control by marking
+   `.hermes-loop/master_state.json` active and updating reporter, hardening,
+   launcher, and prompts to reject legacy active execution.
+12. Move old active root-loop control files to
    `.hermes-loop/legacy/root-loop/`.
-12. Leave minimal `.hermes-loop/state.json`, `.hermes-loop/config.json`, and
+13. Leave minimal `.hermes-loop/state.json`, `.hermes-loop/config.json`, and
    `.hermes-loop/god_loop_prompt.md` migration stubs only if needed by an
    unreplaced external caller. The stub must say `active=false`, point to
    the matching Master file, and must not contain executable phase lanes, active
    phase metadata, or active prompts.
-13. Generate `.hermes-loop/master_status.{json,md}` from `master_state.json`.
-14. Keep legacy readers for audit and migration reports only.
-15. Update prompts and blueprint text so old `state.json`, `config.json`,
+14. Generate `.hermes-loop/master_status.{json,md}` from `master_state.json`.
+15. Keep legacy readers for audit and migration reports only.
+16. Update prompts and blueprint text so old `state.json`, `config.json`,
    `blueprint.md`, `god_loop_prompt.md`, and God dispatch template are described
    as legacy history, not active control.
 
@@ -486,6 +569,8 @@ The implementation plan must treat reporter, hardening, launcher, Master/Slave
 prompts, Master blueprint migration, config migration, approval path setup, and
 dispatch-contract migration as one migration unit. Moving root-loop files before
 those readers and replacement contracts are in place is invalid.
+Switching launcher/prompts to require Master files before those files exist and
+pass validation is also invalid.
 
 The migration must preserve phase0-18 evidence and the current feature-lane
 status:
@@ -512,8 +597,13 @@ status:
 - Missing slave ACK, review, or result: that feature is blocked.
 - Dirty slave worktree: feature cannot enter review or merge queue.
 - Missing or failed integrated tests: feature cannot enter merge queue.
+- Missing, malformed, or digest-mismatched `merge_approval_request`: feature
+  cannot be merged.
 - Missing, stale, mismatched, unverifiable, self-signed, Master-authored, or
   Slave-authored `merge_approval`: feature cannot be merged.
+- Approval that uses maintainer allowlist without a signed/API/external artifact
+  provenance check is unverifiable and cannot be merged.
+- Missing or malformed `merge_decision`: feature cannot be marked merged.
 - GitHub unavailable: degrade to local-only and keep local gates.
 
 ## Testing
@@ -524,6 +614,9 @@ Add `tests/test_hermes_master_state.py` for:
 - migration order safety: compatibility readers, reporter, hardening, launcher,
   prompts, Master blueprint, config migration, approval path setup, and dispatch
   contracts are updated before root-loop files move;
+- prepare phase keeps legacy active until all Master files exist and validate;
+- activate phase atomically switches to active Master control only after
+  validation;
 - legacy root-loop isolation;
 - old `blueprint.md`, `blueprint.zh.md`, `god_loop_prompt.md`, `config.json`,
   and `god_dispatch_template.json` are legacy-only after migration;
@@ -544,12 +637,18 @@ Add `tests/test_hermes_master_state.py` for:
   sets;
 - `ready_for_merge` requires integrated tests;
 - merge requires `merge_approval`;
+- `merge_approval_request.json` includes request id, commit/range, target,
+  review/test refs, merge strategy, policy snapshot, and canonical digest;
+- `merge_approval.json` must match request id and request digest;
 - `merge_approval.json` rejects missing actor, wrong commit range, wrong target
   branch, stale test/review refs, self-signed Master approval, and Slave-authored
   approval;
+- maintainer allowlist alone is rejected as provenance verification;
 - `merge_approval.json` must live under `.hermes-loop/approvals/<feature-id>/`
-  and must include verified maintainer allowlist, trusted git signature, GitHub
+  and must include verified signed approval, trusted git signature, GitHub
   review/check, signed commit/tag, or CI artifact evidence;
+- `merge_decision.json` records final state, approved head, merge commit or PR,
+  approval refs, and post-merge verification refs;
 - malformed `merge.status` ahead of feature state is blocked;
 - invalid or unexpectedly inactive `master_state.json` blocks active execution
   instead of falling back to legacy state;
@@ -593,6 +692,8 @@ python3 -m py_compile .hermes-loop/hermes_hardening.py .hermes-loop/hermes_repor
 - Slave autonomy is feature-local and cannot mutate Master queues directly.
 - Slave state is required and referenced from `master_state.features[]`.
 - Migration order installs compatibility readers before moving legacy files.
+- Migration activation is two-phase: prepare while legacy remains active, then
+  atomically activate Master after validation.
 - Launcher and God prompts are included in the migration scope.
 - Master autonomy is audit-driven and cannot merge without external approval.
 - GitHub support is optional and cannot replace local gates.
