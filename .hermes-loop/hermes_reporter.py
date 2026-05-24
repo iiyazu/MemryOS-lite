@@ -42,22 +42,57 @@ def controller_hardening_report(s):
         return {"error": str(exc)}
 
 
-def master_slave_report():
-    """Return optional master/slave feature-lane summary."""
+def _load_hardening_module():
     module_path = LOOP / "hermes_hardening.py"
     if not module_path.exists():
-        return None
+        module_path = Path(__file__).with_name("hermes_hardening.py")
+    if not module_path.exists():
+        return None, {"error": "missing hermes_hardening.py"}
+    spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
+    if spec is None or spec.loader is None:
+        return None, {"error": "cannot load hermes_hardening.py"}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module, None
+
+
+def master_slave_report():
+    """Return optional master/slave feature-lane summary."""
+    module, error = _load_hardening_module()
+    if error:
+        return error
     try:
-        spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
-        if spec is None or spec.loader is None:
-            return {"error": "cannot load hermes_hardening.py"}
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
         summary = module.summarize_master_slave_control(LOOP, project_root=PROJECT)
         module.write_master_slave_status(LOOP, summary)
         return summary
     except Exception as exc:
         return {"error": str(exc)}
+
+
+def master_report() -> dict:
+    """Return active Master control-plane status, if Master exists."""
+    module, error = _load_hardening_module()
+    if error:
+        return {
+            "version": "1.0",
+            "source": "missing_hardening",
+            "activation_state": None,
+            "counts": {"total": 0, "reviewable": 0, "mergeable": 0, "held": 0, "blocked": 0, "merged": 0},
+            "queues": {},
+            "errors": [error["error"]],
+        }
+    controller = module.resolve_active_controller(LOOP)
+    if controller["source"] == "master":
+        return module.write_master_status(LOOP, controller["state"])
+    state = controller.get("state") if isinstance(controller.get("state"), dict) else {}
+    return {
+        "version": "1.0",
+        "source": controller["source"],
+        "activation_state": state.get("activation_state"),
+        "counts": {"total": 0, "reviewable": 0, "mergeable": 0, "held": 0, "blocked": 0, "merged": 0},
+        "queues": {},
+        "errors": controller.get("errors", []),
+    }
 
 
 def read_lock_pid() -> int | None:
@@ -139,6 +174,7 @@ def generate_report(s):
     ex = s.get("execute_lane", {})
     pl = s.get("plan_lane", {})
     hardening = controller_hardening_report(s)
+    master = master_report()
     master_slave = master_slave_report()
 
     report = {
@@ -157,6 +193,7 @@ def generate_report(s):
         "execute_lane": {"phase": ex.get("phase"), "state": ex.get("state")},
         "plan_lane": {"phase": pl.get("phase"), "state": pl.get("state")},
         "research_lane": s.get("research_lane", {}).get("phases", []),
+        "master": master,
         "phases": [
             {"id": p["id"], "name": p["name"], "status": p["status"]}
             for p in s.get("phases", [])
