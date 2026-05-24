@@ -9,6 +9,7 @@ benchmark reports.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -30,6 +31,71 @@ STALE_CANDIDATE_FILES = (
     "plan_final.md",
 )
 FEATURE_LANES_FILE = "feature_lanes.json"
+MASTER_STATE_FILE = "master_state.json"
+MASTER_STATUS_JSON = "master_status.json"
+MASTER_STATUS_MD = "master_status.md"
+LEGACY_ROOT_LOOP_DIR = "legacy/root-loop"
+MASTER_ACTIVATION_STATES = {
+    "legacy_active",
+    "master_pending",
+    "master_active",
+    "blocked",
+}
+MASTER_QUEUE_NAMES = {
+    "planning_queue",
+    "active_lanes",
+    "master_review_queue",
+    "merge_queue",
+    "held",
+    "blocked",
+    "merged",
+}
+REQUIRED_MASTER_STATE_KEYS = {
+    "version",
+    "mode",
+    "activation_state",
+    "active",
+    "history_baseline",
+    "legacy_root_loop",
+    "master_blueprint",
+    "master_config",
+    "prompts",
+    "dispatch_contracts",
+    "master_policy",
+    "features",
+    "queues",
+    "decisions",
+    "integration",
+    "github",
+    "last_updated",
+}
+REQUIRED_FEATURE_KEYS = {
+    "id",
+    "name",
+    "state",
+    "branch",
+    "target_branch",
+    "worktree",
+    "slave_state_path",
+    "slave_god",
+    "blueprint_path",
+    "artifacts",
+    "merge",
+    "policy_flags",
+    "risk",
+}
+REQUIRED_FEATURE_ARTIFACT_KEYS = {
+    "result",
+    "ack",
+    "review_verdict",
+    "integrated_tests",
+    "master_review",
+    "merge_approval_request",
+    "merge_approval",
+    "post_merge_verification",
+    "merge_decision",
+    "next_action",
+}
 MASTER_REVIEW_STATES = {"ready_for_master_review"}
 MERGE_REQUEST_STATES = {"ready_for_merge", "merge_requested"}
 TARGET_BRANCH_STATES = MASTER_REVIEW_STATES | MERGE_REQUEST_STATES
@@ -38,6 +104,93 @@ FEATURE_PASS_STATES = {"acked", "ready_for_master_review", "ready_for_merge", "m
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def canonical_json_bytes(payload: Any, *, exclude_keys: set[str] | None = None) -> bytes:
+    """Return stable JSON bytes for digest-bound control-plane artifacts."""
+    if exclude_keys and isinstance(payload, dict):
+        payload = {key: value for key, value in payload.items() if key not in exclude_keys}
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
+def canonical_json_digest(payload: Any, *, exclude_keys: set[str] | None = None) -> str:
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(payload, exclude_keys=exclude_keys)).hexdigest()
+
+
+def file_json_digest(path: str | Path) -> str:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    return canonical_json_digest(payload)
+
+
+def _append_missing(errors: list[str], payload: dict[str, Any], required: set[str], prefix: str) -> None:
+    for key in sorted(required - set(payload)):
+        errors.append(f"{prefix} missing required key: {key}")
+
+
+def validate_master_state(state: dict[str, Any]) -> dict[str, Any]:
+    errors: list[str] = []
+    _append_missing(errors, state, REQUIRED_MASTER_STATE_KEYS, "master_state")
+
+    activation_state = state.get("activation_state")
+    if activation_state not in MASTER_ACTIVATION_STATES:
+        errors.append(f"invalid activation_state: {activation_state}")
+
+    active = state.get("active")
+    if activation_state == "master_active" and active is not True:
+        errors.append("active must be true when activation_state is master_active")
+    if activation_state != "master_active" and active is not False:
+        errors.append("active must be false unless activation_state is master_active")
+
+    if state.get("mode") != "master_control":
+        errors.append("mode must be master_control")
+
+    prompts = state.get("prompts", {})
+    if not isinstance(prompts, dict) or {"master", "slave"} - set(prompts):
+        errors.append("prompts must include master and slave")
+
+    dispatch_contracts = state.get("dispatch_contracts", {})
+    if not isinstance(dispatch_contracts, dict) or {"master", "slave"} - set(dispatch_contracts):
+        errors.append("dispatch_contracts must include master and slave")
+
+    queues = state.get("queues", {})
+    if not isinstance(queues, dict):
+        errors.append("queues must be an object")
+    else:
+        missing_queues = MASTER_QUEUE_NAMES - set(queues)
+        if missing_queues:
+            errors.append("queues missing required keys: " + ", ".join(sorted(missing_queues)))
+
+    features = state.get("features", [])
+    if not isinstance(features, list):
+        errors.append("features must be a list")
+    else:
+        seen: set[str] = set()
+        for feature in features:
+            if not isinstance(feature, dict):
+                errors.append("feature entries must be objects")
+                continue
+            feature_id = feature.get("id", "<missing>")
+            if feature_id in seen:
+                errors.append(f"duplicate feature id: {feature_id}")
+            seen.add(feature_id)
+            _append_missing(errors, feature, REQUIRED_FEATURE_KEYS, f"feature {feature_id}")
+            artifacts = feature.get("artifacts", {})
+            if not isinstance(artifacts, dict):
+                errors.append(f"feature {feature_id} artifacts must be an object")
+            else:
+                _append_missing(
+                    errors,
+                    artifacts,
+                    REQUIRED_FEATURE_ARTIFACT_KEYS,
+                    f"feature {feature_id} artifacts",
+                )
+
+    return {"valid": not errors, "errors": errors}
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
