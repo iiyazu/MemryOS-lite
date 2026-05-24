@@ -153,7 +153,10 @@ def canonical_json_bytes(payload: Any, *, exclude_keys: set[str] | None = None) 
 
 
 def canonical_json_digest(payload: Any, *, exclude_keys: set[str] | None = None) -> str:
-    return "sha256:" + hashlib.sha256(canonical_json_bytes(payload, exclude_keys=exclude_keys)).hexdigest()
+    return (
+        "sha256:"
+        + hashlib.sha256(canonical_json_bytes(payload, exclude_keys=exclude_keys)).hexdigest()
+    )
 
 
 def file_json_digest(path: str | Path) -> str:
@@ -161,7 +164,9 @@ def file_json_digest(path: str | Path) -> str:
     return canonical_json_digest(payload)
 
 
-def _append_missing(errors: list[str], payload: dict[str, Any], required: set[str], prefix: str) -> None:
+def _append_missing(
+    errors: list[str], payload: dict[str, Any], required: set[str], prefix: str
+) -> None:
     for key in sorted(required - set(payload)):
         errors.append(f"{prefix} missing required key: {key}")
 
@@ -287,7 +292,9 @@ def resolve_active_controller(loop_root: str | Path, *, audit: bool = False) -> 
             "path": str(master_path),
             "state": master_state,
             "execution_allowed": False,
-            "errors": [f"activation_state does not allow execution: {master_state['activation_state']}"],
+            "errors": [
+                f"activation_state does not allow execution: {master_state['activation_state']}"
+            ],
         }
 
     if legacy_isolated.exists():
@@ -343,9 +350,13 @@ def _master_feature_from_legacy(feature: dict[str, Any]) -> dict[str, Any]:
             ),
             "integrated_tests": f".hermes-loop/master/features/{feature_id}/integrated_tests.json",
             "master_review": f".hermes-loop/master/features/{feature_id}/master_review.json",
-            "merge_approval_request": f".hermes-loop/approvals/{feature_id}/merge_approval_request.json",
+            "merge_approval_request": (
+                f".hermes-loop/approvals/{feature_id}/merge_approval_request.json"
+            ),
             "merge_approval": f".hermes-loop/approvals/{feature_id}/merge_approval.json",
-            "post_merge_verification": f".hermes-loop/approvals/{feature_id}/post_merge_verification.json",
+            "post_merge_verification": (
+                f".hermes-loop/approvals/{feature_id}/post_merge_verification.json"
+            ),
             "merge_decision": f".hermes-loop/approvals/{feature_id}/merge_decision.json",
             "next_action": f".hermes-loop/approvals/{feature_id}/next_action.json",
         },
@@ -373,7 +384,9 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def derive_master_queues(master_state: dict[str, Any], *, loop_root: str | Path | None = None) -> dict[str, Any]:
+def derive_master_queues(
+    master_state: dict[str, Any], *, loop_root: str | Path | None = None
+) -> dict[str, Any]:
     queues = _empty_master_queues()
     errors: list[str] = []
 
@@ -382,12 +395,14 @@ def derive_master_queues(master_state: dict[str, Any], *, loop_root: str | Path 
         state = feature.get("state")
         merge_status = feature.get("merge", {}).get("status", state)
 
-        if (
-            STATE_RANK.get(merge_status, 99) > STATE_RANK.get(state, -1)
-            and state not in {"ready_for_merge", "merge_requested"}
-        ):
+        if STATE_RANK.get(merge_status, 99) > STATE_RANK.get(state, -1) and state not in {
+            "ready_for_merge",
+            "merge_requested",
+        }:
             queues["blocked"].append(feature_id)
-            errors.append(f"merge.status {merge_status} is ahead of feature.state {state} for {feature_id}")
+            errors.append(
+                f"merge.status {merge_status} is ahead of feature.state {state} for {feature_id}"
+            )
             continue
 
         if state == "planned":
@@ -407,7 +422,14 @@ def derive_master_queues(master_state: dict[str, Any], *, loop_root: str | Path 
             else:
                 queues["blocked"].append(feature_id)
                 errors.append(f"merge gate failed for {feature_id}: " + "; ".join(gate["errors"]))
-        elif state in {"held", "held_after_merge", "reverted_after_merge", "repair_forward_open", "manual_hold", "rejected"}:
+        elif state in {
+            "held",
+            "held_after_merge",
+            "reverted_after_merge",
+            "repair_forward_open",
+            "manual_hold",
+            "rejected",
+        }:
             queues["held"].append(feature_id)
         elif state == "merged":
             queues["merged"].append(feature_id)
@@ -474,7 +496,9 @@ def prepare_master_migration(loop_root: str | Path) -> dict[str, Any]:
         if legacy_lanes_path.exists()
         else {"features": []}
     )
-    features = [_master_feature_from_legacy(feature) for feature in legacy_lanes.get("features", [])]
+    features = [
+        _master_feature_from_legacy(feature) for feature in legacy_lanes.get("features", [])
+    ]
 
     master_state = {
         "version": "1.0",
@@ -516,19 +540,30 @@ def prepare_master_migration(loop_root: str | Path) -> dict[str, Any]:
     )
     _write_json(
         loop / "master_config.json",
-        {"version": "1.0", "allowed_target_branches": ["main"], "merge_strategy": "no_ff_merge_commit"},
+        {
+            "version": "1.0",
+            "allowed_target_branches": ["main"],
+            "merge_strategy": "no_ff_merge_commit",
+        },
     )
     (loop / "prompts" / "master_god_prompt.md").parent.mkdir(parents=True, exist_ok=True)
     (loop / "prompts" / "master_god_prompt.md").write_text(
-        "Read master_state.json, master_config.json, master_blueprint.md, and master dispatch contract before acting.\n",
+        "Read master_state.json, master_config.json, master_blueprint.md, "
+        "and master dispatch contract before acting.\n",
         encoding="utf-8",
     )
     (loop / "prompts" / "slave_god_prompt.md").write_text(
-        "Read assigned feature registry entry, slave prompt, slave dispatch contract, slave_state.json, and feature blueprint.\n",
+        "Read assigned feature registry entry, slave prompt, slave dispatch contract, "
+        "slave_state.json, and feature blueprint.\n",
         encoding="utf-8",
     )
-    _write_json(loop / "contracts" / "master_dispatch_template.json", {"version": "1.0", "role": "master_god"})
-    _write_json(loop / "contracts" / "slave_dispatch_template.json", {"version": "1.0", "role": "slave_god"})
+    _write_json(
+        loop / "contracts" / "master_dispatch_template.json",
+        {"version": "1.0", "role": "master_god"},
+    )
+    _write_json(
+        loop / "contracts" / "slave_dispatch_template.json", {"version": "1.0", "role": "slave_god"}
+    )
 
     for feature in features:
         feature_id = feature["id"]
@@ -543,7 +578,9 @@ def prepare_master_migration(loop_root: str | Path) -> dict[str, Any]:
                 "last_updated": "2026-05-24T00:00:00Z",
             },
         )
-        (loop / "work" / "features" / feature_id / "blueprint.md").parent.mkdir(parents=True, exist_ok=True)
+        (loop / "work" / "features" / feature_id / "blueprint.md").parent.mkdir(
+            parents=True, exist_ok=True
+        )
         (loop / "work" / "features" / feature_id / "blueprint.md").touch(exist_ok=True)
         (loop / "master" / "features" / feature_id).mkdir(parents=True, exist_ok=True)
         (loop / "approvals" / feature_id).mkdir(parents=True, exist_ok=True)
@@ -558,7 +595,9 @@ def _controller_path(loop: Path, ref: str) -> Path:
     return loop / ref
 
 
-def _load_required_json(loop: Path, ref: str, errors: list[str], label: str) -> dict[str, Any] | None:
+def _load_required_json(
+    loop: Path, ref: str, errors: list[str], label: str
+) -> dict[str, Any] | None:
     path = _controller_path(loop, ref)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -593,8 +632,13 @@ def validate_merge_queue_gate(loop_root: str | Path, feature: dict[str, Any]) ->
     ack = _load_required_json(loop, artifacts["ack"], errors, "ack")
     if ack and str(ack.get("ack_level", "")).lower() not in PROMOTION_PASS_VERDICTS:
         errors.append("ack ack_level must be usable")
-    review_verdict = _load_required_json(loop, artifacts["review_verdict"], errors, "review_verdict")
-    if review_verdict and str(review_verdict.get("verdict", "")).lower() not in PROMOTION_PASS_VERDICTS:
+    review_verdict = _load_required_json(
+        loop, artifacts["review_verdict"], errors, "review_verdict"
+    )
+    if (
+        review_verdict
+        and str(review_verdict.get("verdict", "")).lower() not in PROMOTION_PASS_VERDICTS
+    ):
         errors.append("review_verdict verdict must be PASS")
 
     slave_state_ref = feature.get("slave_state_path")
@@ -602,14 +646,23 @@ def validate_merge_queue_gate(loop_root: str | Path, feature: dict[str, Any]) ->
         errors.append(f"missing slave_state: {slave_state_ref}")
 
     master_review = _load_required_json(loop, artifacts["master_review"], errors, "master_review")
-    integrated_tests = _load_required_json(loop, artifacts["integrated_tests"], errors, "integrated_tests")
+    integrated_tests = _load_required_json(
+        loop, artifacts["integrated_tests"], errors, "integrated_tests"
+    )
 
     if master_review:
         if master_review.get("recorded_by") != "master-god":
             errors.append("master_review must be recorded_by master-god")
         if master_review.get("status") != "accepted":
             errors.append("master_review status must be accepted")
-        for key in ("feature_id", "branch", "base_commit", "head_commit", "target_branch", "artifact_digests"):
+        for key in (
+            "feature_id",
+            "branch",
+            "base_commit",
+            "head_commit",
+            "target_branch",
+            "artifact_digests",
+        ):
             if key not in master_review:
                 errors.append(f"master_review missing required key: {key}")
 
@@ -620,7 +673,14 @@ def validate_merge_queue_gate(loop_root: str | Path, feature: dict[str, Any]) ->
             errors.append("integrated_tests status must be passed")
         if integrated_tests.get("worktree_clean") is not True:
             errors.append("integrated_tests worktree_clean must be true")
-        for key in ("feature_id", "branch", "base_commit", "head_commit", "target_branch", "commands"):
+        for key in (
+            "feature_id",
+            "branch",
+            "base_commit",
+            "head_commit",
+            "target_branch",
+            "commands",
+        ):
             if key not in integrated_tests:
                 errors.append(f"integrated_tests missing required key: {key}")
 
@@ -831,7 +891,11 @@ def validate_merge_decision(loop_root: str | Path, decision: dict[str, Any]) -> 
             errors.append(f"{selected} decision requires blocked_gate")
         if not decision.get("reasons"):
             errors.append(f"{selected} decision requires reasons")
-        for forbidden in ("merge_commit", "post_merge_verification_refs", "post_merge_verification_digests"):
+        for forbidden in (
+            "merge_commit",
+            "post_merge_verification_refs",
+            "post_merge_verification_digests",
+        ):
             if decision.get(forbidden):
                 errors.append(f"{selected} decision forbids {forbidden}")
     elif selected == "held_after_merge":
@@ -850,7 +914,9 @@ def validate_merge_decision(loop_root: str | Path, decision: dict[str, Any]) -> 
                 errors.append(f"held_after_merge requires {key}")
         if decision.get("blocked_gate") != "post_merge_verification":
             errors.append("held_after_merge blocked_gate must be post_merge_verification")
-        if decision.get("failed_post_merge_verification_ref") and decision.get("failed_post_merge_verification_digest"):
+        if decision.get("failed_post_merge_verification_ref") and decision.get(
+            "failed_post_merge_verification_digest"
+        ):
             verification = validate_post_merge_verification(
                 loop_root,
                 decision["failed_post_merge_verification_ref"],
@@ -913,7 +979,8 @@ def activate_master_migration(loop_root: str | Path) -> dict[str, Any]:
     if not validation["valid"] or master_state.get("activation_state") != "master_pending":
         return {
             "status": "blocked",
-            "errors": validation["errors"] + ["master_state must be valid master_pending before activation"],
+            "errors": validation["errors"]
+            + ["master_state must be valid master_pending before activation"],
         }
 
     required_files = [
@@ -930,7 +997,10 @@ def activate_master_migration(loop_root: str | Path) -> dict[str, Any]:
         if not slave_state.exists():
             missing.append(str(slave_state))
     if missing:
-        return {"status": "blocked", "errors": [f"missing activation file: {path}" for path in missing]}
+        return {
+            "status": "blocked",
+            "errors": [f"missing activation file: {path}" for path in missing],
+        }
 
     active_state = dict(master_state)
     active_state["activation_state"] = "master_active"
@@ -1348,8 +1418,7 @@ def classify_feature_lane(
         blockers.append("merge must be an object")
     merge_status = str(merge.get("status") or state).lower()
     gate_requested = (
-        state in FEATURE_PASS_STATES | {"merge_requested"}
-        or merge_status in TARGET_BRANCH_STATES
+        state in FEATURE_PASS_STATES | {"merge_requested"} or merge_status in TARGET_BRANCH_STATES
     )
     if merge_status in MERGE_REQUEST_STATES and state not in MERGE_REQUEST_STATES:
         blockers.append("merge status is ahead of feature state")
@@ -1406,9 +1475,7 @@ def classify_feature_lane(
             warnings.append("feature worktree has uncommitted changes")
 
     reviewable = (
-        not blockers
-        and merge_status in MASTER_REVIEW_STATES
-        and artifact_gate.get("ok") is True
+        not blockers and merge_status in MASTER_REVIEW_STATES and artifact_gate.get("ok") is True
     )
     mergeable = (
         not blockers
@@ -1462,7 +1529,14 @@ def summarize_master_slave_control(
             "ok": False,
             "source": "blocked",
             "path": controller.get("path"),
-            "counts": {"total": 0, "reviewable": 0, "mergeable": 0, "held": 0, "blocked": 1, "merged": 0},
+            "counts": {
+                "total": 0,
+                "reviewable": 0,
+                "mergeable": 0,
+                "held": 0,
+                "blocked": 1,
+                "merged": 0,
+            },
             "queues": {"blocked": ["master_state"]},
             "errors": controller.get("errors", []),
             "features": [],
@@ -1508,16 +1582,8 @@ def summarize_master_slave_control(
             "strategy": feature["merge"].get("strategy", "git_worktree"),
         }
 
-    master_review_queue = [
-        _queue_item(feature)
-        for feature in features
-        if feature["reviewable"]
-    ]
-    merge_queue = [
-        _queue_item(feature)
-        for feature in features
-        if feature["mergeable"]
-    ]
+    master_review_queue = [_queue_item(feature) for feature in features if feature["reviewable"]]
+    merge_queue = [_queue_item(feature) for feature in features if feature["mergeable"]]
     return {
         "ok": not blockers,
         "state": registry.get("state"),
@@ -1680,9 +1746,7 @@ def classify_eval_run(
         summary = summarize_eval_report(final)
         state = "completed" if summary.get("valid") else "invalid_final"
         reason = (
-            "final report exists"
-            if state == "completed"
-            else summary.get("error", "invalid final")
+            "final report exists" if state == "completed" else summary.get("error", "invalid final")
         )
         if require_llm and summary.get("valid"):
             problem = _llm_promotion_problem(summary)
@@ -2055,8 +2119,7 @@ def check_state_phase_order(loop_root: str | Path) -> dict[str, Any]:
                     "phase": phase_id,
                     "status": status,
                     "reason": (
-                        "phase before current_phase_idx is not completed "
-                        "or documented superseded"
+                        "phase before current_phase_idx is not completed or documented superseded"
                     ),
                 }
             )

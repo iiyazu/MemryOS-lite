@@ -2,7 +2,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 PROJECT = Path(__file__).resolve().parents[1]
 HARDENING_PATH = PROJECT / ".hermes-loop" / "hermes_hardening.py"
 
@@ -198,7 +197,9 @@ def write_legacy_inputs(loop: Path) -> None:
                     "artifacts": {
                         "result": ".hermes-loop/work/features/v1-quarantine/result.md",
                         "ack": ".hermes-loop/work/features/v1-quarantine/ack.json",
-                        "review_verdict": ".hermes-loop/work/features/v1-quarantine/review_verdict.json",
+                        "review_verdict": (
+                            ".hermes-loop/work/features/v1-quarantine/review_verdict.json"
+                        ),
                     },
                     "merge": {"status": "ready_for_master_review", "target_branch": "main"},
                 },
@@ -233,7 +234,10 @@ def test_prepare_master_migration_generates_pending_master_files(tmp_path):
     master_state = json.loads((loop / "master_state.json").read_text())
     assert master_state["activation_state"] == "master_pending"
     assert master_state["active"] is False
-    assert [feature["id"] for feature in master_state["features"]] == ["v1-quarantine", "archive-rag"]
+    assert [feature["id"] for feature in master_state["features"]] == [
+        "v1-quarantine",
+        "archive-rag",
+    ]
     assert (
         master_state["features"][0]["slave_state_path"]
         == ".hermes-loop/work/features/v1-quarantine/slave_state.json"
@@ -287,9 +291,13 @@ def _master_feature_from_test(feature_id: str) -> dict:
             "review_verdict": f".hermes-loop/work/features/{feature_id}/review_verdict.json",
             "integrated_tests": f".hermes-loop/master/features/{feature_id}/integrated_tests.json",
             "master_review": f".hermes-loop/master/features/{feature_id}/master_review.json",
-            "merge_approval_request": f".hermes-loop/approvals/{feature_id}/merge_approval_request.json",
+            "merge_approval_request": (
+                f".hermes-loop/approvals/{feature_id}/merge_approval_request.json"
+            ),
             "merge_approval": f".hermes-loop/approvals/{feature_id}/merge_approval.json",
-            "post_merge_verification": f".hermes-loop/approvals/{feature_id}/post_merge_verification.json",
+            "post_merge_verification": (
+                f".hermes-loop/approvals/{feature_id}/post_merge_verification.json"
+            ),
             "merge_decision": f".hermes-loop/approvals/{feature_id}/merge_decision.json",
             "next_action": f".hermes-loop/approvals/{feature_id}/next_action.json",
         },
@@ -312,9 +320,14 @@ def write_gate_artifacts(loop: Path, feature_id: str = "v1-quarantine") -> None:
     feature = _master_feature_from_test(feature_id)
     write_json(loop / "work" / "features" / feature_id / "ack.json", {"ack_level": "usable"})
     write_json(loop / "work" / "features" / feature_id / "review_verdict.json", {"verdict": "PASS"})
-    (loop / "work" / "features" / feature_id / "result.md").parent.mkdir(parents=True, exist_ok=True)
+    (loop / "work" / "features" / feature_id / "result.md").parent.mkdir(
+        parents=True, exist_ok=True
+    )
     (loop / "work" / "features" / feature_id / "result.md").write_text("result\n")
-    write_json(loop / "work" / "features" / feature_id / "slave_state.json", {"version": "1.0", "feature_id": feature_id})
+    write_json(
+        loop / "work" / "features" / feature_id / "slave_state.json",
+        {"version": "1.0", "feature_id": feature_id},
+    )
     (loop / "work" / "features" / feature_id / "blueprint.md").write_text("blueprint\n")
     write_json(
         loop / "master" / "features" / feature_id / "master_review.json",
@@ -331,7 +344,11 @@ def write_gate_artifacts(loop: Path, feature_id: str = "v1-quarantine") -> None:
             "slave_result_ref": feature["artifacts"]["result"],
             "slave_ack_ref": feature["artifacts"]["ack"],
             "slave_review_ref": feature["artifacts"]["review_verdict"],
-            "artifact_digests": {"result": "sha256:r", "ack": "sha256:a", "review_verdict": "sha256:v"},
+            "artifact_digests": {
+                "result": "sha256:r",
+                "ack": "sha256:a",
+                "review_verdict": "sha256:v",
+            },
             "findings": [],
             "policy_checks": {
                 "v1_fallback_preserved": True,
@@ -356,7 +373,9 @@ def write_gate_artifacts(loop: Path, feature_id: str = "v1-quarantine") -> None:
                 {
                     "command": "uv run pytest tests/test_hermes_master_state.py -q",
                     "status": "passed",
-                    "artifact_ref": ".hermes-loop/master/features/v1-quarantine/integrated_pytest.log",
+                    "artifact_ref": (
+                        ".hermes-loop/master/features/v1-quarantine/integrated_pytest.log"
+                    ),
                     "artifact_digest": "sha256:log",
                 }
             ],
@@ -383,7 +402,9 @@ def test_merge_queue_gate_rejects_feature_local_master_review(tmp_path):
     loop = tmp_path / ".hermes-loop"
     state = feature_for_gate()
     feature = state["features"][0]
-    feature["artifacts"]["master_review"] = ".hermes-loop/work/features/v1-quarantine/master_review.json"
+    feature["artifacts"]["master_review"] = (
+        ".hermes-loop/work/features/v1-quarantine/master_review.json"
+    )
     write_gate_artifacts(loop)
     write_json(
         loop / "work" / "features" / "v1-quarantine" / "master_review.json",
@@ -393,7 +414,10 @@ def test_merge_queue_gate_rejects_feature_local_master_review(tmp_path):
     result = hardening.validate_merge_queue_gate(loop, feature)
 
     assert result["valid"] is False
-    assert "master_review must live under .hermes-loop/master/features/v1-quarantine/" in result["errors"]
+    assert (
+        "master_review must live under .hermes-loop/master/features/v1-quarantine/"
+        in result["errors"]
+    )
 
 
 def test_merge_queue_gate_rejects_failed_integrated_tests(tmp_path):
@@ -419,7 +443,11 @@ def valid_approval_bundle(loop: Path, feature_id: str = "v1-quarantine") -> dict
     hardening = load_hardening()
     review_digest = hardening.file_json_digest(loop.parent / review_ref)
     tests_digest = hardening.file_json_digest(loop.parent / tests_ref)
-    policy_snapshot = {"feature_id": feature_id, "merge_strategy": "no_ff_merge_commit", "target_branch": "main"}
+    policy_snapshot = {
+        "feature_id": feature_id,
+        "merge_strategy": "no_ff_merge_commit",
+        "target_branch": "main",
+    }
     policy_digest = hardening.canonical_json_digest(policy_snapshot)
     request = {
         "version": "1.0",
@@ -439,7 +467,9 @@ def valid_approval_bundle(loop: Path, feature_id: str = "v1-quarantine") -> dict
         "policy_snapshot_ref": ".hermes-loop/master_state.json#features/v1-quarantine",
         "policy_snapshot_digest": policy_digest,
     }
-    request["request_digest"] = hardening.canonical_json_digest(request, exclude_keys={"request_digest"})
+    request["request_digest"] = hardening.canonical_json_digest(
+        request, exclude_keys={"request_digest"}
+    )
     approval = {
         "version": "1.0",
         "feature_id": feature_id,
@@ -571,7 +601,9 @@ def test_merge_decision_requires_merge_commit_for_merged(tmp_path):
         "approval_request_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
         "approval_request_digest": "sha256:r",
         "integrated_tests_ref": ".hermes-loop/master/features/v1-quarantine/integrated_tests.json",
-        "post_merge_verification_refs": [".hermes-loop/approvals/v1-quarantine/post_merge_verification.json"],
+        "post_merge_verification_refs": [
+            ".hermes-loop/approvals/v1-quarantine/post_merge_verification.json"
+        ],
         "post_merge_verification_digests": ["sha256:p"],
         "recorded_by": "master-god",
         "recorded_at": "2026-05-24T00:00:00Z",
@@ -600,7 +632,9 @@ def test_held_after_merge_requires_next_action_ref():
         "approval_digest": "sha256:a",
         "approval_request_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
         "approval_request_digest": "sha256:r",
-        "failed_post_merge_verification_ref": ".hermes-loop/approvals/v1-quarantine/post_merge_verification.json",
+        "failed_post_merge_verification_ref": (
+            ".hermes-loop/approvals/v1-quarantine/post_merge_verification.json"
+        ),
         "failed_post_merge_verification_digest": "sha256:p",
         "next_action": "repair_forward",
         "recorded_by": "master-god",
@@ -719,7 +753,9 @@ def test_merge_decision_validates_post_merge_verification_digest(tmp_path):
         "approval_request_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
         "approval_request_digest": "sha256:request",
         "integrated_tests_ref": ".hermes-loop/master/features/v1-quarantine/integrated_tests.json",
-        "post_merge_verification_refs": [".hermes-loop/approvals/v1-quarantine/post_merge_verification.json"],
+        "post_merge_verification_refs": [
+            ".hermes-loop/approvals/v1-quarantine/post_merge_verification.json"
+        ],
         "post_merge_verification_digests": ["sha256:stale"],
         "recorded_by": "master-god",
         "recorded_at": "2026-05-24T00:00:00Z",
@@ -775,7 +811,10 @@ def test_merge_status_ahead_of_feature_state_blocks_feature():
     result = hardening.derive_master_queues(state)
 
     assert result["queues"]["blocked"] == ["v1-quarantine"]
-    assert "merge.status ready_for_merge is ahead of feature.state planned for v1-quarantine" in result["errors"]
+    assert (
+        "merge.status ready_for_merge is ahead of feature.state planned for v1-quarantine"
+        in result["errors"]
+    )
 
 
 def test_held_after_merge_maps_to_held_not_merged():

@@ -724,7 +724,7 @@ def test_launcher_uses_stable_lockfile_without_unlinking() -> None:
     )
 
     assert 'exec 9>>"$LOCKFILE"' in launcher
-    assert "rm -f \"$LOCKFILE\"" not in launcher
+    assert 'rm -f "$LOCKFILE"' not in launcher
 
 
 def test_launcher_records_and_completes_active_codex_job() -> None:
@@ -739,9 +739,9 @@ def test_launcher_records_and_completes_active_codex_job() -> None:
 
 
 def test_hermes_gitignore_covers_runtime_control_artifacts() -> None:
-    gitignore = (
-        Path(__file__).resolve().parents[1] / ".hermes-loop" / ".gitignore"
-    ).read_text(encoding="utf-8")
+    gitignore = (Path(__file__).resolve().parents[1] / ".hermes-loop" / ".gitignore").read_text(
+        encoding="utf-8"
+    )
 
     assert "active_job.json" in gitignore
     assert "work/**/*.log" in gitignore
@@ -915,7 +915,10 @@ def test_master_state_supersedes_legacy_feature_lanes(tmp_path: Path) -> None:
     hardening = load_hardening_module()
     loop = tmp_path / ".hermes-loop"
     loop.mkdir()
-    write_json(loop / "feature_lanes.json", {"features": [{"id": "legacy-only", "state": "ready_for_merge"}]})
+    write_json(
+        loop / "feature_lanes.json",
+        {"features": [{"id": "legacy-only", "state": "ready_for_merge"}]},
+    )
     write_json(
         loop / "master_state.json",
         {

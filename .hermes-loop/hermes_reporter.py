@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Hermes Scheduler + Reporter — 监控存活, 死时启动 God, 生成报告, 不改代码或 state.json."""
+
 import importlib.util
 import json
 import os
@@ -77,7 +78,14 @@ def master_report() -> dict:
             "version": "1.0",
             "source": "missing_hardening",
             "activation_state": None,
-            "counts": {"total": 0, "reviewable": 0, "mergeable": 0, "held": 0, "blocked": 0, "merged": 0},
+            "counts": {
+                "total": 0,
+                "reviewable": 0,
+                "mergeable": 0,
+                "held": 0,
+                "blocked": 0,
+                "merged": 0,
+            },
             "queues": {},
             "errors": [error["error"]],
         }
@@ -89,7 +97,14 @@ def master_report() -> dict:
         "version": "1.0",
         "source": controller["source"],
         "activation_state": state.get("activation_state"),
-        "counts": {"total": 0, "reviewable": 0, "mergeable": 0, "held": 0, "blocked": 0, "merged": 0},
+        "counts": {
+            "total": 0,
+            "reviewable": 0,
+            "mergeable": 0,
+            "held": 0,
+            "blocked": 0,
+            "merged": 0,
+        },
         "queues": {},
         "errors": controller.get("errors", []),
     }
@@ -184,22 +199,18 @@ def generate_report(s):
         "god": {
             "alive": god_alive,
             "heartbeat_last": hb_last[-80:] if hb_last else "",
-            "heartbeat_age_seconds": hb_age
+            "heartbeat_age_seconds": hb_age,
         },
-        "lock": {
-            "exists": LOCK_FILE.exists(),
-            "status": lock_status()
-        },
+        "lock": {"exists": LOCK_FILE.exists(), "status": lock_status()},
         "execute_lane": {"phase": ex.get("phase"), "state": ex.get("state")},
         "plan_lane": {"phase": pl.get("phase"), "state": pl.get("state")},
         "research_lane": s.get("research_lane", {}).get("phases", []),
         "master": master,
         "phases": [
-            {"id": p["id"], "name": p["name"], "status": p["status"]}
-            for p in s.get("phases", [])
+            {"id": p["id"], "name": p["name"], "status": p["status"]} for p in s.get("phases", [])
         ],
         "dirty_files": dirty[:500] if dirty else "(clean)",
-        "action": "wait" if god_alive else "start"
+        "action": "wait" if god_alive else "start",
     }
     if hardening is not None:
         report["controller_hardening"] = hardening
@@ -249,13 +260,13 @@ def main():
     hb_age = report["god"].get("heartbeat_age_seconds")
     hb_str = f"{hb_age:.0f}s ago" if hb_age is not None else "—"
 
-    md = f"""# Hermes Report — {report['timestamp'][:19]}Z
+    md = f"""# Hermes Report — {report["timestamp"][:19]}Z
 
 | Field | Value |
 |-------|-------|
 | God   | {"🟢" if god_alive else "🔴"} |
-| Exec  | {report['execute_lane']['phase']} / {report['execute_lane']['state']} |
-| Plan  | {report['plan_lane']['phase']} / {report['plan_lane']['state']} |
+| Exec  | {report["execute_lane"]["phase"]} / {report["execute_lane"]["state"]} |
+| Plan  | {report["plan_lane"]["phase"]} / {report["plan_lane"]["state"]} |
 | HB    | {hb_str} |
 | Action| {action} |
 """
