@@ -61,19 +61,29 @@ start_master() {
     printf '%s\n' "$!" > /tmp/xmuse_master_god_launcher.pid
 }
 
-log "monitor started interval=${INTERVAL_SECONDS}s"
-while true; do
-    log "scheduler tick"
+refresh_report() {
     XMUSE_REPORT_ONLY=1 python3 "$LOOP_ROOT/hermes_reporter.py" \
         >/tmp/xmuse_report_only_monitor.json \
         2>/tmp/xmuse_report_only_monitor.err || true
+}
+
+refresh_dispatch() {
     python3 "$LOOP_ROOT/multi_lane_dispatcher.py" --write \
         >/tmp/xmuse_dispatch_monitor.json \
         2>/tmp/xmuse_dispatch_monitor.err || true
+}
+
+log "monitor started interval=${INTERVAL_SECONDS}s"
+while true; do
+    log "scheduler tick"
+    refresh_report
+    refresh_dispatch
 
     state="$(active_job_state || echo unknown)"
     if ! launcher_alive || [ "$state" != "running" ]; then
         start_master
+        sleep 5
+        refresh_report
     else
         log "master alive active_job_state=${state}"
     fi
