@@ -483,6 +483,13 @@ class RecallMemorySearcher:
         packet_session_id = anchor.temporal_scope.get("benchmark_session_id")
         packet_id = f"recall_packet:{packet_session_id}:{anchor.message_id}"
         member_message_ids = [entry.message_id for entry in member_entries]
+        member_neighbor_offsets = [
+            {
+                "message_id": entry.message_id,
+                "neighbor_offset": entry.position - anchor.position,
+            }
+            for entry in member_entries
+        ]
         member_source_ids = [
             source_ref.source_id
             for entry in member_entries
@@ -494,6 +501,7 @@ class RecallMemorySearcher:
             "packet_anchor_message_id": anchor.message_id,
             "packet_session_id": packet_session_id,
             "packet_member_message_ids": member_message_ids,
+            "packet_member_neighbor_offsets": member_neighbor_offsets,
             "packet_member_source_ids": member_source_ids,
             "packet_reason": packet_reason,
             "packet_rank": packet_rank,

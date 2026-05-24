@@ -232,6 +232,9 @@ class RecallPipeline:
                     "packet_member_message_ids": list(
                         hit.packet_metadata.get("packet_member_message_ids", [])
                     ),
+                    "packet_member_neighbor_offsets": list(
+                        hit.packet_metadata.get("packet_member_neighbor_offsets", [])
+                    ),
                     "packet_member_source_ids": list(
                         hit.packet_metadata.get("packet_member_source_ids", [])
                     ),
