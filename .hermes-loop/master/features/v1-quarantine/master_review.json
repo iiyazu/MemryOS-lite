@@ -1,0 +1,27 @@
+{
+  "feature_id": "v1-quarantine",
+  "recorded_by": "master-god",
+  "status": "accepted",
+  "reviewed_at": "2026-05-24T11:37:59Z",
+  "branch": "chore/v1-quarantine",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "base_commit": "920237bd6082b905b847c5738b52f36070d5697a",
+  "head_commit": "053281c571361e139eab379e27ecc100024dc698",
+  "integration_commit": "67d40e1d744cf86549a4c95b017fdce3e0fb8043",
+  "artifact_digests": {
+    "ack": "sha256:54f7e40d1259f0c800d5c47f02532ea169d959ef804325e01941aba892b2c64e",
+    "review_verdict": "sha256:8aae81a3adb7b136ec791547db8ff0a91d5fd982cb760a3676950ac16ba0c580",
+    "result": "sha256:819b876d9fa4351761f2fae23605c86f3594cf4416d55d85cebf0862f9c2446a"
+  },
+  "review_summary": "Accepted v1 ContextBuilder quarantine. The feature moves the legacy fallback implementation to memoryos_lite.legacy_context, preserves compatibility aliases, keeps the default v3 path unchanged, preserves MEMORYOS_MEMORY_ARCH=v1 fallback behavior, and leaves the opt-in kernel default unchanged.",
+  "blocking_findings": [],
+  "policy_checks": {
+    "v3_default_preserved": true,
+    "v1_fallback_preserved": true,
+    "kernel_default_unchanged": true,
+    "benchmark_improvement_claim": false,
+    "requires_explicit_merge_approval": true
+  },
+  "merge_decision": "not_merged",
+  "next_gate": "external_merge_approval"
+}

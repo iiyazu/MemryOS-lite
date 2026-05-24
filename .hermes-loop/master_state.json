@@ -1,7 +1,18 @@
 {
   "activation_state": "master_active",
   "active": true,
-  "decisions": [],
+  "decisions": [
+    {
+      "feature_id": "v1-quarantine",
+      "recorded_at": "2026-05-24T11:37:59Z",
+      "recorded_by": "master-god",
+      "decision": "accepted_for_merge_gate",
+      "master_review": ".hermes-loop/master/features/v1-quarantine/master_review.json",
+      "integrated_tests": ".hermes-loop/master/features/v1-quarantine/integrated_tests.json",
+      "next_action": ".hermes-loop/approvals/v1-quarantine/next_action.json",
+      "merge_blocked_until": "external_merge_approval"
+    }
+  ],
   "dispatch_contracts": {
     "master": ".hermes-loop/contracts/master_dispatch_template.json",
     "slave": ".hermes-loop/contracts/slave_dispatch_template.json"
@@ -25,7 +36,7 @@
       "id": "v1-quarantine",
       "merge": {
         "github_pr": null,
-        "status": "ready_for_master_review",
+        "status": "ready_for_merge",
         "strategy": "no_ff_merge_commit",
         "target_branch": "feat/phase-2.5-3-retrieval-agent"
       },
@@ -45,7 +56,7 @@
         "owner": "slave-god-v1-quarantine"
       },
       "slave_state_path": ".hermes-loop/work/features/v1-quarantine/slave_state.json",
-      "state": "ready_for_master_review",
+      "state": "ready_for_merge",
       "target_branch": "feat/phase-2.5-3-retrieval-agent",
       "worktree": "/home/iiyatu/projects/python/memoryOS-v1-quarantine"
     },
@@ -818,7 +829,7 @@
       "version": "2.0"
     }
   },
-  "last_updated": "2026-05-24T00:00:00Z",
+  "last_updated": "2026-05-24T11:37:59Z",
   "legacy_root_loop": ".hermes-loop/legacy/root-loop/",
   "master_blueprint": ".hermes-loop/master_blueprint.md",
   "master_config": ".hermes-loop/master_config.json",
@@ -837,10 +848,10 @@
     "active_lanes": [],
     "blocked": [],
     "held": [],
-    "master_review_queue": [
+    "master_review_queue": [],
+    "merge_queue": [
       "v1-quarantine"
     ],
-    "merge_queue": [],
     "merged": [],
     "planning_queue": [
       "archive-rag"

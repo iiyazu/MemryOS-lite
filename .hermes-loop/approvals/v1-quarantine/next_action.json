@@ -1,0 +1,12 @@
+{
+  "feature_id": "v1-quarantine",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T11:37:59Z",
+  "status": "awaiting_external_merge_approval",
+  "reason": "Master review accepted and integrated tests passed, but the feature policy requires explicit merge approval before the branch can be merged.",
+  "master_review_ref": ".hermes-loop/master/features/v1-quarantine/master_review.json",
+  "integrated_tests_ref": ".hermes-loop/master/features/v1-quarantine/integrated_tests.json",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "feature_branch": "chore/v1-quarantine",
+  "merge_strategy": "no_ff_merge_commit"
+}

@@ -3,9 +3,9 @@
   "counts": {
     "blocked": 0,
     "held": 0,
-    "mergeable": 0,
+    "mergeable": 1,
     "merged": 0,
-    "reviewable": 1,
+    "reviewable": 0,
     "total": 2
   },
   "errors": [],
@@ -13,10 +13,10 @@
     "active_lanes": [],
     "blocked": [],
     "held": [],
-    "master_review_queue": [
+    "master_review_queue": [],
+    "merge_queue": [
       "v1-quarantine"
     ],
-    "merge_queue": [],
     "merged": [],
     "planning_queue": [
       "archive-rag"

@@ -1,0 +1,61 @@
+{
+  "feature_id": "v1-quarantine",
+  "recorded_by": "master-god",
+  "status": "passed",
+  "recorded_at": "2026-05-24T11:37:59Z",
+  "branch": "chore/v1-quarantine",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "base_commit": "920237bd6082b905b847c5738b52f36070d5697a",
+  "head_commit": "053281c571361e139eab379e27ecc100024dc698",
+  "integration_branch": "tmp/v1-quarantine-integration-r2",
+  "integration_worktree": "/home/iiyatu/projects/python/memoryOS-v1-quarantine-integration-r2",
+  "integration_commit": "67d40e1d744cf86549a4c95b017fdce3e0fb8043",
+  "worktree_clean": true,
+  "ignored_test_fixtures": [
+    ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json"
+  ],
+  "commands": [
+    {
+      "command": "uv run pytest tests/test_engine.py -q -k 'context_builder'",
+      "phase": "target_baseline_before_feature_merge",
+      "status": "passed",
+      "summary": "11 passed, 28 deselected in 15.99s"
+    },
+    {
+      "command": "git merge --no-ff --no-edit chore/v1-quarantine",
+      "phase": "integration_merge",
+      "status": "passed",
+      "summary": "Created integration merge commit 67d40e1d744cf86549a4c95b017fdce3e0fb8043"
+    },
+    {
+      "command": "python3 -m py_compile src/memoryos_lite/engine.py src/memoryos_lite/legacy_context.py",
+      "phase": "static_check",
+      "status": "passed",
+      "summary": "No compile errors"
+    },
+    {
+      "command": "uv run ruff check .",
+      "phase": "static_check",
+      "status": "passed",
+      "summary": "All checks passed"
+    },
+    {
+      "command": "uv run mypy src/memoryos_lite/legacy_context.py",
+      "phase": "static_check",
+      "status": "passed",
+      "summary": "Success: no issues found in 1 source file"
+    },
+    {
+      "command": "uv run pytest tests/test_engine.py -q -k 'v1_context_builder_is_quarantined or context_builder'",
+      "phase": "focused_feature_check",
+      "status": "passed",
+      "summary": "12 passed, 28 deselected in 22.12s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "phase": "full_integrated_suite",
+      "status": "passed",
+      "summary": "586 passed, 1 warning in 780.49s"
+    }
+  ]
+}

@@ -2,8 +2,8 @@
 
 - activation_state: master_active
 - total: 2
-- reviewable: 1
-- mergeable: 0
+- reviewable: 0
+- mergeable: 1
 - held: 0
 - blocked: 0
 - merged: 0
