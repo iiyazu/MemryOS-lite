@@ -1,32 +1,42 @@
 {
-  "artifact_refs": {
-    "ack": "work/features/archive-rag/ack.json",
-    "result": "work/features/archive-rag/result.md",
-    "review_verdict": "work/features/archive-rag/review_verdict.json"
-  },
-  "benchmark_policy": "eval output may diagnose regressions or missing evidence but is not a score target",
-  "decision": "request_rework",
-  "dispatch_status": "rework_required",
-  "engineering_blockers": [
-    "feature-local ACK or review requires autonomous Slave repair"
-  ],
-  "expected_next_evidence": [
-    "updated result.md",
-    "usable ack.json or explicit re-scope proposal",
-    "PASS review_verdict.json or concrete remaining engineering blockers"
-  ],
+  "version": "1.0",
+  "request_id": "archive-rag-rework-20260524T200728Z",
   "feature_id": "archive-rag",
-  "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
+  "decision": "request_rework",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T20:07:28Z",
+  "previous_state": "repairing",
   "next_state": "repairing",
+  "dispatch_status": "rework_required",
+  "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
+  "engineering_blockers": [
+    "ack_level is blocked and review_verdict is FAIL, so Master review prerequisites are not satisfied.",
+    "uv run mypy src fails with 82 errors in 11 files according to feature-local review evidence.",
+    "hard eval diagnostic reports accuracy/source_hit 0.56/0.56; Slave must diagnose whether this is a feature regression or produce an explicit re-scope/blocker without treating the numeric score as a goal target."
+  ],
+  "affected_artifacts": {
+    "result": "xmuse/work/features/archive-rag/result.md",
+    "ack": "xmuse/work/features/archive-rag/ack.json",
+    "review_verdict": "xmuse/work/features/archive-rag/review_verdict.json",
+    "slave_state": "xmuse/work/features/archive-rag/slave_state.json"
+  },
+  "expected_next_evidence": [
+    "updated result.md describing the repair or re-scope decision",
+    "usable ack.json or explicit re-scope proposal",
+    "PASS review_verdict.json or concrete remaining engineering blockers outside Slave authority",
+    "verification evidence for type checking, regression tests, and hard eval diagnostics without benchmark score-target claims"
+  ],
+  "benchmark_policy": "eval output may diagnose regressions or missing evidence but is not a score target; same-slice repair smoke is not promotion evidence",
   "policy_preserved": {
+    "v3_default_preserved": true,
+    "v1_fallback_preserved": true,
     "kernel_opt_in_preserved": true,
     "no_benchmark_score_targets": true,
-    "no_gate_lowering": true,
-    "v1_fallback_preserved": true
-  },
-  "previous_state": "blocked",
-  "recorded_at": "2026-05-24T17:38:35Z",
-  "recorded_by": "master-god",
-  "request_id": "archive-rag-rework-20260524T173835Z",
-  "version": "1.0"
+    "same_slice_repair_smoke_not_promotion": true,
+    "requires_master_review": true,
+    "requires_integrated_tests": true,
+    "requires_external_approval": true,
+    "requires_fresh_target_gate": true,
+    "no_gate_lowering": true
+  }
 }

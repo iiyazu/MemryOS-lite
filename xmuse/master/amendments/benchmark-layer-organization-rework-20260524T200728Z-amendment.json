@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "amendment_id": "benchmark-layer-organization-rework-20260524T200728Z-amendment",
+  "action": "request_rework",
+  "status": "applied",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T20:07:28Z",
+  "affected_feature_ids": [
+    "benchmark-layer-organization"
+  ],
+  "target_feature_id": "benchmark-layer-organization",
+  "previous_state_reference": {
+    "master_state": "xmuse/master_state.json",
+    "rework_request": "xmuse/master/features/benchmark-layer-organization/rework_request.json",
+    "head_commit": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc"
+  },
+  "reason": "ack_level is partial and review_verdict is FAIL, so Master review prerequisites are not satisfied.; Slave completed only a bounded signed recall packet offset slice; full blueprint Phase 2-4 coverage remains incomplete.; full regression, mypy, hard eval diagnostic, and public LongMemEval/LoCoMo comparison evidence are missing; no benchmark movement claim is allowed from the bounded slice.",
+  "preserved_policy_flags": {
+    "v3_default": true,
+    "v1_fallback": true,
+    "kernel_opt_in": true,
+    "diagnostic_only_benchmarks": true,
+    "same_slice_repair_smoke_not_promotion": true,
+    "review_gate": true,
+    "integrated_test_gate": true,
+    "external_approval_gate": true,
+    "fresh_target_gate": true
+  },
+  "gate_effect": "no_gate_lowering"
+}

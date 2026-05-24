@@ -294,6 +294,33 @@
       "reason": "User requested registration after blueprint review for xmuse frameworkization state/status core extraction.",
       "recorded_at": "2026-05-24T17:57:44Z",
       "recorded_by": "master-god"
+    },
+    {
+      "decision": "integrated_gate_refresh_failed_and_stale",
+      "feature_id": "memoryos-redis-cache-probe",
+      "recorded_by": "master-god",
+      "recorded_at": "2026-05-24T20:07:28Z",
+      "branch": "feat/memoryos-redis-cache-probe",
+      "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
+      "target_branch": "feat/phase-2.5-3-retrieval-agent",
+      "attempted_target_base_commit": "5f890c73a3130f927cac553dd8b9cd44e5c4a88a",
+      "current_target_head": "4823891686c5944c9baefa7d721a002adf1f4710",
+      "integration_commit": "b2038c66e2e63e2db01f8318efc64593b95e1bbb",
+      "integrated_tests": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+      "status": "not_mergeable",
+      "reason": "fresh integration attempt failed full pytest due FastEmbed/HuggingFace ConnectTimeout failures and became stale when target HEAD advanced",
+      "merge_blocked_until": "fresh_target_head_integrated_tests_pass_and_external_merge_approval",
+      "benchmark_policy": "diagnostic evidence only; no benchmark score target or same-slice promotion claim"
+    },
+    {
+      "decision": "merge_held",
+      "feature_id": "memoryos-redis-cache-probe",
+      "recorded_by": "master-god",
+      "recorded_at": "2026-05-24T20:07:28Z",
+      "state": "blocked_external",
+      "merge_status": "not_requested",
+      "reason": "Master must not request approval or merge because integrated tests are failed/stale and external approval is absent",
+      "gate_effect": "no_gate_lowering"
     }
   ],
   "dispatch_contracts": {
@@ -490,19 +517,20 @@
           "Planned lane has no feature worktree at /home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe; dispatch is blocked until Master creates/confirms the isolated worktree.",
           "2026-05-24T16:26:22Z: Slave dispatched on feat/memoryos-redis-cache-probe at 4c4712df763c652952a8066060bdb8bb4b37ba0b after full pytest with restored ignored replay fixture passed 596/596; however worktree was dirty before dispatch with feature-scoped Redis cache changes and generated __pycache__, so Slave must audit/reconcile and rerun focused verification.",
           "2026-05-24T16:26:22Z: Redis must remain optional/default-off/derived-cache-only; merge readiness remains blocked until usable ACK, PASS review, Master review, integrated tests, explicit external approval, and fresh target gate.",
-          "2026-05-24T17:38:35Z: Master reconcile set state=approval_blocked, dispatch_status=approval_required; feature passed Slave/Master evidence but awaits external approval."
+          "2026-05-24T17:38:35Z: Master reconcile set state=approval_blocked, dispatch_status=approval_required; feature passed Slave/Master evidence but awaits external approval.",
+          "2026-05-24T20:07:28Z: Master refreshed Redis integration on tmp/memoryos-redis-cache-probe-integration-r2 at target 5f890c73a3130f927cac553dd8b9cd44e5c4a88a; focused checks passed, but full pytest failed/interrupted with FastEmbed HuggingFace ConnectTimeout failures and target advanced to 4823891686c5944c9baefa7d721a002adf1f4710. Lane held as blocked_external; no merge approval request is valid until a fresh target-head integrated gate passes."
         ]
       },
       "slave_god": {
         "dispatch_agent_id": "019e5ace-efd1-7c52-b512-4f001c396161",
-        "dispatch_status": "approval_required",
+        "dispatch_status": "master_hold_integration_failed",
         "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
-        "last_reported_at": "2026-05-24T17:38:35Z",
+        "last_reported_at": "2026-05-24T20:07:28Z",
         "mode": "feature_local_single_god",
         "owner": "slave-god-memoryos-redis-cache-probe"
       },
       "slave_state_path": "xmuse/work/features/memoryos-redis-cache-probe/slave_state.json",
-      "state": "approval_blocked",
+      "state": "blocked_external",
       "target_branch": "feat/phase-2.5-3-retrieval-agent",
       "worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe"
     },
@@ -1294,7 +1322,7 @@
       "version": "2.0"
     }
   },
-  "last_updated": "2026-05-24T17:57:44Z",
+  "last_updated": "2026-05-24T20:07:28Z",
   "legacy_root_loop": "xmuse/legacy/root-loop/",
   "master_blueprint": "xmuse/master_blueprint.md",
   "master_config": "xmuse/master_config.json",
@@ -1310,21 +1338,21 @@
     "slave": "xmuse/prompts/slave_god_prompt.md"
   },
   "queues": {
+    "planning_queue": [
+      "xmuse-core-state-extraction"
+    ],
     "active_lanes": [
       "archive-rag",
       "xmuse-console",
       "benchmark-layer-organization"
     ],
-    "blocked": [],
+    "master_review_queue": [],
+    "merge_queue": [],
     "held": [
       "memoryos-redis-cache-probe"
     ],
-    "master_review_queue": [],
-    "merge_queue": [],
-    "merged": [],
-    "planning_queue": [
-      "xmuse-core-state-extraction"
-    ]
+    "blocked": [],
+    "merged": []
   },
   "version": "1.0"
 }

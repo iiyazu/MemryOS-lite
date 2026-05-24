@@ -1,32 +1,42 @@
 {
-  "artifact_refs": {
-    "ack": "work/features/benchmark-layer-organization/ack.json",
-    "result": "work/features/benchmark-layer-organization/result.md",
-    "review_verdict": "work/features/benchmark-layer-organization/review_verdict.json"
-  },
-  "benchmark_policy": "eval output may diagnose regressions or missing evidence but is not a score target",
-  "decision": "request_rework",
-  "dispatch_status": "rework_required",
-  "engineering_blockers": [
-    "feature-local ACK or review requires autonomous Slave repair"
-  ],
-  "expected_next_evidence": [
-    "updated result.md",
-    "usable ack.json or explicit re-scope proposal",
-    "PASS review_verdict.json or concrete remaining engineering blockers"
-  ],
+  "version": "1.0",
+  "request_id": "benchmark-layer-organization-rework-20260524T200728Z",
   "feature_id": "benchmark-layer-organization",
-  "head_commit": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc",
+  "decision": "request_rework",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T20:07:28Z",
+  "previous_state": "repairing",
   "next_state": "repairing",
+  "dispatch_status": "rework_required",
+  "head_commit": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc",
+  "engineering_blockers": [
+    "ack_level is partial and review_verdict is FAIL, so Master review prerequisites are not satisfied.",
+    "Slave completed only a bounded signed recall packet offset slice; full blueprint Phase 2-4 coverage remains incomplete.",
+    "full regression, mypy, hard eval diagnostic, and public LongMemEval/LoCoMo comparison evidence are missing; no benchmark movement claim is allowed from the bounded slice."
+  ],
+  "affected_artifacts": {
+    "result": "xmuse/work/features/benchmark-layer-organization/result.md",
+    "ack": "xmuse/work/features/benchmark-layer-organization/ack.json",
+    "review_verdict": "xmuse/work/features/benchmark-layer-organization/review_verdict.json",
+    "slave_state": "xmuse/work/features/benchmark-layer-organization/slave_state.json"
+  },
+  "expected_next_evidence": [
+    "updated result.md covering completed blueprint scope or a concrete re-scope proposal",
+    "usable ack.json or explicit re-scope proposal",
+    "PASS review_verdict.json or concrete remaining engineering blockers outside Slave authority",
+    "full-suite, mypy, hard eval diagnostic, and public benchmark diagnostic evidence if any benchmark-related claim is made"
+  ],
+  "benchmark_policy": "eval output may diagnose regressions or missing evidence but is not a score target; same-slice repair smoke is not promotion evidence",
   "policy_preserved": {
+    "v3_default_preserved": true,
+    "v1_fallback_preserved": true,
     "kernel_opt_in_preserved": true,
     "no_benchmark_score_targets": true,
-    "no_gate_lowering": true,
-    "v1_fallback_preserved": true
-  },
-  "previous_state": "blocked",
-  "recorded_at": "2026-05-24T17:38:35Z",
-  "recorded_by": "master-god",
-  "request_id": "benchmark-layer-organization-rework-20260524T173835Z",
-  "version": "1.0"
+    "same_slice_repair_smoke_not_promotion": true,
+    "requires_master_review": true,
+    "requires_integrated_tests": true,
+    "requires_external_approval": true,
+    "requires_fresh_target_gate": true,
+    "no_gate_lowering": true
+  }
 }

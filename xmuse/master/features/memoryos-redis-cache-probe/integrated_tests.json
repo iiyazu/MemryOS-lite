@@ -1,65 +1,83 @@
 {
   "feature_id": "memoryos-redis-cache-probe",
   "recorded_by": "master-god",
-  "status": "passed",
-  "recorded_at": "2026-05-24T17:00:15Z",
+  "status": "failed_stale_target_head",
+  "recorded_at": "2026-05-24T20:07:28Z",
   "branch": "feat/memoryos-redis-cache-probe",
   "target_branch": "feat/phase-2.5-3-retrieval-agent",
-  "base_commit": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
-  "target_base_commit": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+  "base_commit": "5f890c73a3130f927cac553dd8b9cd44e5c4a88a",
+  "target_base_commit": "5f890c73a3130f927cac553dd8b9cd44e5c4a88a",
+  "current_target_head": "4823891686c5944c9baefa7d721a002adf1f4710",
   "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
-  "integration_branch": "tmp/memoryos-redis-cache-probe-integration",
-  "integration_worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration",
-  "integration_commit": "9d99bb8326d065770345bb14b174006ece9bbcb0",
-  "target_head_at_recording": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+  "integration_branch": "tmp/memoryos-redis-cache-probe-integration-r2",
+  "integration_worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration-r2",
+  "integration_commit": "b2038c66e2e63e2db01f8318efc64593b95e1bbb",
+  "target_head_at_recording": "5f890c73a3130f927cac553dd8b9cd44e5c4a88a",
   "worktree_clean": true,
-  "ignored_test_fixtures": [
-    ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json"
-  ],
   "commands": [
     {
-      "command": "git worktree add -b tmp/memoryos-redis-cache-probe-integration /home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration feat/phase-2.5-3-retrieval-agent",
       "phase": "integration_setup",
+      "command": "git worktree add -b tmp/memoryos-redis-cache-probe-integration-r2 /home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration-r2 feat/phase-2.5-3-retrieval-agent",
       "status": "passed",
-      "summary": "Created integration worktree from target base 4c4712df763c652952a8066060bdb8bb4b37ba0b"
+      "summary": "Created integration worktree from target head 5f890c73a3130f927cac553dd8b9cd44e5c4a88a."
     },
     {
-      "command": "git merge --no-ff --no-edit feat/memoryos-redis-cache-probe",
       "phase": "integration_merge",
+      "command": "git merge --no-ff --no-edit feat/memoryos-redis-cache-probe",
       "status": "passed",
-      "summary": "Created integration merge commit 9d99bb8326d065770345bb14b174006ece9bbcb0"
+      "summary": "Created integration merge commit b2038c66e2e63e2db01f8318efc64593b95e1bbb without conflicts."
     },
     {
+      "phase": "static_check",
       "command": "python3 -m py_compile src/memoryos_lite/cache/__init__.py src/memoryos_lite/config.py",
-      "phase": "static_check",
       "status": "passed",
-      "summary": "No compile errors"
+      "summary": "No compile errors."
     },
     {
+      "phase": "static_check",
       "command": "uv run ruff check src/memoryos_lite/config.py src/memoryos_lite/cache tests/test_config.py tests/test_memory_cache.py",
-      "phase": "static_check",
       "status": "passed",
-      "summary": "All checks passed!"
+      "summary": "All checks passed."
     },
     {
+      "phase": "static_check",
       "command": "uv run mypy src/memoryos_lite/cache src/memoryos_lite/config.py",
-      "phase": "static_check",
       "status": "passed",
-      "summary": "Success: no issues found in 2 source files"
+      "summary": "Success: no issues found in 2 source files."
     },
     {
-      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
       "phase": "focused_feature_and_invariant_check",
+      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
       "status": "passed",
-      "summary": "17 passed in 1.24s"
+      "summary": "17 passed in 11.47s."
     },
     {
-      "command": "uv run pytest -q",
       "phase": "full_integrated_suite",
-      "status": "passed",
-      "summary": "610 passed, 1 warning in 811.88s"
+      "command": "uv run pytest -q",
+      "status": "failed_interrupted_after_failures",
+      "summary": "9 failed, 524 passed, 1 warning in 2322.83s before KeyboardInterrupt; failures were FastEmbed/HuggingFace httpx.ConnectTimeout during public benchmark tests.",
+      "failing_tests": [
+        "tests/test_longmemeval_integration.py::test_full_pipeline",
+        "tests/test_public_benchmarks.py::test_run_public_benchmark_without_llm_judge_writes_report",
+        "tests/test_public_benchmarks.py::test_public_benchmark_projected_answer_cites_selected_evidence",
+        "tests/test_public_benchmarks.py::test_longmemeval_temporal_comparison_keeps_two_raw_sources",
+        "tests/test_public_benchmarks.py::test_longmemeval_temporal_anchor_exposes_page_candidate",
+        "tests/test_public_benchmarks.py::test_public_benchmark_compare_baselines_reports_all_rows",
+        "tests/test_public_benchmarks.py::test_public_benchmark_reports_dropped_relevant_memoryos_page",
+        "tests/test_public_benchmarks.py::test_public_benchmark_reports_windowed_page_diagnostics",
+        "tests/test_public_benchmarks.py::test_public_benchmark_reports_v2_recall_diagnostics"
+      ]
     }
   ],
+  "root_cause_assessment": {
+    "classification": "integration_environment_or_target_dependency_blocker_not_redis_cache_code_path",
+    "evidence": [
+      "Failing stack traces originate in MemoryOSService._default_embedding_client -> FastEmbedClient -> fastembed TextEmbedding -> huggingface_hub model_info.",
+      "The Redis feature diff touches pyproject.toml, uv.lock, src/memoryos_lite/cache/__init__.py, src/memoryos_lite/config.py, tests/test_config.py, and tests/test_memory_cache.py only.",
+      "The Redis feature does not modify public_benchmarks.py, engine.py, fastembed_client.py, or the failing benchmark tests.",
+      "The integration target branch advanced to current_target_head after this attempt, so this evidence is stale for merge readiness even aside from the failed full suite."
+    ]
+  },
   "policy_checks": {
     "v3_default_preserved": true,
     "v1_fallback_preserved": true,
@@ -67,11 +85,14 @@
     "kernel_default_unchanged": true,
     "sqlite_authority_preserved": true,
     "redis_default_off_preserved": true,
-    "benchmark_improvement_claim": false
+    "benchmark_improvement_claim": false,
+    "no_gate_lowering": true
   },
-  "stale_against_current_target_head": false,
+  "stale_against_current_target_head": true,
   "merge_readiness_blockers": [
-    "external merge approval is absent",
-    "master_config.allowed_target_branches currently does not include feat/phase-2.5-3-retrieval-agent"
-  ]
+    "full integrated suite did not pass on the integration ref",
+    "integration evidence target_base_commit is stale against current target HEAD",
+    "external merge approval is absent"
+  ],
+  "next_action": "hold feature; rerun fresh target-head integrated gate after resolving FastEmbed model cache/network dependency or target test isolation, then request external approval only if the fresh gate passes"
 }

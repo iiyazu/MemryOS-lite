@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "amendment_id": "memoryos-redis-cache-probe-hold-20260524T200728Z",
+  "action": "hold_feature",
+  "status": "applied",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T20:07:28Z",
+  "affected_feature_ids": [
+    "memoryos-redis-cache-probe"
+  ],
+  "target_feature_id": "memoryos-redis-cache-probe",
+  "previous_state_reference": {
+    "master_state": "xmuse/master_state.json",
+    "previous_state": "approval_blocked",
+    "previous_dispatch_status": "approval_required",
+    "integrated_tests": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json"
+  },
+  "reason": "Fresh integration attempt did not pass the full suite and became stale after target HEAD advanced; external merge approval is also absent.",
+  "preserved_policy_flags": {
+    "v3_default": true,
+    "v1_fallback": true,
+    "kernel_opt_in": true,
+    "diagnostic_only_benchmarks": true,
+    "same_slice_repair_smoke_not_promotion": true,
+    "review_gate": true,
+    "integrated_test_gate": true,
+    "external_approval_gate": true,
+    "fresh_target_gate": true
+  },
+  "gate_effect": "no_gate_lowering"
+}

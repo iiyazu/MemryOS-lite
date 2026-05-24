@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "amendment_id": "archive-rag-rework-20260524T200728Z-amendment",
+  "action": "request_rework",
+  "status": "applied",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T20:07:28Z",
+  "affected_feature_ids": [
+    "archive-rag"
+  ],
+  "target_feature_id": "archive-rag",
+  "previous_state_reference": {
+    "master_state": "xmuse/master_state.json",
+    "rework_request": "xmuse/master/features/archive-rag/rework_request.json",
+    "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+  },
+  "reason": "ack_level is blocked and review_verdict is FAIL, so Master review prerequisites are not satisfied.; uv run mypy src fails with 82 errors in 11 files according to feature-local review evidence.; hard eval diagnostic reports accuracy/source_hit 0.56/0.56; Slave must diagnose whether this is a feature regression or produce an explicit re-scope/blocker without treating the numeric score as a goal target.",
+  "preserved_policy_flags": {
+    "v3_default": true,
+    "v1_fallback": true,
+    "kernel_opt_in": true,
+    "diagnostic_only_benchmarks": true,
+    "same_slice_repair_smoke_not_promotion": true,
+    "review_gate": true,
+    "integrated_test_gate": true,
+    "external_approval_gate": true,
+    "fresh_target_gate": true
+  },
+  "gate_effect": "no_gate_lowering"
+}
