@@ -96,6 +96,13 @@ REQUIRED_FEATURE_ARTIFACT_KEYS = {
     "merge_decision",
     "next_action",
 }
+PROVENANCE_METHODS = {
+    "signed_approval",
+    "git_signature",
+    "github_review",
+    "github_check",
+    "ci_artifact",
+}
 MASTER_REVIEW_STATES = {"ready_for_master_review"}
 MERGE_REQUEST_STATES = {"ready_for_merge", "merge_requested"}
 TARGET_BRANCH_STATES = MASTER_REVIEW_STATES | MERGE_REQUEST_STATES
@@ -530,6 +537,231 @@ def validate_merge_queue_gate(loop_root: str | Path, feature: dict[str, Any]) ->
     merge = feature.get("merge", {})
     if merge.get("strategy") != "no_ff_merge_commit":
         errors.append("merge strategy must be no_ff_merge_commit")
+
+    return {"valid": not errors, "errors": errors}
+
+
+def validate_merge_approval(
+    loop_root: str | Path,
+    request_ref: str,
+    approval_ref: str,
+    *,
+    policy_snapshot_digest: str,
+) -> dict[str, Any]:
+    loop = Path(loop_root)
+    errors: list[str] = []
+
+    if not request_ref.startswith(".hermes-loop/approvals/"):
+        errors.append("merge_approval_request must live under .hermes-loop/approvals/")
+    if not approval_ref.startswith(".hermes-loop/approvals/"):
+        errors.append("merge_approval must live under .hermes-loop/approvals/")
+
+    request = _load_required_json(loop, request_ref, errors, "merge_approval_request")
+    approval = _load_required_json(loop, approval_ref, errors, "merge_approval")
+    if not request or not approval:
+        return {
+            "schema_valid": False,
+            "valid": False,
+            "errors": errors,
+            "provenance_scope": "schema_level_only",
+            "provenance_verified": False,
+        }
+
+    expected_request_digest = canonical_json_digest(request, exclude_keys={"request_digest"})
+    if request.get("request_digest") != expected_request_digest:
+        errors.append("request_digest does not match canonical request JSON")
+
+    for key in ("request_id", "request_digest"):
+        if approval.get(key) != request.get(key):
+            errors.append(f"approval {key} does not match request")
+
+    for key in ("head_commit", "base_commit", "approved_range", "target_branch", "merge_strategy"):
+        approval_key = "approved_commit" if key == "head_commit" else key
+        if approval.get(approval_key) != request.get(key):
+            errors.append(f"approval {approval_key} does not match request {key}")
+
+    if approval.get("created_by") != "external_to_master_and_slave":
+        errors.append("approval must be external_to_master_and_slave")
+    if approval.get("decision") != "approved":
+        errors.append("approval decision must be approved")
+
+    verification = approval.get("verification", {})
+    method = verification.get("method") if isinstance(verification, dict) else None
+    if method == "maintainer_allowlist":
+        errors.append("maintainer_allowlist cannot be sole provenance verification")
+    elif method not in PROVENANCE_METHODS:
+        errors.append(f"unsupported approval provenance method: {method}")
+    if not isinstance(verification, dict) or verification.get("status") != "verified":
+        errors.append("approval verification status must be verified")
+    if not isinstance(verification, dict) or not verification.get("ref"):
+        errors.append("approval verification ref is required")
+    if not isinstance(verification, dict) or not verification.get("digest"):
+        errors.append("approval verification digest is required")
+
+    if request.get("policy_snapshot_digest") != policy_snapshot_digest:
+        errors.append("policy snapshot digest does not match current policy")
+    if approval.get("policy_snapshot_digest") != policy_snapshot_digest:
+        errors.append("approval policy snapshot digest does not match current policy")
+
+    try:
+        review_digest = file_json_digest(_controller_path(loop, request["master_review_ref"]))
+    except Exception:
+        review_digest = None
+        errors.append("current master_review digest does not match approval request")
+    try:
+        tests_digest = file_json_digest(_controller_path(loop, request["integrated_tests_ref"]))
+    except Exception:
+        tests_digest = None
+        errors.append("current integrated_tests digest does not match approval request")
+    if review_digest != request.get("master_review_digest"):
+        errors.append("current master_review digest does not match approval request")
+    if tests_digest != request.get("integrated_tests_digest"):
+        errors.append("current integrated_tests digest does not match approval request")
+    if approval.get("master_review_digest") != request.get("master_review_digest"):
+        errors.append("approval master_review_digest does not match request")
+    if approval.get("integrated_tests_digest") != request.get("integrated_tests_digest"):
+        errors.append("approval integrated_tests_digest does not match request")
+
+    schema_valid = not errors
+    return {
+        "schema_valid": schema_valid,
+        "valid": False,
+        "errors": errors,
+        "provenance_scope": "schema_level_only",
+        "provenance_verified": False,
+    }
+
+
+def validate_post_merge_verification(
+    loop_root: str | Path,
+    verification_ref: str,
+    *,
+    expected_digest: str,
+    expected_status: str,
+) -> dict[str, Any]:
+    loop = Path(loop_root)
+    errors: list[str] = []
+    if not verification_ref.startswith(".hermes-loop/approvals/"):
+        errors.append("post_merge_verification must live under .hermes-loop/approvals/")
+    payload = _load_required_json(loop, verification_ref, errors, "post_merge_verification")
+    if not payload:
+        return {"valid": False, "errors": errors}
+
+    actual_digest = canonical_json_digest(payload)
+    if actual_digest != expected_digest:
+        errors.append("post_merge_verification digest mismatch")
+    for key in (
+        "target_branch",
+        "pre_merge_head",
+        "approved_head",
+        "post_merge_head",
+        "merge_commit",
+        "merge_strategy",
+        "merge_execution_status",
+        "approval_ref",
+        "approval_digest",
+        "approval_request_ref",
+        "approval_request_digest",
+        "ancestry_check",
+        "verification_commands",
+        "status",
+    ):
+        if not payload.get(key):
+            errors.append(f"post_merge_verification missing required key: {key}")
+    if payload.get("merge_strategy") != "no_ff_merge_commit":
+        errors.append("post_merge_verification merge_strategy must be no_ff_merge_commit")
+    if payload.get("merge_execution_status") != "passed":
+        errors.append("post_merge_verification merge_execution_status must be passed")
+    if payload.get("status") != expected_status:
+        errors.append(f"post_merge_verification status must be {expected_status}")
+    if payload.get("ancestry_check", {}).get("status") != "passed":
+        errors.append("post_merge_verification ancestry_check status must be passed")
+    commands = payload.get("verification_commands", [])
+    if expected_status == "passed":
+        for command in commands:
+            if command.get("status") != "passed":
+                errors.append("passed post_merge_verification requires every command to pass")
+            if not command.get("artifact_digest"):
+                errors.append("post_merge_verification command artifact_digest is required")
+    elif expected_status == "failed":
+        if not any(command.get("status") == "failed" for command in commands):
+            errors.append("failed post_merge_verification requires at least one failed command")
+    else:
+        errors.append(f"unsupported post_merge_verification expected_status: {expected_status}")
+    return {"valid": not errors, "errors": errors, "payload": payload}
+
+
+def validate_merge_decision(loop_root: str | Path, decision: dict[str, Any]) -> dict[str, Any]:
+    errors: list[str] = []
+    selected = decision.get("decision")
+
+    if decision.get("recorded_by") != "master-god":
+        errors.append("merge_decision must be recorded_by master-god")
+
+    if selected == "merged":
+        for key in (
+            "merge_commit",
+            "approval_ref",
+            "approval_digest",
+            "approval_request_ref",
+            "approval_request_digest",
+            "post_merge_verification_refs",
+            "post_merge_verification_digests",
+        ):
+            if not decision.get(key):
+                errors.append(f"merged decision requires {key}")
+        if len(decision.get("post_merge_verification_refs", [])) != len(
+            decision.get("post_merge_verification_digests", [])
+        ):
+            errors.append("post_merge_verification refs and digests length mismatch")
+        for ref, digest in zip(
+            decision.get("post_merge_verification_refs", []),
+            decision.get("post_merge_verification_digests", []),
+            strict=False,
+        ):
+            verification = validate_post_merge_verification(
+                loop_root,
+                ref,
+                expected_digest=digest,
+                expected_status="passed",
+            )
+            if not verification["valid"]:
+                errors.extend(verification["errors"])
+    elif selected in {"held", "rejected"}:
+        if not decision.get("blocked_gate"):
+            errors.append(f"{selected} decision requires blocked_gate")
+        if not decision.get("reasons"):
+            errors.append(f"{selected} decision requires reasons")
+        for forbidden in ("merge_commit", "post_merge_verification_refs", "post_merge_verification_digests"):
+            if decision.get(forbidden):
+                errors.append(f"{selected} decision forbids {forbidden}")
+    elif selected == "held_after_merge":
+        for key in (
+            "merge_commit",
+            "approval_ref",
+            "approval_digest",
+            "approval_request_ref",
+            "approval_request_digest",
+            "failed_post_merge_verification_ref",
+            "failed_post_merge_verification_digest",
+            "next_action",
+            "next_action_ref",
+        ):
+            if not decision.get(key):
+                errors.append(f"held_after_merge requires {key}")
+        if decision.get("blocked_gate") != "post_merge_verification":
+            errors.append("held_after_merge blocked_gate must be post_merge_verification")
+        if decision.get("failed_post_merge_verification_ref") and decision.get("failed_post_merge_verification_digest"):
+            verification = validate_post_merge_verification(
+                loop_root,
+                decision["failed_post_merge_verification_ref"],
+                expected_digest=decision["failed_post_merge_verification_digest"],
+                expected_status="failed",
+            )
+            if not verification["valid"]:
+                errors.extend(verification["errors"])
+    else:
+        errors.append(f"unsupported merge decision: {selected}")
 
     return {"valid": not errors, "errors": errors}
 

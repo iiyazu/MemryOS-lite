@@ -410,3 +410,322 @@ def test_merge_queue_gate_rejects_failed_integrated_tests(tmp_path):
 
     assert result["valid"] is False
     assert "integrated_tests status must be passed" in result["errors"]
+
+
+def valid_approval_bundle(loop: Path, feature_id: str = "v1-quarantine") -> dict:
+    write_gate_artifacts(loop, feature_id)
+    review_ref = f".hermes-loop/master/features/{feature_id}/master_review.json"
+    tests_ref = f".hermes-loop/master/features/{feature_id}/integrated_tests.json"
+    hardening = load_hardening()
+    review_digest = hardening.file_json_digest(loop.parent / review_ref)
+    tests_digest = hardening.file_json_digest(loop.parent / tests_ref)
+    policy_snapshot = {"feature_id": feature_id, "merge_strategy": "no_ff_merge_commit", "target_branch": "main"}
+    policy_digest = hardening.canonical_json_digest(policy_snapshot)
+    request = {
+        "version": "1.0",
+        "request_id": "v1-quarantine-20260524T000000Z",
+        "feature_id": feature_id,
+        "requested_by": "master-god",
+        "requested_at": "2026-05-24T00:00:00Z",
+        "head_commit": "abcdef123456",
+        "base_commit": "123456abcdef",
+        "approved_range": "123456abcdef..abcdef123456",
+        "target_branch": "main",
+        "master_review_ref": review_ref,
+        "master_review_digest": review_digest,
+        "integrated_tests_ref": tests_ref,
+        "integrated_tests_digest": tests_digest,
+        "merge_strategy": "no_ff_merge_commit",
+        "policy_snapshot_ref": ".hermes-loop/master_state.json#features/v1-quarantine",
+        "policy_snapshot_digest": policy_digest,
+    }
+    request["request_digest"] = hardening.canonical_json_digest(request, exclude_keys={"request_digest"})
+    approval = {
+        "version": "1.0",
+        "feature_id": feature_id,
+        "request_id": request["request_id"],
+        "request_digest": request["request_digest"],
+        "decision": "approved",
+        "actor": "repo-maintainer",
+        "actor_type": "human",
+        "created_by": "external_to_master_and_slave",
+        "approved_commit": request["head_commit"],
+        "base_commit": request["base_commit"],
+        "approved_range": request["approved_range"],
+        "target_branch": "main",
+        "master_review_ref": review_ref,
+        "master_review_digest": review_digest,
+        "integrated_tests_ref": tests_ref,
+        "integrated_tests_digest": tests_digest,
+        "merge_strategy": "no_ff_merge_commit",
+        "policy_snapshot_ref": request["policy_snapshot_ref"],
+        "policy_snapshot_digest": policy_digest,
+        "verification": {
+            "method": "signed_approval",
+            "ref": "approval.sig",
+            "digest": "sha256:external",
+            "status": "verified",
+        },
+        "constraints": [],
+        "timestamp": "2026-05-24T00:00:00Z",
+    }
+    write_json(loop / "approvals" / feature_id / "merge_approval_request.json", request)
+    write_json(loop / "approvals" / feature_id / "merge_approval.json", approval)
+    return {"request": request, "approval": approval}
+
+
+def test_approval_validation_treats_schema_only_approval_as_not_merge_valid(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    bundle = valid_approval_bundle(loop)
+
+    result = hardening.validate_merge_approval(
+        loop,
+        ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        policy_snapshot_digest=bundle["request"]["policy_snapshot_digest"],
+    )
+
+    assert result["schema_valid"] is True
+    assert result["valid"] is False
+    assert result["errors"] == []
+    assert result["provenance_scope"] == "schema_level_only"
+    assert result["provenance_verified"] is False
+
+
+def test_approval_validation_rejects_changed_review_artifact(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    bundle = valid_approval_bundle(loop)
+    review_path = loop / "master" / "features" / "v1-quarantine" / "master_review.json"
+    review = json.loads(review_path.read_text())
+    review["findings"] = ["changed after approval"]
+    write_json(review_path, review)
+
+    result = hardening.validate_merge_approval(
+        loop,
+        ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        policy_snapshot_digest=bundle["request"]["policy_snapshot_digest"],
+    )
+
+    assert result["valid"] is False
+    assert "current master_review digest does not match approval request" in result["errors"]
+
+
+def test_approval_validation_rejects_allowlist_only_provenance(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    bundle = valid_approval_bundle(loop)
+    approval_path = loop / "approvals" / "v1-quarantine" / "merge_approval.json"
+    approval = json.loads(approval_path.read_text())
+    approval["verification"]["method"] = "maintainer_allowlist"
+    write_json(approval_path, approval)
+
+    result = hardening.validate_merge_approval(
+        loop,
+        ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        policy_snapshot_digest=bundle["request"]["policy_snapshot_digest"],
+    )
+
+    assert result["valid"] is False
+    assert "maintainer_allowlist cannot be sole provenance verification" in result["errors"]
+
+
+def test_approval_validation_rejects_missing_external_provenance_ref_or_digest(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    bundle = valid_approval_bundle(loop)
+    approval_path = loop / "approvals" / "v1-quarantine" / "merge_approval.json"
+    approval = json.loads(approval_path.read_text())
+    approval["verification"].pop("ref")
+    approval["verification"].pop("digest")
+    write_json(approval_path, approval)
+
+    result = hardening.validate_merge_approval(
+        loop,
+        ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        policy_snapshot_digest=bundle["request"]["policy_snapshot_digest"],
+    )
+
+    assert result["valid"] is False
+    assert "approval verification ref is required" in result["errors"]
+    assert "approval verification digest is required" in result["errors"]
+
+
+def test_merge_decision_requires_merge_commit_for_merged(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    decision = {
+        "version": "1.0",
+        "feature_id": "v1-quarantine",
+        "decision": "merged",
+        "final_state": "merged",
+        "approved_head": "abcdef123456",
+        "target_branch": "main",
+        "merge_strategy": "no_ff_merge_commit",
+        "approval_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        "approval_digest": "sha256:a",
+        "approval_request_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        "approval_request_digest": "sha256:r",
+        "integrated_tests_ref": ".hermes-loop/master/features/v1-quarantine/integrated_tests.json",
+        "post_merge_verification_refs": [".hermes-loop/approvals/v1-quarantine/post_merge_verification.json"],
+        "post_merge_verification_digests": ["sha256:p"],
+        "recorded_by": "master-god",
+        "recorded_at": "2026-05-24T00:00:00Z",
+    }
+
+    result = hardening.validate_merge_decision(loop, decision)
+
+    assert result["valid"] is False
+    assert "merged decision requires merge_commit" in result["errors"]
+
+
+def test_held_after_merge_requires_next_action_ref():
+    hardening = load_hardening()
+    decision = {
+        "version": "1.0",
+        "feature_id": "v1-quarantine",
+        "decision": "held_after_merge",
+        "final_state": "held_after_merge",
+        "blocked_gate": "post_merge_verification",
+        "reasons": ["Post-merge verification failed."],
+        "target_branch": "main",
+        "approved_head": "abcdef123456",
+        "merge_strategy": "no_ff_merge_commit",
+        "merge_commit": "fedcba654321",
+        "approval_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        "approval_digest": "sha256:a",
+        "approval_request_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        "approval_request_digest": "sha256:r",
+        "failed_post_merge_verification_ref": ".hermes-loop/approvals/v1-quarantine/post_merge_verification.json",
+        "failed_post_merge_verification_digest": "sha256:p",
+        "next_action": "repair_forward",
+        "recorded_by": "master-god",
+        "recorded_at": "2026-05-24T00:00:00Z",
+    }
+
+    result = hardening.validate_merge_decision(Path("."), decision)
+
+    assert result["valid"] is False
+    assert "held_after_merge requires next_action_ref" in result["errors"]
+
+
+def write_post_merge_verification(loop: Path, status: str = "passed") -> dict:
+    payload = {
+        "version": "1.0",
+        "feature_id": "v1-quarantine",
+        "target_branch": "main",
+        "pre_merge_head": "123456abcdef",
+        "approved_head": "abcdef123456",
+        "post_merge_head": "fedcba654321",
+        "merge_commit": "fedcba654321",
+        "merge_strategy": "no_ff_merge_commit",
+        "merge_execution_status": "passed",
+        "github_pr": None,
+        "approval_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        "approval_digest": "sha256:approval",
+        "approval_request_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        "approval_request_digest": "sha256:request",
+        "ancestry_check": {
+            "command": "git merge-base --is-ancestor abcdef123456 fedcba654321",
+            "status": "passed",
+        },
+        "verification_commands": [
+            {
+                "command": "uv run pytest tests/test_hermes_master_state.py -q",
+                "status": status,
+                "artifact_ref": ".hermes-loop/approvals/v1-quarantine/post_merge_pytest.log",
+                "artifact_digest": "sha256:log",
+            }
+        ],
+        "status": status,
+        "recorded_by": "master-god",
+        "recorded_at": "2026-05-24T00:00:00Z",
+    }
+    write_json(loop / "approvals" / "v1-quarantine" / "post_merge_verification.json", payload)
+    return payload
+
+
+def test_post_merge_verification_accepts_passed_no_ff_artifact(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    payload = write_post_merge_verification(loop, status="passed")
+    digest = hardening.canonical_json_digest(payload)
+
+    result = hardening.validate_post_merge_verification(
+        loop,
+        ".hermes-loop/approvals/v1-quarantine/post_merge_verification.json",
+        expected_digest=digest,
+        expected_status="passed",
+    )
+
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_post_merge_verification_rejects_digest_mismatch(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_post_merge_verification(loop, status="passed")
+
+    result = hardening.validate_post_merge_verification(
+        loop,
+        ".hermes-loop/approvals/v1-quarantine/post_merge_verification.json",
+        expected_digest="sha256:stale",
+        expected_status="passed",
+    )
+
+    assert result["valid"] is False
+    assert "post_merge_verification digest mismatch" in result["errors"]
+
+
+def test_post_merge_verification_failed_requires_merge_execution_passed(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    payload = write_post_merge_verification(loop, status="failed")
+    path = loop / "approvals" / "v1-quarantine" / "post_merge_verification.json"
+    payload["merge_execution_status"] = "failed"
+    write_json(path, payload)
+
+    result = hardening.validate_post_merge_verification(
+        loop,
+        ".hermes-loop/approvals/v1-quarantine/post_merge_verification.json",
+        expected_digest=hardening.canonical_json_digest(payload),
+        expected_status="failed",
+    )
+
+    assert result["valid"] is False
+    assert "post_merge_verification merge_execution_status must be passed" in result["errors"]
+
+
+def test_merge_decision_validates_post_merge_verification_digest(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_post_merge_verification(loop, status="passed")
+    decision = {
+        "version": "1.0",
+        "feature_id": "v1-quarantine",
+        "decision": "merged",
+        "final_state": "merged",
+        "approved_head": "abcdef123456",
+        "target_branch": "main",
+        "merge_strategy": "no_ff_merge_commit",
+        "merge_commit": "fedcba654321",
+        "approval_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        "approval_digest": "sha256:approval",
+        "approval_request_ref": ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
+        "approval_request_digest": "sha256:request",
+        "integrated_tests_ref": ".hermes-loop/master/features/v1-quarantine/integrated_tests.json",
+        "post_merge_verification_refs": [".hermes-loop/approvals/v1-quarantine/post_merge_verification.json"],
+        "post_merge_verification_digests": ["sha256:stale"],
+        "recorded_by": "master-god",
+        "recorded_at": "2026-05-24T00:00:00Z",
+    }
+
+    result = hardening.validate_merge_decision(loop, decision)
+
+    assert result["valid"] is False
+    assert "post_merge_verification digest mismatch" in result["errors"]
