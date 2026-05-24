@@ -77,7 +77,10 @@ Extend `.hermes-loop/master_config.json` with a `github` object:
 ```json
 {
   "version": "1.0",
-  "allowed_target_branches": ["main"],
+  "allowed_target_branches": [
+    "main",
+    "feat/phase-2.5-3-retrieval-agent"
+  ],
   "merge_strategy": "no_ff_merge_commit",
   "github": {
     "enabled": false,
@@ -99,12 +102,14 @@ When `github.enabled` is false, Master must keep the current local-only gate
 behavior. When true, Master may require GitHub evidence for features whose
 policy flags allow or require it.
 
-`master_config.allowed_target_branches` remains the local merge target allowlist.
-`master_config.github.allowed_target_branches` is the GitHub PR base allowlist.
-During the current rollout it must include the active Hermes target branch
-`feat/phase-2.5-3-retrieval-agent`; otherwise GitHub evidence for current lanes
-must be rejected as branch-policy mismatched. A future production rollout may
-shrink both allowlists back to protected branches such as `main`.
+`master_config.allowed_target_branches` remains the local merge target allowlist,
+so the current rollout config must include the active Hermes target branch
+`feat/phase-2.5-3-retrieval-agent` while feature-to-feature integration is still
+used. `master_config.github.allowed_target_branches` is the GitHub PR base
+allowlist and must include the same active target branch for current lanes.
+Otherwise local merge readiness or GitHub evidence for current lanes must be
+rejected as branch-policy mismatched. A future production rollout may shrink
+both allowlists back to protected branches such as `main`.
 
 ## Feature Lane Schema
 
@@ -170,6 +175,10 @@ Minimum schema:
     "number": 123,
     "url": "https://github.com/owner/repo/pull/123",
     "state": "open",
+    "draft": false,
+    "merged": false,
+    "closed_at": null,
+    "merged_at": null,
     "head_ref": "feat/archive-rag",
     "base_ref": "feat/phase-2.5-3-retrieval-agent",
     "head_sha": "feature-head-sha",
@@ -211,6 +220,9 @@ GitHub evidence may satisfy external approval provenance only when all of these
 conditions hold:
 
 - PR repo matches `master_config.github.repo`.
+- PR state is `open`.
+- PR is not draft.
+- PR is not already merged or closed.
 - PR head ref matches the feature branch.
 - PR base ref matches the target branch.
 - PR base ref is in `master_config.github.allowed_target_branches`.
@@ -275,26 +287,36 @@ github_evidence.json
      target base
 
 merge_approval.json
-  -> references both the request digest and github_evidence digest
+  -> carries the existing request_id/request_digest fields and uses the existing
+     verification.method/ref/digest contract to point at github_evidence.json
 ```
 
-`merge_approval.json` must include a verification reference like:
+This design must remain compatible with the current Hermes approval validator.
+It must not introduce a new `verification.method` unless the implementation
+also extends `PROVENANCE_METHODS` and the validator tests. For the MVP,
+`merge_approval.json` should reuse the existing generic verification fields:
 
 ```json
 {
+  "request_id": "archive-rag-merge-request",
+  "request_digest": "sha256:request-digest",
   "verification": {
-    "method": "github_readonly_evidence",
-    "github_evidence_ref": ".hermes-loop/master/features/archive-rag/github_evidence.json",
-    "github_evidence_digest": "sha256:evidence-digest",
-    "request_digest": "sha256:request-digest"
+    "method": "github_review",
+    "status": "verified",
+    "ref": ".hermes-loop/master/features/archive-rag/github_evidence.json",
+    "digest": "sha256:evidence-digest"
   }
 }
 ```
 
-Master must validate that the current file digest of `github_evidence_ref`
-matches `github_evidence_digest`, and that the current request digest matches
-`request_digest`. If any referenced artifact has changed since approval, the
-feature returns to hold.
+Use `github_review` when the external approval provenance is a GitHub PR review.
+Use `github_check` only when the approval actor is trusted automation and the
+approval policy explicitly allows check-run provenance. In both cases,
+`verification.ref` points to the Master-owned `github_evidence.json`, and
+`verification.digest` binds its current content. The approval's existing
+top-level `request_digest` must still match the current
+`merge_approval_request.json` digest. If either digest has changed since
+approval, the feature returns to hold.
 
 ## API Boundary
 
@@ -326,6 +348,7 @@ No test should require live GitHub network access.
   report a warning.
 - API timeout: block only if GitHub evidence is required.
 - PR head SHA mismatch: block.
+- PR closed, merged, or draft: block.
 - Review not bound to current head SHA: block.
 - Required review id missing, stale, or superseded by a later non-approval
   review from the same reviewer: block.
