@@ -1,16 +1,16 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 17,
+  "current_phase_idx": 18,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-17",
+    "phase": "phase-18",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-18",
-    "state": "PLAN_STORM"
+    "phase": null,
+    "state": "idle"
   },
   "research_lane": {
     "phases": []
@@ -686,16 +686,35 @@
       "id": "phase-17",
       "name": "LoCoMo Maintenance Repair Eval",
       "target_state": "locomo-maintenance-repair-measured",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-24T03:47:56Z",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "context_bundle": "work/phase-17/context_bundle.md",
+            "result": "work/phase-17/result.md",
+            "review": "work/phase-17/reviews/codex-review-r2.md",
+            "ack": "work/phase-17/ack.json",
+            "reflection": "work/phase-17/reflect_phase-17.md",
+            "locomo_r3": "8 pass / 2 fail baseline and repair smoke; fail_to_pass=0; pass_to_fail=0; source_miss_judge_pass=4; same-slice diagnostic only",
+            "tests": "536 passed, 1 warning; ruff passed",
+            "kernel_default_unchanged": true,
+            "v3_default_preserved": true,
+            "v1_fallback_preserved": true,
+            "blueprint_adjustment": "none"
+          },
+          "commit": "4aa404b"
+        }
+      ]
     },
     {
       "id": "phase-18",
       "name": "Benchmark Governance And Promotion",
       "target_state": "governed-promotion-ready",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-24T00:19:24Z"
+  "last_updated": "2026-05-24T03:47:56Z"
 }
