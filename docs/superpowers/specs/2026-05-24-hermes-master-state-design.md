@@ -71,7 +71,41 @@ Legacy root-loop files remain auditable but no longer drive new control flow.
   "features": [
     {
       "id": "feature-id",
-      "slave_state_path": ".hermes-loop/work/features/feature-id/slave_state.json"
+      "name": "Feature Name",
+      "state": "ready_for_master_review",
+      "branch": "feature/feature-id",
+      "target_branch": "main",
+      "worktree": "../memoryOS-feature-id",
+      "slave_state_path": ".hermes-loop/work/features/feature-id/slave_state.json",
+      "slave_god": {
+        "owner": "slave-god-feature-id",
+        "mode": "feature_local_single_god",
+        "last_reported_at": ""
+      },
+      "blueprint_path": ".hermes-loop/work/features/feature-id/blueprint.md",
+      "artifacts": {
+        "result": ".hermes-loop/work/features/feature-id/result.md",
+        "ack": ".hermes-loop/work/features/feature-id/ack.json",
+        "review_verdict": ".hermes-loop/work/features/feature-id/review_verdict.json",
+        "integrated_tests": ".hermes-loop/work/features/feature-id/integrated_tests.json",
+        "master_review": ".hermes-loop/work/features/feature-id/master_review.json",
+        "merge_approval": ".hermes-loop/work/features/feature-id/merge_approval.json"
+      },
+      "merge": {
+        "status": "ready_for_master_review",
+        "target_branch": "main",
+        "strategy": "no_ff_or_pr",
+        "github_pr": null
+      },
+      "policy_flags": {
+        "requires_integrated_tests": true,
+        "requires_explicit_merge_approval": true,
+        "allows_github_evidence": true
+      },
+      "risk": {
+        "level": "medium",
+        "notes": []
+      }
     }
   ],
   "queues": {},
@@ -81,6 +115,19 @@ Legacy root-loop files remain auditable but no longer drive new control flow.
   "last_updated": ""
 }
 ```
+
+`master_state.features[]` is the Master-owned registry. It must contain the
+fields Master needs to make review, queue, and merge decisions: branch,
+worktree, target branch, blueprint path, artifact paths, merge status, policy
+flags, and risk notes. The registry may reference `slave_state.json`, but Master
+decisions must not trust slave self-report alone. Master validates referenced
+artifacts on disk and derives queue membership from Master-owned registry fields
+plus artifact contents.
+
+`slave_state.json` is feature-local. It records the Slave God's internal loop
+state, local execution progress, and artifact declarations. It is required for
+durability, but it is not an authority for Master queues, Master policy, or
+merge state.
 
 ### Master Policy
 
@@ -175,19 +222,39 @@ Rules:
 
 Local Git worktrees are required. GitHub is optional.
 
-Required local evidence:
+Required local evidence is staged by gate.
+
+Master review gate:
 
 - feature branch;
 - feature worktree;
 - required slave state file at
   `work/features/<feature-id>/slave_state.json`;
-- clean feature worktree;
-- committed feature changes;
+- Master-owned registry fields for branch, worktree, target branch, blueprint,
+  artifact paths, and merge status;
+- blueprint artifact;
 - feature ACK;
 - PASS feature review;
 - result artifact;
+
+Merge queue gate:
+
+- all Master review gate evidence;
+- accepted Master review decision artifact;
+- clean feature worktree;
+- committed feature changes;
 - integrated tests artifact;
-- Master decision artifact.
+- target branch and merge strategy;
+- policy gates satisfied;
+- no merge-status-ahead-of-feature-state mismatch.
+
+Actual merge gate:
+
+- all merge queue gate evidence;
+- explicit `merge_approval` artifact;
+- merge execution evidence;
+- post-merge verification evidence;
+- updated Master decision artifact recording final disposition.
 
 Optional GitHub evidence:
 
@@ -213,6 +280,11 @@ Migration steps:
    - `.hermes-loop/legacy/root-loop/state.json` only as read-only migration
      input;
    - current `.hermes-loop/state.json` only before the isolation move.
+   If `.hermes-loop/master_state.json` exists but is invalid, unreadable, or has
+   an abnormal `active=false`, the reader must not silently fall back to legacy
+   state for active execution. It must return a blocked/report-only status.
+   Legacy fallback is allowed only before `master_state.json` exists or for
+   explicit migration audit.
 2. Update reporter, hardening helpers, launcher, and God prompts to use the
    compatibility reader instead of opening `.hermes-loop/state.json` directly.
 3. Generate `.hermes-loop/master_state.json` from current `.hermes-loop/state.json`
@@ -245,7 +317,9 @@ status:
 
 ## Error Handling
 
-- Invalid `master_state.json`: reporter reports blocked and does not start God.
+- Invalid, unreadable, or unexpectedly inactive `master_state.json`: reporter
+  reports blocked/report-only and does not start God. Active execution must not
+  fall back to legacy state.
 - Missing history baseline: Master control is blocked.
 - Missing active-state compatibility reader during migration: migration is
   blocked before moving legacy files.
@@ -268,11 +342,17 @@ Add `tests/test_hermes_master_state.py` for:
 - legacy root-loop isolation;
 - required `slave_state.json` generation and validation;
 - master state schema validation;
+- Master-owned feature registry fields are required for review and merge
+  decisions;
 - queue derivation and queue consistency;
 - `ready_for_master_review` not mergeable;
+- Master review, merge queue, and actual merge gates require different evidence
+  sets;
 - `ready_for_merge` requires integrated tests;
 - merge requires `merge_approval`;
 - malformed `merge.status` ahead of feature state is blocked;
+- invalid or unexpectedly inactive `master_state.json` blocks active execution
+  instead of falling back to legacy state;
 - GitHub evidence is optional and never replaces local gates.
 
 Update existing tests:
