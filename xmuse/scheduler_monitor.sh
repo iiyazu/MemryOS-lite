@@ -57,7 +57,7 @@ launcher_alive() {
 
 start_master() {
     log "master missing; restarting"
-    nohup bash "$LOOP_ROOT/god_launcher.sh" >/tmp/xmuse_master_god_launcher.nohup 2>&1 &
+    nohup bash "$LOOP_ROOT/god_launcher.sh" >/tmp/xmuse_master_god_launcher.nohup 2>&1 8>&- &
     printf '%s\n' "$!" > /tmp/xmuse_master_god_launcher.pid
 }
 
