@@ -37,7 +37,8 @@
         "requires_integrated_tests": true
       },
       "merge_status": "ready_for_master_review",
-      "mergeable": true,
+      "reviewable": true,
+      "mergeable": false,
       "blockers": [],
       "warnings": [],
       "artifact_gate": {
@@ -48,6 +49,11 @@
           "review_verdict": ".hermes-loop/work/features/v1-quarantine/review_verdict.json",
           "result": ".hermes-loop/work/features/v1-quarantine/result.md"
         }
+      },
+      "integrated_tests_gate": {
+        "ok": true,
+        "blockers": [],
+        "paths": {}
       },
       "git_status_short": "",
       "project_root": "/home/iiyatu/projects/python/memoryOS"
@@ -70,6 +76,7 @@
         "requires_integrated_tests": true
       },
       "merge_status": "not_requested",
+      "reviewable": false,
       "mergeable": false,
       "blockers": [],
       "warnings": [],
@@ -78,11 +85,16 @@
         "blockers": [],
         "paths": {}
       },
+      "integrated_tests_gate": {
+        "ok": true,
+        "blockers": [],
+        "paths": {}
+      },
       "git_status_short": null,
       "project_root": "/home/iiyatu/projects/python/memoryOS"
     }
   ],
-  "merge_queue": [
+  "master_review_queue": [
     {
       "id": "v1-quarantine",
       "branch": "chore/v1-quarantine",
@@ -91,10 +103,12 @@
       "strategy": "git_worktree"
     }
   ],
+  "merge_queue": [],
   "blockers": [],
   "counts": {
     "features": 2,
-    "mergeable": 1,
+    "reviewable": 1,
+    "mergeable": 0,
     "blocked": 0
   }
 }

@@ -901,8 +901,122 @@ def test_master_slave_summary_allows_missing_registry(tmp_path: Path) -> None:
 
     assert summary["ok"] is True
     assert summary["state"] == "missing"
-    assert summary["counts"] == {"features": 0, "mergeable": 0, "blocked": 0}
+    assert summary["counts"] == {
+        "features": 0,
+        "reviewable": 0,
+        "mergeable": 0,
+        "blocked": 0,
+    }
     assert summary["merge_queue"] == []
+    assert summary["master_review_queue"] == []
+
+
+def test_master_slave_summary_queues_ready_feature_for_master_review_only(
+    tmp_path: Path,
+) -> None:
+    hardening = load_hardening_module()
+    loop = tmp_path / ".hermes-loop"
+    feature_dir = loop / "work" / "features" / "archive-rag"
+    worktree = tmp_path / "memoryOS-archive-rag"
+    feature_dir.mkdir(parents=True)
+    worktree.mkdir()
+    write_json(feature_dir / "ack.json", {"ack_level": "usable"})
+    write_json(feature_dir / "review_verdict.json", {"verdict": "PASS"})
+    (feature_dir / "result.md").write_text("# feature: archive-rag\n", encoding="utf-8")
+    write_json(
+        loop / "feature_lanes.json",
+        {
+            "features": [
+                {
+                    "id": "archive-rag",
+                    "state": "ready_for_master_review",
+                    "branch": "feat/archive-rag",
+                    "worktree": str(worktree),
+                    "artifacts": {
+                        "ack": "work/features/archive-rag/ack.json",
+                        "review_verdict": "work/features/archive-rag/review_verdict.json",
+                        "result": "work/features/archive-rag/result.md",
+                    },
+                    "merge": {
+                        "status": "ready_for_master_review",
+                        "target_branch": "main",
+                        "requires_integrated_tests": True,
+                    },
+                }
+            ]
+        },
+    )
+
+    summary = hardening.summarize_master_slave_control(loop, project_root=tmp_path)
+
+    assert summary["ok"] is True
+    assert summary["counts"] == {
+        "features": 1,
+        "reviewable": 1,
+        "mergeable": 0,
+        "blocked": 0,
+    }
+    assert summary["master_review_queue"] == [
+        {
+            "id": "archive-rag",
+            "branch": "feat/archive-rag",
+            "worktree": str(worktree),
+            "target_branch": "main",
+            "strategy": "git_worktree",
+        }
+    ]
+    assert summary["merge_queue"] == []
+    assert summary["features"][0]["reviewable"] is True
+    assert summary["features"][0]["mergeable"] is False
+
+
+def test_master_slave_summary_blocks_merge_without_integrated_tests(
+    tmp_path: Path,
+) -> None:
+    hardening = load_hardening_module()
+    loop = tmp_path / ".hermes-loop"
+    feature_dir = loop / "work" / "features" / "archive-rag"
+    worktree = tmp_path / "memoryOS-archive-rag"
+    feature_dir.mkdir(parents=True)
+    worktree.mkdir()
+    write_json(feature_dir / "ack.json", {"ack_level": "usable"})
+    write_json(feature_dir / "review_verdict.json", {"verdict": "PASS"})
+    (feature_dir / "result.md").write_text("# feature: archive-rag\n", encoding="utf-8")
+    write_json(
+        loop / "feature_lanes.json",
+        {
+            "features": [
+                {
+                    "id": "archive-rag",
+                    "state": "ready_for_merge",
+                    "branch": "feat/archive-rag",
+                    "worktree": str(worktree),
+                    "artifacts": {
+                        "ack": "work/features/archive-rag/ack.json",
+                        "review_verdict": "work/features/archive-rag/review_verdict.json",
+                        "result": "work/features/archive-rag/result.md",
+                    },
+                    "merge": {
+                        "status": "ready_for_merge",
+                        "target_branch": "main",
+                        "requires_integrated_tests": True,
+                    },
+                }
+            ]
+        },
+    )
+
+    summary = hardening.summarize_master_slave_control(loop, project_root=tmp_path)
+
+    assert summary["ok"] is False
+    assert summary["counts"] == {
+        "features": 1,
+        "reviewable": 0,
+        "mergeable": 0,
+        "blocked": 1,
+    }
+    assert summary["merge_queue"] == []
+    assert "archive-rag: missing integrated_tests artifact path" in summary["blockers"]
 
 
 def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Path) -> None:
@@ -914,6 +1028,10 @@ def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Pa
     worktree.mkdir()
     write_json(feature_dir / "ack.json", {"ack_level": "usable"})
     write_json(feature_dir / "review_verdict.json", {"verdict": "PASS"})
+    write_json(
+        feature_dir / "integrated_tests.json",
+        {"status": "passed", "commands": ["uv run pytest -q"]},
+    )
     (feature_dir / "result.md").write_text("# feature: archive-rag\n", encoding="utf-8")
     write_json(
         loop / "feature_lanes.json",
@@ -931,11 +1049,13 @@ def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Pa
                         "ack": "work/features/archive-rag/ack.json",
                         "review_verdict": "work/features/archive-rag/review_verdict.json",
                         "result": "work/features/archive-rag/result.md",
+                        "integrated_tests": "work/features/archive-rag/integrated_tests.json",
                     },
                     "merge": {
                         "status": "ready_for_merge",
                         "target_branch": "main",
                         "strategy": "git_worktree",
+                        "requires_integrated_tests": True,
                     },
                 }
             ],
@@ -945,7 +1065,12 @@ def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Pa
     summary = hardening.summarize_master_slave_control(loop, project_root=tmp_path)
 
     assert summary["ok"] is True
-    assert summary["counts"] == {"features": 1, "mergeable": 1, "blocked": 0}
+    assert summary["counts"] == {
+        "features": 1,
+        "reviewable": 0,
+        "mergeable": 1,
+        "blocked": 0,
+    }
     assert summary["merge_queue"] == [
         {
             "id": "archive-rag",
@@ -961,6 +1086,7 @@ def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Pa
         "ack": ".hermes-loop/work/features/archive-rag/ack.json",
         "review_verdict": ".hermes-loop/work/features/archive-rag/review_verdict.json",
         "result": ".hermes-loop/work/features/archive-rag/result.md",
+        "integrated_tests": ".hermes-loop/work/features/archive-rag/integrated_tests.json",
     }
 
 
@@ -996,7 +1122,12 @@ def test_master_slave_summary_blocks_ready_feature_without_ack(tmp_path: Path) -
     summary = hardening.summarize_master_slave_control(loop, project_root=tmp_path)
 
     assert summary["ok"] is False
-    assert summary["counts"] == {"features": 1, "mergeable": 0, "blocked": 1}
+    assert summary["counts"] == {
+        "features": 1,
+        "reviewable": 0,
+        "mergeable": 0,
+        "blocked": 1,
+    }
     assert "archive-rag: ack artifact does not exist" in summary["blockers"]
 
 

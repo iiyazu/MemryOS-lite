@@ -3,10 +3,11 @@
 - registry: `.hermes-loop/feature_lanes.json`
 - ok: `True`
 - features: `2`
-- mergeable: `1`
+- reviewable: `1`
+- mergeable: `0`
 
-- `v1-quarantine` state=ready_for_master_review mergeable=True branch=chore/v1-quarantine
-- `archive-rag` state=planned mergeable=False branch=feat/archive-rag
+- `v1-quarantine` state=ready_for_master_review reviewable=True mergeable=False branch=chore/v1-quarantine
+- `archive-rag` state=planned reviewable=False mergeable=False branch=feat/archive-rag
 
-## Merge Queue
+## Master Review Queue
 - `v1-quarantine` chore/v1-quarantine -> feat/phase-2.5-3-retrieval-agent via git_worktree

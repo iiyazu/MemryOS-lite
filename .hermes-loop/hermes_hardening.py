@@ -30,7 +30,9 @@ STALE_CANDIDATE_FILES = (
     "plan_final.md",
 )
 FEATURE_LANES_FILE = "feature_lanes.json"
-MERGE_REQUEST_STATES = {"ready_for_master_review", "ready_for_merge", "merge_requested"}
+MASTER_REVIEW_STATES = {"ready_for_master_review"}
+MERGE_REQUEST_STATES = {"ready_for_merge", "merge_requested"}
+TARGET_BRANCH_STATES = MASTER_REVIEW_STATES | MERGE_REQUEST_STATES
 FEATURE_PASS_STATES = {"acked", "ready_for_master_review", "ready_for_merge", "merged"}
 
 
@@ -337,6 +339,33 @@ def _artifact_gate(loop: Path, artifacts: dict[str, Any]) -> dict[str, Any]:
     return {"ok": not blockers, "blockers": blockers, "paths": paths}
 
 
+def _integrated_tests_gate(loop: Path, artifacts: dict[str, Any]) -> dict[str, Any]:
+    blockers: list[str] = []
+    paths: dict[str, str] = {}
+
+    tests_path = _resolve_controller_path(loop, artifacts.get("integrated_tests"))
+    if tests_path is None:
+        return {
+            "ok": False,
+            "blockers": ["missing integrated_tests artifact path"],
+            "paths": paths,
+        }
+    paths["integrated_tests"] = _controller_display_path(loop, tests_path)
+    if not tests_path.exists():
+        blockers.append("integrated_tests artifact does not exist")
+    else:
+        try:
+            integrated = _read_json(tests_path)
+        except Exception as exc:
+            blockers.append(f"invalid integrated_tests artifact: {exc}")
+        else:
+            if not isinstance(integrated, dict):
+                blockers.append("integrated_tests artifact root is not an object")
+            elif str(integrated.get("status", "")).lower() not in PROMOTION_PASS_VERDICTS:
+                blockers.append("integrated_tests artifact is not passing")
+    return {"ok": not blockers, "blockers": blockers, "paths": paths}
+
+
 def classify_feature_lane(
     loop_root: str | Path,
     feature: dict[str, Any],
@@ -405,19 +434,35 @@ def classify_feature_lane(
     target_branch = str(merge.get("target_branch") or "").strip()
     if merge_status in MERGE_REQUEST_STATES and not target_branch:
         blockers.append("merge target_branch is required")
+    if merge_status in MASTER_REVIEW_STATES and not target_branch:
+        blockers.append("master review target_branch is required")
+
+    requires_integrated_tests = bool(merge.get("requires_integrated_tests"))
+    if requires_integrated_tests and merge_status in MERGE_REQUEST_STATES:
+        integrated_tests_gate = _integrated_tests_gate(loop, artifacts)
+        blockers.extend(integrated_tests_gate["blockers"])
+        artifact_gate["paths"].update(integrated_tests_gate["paths"])
+    else:
+        integrated_tests_gate = {"ok": True, "blockers": [], "paths": {}}
 
     git_status = None
     if worktree_path is not None and worktree_path.exists():
         git_status = _git_status_short(worktree_path)
-        if git_status and merge_status in MERGE_REQUEST_STATES:
+        if git_status and merge_status in TARGET_BRANCH_STATES:
             blockers.append("feature worktree has uncommitted changes")
         elif git_status:
             warnings.append("feature worktree has uncommitted changes")
 
+    reviewable = (
+        not blockers
+        and merge_status in MASTER_REVIEW_STATES
+        and artifact_gate.get("ok") is True
+    )
     mergeable = (
         not blockers
         and merge_status in MERGE_REQUEST_STATES
         and artifact_gate.get("ok") is True
+        and (not requires_integrated_tests or integrated_tests_gate.get("ok") is True)
     )
     return {
         "id": feature_id,
@@ -428,10 +473,12 @@ def classify_feature_lane(
         "worktree": str(worktree_path) if worktree_path is not None else None,
         "merge": merge,
         "merge_status": merge_status,
+        "reviewable": reviewable,
         "mergeable": mergeable,
         "blockers": blockers,
         "warnings": warnings,
         "artifact_gate": artifact_gate,
+        "integrated_tests_gate": integrated_tests_gate,
         "git_status_short": git_status,
         "project_root": str(project_root) if project_root is not None else str(loop.parent),
     }
@@ -452,6 +499,7 @@ def summarize_master_slave_control(
             "error": registry.get("error"),
             "master_god": registry.get("master_god", {}),
             "features": [],
+            "master_review_queue": [],
             "merge_queue": [],
             "blockers": [registry.get("error", "invalid feature registry")],
         }
@@ -471,14 +519,22 @@ def summarize_master_slave_control(
         for blocker in feature["blockers"]:
             blockers.append(f"{feature['id']}: {blocker}")
 
-    merge_queue = [
-        {
+    def _queue_item(feature: dict[str, Any]) -> dict[str, Any]:
+        return {
             "id": feature["id"],
             "branch": feature["branch"],
             "worktree": feature["worktree"],
             "target_branch": feature["merge"].get("target_branch"),
             "strategy": feature["merge"].get("strategy", "git_worktree"),
         }
+
+    master_review_queue = [
+        _queue_item(feature)
+        for feature in features
+        if feature["reviewable"]
+    ]
+    merge_queue = [
+        _queue_item(feature)
         for feature in features
         if feature["mergeable"]
     ]
@@ -488,10 +544,12 @@ def summarize_master_slave_control(
         "path": registry.get("path"),
         "master_god": registry.get("master_god", {}),
         "features": features,
+        "master_review_queue": master_review_queue,
         "merge_queue": merge_queue,
         "blockers": blockers,
         "counts": {
             "features": len(features),
+            "reviewable": len(master_review_queue),
             "mergeable": len(merge_queue),
             "blocked": sum(1 for feature in features if feature["blockers"]),
         },
@@ -512,17 +570,27 @@ def write_master_slave_status(
     lines.append(f"- registry: `{payload.get('path')}`")
     lines.append(f"- ok: `{payload.get('ok')}`")
     lines.append(f"- features: `{payload.get('counts', {}).get('features', 0)}`")
+    lines.append(f"- reviewable: `{payload.get('counts', {}).get('reviewable', 0)}`")
     lines.append(f"- mergeable: `{payload.get('counts', {}).get('mergeable', 0)}`")
     lines.append("")
     for feature in payload.get("features", []):
         lines.append(
             f"- `{feature.get('id')}` state={feature.get('state')} "
+            f"reviewable={feature.get('reviewable')} "
             f"mergeable={feature.get('mergeable')} branch={feature.get('branch')}"
         )
         for blocker in feature.get("blockers", []):
             lines.append(f"  - blocker: {blocker}")
         for warning in feature.get("warnings", []):
             lines.append(f"  - warning: {warning}")
+    if payload.get("master_review_queue"):
+        lines.append("")
+        lines.append("## Master Review Queue")
+        for item in payload["master_review_queue"]:
+            lines.append(
+                f"- `{item.get('id')}` {item.get('branch')} -> {item.get('target_branch')} "
+                f"via {item.get('strategy')}"
+            )
     if payload.get("merge_queue"):
         lines.append("")
         lines.append("## Merge Queue")

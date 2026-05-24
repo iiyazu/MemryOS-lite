@@ -46,13 +46,21 @@ RAG feature lanes.
    - Impact: the phase0-18 history baseline could not be fully audited from git.
    - Fix: phase-18 artifacts are included in the next control-plane commit.
 
+5. Feature review and merge queues were conflated.
+   - Root cause: `ready_for_master_review` was treated as `mergeable=true`.
+   - Impact: Master God could interpret a slave feature as safe to merge before
+     master integration tests existed.
+   - Fix: `ready_for_master_review` now enters `master_review_queue` only.
+     `ready_for_merge` and `merge_requested` enter `merge_queue` only after
+     required integrated-test evidence is present and passing.
+
 ## Status After Fixes
 
 - Phase-18 ACK gate: pass.
 - Phase-18 review eval decision gate: pass.
 - State phase order gate: pass.
-- Master/slave registry: loaded, two feature lanes, one mergeable
-  (`v1-quarantine`), zero blockers.
+- Master/slave registry: loaded, two feature lanes, one reviewable
+  (`v1-quarantine`), zero mergeable, zero blockers.
 
 No benchmark improvement, promotion, or chain-level improvement is claimed from
 these fixes.
