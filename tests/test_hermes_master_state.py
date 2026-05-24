@@ -883,3 +883,13 @@ def test_activate_master_migration_rolls_back_status_on_late_failure(tmp_path, m
     assert state["activation_state"] == "master_pending"
     assert status["activation_state"] == "master_pending"
     assert (loop / "master_status.md").read_text() == "pending status\n"
+
+
+def test_launcher_uses_master_prompt_and_master_state_after_migration():
+    launcher = (PROJECT / ".hermes-loop" / "god_launcher.sh").read_text()
+
+    assert "master_state.json" in launcher
+    assert "prompts/master_god_prompt.md" in launcher
+    assert "contracts/master_dispatch_template.json" in launcher
+    assert "god_loop_prompt.md" not in launcher
+    assert "contracts/god_dispatch_template.json" not in launcher
