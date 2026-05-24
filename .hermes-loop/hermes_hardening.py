@@ -74,6 +74,14 @@ def _resolve_controller_path(loop: Path, value: Any) -> Path | None:
     return loop / value
 
 
+def _controller_display_path(loop: Path, path: Path) -> str:
+    """Return stable project-relative controller paths for reports."""
+    try:
+        return path.resolve().relative_to(loop.parent.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def _git_status_short(path: Path) -> str | None:
     if not path.exists():
         return None
@@ -272,7 +280,7 @@ def load_feature_lanes(loop_root: str | Path) -> dict[str, Any]:
     return {
         "ok": True,
         "state": "loaded",
-        "path": str(registry_path),
+        "path": _controller_display_path(loop, registry_path),
         "master_god": registry.get("master_god", {}),
         "features": features,
     }
@@ -289,7 +297,7 @@ def _artifact_gate(loop: Path, artifacts: dict[str, Any]) -> dict[str, Any]:
     if ack_path is None:
         blockers.append("missing ack artifact path")
     else:
-        paths["ack"] = str(ack_path)
+        paths["ack"] = _controller_display_path(loop, ack_path)
         if not ack_path.exists():
             blockers.append("ack artifact does not exist")
         else:
@@ -306,7 +314,7 @@ def _artifact_gate(loop: Path, artifacts: dict[str, Any]) -> dict[str, Any]:
     if review_path is None:
         blockers.append("missing review_verdict artifact path")
     else:
-        paths["review_verdict"] = str(review_path)
+        paths["review_verdict"] = _controller_display_path(loop, review_path)
         if not review_path.exists():
             blockers.append("review_verdict artifact does not exist")
         else:
@@ -322,7 +330,7 @@ def _artifact_gate(loop: Path, artifacts: dict[str, Any]) -> dict[str, Any]:
     if result_path is None:
         blockers.append("missing result artifact path")
     else:
-        paths["result"] = str(result_path)
+        paths["result"] = _controller_display_path(loop, result_path)
         if not result_path.exists():
             blockers.append("result artifact does not exist")
 

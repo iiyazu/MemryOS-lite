@@ -738,6 +738,15 @@ def test_launcher_records_and_completes_active_codex_job() -> None:
     assert 'wait "$CODEX_PID"' in launcher
 
 
+def test_hermes_gitignore_covers_runtime_control_artifacts() -> None:
+    gitignore = (
+        Path(__file__).resolve().parents[1] / ".hermes-loop" / ".gitignore"
+    ).read_text(encoding="utf-8")
+
+    assert "active_job.json" in gitignore
+    assert "work/**/*.log" in gitignore
+
+
 def test_stale_artifact_index_marks_files_without_current_context_bundle(tmp_path: Path) -> None:
     hardening = load_hardening_module()
     phase_dir = tmp_path / "work" / "phase-8"
@@ -946,6 +955,13 @@ def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Pa
             "strategy": "git_worktree",
         }
     ]
+    assert summary["path"] == ".hermes-loop/feature_lanes.json"
+    feature = summary["features"][0]
+    assert feature["artifact_gate"]["paths"] == {
+        "ack": ".hermes-loop/work/features/archive-rag/ack.json",
+        "review_verdict": ".hermes-loop/work/features/archive-rag/review_verdict.json",
+        "result": ".hermes-loop/work/features/archive-rag/result.md",
+    }
 
 
 def test_master_slave_summary_blocks_ready_feature_without_ack(tmp_path: Path) -> None:

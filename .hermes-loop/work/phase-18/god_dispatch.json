@@ -1,0 +1,92 @@
+{
+  "phase": "phase-18",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-18/context_bundle.md",
+    "summary": "K5 benchmark governance and promotion decision bundle: phase-17 repair smoke is diagnostic/non-promotion evidence; phase-18 must separate LME and LoCoMo, source metrics and judged quality, valid and invalid artifacts, and kernel-off default behavior."
+  },
+  "current_phase_objective": "Produce a governed promotion/hold/continue decision from real MemoryOS v3 public benchmark evidence without hiding LoCoMo source-grounding regressions or treating same-slice repair smoke as promotion.",
+  "target_chain_components": {
+    "ingest": "verified",
+    "store": "verified",
+    "retrieval": "verified",
+    "context_composer": "verified",
+    "answer_projection": "verified",
+    "kernel_loop": "verified_opt_in_boundary_only",
+    "public_eval": "changed_or_verified_governance"
+  },
+  "read_first": [
+    ".hermes-loop/work/phase-18/context_bundle.md",
+    ".hermes-loop/state.json",
+    ".hermes-loop/blueprint.md",
+    ".hermes-loop/config.json",
+    ".hermes-loop/work/current_goal.md",
+    ".hermes-loop/work/phase-17/ack.json",
+    ".hermes-loop/work/phase-17/result.md",
+    ".hermes-loop/work/phase-17/execute_review.md",
+    ".hermes-loop/work/phase-17/review_verdict.json",
+    ".hermes-loop/work/phase-17/reflect_phase-17.md",
+    ".memoryos/evals/phase8_lme50_20260522T151605Z_longmemeval.json",
+    ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json",
+    ".memoryos/evals/phase17_locomo10_baseline_r3_locomo.json",
+    ".memoryos/evals/phase17_locomo10_kernel_repair_smoke_r3_locomo.json",
+    ".memoryos/evals/phase17_locomo10_kernel_repair_smoke_r3_locomo_repair_smoke_summary.json",
+    "src/memoryos_lite/public_benchmarks.py",
+    "src/memoryos_lite/public_case_diagnostics.py",
+    "src/memoryos_lite/public_repair_smoke.py",
+    "src/memoryos_lite/evals.py",
+    "tests/test_public_benchmarks.py",
+    "docs/public-benchmark-diagnosis.md",
+    "docs/known-issues.md"
+  ],
+  "failing_tests_required_before_implementation": [
+    "If product or test code changes are proposed, add RED coverage first for the exact governance gap: invalid artifact quarantine, source-miss judge-pass accounting, same-case movement comparison, or kernel-default-off protection.",
+    "If the phase is governance-only with no product behavior change, case-level benchmark evidence and artifact-validation checks are the RED evidence; do not invent demo-only tests."
+  ],
+  "expected_artifacts": [
+    "work/phase-18/brainstorm.md",
+    "work/phase-18/spec.md",
+    "work/phase-18/plan.md",
+    "work/phase-18/plan_review.md",
+    "work/phase-18/plan_final.md",
+    "work/phase-18/execute_goal.md",
+    "work/phase-18/result.md",
+    "work/phase-18/execute_review.md",
+    "work/phase-18/reviews/*.md",
+    "work/phase-18/review_verdict.json",
+    "work/phase-18/ack.json"
+  ],
+  "benchmark_and_smoke_commands": {
+    "structural_lme5": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 5 --run-id phase18_lme5_structural --no-llm-answer --no-llm-judge",
+    "structural_locomo5": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 5 --run-id phase18_locomo5_structural --no-llm-answer --no-llm-judge",
+    "milestone_lme50": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 50 --run-id phase18_lme50_<timestamp>",
+    "milestone_locomo50": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 50 --run-id phase18_locomo50_<timestamp>"
+  },
+  "usable_ack_checklist": [
+    "ACK phase equals phase-18 and ack_level is usable.",
+    "Active goal is cited in dispatch, result, review_verdict, and ack.",
+    "Context bundle is cited by plan, execute, and review artifacts.",
+    "LongMemEval and LoCoMo are reported separately when milestone evidence is used.",
+    "Case-level fail-to-pass, pass-to-fail, unchanged fail, retrieval miss, evidence-hit-answer-fail, source-miss judge-pass, context missing evidence, unsupported answer, and judge-questionable rows are visible.",
+    "Invalid partial, projected, heartbeat-only, stale, or mismatched artifacts are quarantined.",
+    "No same-slice repair smoke is used as promotion evidence.",
+    "v1 fallback, v3 default, and kernel default-off are preserved.",
+    "Review verdict passes and review_eval_decision.promotion_gate is satisfied or not_applicable.",
+    "Decision is evidence-bound: continue_targeted, expand_eval, hold, or promote_blueprint."
+  ],
+  "review_focus": [
+    "Behavioral regression and source-grounding regression.",
+    "LoCoMo source-miss judge-pass visibility.",
+    "Benchmark leakage or case-id overfitting.",
+    "Whether LME/LoCoMo and LLM answer/judge were routed correctly under the Review Eval Autonomy Policy.",
+    "Whether same-slice repair smoke was kept diagnostic-only.",
+    "Whether kernel default remained off and v1 fallback remained explicit.",
+    "Whether context bundle coverage was honored by all lane outputs."
+  ],
+  "anti_demo_gate": {
+    "minimum_ack_level": "usable",
+    "plan_only_allowed_to_advance": false,
+    "demo_only_allowed_to_advance": false,
+    "partial_allowed_to_advance": false
+  }
+}

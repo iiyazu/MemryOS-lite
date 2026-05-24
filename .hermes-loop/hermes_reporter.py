@@ -192,13 +192,10 @@ def start_god() -> bool:
 def main():
     s = json.loads(STATE_FILE.read_text())
 
-    # If DONE, exit silently
-    if s.get("current_state") == "DONE":
-        return
-
+    done = s.get("current_state") == "DONE"
     god_alive = is_god_alive()
-    action = "wait"
-    if not god_alive:
+    action = "done" if done else "wait"
+    if not done and not god_alive:
         started = start_god()
         god_alive = started
         action = "started_ok" if started else "started_failed"
