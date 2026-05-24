@@ -13,10 +13,11 @@ from memoryos_lite.agent_tool_selection import ToolSelectionBoundary
 from memoryos_lite.config import Settings
 from memoryos_lite.context_composer import V3ContextComposer
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import Role
+from memoryos_lite.schemas import Role, new_id
 from memoryos_lite.store import create_store
 from memoryos_lite.v3_contracts import (
     AgentStepRequest,
+    ArchivalMemory,
     ContextComposerRequest,
     ContextPackageV3,
     SourceRef,
@@ -86,6 +87,74 @@ def _archival_memory_count(store) -> int:
         return int(db.scalar(text("select count(*) from archival_memories")))
 
 
+def _core_promotion_request(
+    *,
+    content: str = "Alice prefers concise status updates.",
+    label: str = "human",
+    source_refs: list[SourceRef] | None = None,
+    approval_id: str | None = None,
+    tool_call_id: str | None = None,
+    session_id: str = "ses_1",
+) -> ToolExecutionRequest:
+    return ToolExecutionRequest(
+        session_id=session_id,
+        tool_name="core_promotion_request",
+        arguments={
+            "content": content,
+            "label": label,
+            "reason": "source-backed preference candidate",
+            "limit_tokens": 120,
+        },
+        source_refs=[_source_ref(session_id)] if source_refs is None else source_refs,
+        approval_id=approval_id,
+        tool_call_id=tool_call_id,
+    )
+
+
+def _core_promotion_runner(store):
+    return SimpleAgentStepRunner(
+        store=store,
+        tool_policy_engine=SimpleToolPolicyEngine(
+            rules=[
+                ToolPolicyRule(
+                    id="core_promotion_request_requires_approval",
+                    tool_name="core_promotion_request",
+                    effect="require_approval",
+                    reason="core promotion requests require approval",
+                )
+            ]
+        ),
+        approval_gate=ApprovalGateV1(),
+        tool_execution_manager=SimpleToolExecutionManager(store=store),
+    )
+
+
+def _promotion_candidate_count(store) -> int:
+    return len(store.list_promotion_candidates())
+
+
+def _seed_archival_memory(
+    store,
+    *,
+    archive_id: str,
+    content: str,
+    session_id: str = "ses_1",
+) -> str:
+    memory = store.add_archival_memory(
+        ArchivalMemory(
+            id=new_id("amem"),
+            archive_id=archive_id,
+            memory_type="fact",
+            content=content,
+            source_refs=[_source_ref(session_id)],
+            metadata={"test": "phase16_archive_attach"},
+        ),
+        actor="agent",
+        reason="test seed archival memory",
+    )
+    return memory.id
+
+
 def _trace_payloads(store, session_id: str, event_type: str) -> list[dict]:
     return [
         trace.payload
@@ -144,6 +213,22 @@ class _NoopSelector:
         )
 
 
+def test_kernel_tool_registry_exposes_only_phase16_level1_tools():
+    from memoryos_lite.agent_tool_registry import (
+        executable_kernel_tool_names,
+        get_kernel_tool_spec,
+    )
+
+    assert executable_kernel_tool_names() == {
+        "archive_write",
+        "archive_attach",
+        "core_promotion_request",
+    }
+    assert get_kernel_tool_spec("archive_attach").mutating is True
+    assert get_kernel_tool_spec("core_promotion_request").verification_required is True
+    assert get_kernel_tool_spec("core_memory_append") is None
+
+
 def test_tool_selection_boundary_reports_unsupported_input_without_runner():
     boundary = ToolSelectionBoundary()
 
@@ -169,6 +254,69 @@ def test_tool_selection_boundary_reports_unsupported_input_without_runner():
     ]
     assert resolution.selection_payload["selection_origin"] == "fallback"
     assert "unsupported" in resolution.selection_payload["reason"]
+
+
+def test_tool_selection_boundary_generates_archive_attach_candidate_without_broad_scope():
+    boundary = ToolSelectionBoundary()
+    request = ToolExecutionRequest(
+        session_id="ses_1",
+        tool_name="archive_attach",
+        arguments={"archive_id": "archive_existing", "scope_type": "session"},
+        source_refs=[_source_ref()],
+        tool_call_id="toolcall_attach",
+    )
+
+    resolution = boundary.resolve(_request(), [request])
+
+    assert resolution.denied is False
+    assert resolution.selected_request is not None
+    candidate = resolution.candidates[0]
+    assert candidate.tool_name == "archive_attach"
+    assert candidate.arguments["scope_id"] == "ses_1"
+    assert candidate.constraints["requires_session_scope"] is True
+    assert candidate.constraints["requires_source_refs_or_approval"] is True
+
+
+def test_tool_selection_boundary_rejects_archive_attach_non_session_scope():
+    boundary = ToolSelectionBoundary()
+    request = ToolExecutionRequest(
+        session_id="ses_1",
+        tool_name="archive_attach",
+        arguments={
+            "archive_id": "archive_existing",
+            "scope_type": "agent",
+            "scope_id": "agent_1",
+        },
+        source_refs=[_source_ref()],
+    )
+
+    resolution = boundary.resolve(_request(), [request])
+
+    assert resolution.selected_request is None
+    assert resolution.denied is True
+    assert "session scope" in resolution.selection_payload["reason"]
+
+
+def test_tool_selection_boundary_generates_core_promotion_request_candidate():
+    boundary = ToolSelectionBoundary()
+    request = ToolExecutionRequest(
+        session_id="ses_1",
+        tool_name="core_promotion_request",
+        arguments={
+            "content": "Alice prefers concise status updates.",
+            "reason": "source-backed preference candidate",
+            "label": "human",
+        },
+        source_refs=[_source_ref()],
+        tool_call_id="toolcall_promote",
+    )
+
+    resolution = boundary.resolve(_request(), [request])
+
+    assert resolution.denied is False
+    assert resolution.selected_request is not None
+    assert resolution.selected_request.tool_name == "core_promotion_request"
+    assert resolution.candidates[0].constraints["applies_core_memory"] is False
 
 
 def test_tool_selection_boundary_preserves_approval_bound_candidate_without_source_refs():
@@ -586,6 +734,52 @@ def test_kernel_denies_unknown_tool_as_result_without_executor_call(tmp_path):
     assert _archival_memory_count(store) == 0
 
 
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "core_memory_append",
+        "core_memory_replace",
+        "archive_detach",
+        "archive_delete",
+        "archive_deprecate",
+        "recall_search",
+        "archive_search",
+        "unknown_tool",
+    ],
+)
+def test_kernel_denies_unopened_phase16_tools_before_policy_or_execution(
+    tmp_path,
+    tool_name,
+):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    runner = SimpleAgentStepRunner(
+        store=store,
+        tool_execution_manager=SimpleToolExecutionManager(store=store),
+    )
+
+    result = runner.run_step(
+        _request(),
+        tool_requests=[
+            ToolExecutionRequest(
+                session_id="ses_1",
+                tool_name=tool_name,
+                arguments={"content": "must not be written"},
+                source_refs=[_source_ref()],
+            )
+        ],
+    )
+
+    event_types = [event.event_type for event in result.trace]
+    assert "tool_selection_denied" in event_types
+    assert "tool_policy_decision" not in event_types
+    assert "tool_executed" not in event_types
+    assert "tool_verified" not in event_types
+    assert _archival_memory_count(store) == 0
+    assert store.list_messages("ses_1") == []
+
+
 def test_kernel_denies_unsupported_memory_tools_without_verification_or_write(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
     store = create_store(settings)
@@ -923,6 +1117,405 @@ def test_kernel_emits_negative_verification_when_execution_is_not_store_visible(
     assert [msg for msg in store.list_messages("ses_1") if msg.role == Role.TOOL] == []
 
 
+def test_kernel_archive_attach_is_approval_bound_verified_and_visible_to_v3(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    archive_id = "archive_phase16"
+    memory_id = _seed_archival_memory(
+        store,
+        archive_id=archive_id,
+        content="Alice wants the blue notebook remembered.",
+    )
+    before = V3ContextComposer(store=store, settings=settings).build(
+        ContextComposerRequest(session_id="ses_1", task="blue notebook", budget=120)
+    )
+    assert [item for item in before.items if item.layer == "archival"] == []
+
+    runner = SimpleAgentStepRunner(
+        store=store,
+        tool_policy_engine=SimpleToolPolicyEngine(
+            rules=[
+                ToolPolicyRule(
+                    id="archive_attach_requires_approval",
+                    tool_name="archive_attach",
+                    effect="require_approval",
+                    reason="archive attachments require approval",
+                )
+            ]
+        ),
+        approval_gate=ApprovalGateV1(),
+        tool_execution_manager=SimpleToolExecutionManager(store=store),
+    )
+    tool_request = ToolExecutionRequest(
+        session_id="ses_1",
+        tool_name="archive_attach",
+        arguments={"archive_id": archive_id, "scope_type": "session"},
+        source_refs=[_source_ref()],
+    )
+
+    first = runner.run_step(_request(), tool_requests=[tool_request])
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    tool_call_id = _pending_tool_call_id(first.trace)
+    resumed = runner.run_step(
+        _request(),
+        tool_requests=[
+            tool_request.model_copy(
+                update={"approval_id": approval_id, "tool_call_id": tool_call_id}
+            )
+        ],
+    )
+
+    event_types = [event.event_type for event in resumed.trace]
+    assert "tool_executed" in event_types
+    assert "tool_verified" in event_types
+    verified = next(event for event in resumed.trace if event.event_type == "tool_verified")
+    assert verified.payload["tool_name"] == "archive_attach"
+    assert verified.payload["ok"] is True
+    assert verified.payload["verification"]["status"] == "verified"
+    assert verified.payload["verification"]["attachment_found"] is True
+    assert f"apsg_{memory_id}" in verified.payload["verification"]["eligible_passage_ids"]
+    attachments = store.list_archive_attachments(scope_type="session", scope_id="ses_1")
+    assert [attachment.archive_id for attachment in attachments] == [archive_id]
+
+    tool_messages = [msg for msg in store.list_messages("ses_1") if msg.role == Role.TOOL]
+    assert [msg.content for msg in tool_messages] == ["tool archive_attach executed"]
+    assert tool_messages[0].metadata["result"]["attachment_id"]
+    after = V3ContextComposer(store=store, settings=settings).build(
+        ContextComposerRequest(session_id="ses_1", task="blue notebook", budget=120)
+    )
+    archival_items = [item for item in after.items if item.layer == "archival"]
+    assert [item.text for item in archival_items] == [
+        "Alice wants the blue notebook remembered."
+    ]
+
+
+def test_kernel_archive_attach_replay_tamper_denies_before_execution(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    _seed_archival_memory(store, archive_id="archive_phase16", content="attach me")
+    runner = _approval_runner(store)
+    runner.tool_policy_engine = SimpleToolPolicyEngine(
+        rules=[
+            ToolPolicyRule(
+                id="archive_attach_requires_approval",
+                tool_name="archive_attach",
+                effect="require_approval",
+                reason="archive attachments require approval",
+            )
+        ]
+    )
+    tool_request = ToolExecutionRequest(
+        session_id="ses_1",
+        tool_name="archive_attach",
+        arguments={"archive_id": "archive_phase16", "scope_type": "session"},
+        source_refs=[_source_ref()],
+    )
+    first = runner.run_step(_request(), tool_requests=[tool_request])
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    tool_call_id = _pending_tool_call_id(first.trace)
+
+    tampered = tool_request.model_copy(
+        update={
+            "approval_id": approval_id,
+            "tool_call_id": tool_call_id,
+            "arguments": {"archive_id": "archive_other", "scope_type": "session"},
+        }
+    )
+    result = runner.run_step(_request(), tool_requests=[tampered])
+
+    event_types = [event.event_type for event in result.trace]
+    assert "approval_replay_denied" in event_types
+    assert "tool_executed" not in event_types
+    assert "tool_verified" not in event_types
+    assert store.list_archive_attachments(scope_type="session", scope_id="ses_1") == []
+
+
+def test_kernel_core_promotion_request_persists_pending_candidate_without_core_mutation(
+    tmp_path,
+):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    runner = _core_promotion_runner(store)
+
+    first = runner.run_step(_request(), tool_requests=[_core_promotion_request()])
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    assert approval_id is not None
+    tool_call_id = _pending_tool_call_id(first.trace)
+
+    resumed = runner.run_step(
+        _request(),
+        tool_requests=[
+            _core_promotion_request(
+                approval_id=approval_id,
+                tool_call_id=tool_call_id,
+            )
+        ],
+    )
+
+    event_types = [event.event_type for event in resumed.trace]
+    assert "tool_executed" in event_types
+    assert "tool_verified" in event_types
+    executed = next(event for event in resumed.trace if event.event_type == "tool_executed")
+    candidate_id = executed.payload["result"]["candidate_id"]
+    verified = next(event for event in resumed.trace if event.event_type == "tool_verified")
+    assert verified.payload["tool_name"] == "core_promotion_request"
+    assert verified.payload["ok"] is True
+    assert verified.payload["verification"]["status"] == "verified"
+    assert verified.payload["verification"]["candidate_pending"] is True
+    assert verified.payload["verification"]["core_block_count_before"] == 0
+    assert verified.payload["verification"]["core_block_count_after"] == 0
+    assert verified.payload["verification"]["core_history_count_before"] == 0
+    assert verified.payload["verification"]["core_history_count_after"] == 0
+
+    candidate = store.get_promotion_candidate(candidate_id)
+    assert candidate is not None
+    assert candidate.status == "pending"
+    assert candidate.target_layer == "core"
+    assert candidate.operation == "promote"
+    assert candidate.write_source == "explicit_instruction"
+    assert candidate.content == "Alice prefers concise status updates."
+    assert candidate.source_refs[0].approval_id == approval_id
+    assert candidate.metadata["label"] == "human"
+    assert candidate.metadata["limit_tokens"] == 120
+    assert candidate.metadata["tool_name"] == "core_promotion_request"
+    assert candidate.metadata["approval_id"] == approval_id
+    assert candidate.metadata["tool_call_id"] == tool_call_id
+
+    tool_messages = [msg for msg in store.list_messages("ses_1") if msg.role == Role.TOOL]
+    assert [msg.content for msg in tool_messages] == [
+        "tool core_promotion_request executed"
+    ]
+    assert tool_messages[0].metadata["candidate_id"] == candidate_id
+    assert store.list_core_memory_blocks() == []
+    assert store.list_core_memory_history(candidate_id) == []
+
+    package = V3ContextComposer(store=store, settings=settings).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="concise status updates",
+            budget=120,
+        )
+    )
+    assert [item for item in package.items if item.layer == "core"] == []
+
+
+def test_kernel_core_promotion_request_replay_tamper_denies_before_execution_or_candidate(
+    tmp_path,
+):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    runner = _core_promotion_runner(store)
+    first = runner.run_step(_request(), tool_requests=[_core_promotion_request()])
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    assert approval_id is not None
+    tool_call_id = _pending_tool_call_id(first.trace)
+
+    tampered_source_refs = [
+        SourceRef(
+            source_type=SourceType.MESSAGE,
+            source_id="msg_tampered",
+            session_id="ses_1",
+        )
+    ]
+    tampered_requests = [
+        _core_promotion_request(
+            content="Alice prefers verbose reports.",
+            approval_id=approval_id,
+            tool_call_id=tool_call_id,
+        ),
+        _core_promotion_request(
+            label="persona",
+            approval_id=approval_id,
+            tool_call_id=tool_call_id,
+        ),
+        _core_promotion_request(
+            source_refs=tampered_source_refs,
+            approval_id=approval_id,
+            tool_call_id=tool_call_id,
+        ),
+        _core_promotion_request(
+            approval_id=approval_id,
+            tool_call_id="toolcall_tampered",
+        ),
+        _core_promotion_request(
+            approval_id=approval_id,
+            tool_call_id=tool_call_id,
+        ).model_copy(
+            update={
+                "arguments": {
+                    "content": "Alice prefers concise status updates.",
+                    "label": "human",
+                    "reason": "source-backed preference candidate",
+                    "limit_tokens": 120,
+                    "operation": "update",
+                }
+            }
+        ),
+    ]
+
+    for tool_request in tampered_requests:
+        reopened = create_store(settings)
+        result = _core_promotion_runner(reopened).run_step(
+            _request(),
+            tool_requests=[tool_request],
+        )
+        event_types = [event.event_type for event in result.trace]
+        assert "approval_replay_denied" in event_types
+        assert "approval_granted" not in event_types
+        assert "tool_executed" not in event_types
+        assert "tool_verified" not in event_types
+        assert _promotion_candidate_count(reopened) == 0
+        assert reopened.list_core_memory_blocks() == []
+        assert [msg for msg in reopened.list_messages("ses_1") if msg.role == Role.TOOL] == []
+
+
+def test_memoryos_service_opt_in_kernel_requires_approval_for_all_phase16_mutating_tools(
+    tmp_path,
+):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_agent_kernel="v1",
+    )
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(settings=settings, store=store)
+    assert service.agent_kernel is not None
+
+    tool_requests = [
+        _archive_request(tool_call_id="toolcall_archive_write"),
+        ToolExecutionRequest(
+            session_id="ses_1",
+            tool_name="archive_attach",
+            arguments={"archive_id": "archive_phase16", "scope_type": "session"},
+            source_refs=[_source_ref()],
+            tool_call_id="toolcall_archive_attach",
+        ),
+        _core_promotion_request(tool_call_id="toolcall_core_promotion"),
+    ]
+
+    for tool_request in tool_requests:
+        result = service.agent_kernel.run_step(
+            _request(),
+            tool_requests=[tool_request],
+        )
+        event_types = [event.event_type for event in result.trace]
+        assert event_types == [
+            "kernel_step_started",
+            "tool_candidates_generated",
+            "tool_selected",
+            "tool_policy_decision",
+            "approval_pending",
+            "kernel_step_completed",
+        ]
+        pending = next(
+            event for event in result.trace if event.event_type == "approval_pending"
+        )
+        assert pending.payload["tool_name"] == tool_request.tool_name
+        assert pending.payload["metadata"]["tool_call_id"] == tool_request.tool_call_id
+        assert result.continuation == "pause"
+
+
+@pytest.mark.parametrize(
+    ("tool_request", "error_fragment"),
+    [
+        (
+            _archive_request(
+                tool_call_id="toolcall_bad_archive_write",
+            ).model_copy(
+                update={
+                    "arguments": {
+                        "content": "bad archival fact",
+                        "memory_type": "not-a-memory-type",
+                    }
+                }
+            ),
+            "archive_write",
+        ),
+        (
+            ToolExecutionRequest(
+                session_id="ses_1",
+                tool_name="archive_attach",
+                arguments={"archive_id": "archive_missing", "scope_type": "session"},
+                source_refs=[_source_ref()],
+                tool_call_id="toolcall_bad_archive_attach",
+            ),
+            "archive_attach",
+        ),
+        (
+            _core_promotion_request(
+                tool_call_id="toolcall_bad_core_promotion",
+            ).model_copy(
+                update={
+                    "arguments": {
+                        "content": "Alice prefers concise status updates.",
+                        "label": "human",
+                        "reason": "source-backed preference candidate",
+                        "limit_tokens": "not-an-int",
+                    }
+                }
+            ),
+            "core_promotion_request",
+        ),
+    ],
+)
+def test_memoryos_service_registered_tool_malformed_replay_fails_closed(
+    tmp_path,
+    tool_request,
+    error_fragment,
+):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_agent_kernel="v1",
+    )
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(settings=settings, store=store)
+    assert service.agent_kernel is not None
+
+    first = service.agent_kernel.run_step(
+        _request(),
+        tool_requests=[tool_request],
+    )
+    approval_id = next(
+        event.approval_id for event in first.trace if event.event_type == "approval_pending"
+    )
+    tool_call_id = _pending_tool_call_id(first.trace)
+
+    resumed = service.agent_kernel.run_step(
+        _request(),
+        tool_requests=[
+            tool_request.model_copy(
+                update={"approval_id": approval_id, "tool_call_id": tool_call_id}
+            )
+        ],
+    )
+
+    event_types = [event.event_type for event in resumed.trace]
+    assert "approval_granted" in event_types
+    assert "tool_executed" in event_types
+    assert "tool_verified" not in event_types
+    executed = next(event for event in resumed.trace if event.event_type == "tool_executed")
+    assert executed.payload["tool_name"] == tool_request.tool_name
+    assert executed.payload["ok"] is False
+    assert error_fragment in executed.payload["error"]
+    assert _archival_memory_count(store) == 0
+    assert store.list_archive_attachments(scope_type="session", scope_id="ses_1") == []
+    assert _promotion_candidate_count(store) == 0
+    assert [msg for msg in store.list_messages("ses_1") if msg.role == Role.TOOL] == []
+
+
 def test_kernel_tool_result_message_is_visible_to_later_v3_context(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
     store = create_store(settings)
@@ -958,11 +1551,9 @@ def test_kernel_tool_result_message_is_visible_to_later_v3_context(tmp_path):
         if item.layer == "recent" and item.metadata.get("role") == "tool"
     ]
     assert recent_tool_items
-    assert "archive_write" in recent_tool_items[0].text
-    assert (
-        memory_id in recent_tool_items[0].text
-        or recent_tool_items[0].metadata.get("memory_id") == memory_id
-    )
+    assert recent_tool_items[0].text == "tool archive_write executed"
+    tool_messages = [msg for msg in reopened.list_messages("ses_1") if msg.role == Role.TOOL]
+    assert tool_messages[0].metadata.get("memory_id") == memory_id
     assert package.metadata["memory_arch"] == "v3"
 
 

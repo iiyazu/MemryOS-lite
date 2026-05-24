@@ -1,15 +1,15 @@
 {
   "version": "2.0",
   "current_state": "GOD_DISPATCH",
-  "current_phase_idx": 16,
+  "current_phase_idx": 17,
   "started_at": "2026-05-20T00:00:00Z",
   "max_review_iterations": 3,
   "execute_lane": {
-    "phase": "phase-16",
+    "phase": "phase-17",
     "state": "GOD_DISPATCH"
   },
   "plan_lane": {
-    "phase": "phase-17",
+    "phase": "phase-18",
     "state": "PLAN_STORM"
   },
   "research_lane": {
@@ -647,14 +647,46 @@
       "id": "phase-16",
       "name": "Kernel Maintenance Tool Surface",
       "target_state": "kernel-maintenance-tools-usable",
-      "status": "in_progress",
-      "state_history": []
+      "status": "completed",
+      "state_history": [
+        {
+          "completed_at": "2026-05-24T00:19:24Z",
+          "ack_evidence": {
+            "ack_level": "usable",
+            "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+            "context_bundle": "work/phase-16/context_bundle.md",
+            "ack": "work/phase-16/ack.json",
+            "review": "work/phase-16/reviews/codex-review-after-repair.md",
+            "review_verdict": "work/phase-16/review_verdict.json",
+            "reflection": "work/phase-16/reflect_phase-16.md",
+            "tests_passed": 520,
+            "checks_passed": 8,
+            "case_level_eval": {
+              "longmemeval": "not applicable: no default LongMemEval retrieval, answer, judge, or scoring path changed; no benchmark-quality movement claimed",
+              "locomo": "5-case projected no-LLM structural smoke: 0/5; retrieval_miss=conv-26_qa_003,conv-26_qa_004,conv-26_qa_005; evidence_hit_answer_fail=conv-26_qa_001,conv-26_qa_002; default-off traces empty; opt-in traces length 14 per case"
+            },
+            "real_path_wired": true,
+            "structural_kernel_tool_smoke_only": true,
+            "no_benchmark_improvement_claim": true,
+            "v1_fallback_preserved": true,
+            "v3_default_preserved": true,
+            "kernel_default_unchanged": true,
+            "source_grounding_regressed": false,
+            "locomo_regressed_or_unexplained": false,
+            "review_eval_scope": "smoke",
+            "promotion_gate": "not_applicable",
+            "blueprint_adjustment": "none",
+            "next_phase_scope": "Phase 17 should run K4 LoCoMo maintenance repair measurement with same-slice full-chain evidence, isolated repair-smoke writes, and clean held-out or clean-store validation before any quality claim."
+          },
+          "commit": null
+        }
+      ]
     },
     {
       "id": "phase-17",
       "name": "LoCoMo Maintenance Repair Eval",
       "target_state": "locomo-maintenance-repair-measured",
-      "status": "pending",
+      "status": "in_progress",
       "state_history": []
     },
     {
@@ -665,5 +697,5 @@
       "state_history": []
     }
   ],
-  "last_updated": "2026-05-23T21:36:00Z"
+  "last_updated": "2026-05-24T00:19:24Z"
 }

@@ -556,6 +556,7 @@ V3_FUTURE_TABLES: set[str] = {
     "archive_attachments",
     "core_memory_blocks",
     "core_memory_history",
+    "promotion_candidates",
     "tool_policy_rules",
     "approval_states",
     "kernel_traces",

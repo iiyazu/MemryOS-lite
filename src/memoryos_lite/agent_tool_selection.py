@@ -5,6 +5,11 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
+from memoryos_lite.agent_tool_registry import (
+    KernelToolSpec,
+    executable_kernel_tool_names,
+    get_kernel_tool_spec,
+)
 from memoryos_lite.schemas import new_id
 from memoryos_lite.v3_contracts import (
     AgentStepRequest,
@@ -14,7 +19,7 @@ from memoryos_lite.v3_contracts import (
     ToolSelectionOrigin,
 )
 
-ALLOWED_K2_TOOLS = {"archive_write"}
+ALLOWED_K2_TOOLS = executable_kernel_tool_names()
 
 
 class ToolSelector(Protocol):
@@ -191,7 +196,8 @@ class ToolSelectionBoundary:
         candidates: list[ToolCandidate] = []
         rejected_inputs: list[dict[str, Any]] = []
         for request in tool_requests:
-            if request.tool_name not in ALLOWED_K2_TOOLS:
+            spec = get_kernel_tool_spec(request.tool_name)
+            if spec is None:
                 rejected_inputs.append(
                     {
                         "tool_name": request.tool_name,
@@ -199,37 +205,90 @@ class ToolSelectionBoundary:
                     }
                 )
                 continue
-            content = str(request.arguments.get("content") or "").strip()
-            if not content:
+            try:
+                candidate = self._candidate_for_request(request, spec)
+            except ValueError as exc:
                 rejected_inputs.append(
                     {
                         "tool_name": request.tool_name,
-                        "reason": "archive_write candidate requires non-empty content",
+                        "reason": str(exc),
                     }
                 )
                 continue
-            tool_call_id = request.tool_call_id or new_id("toolcall")
-            candidates.append(
-                ToolCandidate(
-                    tool_call_id=tool_call_id,
-                    session_id=request.session_id,
-                    tool_name="archive_write",
-                    arguments=dict(request.arguments),
-                    source_refs=list(request.source_refs),
-                    approval_id=request.approval_id,
-                    candidate_reason=(
-                        "archive_write candidate requiring policy and source/approval "
-                        "provenance"
-                    ),
-                    constraints={
-                        "allowed_tool": "archive_write",
-                        "requires_source_refs_or_approval": True,
-                        "requires_non_empty_content": True,
-                        "requires_policy_check": True,
-                    },
-                )
-            )
+            candidates.append(candidate)
         return candidates, rejected_inputs
+
+    @staticmethod
+    def _candidate_for_request(
+        request: ToolExecutionRequest,
+        spec: KernelToolSpec,
+    ) -> ToolCandidate:
+        arguments = dict(request.arguments)
+        if request.tool_name == "archive_write":
+            content = str(arguments.get("content") or "").strip()
+            if not content:
+                raise ValueError("archive_write candidate requires non-empty content")
+            arguments["content"] = content
+            constraints = {
+                "allowed_tool": "archive_write",
+                "requires_source_refs_or_approval": spec.requires_source_refs_or_approval,
+                "requires_non_empty_content": True,
+                "requires_policy_check": spec.requires_policy_check,
+            }
+        elif request.tool_name == "archive_attach":
+            archive_id = str(arguments.get("archive_id") or "").strip()
+            if not archive_id:
+                raise ValueError("archive_attach candidate requires archive_id")
+            scope_type = str(arguments.get("scope_type") or "session")
+            scope_id = str(arguments.get("scope_id") or request.session_id)
+            if scope_type != "session" or scope_id != request.session_id:
+                raise ValueError("archive_attach candidate requires current session scope")
+            arguments.update(
+                {
+                    "archive_id": archive_id,
+                    "scope_type": "session",
+                    "scope_id": request.session_id,
+                }
+            )
+            constraints = {
+                "allowed_tool": "archive_attach",
+                "requires_source_refs_or_approval": spec.requires_source_refs_or_approval,
+                "requires_existing_archive": True,
+                "requires_session_scope": True,
+                "requires_policy_check": spec.requires_policy_check,
+            }
+        elif request.tool_name == "core_promotion_request":
+            content = str(arguments.get("content") or "").strip()
+            if not content:
+                raise ValueError(
+                    "core_promotion_request candidate requires non-empty content"
+                )
+            arguments["content"] = content
+            arguments.setdefault("target_layer", "core")
+            arguments.setdefault("operation", "promote")
+            arguments.setdefault("write_source", "explicit_instruction")
+            constraints = {
+                "allowed_tool": "core_promotion_request",
+                "requires_source_refs_or_approval": spec.requires_source_refs_or_approval,
+                "applies_core_memory": False,
+                "requires_policy_check": spec.requires_policy_check,
+            }
+        else:
+            raise ValueError(
+                f"unsupported tool for kernel maintenance selection: {request.tool_name}"
+            )
+        return ToolCandidate(
+            tool_call_id=request.tool_call_id or new_id("toolcall"),
+            session_id=request.session_id,
+            tool_name=request.tool_name,
+            arguments=arguments,
+            source_refs=list(request.source_refs),
+            approval_id=request.approval_id,
+            candidate_reason=(
+                f"{request.tool_name} candidate requiring policy and provenance"
+            ),
+            constraints=constraints,
+        )
 
     @staticmethod
     def _coerce_choice(output: ToolSelectionChoice | dict[str, Any] | None) -> ToolSelectionChoice:

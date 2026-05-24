@@ -1,0 +1,50 @@
+{
+  "phase": "phase-16",
+  "verdict": "PASS",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-16/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "review_artifact": "work/phase-16/reviews/codex-review-after-repair.md",
+  "blocking_findings": [],
+  "repaired_findings": [
+    {
+      "id": "phase16-malformed-registered-tool-fail-closed",
+      "summary": "Registered Phase 16 tools now return auditable ok=false tool execution results on malformed approved replay instead of raising out of the real opt-in kernel path.",
+      "evidence": [
+        "tests/test_agent_kernel.py::test_memoryos_service_registered_tool_malformed_replay_fails_closed -> 3 passed",
+        "review artifact work/phase-16/reviews/codex-review-after-repair.md -> Final verdict: PASS"
+      ]
+    }
+  ],
+  "review_eval_decision": {
+    "scope": "smoke",
+    "reason": "Phase 16 changed the opt-in kernel/tool/store structural path only. Default retrieval, answer projection, scoring, and non-kernel public benchmark behavior did not change, so focused tests plus LoCoMo 5-case default-off and opt-in no-LLM structural smokes are sufficient for this phase; no benchmark-quality improvement is claimed.",
+    "longmemeval": {
+      "run": false,
+      "limit": 0,
+      "reason": "No LongMemEval retrieval, answer projection, scoring, or default public path changed in this structural kernel phase."
+    },
+    "locomo": {
+      "run": true,
+      "limit": 5,
+      "reason": "LoCoMo 5-case no-LLM structural smoke verifies default-off public reports and opt-in kernel trace shape for the changed path."
+    },
+    "llm_answer": false,
+    "llm_judge": false,
+    "promotion_gate": "not_applicable"
+  },
+  "overfitting_risk": "low",
+  "v1_fallback_preserved": true,
+  "v3_default_preserved": true,
+  "kernel_default_unchanged": true,
+  "source_grounding_regressed": false,
+  "locomo_regressed_or_unexplained": false,
+  "decision": "usable_ack"
+}

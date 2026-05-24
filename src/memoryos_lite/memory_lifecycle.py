@@ -35,7 +35,7 @@ class MemoryLifecycleService:
     ) -> PromotionCandidate:
         if not source_refs:
             raise ValueError("promotion candidates require source_refs")
-        return PromotionCandidate(
+        candidate = PromotionCandidate(
             id=new_id("pcand"),
             source_layer=source_layer,  # type: ignore[arg-type]
             target_layer=target_layer,  # type: ignore[arg-type]
@@ -50,6 +50,7 @@ class MemoryLifecycleService:
             created_at=utc_now(),
             updated_at=utc_now(),
         )
+        return self.store.create_promotion_candidate(candidate)
 
     def apply_candidate(
         self,

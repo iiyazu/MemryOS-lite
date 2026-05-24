@@ -13,6 +13,10 @@ from memoryos_lite.agent_kernel import (
     SimpleToolExecutionManager,
     SimpleToolPolicyEngine,
 )
+from memoryos_lite.agent_tool_registry import (
+    executable_kernel_tool_names,
+    get_kernel_tool_spec,
+)
 from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
@@ -1493,10 +1497,17 @@ class MemoryOSService:
                 tool_policy_engine=SimpleToolPolicyEngine(
                     rules=[
                         ToolPolicyRule(
-                            id="kernel_archive_write_requires_approval",
-                            tool_name="archive_write",
+                            id=f"kernel_{tool_name}_requires_approval",
+                            tool_name=tool_name,
                             effect="require_approval",
-                            reason="archive writes require explicit approval",
+                            reason=f"{tool_name} requires explicit approval",
+                        )
+                        for tool_name in sorted(executable_kernel_tool_names())
+                        if (
+                            get_kernel_tool_spec(tool_name) is not None
+                            and get_kernel_tool_spec(
+                                tool_name
+                            ).requires_approval_by_default
                         )
                     ]
                 ),

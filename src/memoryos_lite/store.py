@@ -54,6 +54,7 @@ from memoryos_lite.v3_contracts import (
     CoreMemoryBlock,
     IdentityScope,
     MemoryHistoryEvent,
+    PromotionCandidate,
     SourceRef,
     SourceSpan,
     ensure_persisted_identity_scope,
@@ -349,6 +350,29 @@ class ArchiveAttachmentRecord(Base):
     __table_args__ = (Index("ix_archive_attachments_scope", "scope_type", "scope_id"),)
 
 
+class PromotionCandidateRecord(Base):
+    __tablename__ = "promotion_candidates"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_layer: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    target_layer: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    identity_scope_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    write_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_promotion_candidates_status_created", "status", "created_at"),
+    )
+
+
 class MemoryStore:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -423,14 +447,14 @@ class MemoryStore:
                 conn.execute(
                     text(
                         "INSERT INTO alembic_version (version_num)"
-                        " VALUES ('0007_add_core_block_read_only_tags')"
+                        " VALUES ('0008_add_promotion_candidates')"
                     )
                 )
-            elif row[0] != "0007_add_core_block_read_only_tags":
+            elif row[0] != "0008_add_promotion_candidates":
                 conn.execute(
                     text(
                         "UPDATE alembic_version "
-                        "SET version_num = '0007_add_core_block_read_only_tags'"
+                        "SET version_num = '0008_add_promotion_candidates'"
                     )
                 )
 
@@ -800,6 +824,32 @@ class MemoryStore:
             source_refs=MemoryStore._load_source_refs(record.source_refs_json),
             metadata=json.loads(record.metadata_json),
             created_at=MemoryStore._aware(record.created_at),
+        )
+
+    @staticmethod
+    def _promotion_candidate_from_record(
+        record: PromotionCandidateRecord,
+    ) -> PromotionCandidate:
+        identity_scope = None
+        if record.identity_scope_json:
+            identity_scope = IdentityScope.model_validate(
+                json.loads(record.identity_scope_json)
+            )
+        return PromotionCandidate(
+            id=record.id,
+            source_layer=record.source_layer,  # type: ignore[arg-type]
+            target_layer=record.target_layer,  # type: ignore[arg-type]
+            operation=record.operation,  # type: ignore[arg-type]
+            content=record.content,
+            source_refs=MemoryStore._load_source_refs(record.source_refs_json),
+            identity_scope=identity_scope,
+            reason=record.reason,
+            confidence=record.confidence,
+            status=record.status,  # type: ignore[arg-type]
+            write_source=record.write_source,  # type: ignore[arg-type]
+            metadata=json.loads(record.metadata_json),
+            created_at=MemoryStore._aware(record.created_at),
+            updated_at=MemoryStore._aware(record.updated_at),
         )
 
     @staticmethod
@@ -1340,6 +1390,60 @@ class MemoryStore:
                 stmt = stmt.where(ArchiveAttachmentRecord.scope_id == scope_id)
             records = list(db.scalars(stmt))
         return [self._archive_attachment_from_record(record) for record in records]
+
+    def create_promotion_candidate(
+        self,
+        candidate: PromotionCandidate,
+    ) -> PromotionCandidate:
+        self._require_source_refs(candidate.source_refs, "promotion candidate write")
+        ensure_persisted_identity_scope(candidate.identity_scope)
+        with self.db() as db:
+            db.add(
+                PromotionCandidateRecord(
+                    id=candidate.id,
+                    source_layer=candidate.source_layer,
+                    target_layer=candidate.target_layer,
+                    operation=candidate.operation,
+                    content=candidate.content,
+                    source_refs_json=self._dump_source_refs(candidate.source_refs),
+                    identity_scope_json=(
+                        candidate.identity_scope.model_dump_json()
+                        if candidate.identity_scope is not None
+                        else None
+                    ),
+                    reason=candidate.reason,
+                    confidence=candidate.confidence,
+                    status=candidate.status,
+                    write_source=candidate.write_source,
+                    metadata_json=self._dump_json(candidate.metadata),
+                    created_at=candidate.created_at,
+                    updated_at=candidate.updated_at,
+                )
+            )
+        return candidate
+
+    def get_promotion_candidate(self, candidate_id: str) -> PromotionCandidate | None:
+        with self.db() as db:
+            record = db.get(PromotionCandidateRecord, candidate_id)
+            return None if record is None else self._promotion_candidate_from_record(record)
+
+    def list_promotion_candidates(
+        self,
+        *,
+        status: str | None = None,
+        target_layer: str | None = None,
+    ) -> list[PromotionCandidate]:
+        with self.db() as db:
+            stmt = select(PromotionCandidateRecord).order_by(
+                PromotionCandidateRecord.created_at.asc(),
+                PromotionCandidateRecord.id.asc(),
+            )
+            if status is not None:
+                stmt = stmt.where(PromotionCandidateRecord.status == status)
+            if target_layer is not None:
+                stmt = stmt.where(PromotionCandidateRecord.target_layer == target_layer)
+            records = list(db.scalars(stmt))
+        return [self._promotion_candidate_from_record(record) for record in records]
 
     def add_archival_memory(
         self,

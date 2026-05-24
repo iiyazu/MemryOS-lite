@@ -66,6 +66,42 @@ def test_lifecycle_candidates_require_source_refs_and_remain_pending(tmp_path):
     assert candidate.source_refs[0].source_id == "msg_1"
 
 
+def test_lifecycle_create_candidate_persists_pending_candidate(tmp_path):
+    store = _store(tmp_path)
+    service = MemoryLifecycleService(store)
+
+    candidate = service.create_candidate(
+        source_layer="archival",
+        target_layer="core",
+        operation="promote",
+        content="Alice prefers concise status updates.",
+        source_refs=[_ref()],
+        identity_scope=None,
+        reason="source-backed preference candidate",
+        confidence=0.87,
+        write_source="explicit_instruction",
+        metadata={
+            "label": "human",
+            "limit_tokens": 120,
+            "tool_name": "core_promotion_request",
+        },
+    )
+
+    persisted = store.get_promotion_candidate(candidate.id)
+    candidates = store.list_promotion_candidates(status="pending")
+
+    assert persisted is not None
+    assert persisted.id == candidate.id
+    assert persisted.status == "pending"
+    assert persisted.target_layer == "core"
+    assert persisted.operation == "promote"
+    assert persisted.content == "Alice prefers concise status updates."
+    assert persisted.source_refs[0].source_id == "msg_1"
+    assert persisted.write_source == "explicit_instruction"
+    assert persisted.metadata["label"] == "human"
+    assert [item.id for item in candidates] == [candidate.id]
+
+
 def test_recall_to_archival_candidate_applies_as_archival_memory(tmp_path):
     store = _store(tmp_path)
     service = MemoryLifecycleService(store)

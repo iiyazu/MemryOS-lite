@@ -7,6 +7,8 @@ from memoryos_lite.store import MemoryStore
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
 
+CURRENT_ALEMBIC_HEAD = "0008_add_promotion_candidates"
+
 
 def _settings(tmp_path):
     return Settings(
@@ -75,7 +77,7 @@ def test_init_db_stamps_current_migration_head(tmp_path):
     store.init_db()
     with store.db() as db:
         version = db.scalar(text("select version_num from alembic_version limit 1"))
-    assert version == "0007_add_core_block_read_only_tags"
+    assert version == CURRENT_ALEMBIC_HEAD
 
 
 def test_init_db_upgrades_existing_core_memory_schema_before_stamping_head(tmp_path):
@@ -138,10 +140,17 @@ def test_init_db_upgrades_existing_core_memory_schema_before_stamping_head(tmp_p
         columns = {
             row[1] for row in db.execute(text("PRAGMA table_info(core_memory_blocks)"))
         }
+        table_names = {
+            row[0]
+            for row in db.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'table'")
+            )
+        }
         version = db.scalar(text("select version_num from alembic_version limit 1"))
 
     assert {"read_only", "tags_json"} <= columns
-    assert version == "0007_add_core_block_read_only_tags"
+    assert "promotion_candidates" in table_names
+    assert version == CURRENT_ALEMBIC_HEAD
 
     store.create_core_memory_block(
         CoreMemoryBlock(

@@ -1,0 +1,125 @@
+{
+  "phase": "phase-16",
+  "ack_level": "usable",
+  "active_goal": "Improve MemoryOS Lite v3 into a benchmark-usable Letta-style agent memory system for LongMemEval and LoCoMo, without demo-only phase completion, without hiding case-level regressions, and without enabling the v3 kernel by default.",
+  "context_bundle": {
+    "path": "work/phase-16/context_bundle.md",
+    "used_by": [
+      "plan",
+      "execute",
+      "review"
+    ],
+    "superseded_sections": []
+  },
+  "implemented_chain": {
+    "ingest": "not_applicable",
+    "store": "changed",
+    "retrieval": "verified",
+    "context_composer": "verified",
+    "answer_projection": "not_applicable",
+    "kernel_loop": "changed",
+    "public_eval": "verified"
+  },
+  "real_path_wired": true,
+  "demo_only_or_stub_remaining": [],
+  "failing_tests_added_before_fix": [
+    "Registry/selection RED: missing explicit registry and fail-closed unopened tool behavior.",
+    "Archive attach RED: missing service-backed archive attachment execution, verification, and v3 visibility.",
+    "Core promotion RED: missing durable pending promotion candidate APIs and verification.",
+    "Policy integration RED: service-level opt-in kernel policy only required approval for archive_write.",
+    "Review repair RED: malformed approved replay for registered tools raised out of MemoryOSService opt-in kernel execution."
+  ],
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_agent_kernel.py::test_memoryos_service_registered_tool_malformed_replay_fails_closed -q",
+      "result": "3 passed"
+    },
+    {
+      "command": "uv run pytest tests/test_agent_kernel.py -q",
+      "result": "48 passed"
+    },
+    {
+      "command": "uv run pytest tests/test_memory_lifecycle.py tests/test_core_memory_service.py tests/test_archival_store.py tests/test_context_composer.py -q",
+      "result": "30 passed"
+    },
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py -q",
+      "result": "61 passed"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "520 passed, 1 warning"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed!"
+    },
+    {
+      "command": "MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge --run-id phase16_locomo5_kernel_default_off_repair",
+      "result": "5 rows; 5 fail / 0 pass projected no-LLM structural smoke; kernel trace lengths [0, 0, 0, 0, 0]"
+    },
+    {
+      "command": "MEMORYOS_MEMORY_ARCH=v3 MEMORYOS_AGENT_KERNEL=v1 uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 5 --no-llm-answer --no-llm-judge --run-id phase16_locomo5_kernel_tools_structural_repair",
+      "result": "5 rows; 5 fail / 0 pass projected no-LLM structural smoke; kernel trace lengths [14, 14, 14, 14, 14]"
+    }
+  ],
+  "case_level_eval": {
+    "longmemeval": {
+      "limit": 0,
+      "llm_answer": false,
+      "llm_judge": false,
+      "pass_fail": "not_applicable: Phase 16 changed only the opt-in kernel/tool/store structural path and did not change LongMemEval retrieval, answer projection, scoring, or default public behavior.",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [],
+      "evidence_hit_answer_fail": [],
+      "judge_questionable": []
+    },
+    "locomo": {
+      "limit": 5,
+      "llm_answer": false,
+      "llm_judge": false,
+      "pass_fail": "5 fail / 0 pass projected no-LLM structural smoke for both default-off and opt-in repair reports; no benchmark-quality improvement claim.",
+      "fail_to_pass": [],
+      "pass_to_fail": [],
+      "retrieval_miss": [
+        "conv-26_qa_003",
+        "conv-26_qa_004",
+        "conv-26_qa_005"
+      ],
+      "evidence_hit_answer_fail": [
+        "conv-26_qa_001",
+        "conv-26_qa_002"
+      ],
+      "judge_questionable": []
+    }
+  },
+  "review_verdict": {
+    "verdict": "PASS",
+    "artifact": "work/phase-16/reviews/codex-review-after-repair.md",
+    "overfitting_risk": "low",
+    "v1_fallback_preserved": true,
+    "v3_default_preserved": true,
+    "kernel_default_unchanged": true,
+    "source_grounding_regressed": false,
+    "locomo_regressed_or_unexplained": false,
+    "review_eval_decision": {
+      "scope": "smoke",
+      "reason": "Phase 16 changed the opt-in kernel/tool/store structural path only; default retrieval, answer projection, scoring, and non-kernel public benchmark behavior did not change.",
+      "longmemeval": {
+        "run": false,
+        "limit": 0,
+        "reason": "No LongMemEval retrieval, answer projection, scoring, or default public path changed in this structural kernel phase."
+      },
+      "locomo": {
+        "run": true,
+        "limit": 5,
+        "reason": "LoCoMo 5-case no-LLM structural smoke verifies default-off public reports and opt-in kernel trace shape for the changed path."
+      },
+      "llm_answer": false,
+      "llm_judge": false,
+      "promotion_gate": "not_applicable"
+    }
+  },
+  "decision": "advance"
+}
