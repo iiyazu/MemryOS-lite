@@ -446,6 +446,94 @@ def prepare_master_migration(loop_root: str | Path) -> dict[str, Any]:
     return {"status": "prepared" if validation["valid"] else "blocked", "validation": validation}
 
 
+def _controller_path(loop: Path, ref: str) -> Path:
+    if ref.startswith(".hermes-loop/"):
+        return loop.parent / ref
+    return loop / ref
+
+
+def _load_required_json(loop: Path, ref: str, errors: list[str], label: str) -> dict[str, Any] | None:
+    path = _controller_path(loop, ref)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        errors.append(f"missing {label}: {ref}")
+        return None
+    except json.JSONDecodeError as exc:
+        errors.append(f"invalid {label} JSON: {ref}: {exc}")
+        return None
+    if not isinstance(payload, dict):
+        errors.append(f"{label} JSON root must be an object: {ref}")
+        return None
+    return payload
+
+
+def validate_merge_queue_gate(loop_root: str | Path, feature: dict[str, Any]) -> dict[str, Any]:
+    loop = Path(loop_root)
+    errors: list[str] = []
+    feature_id = feature["id"]
+    artifacts = feature["artifacts"]
+    expected_master_prefix = f".hermes-loop/master/features/{feature_id}/"
+
+    if not artifacts["master_review"].startswith(expected_master_prefix):
+        errors.append(f"master_review must live under {expected_master_prefix}")
+    if not artifacts["integrated_tests"].startswith(expected_master_prefix):
+        errors.append(f"integrated_tests must live under {expected_master_prefix}")
+
+    for label in ("ack", "review_verdict", "result"):
+        if not _controller_path(loop, artifacts[label]).exists():
+            errors.append(f"missing slave {label}: {artifacts[label]}")
+
+    ack = _load_required_json(loop, artifacts["ack"], errors, "ack")
+    if ack and str(ack.get("ack_level", "")).lower() not in PROMOTION_PASS_VERDICTS:
+        errors.append("ack ack_level must be usable")
+    review_verdict = _load_required_json(loop, artifacts["review_verdict"], errors, "review_verdict")
+    if review_verdict and str(review_verdict.get("verdict", "")).lower() not in PROMOTION_PASS_VERDICTS:
+        errors.append("review_verdict verdict must be PASS")
+
+    slave_state_ref = feature.get("slave_state_path")
+    if isinstance(slave_state_ref, str) and not _controller_path(loop, slave_state_ref).exists():
+        errors.append(f"missing slave_state: {slave_state_ref}")
+
+    master_review = _load_required_json(loop, artifacts["master_review"], errors, "master_review")
+    integrated_tests = _load_required_json(loop, artifacts["integrated_tests"], errors, "integrated_tests")
+
+    if master_review:
+        if master_review.get("recorded_by") != "master-god":
+            errors.append("master_review must be recorded_by master-god")
+        if master_review.get("status") != "accepted":
+            errors.append("master_review status must be accepted")
+        for key in ("feature_id", "branch", "base_commit", "head_commit", "target_branch", "artifact_digests"):
+            if key not in master_review:
+                errors.append(f"master_review missing required key: {key}")
+
+    if integrated_tests:
+        if integrated_tests.get("recorded_by") != "master-god":
+            errors.append("integrated_tests must be recorded_by master-god")
+        if integrated_tests.get("status") != "passed":
+            errors.append("integrated_tests status must be passed")
+        if integrated_tests.get("worktree_clean") is not True:
+            errors.append("integrated_tests worktree_clean must be true")
+        for key in ("feature_id", "branch", "base_commit", "head_commit", "target_branch", "commands"):
+            if key not in integrated_tests:
+                errors.append(f"integrated_tests missing required key: {key}")
+
+    if master_review and integrated_tests:
+        for key in ("feature_id", "branch", "base_commit", "head_commit", "target_branch"):
+            if master_review.get(key) != integrated_tests.get(key):
+                errors.append(f"master_review and integrated_tests mismatch on {key}")
+        if master_review.get("branch") != feature.get("branch"):
+            errors.append("gate evidence branch does not match feature branch")
+        if master_review.get("target_branch") != feature.get("target_branch"):
+            errors.append("gate evidence target_branch does not match feature target_branch")
+
+    merge = feature.get("merge", {})
+    if merge.get("strategy") != "no_ff_merge_commit":
+        errors.append("merge strategy must be no_ff_merge_commit")
+
+    return {"valid": not errors, "errors": errors}
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.tmp")
