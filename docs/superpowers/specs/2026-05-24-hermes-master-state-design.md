@@ -48,20 +48,27 @@ The old root-loop files are moved behind a legacy boundary:
 - `.hermes-loop/legacy/root-loop/master_slave_status.md`
 - `.hermes-loop/legacy/root-loop/config.json`
 - `.hermes-loop/legacy/root-loop/contracts/god_dispatch_template.json`
+- `.hermes-loop/legacy/root-loop/blueprint.md`
+- `.hermes-loop/legacy/root-loop/blueprint.zh.md`
+- `.hermes-loop/legacy/root-loop/god_loop_prompt.md`
 
 The active control plane is:
 
+- `.hermes-loop/master_blueprint.md`
 - `.hermes-loop/master_state.json`
 - `.hermes-loop/master_config.json`
 - `.hermes-loop/master_status.json`
 - `.hermes-loop/master_status.md`
+- `.hermes-loop/prompts/master_god_prompt.md`
+- `.hermes-loop/prompts/slave_god_prompt.md`
 - `.hermes-loop/contracts/master_dispatch_template.json`
 - `.hermes-loop/contracts/slave_dispatch_template.json`
+- `.hermes-loop/approvals/<feature-id>/...`
 - `.hermes-loop/work/features/<feature-id>/...`
 
 Legacy root-loop files remain auditable but no longer drive new control flow.
-Old phase-loop config and dispatch templates must not be treated as active
-controller metadata after migration.
+Old phase-loop blueprints, prompts, config, and dispatch templates must not be
+treated as active controller metadata after migration.
 
 ## Master State Shape
 
@@ -74,7 +81,12 @@ controller metadata after migration.
   "active": true,
   "history_baseline": ".hermes-loop/history/main_loop_phase0_18.json",
   "legacy_root_loop": ".hermes-loop/legacy/root-loop/",
+  "master_blueprint": ".hermes-loop/master_blueprint.md",
   "master_config": ".hermes-loop/master_config.json",
+  "prompts": {
+    "master": ".hermes-loop/prompts/master_god_prompt.md",
+    "slave": ".hermes-loop/prompts/slave_god_prompt.md"
+  },
   "dispatch_contracts": {
     "master": ".hermes-loop/contracts/master_dispatch_template.json",
     "slave": ".hermes-loop/contracts/slave_dispatch_template.json"
@@ -101,7 +113,8 @@ controller metadata after migration.
         "review_verdict": ".hermes-loop/work/features/feature-id/review_verdict.json",
         "integrated_tests": ".hermes-loop/work/features/feature-id/integrated_tests.json",
         "master_review": ".hermes-loop/work/features/feature-id/master_review.json",
-        "merge_approval": ".hermes-loop/work/features/feature-id/merge_approval.json"
+        "merge_approval_request": ".hermes-loop/approvals/feature-id/merge_approval_request.json",
+        "merge_approval": ".hermes-loop/approvals/feature-id/merge_approval.json"
       },
       "merge": {
         "status": "ready_for_master_review",
@@ -141,6 +154,46 @@ state, local execution progress, and artifact declarations. It is required for
 durability, but it is not an authority for Master queues, Master policy, or
 merge state.
 
+### Master Blueprint And Prompts
+
+`.hermes-loop/blueprint.md`, `.hermes-loop/blueprint.zh.md`, and
+`.hermes-loop/god_loop_prompt.md` are legacy root-loop files after migration.
+They should move to `.hermes-loop/legacy/root-loop/` with the rest of the
+phase0-18 control plane.
+
+Active Master architecture and operating rules live in
+`.hermes-loop/master_blueprint.md`. It defines the Master/Slave architecture,
+global policy, migration invariants, feature-lane lifecycle, queue semantics,
+and integration/merge rules. It must not contain executable phase0-18 ordering.
+
+Active prompts are split by role:
+
+- `.hermes-loop/prompts/master_god_prompt.md` is the Master God prompt. It owns
+  integration, audit, status, review, queue, approval-request, and merge
+  decision behavior.
+- `.hermes-loop/prompts/slave_god_prompt.md` is the Slave God prompt. It owns
+  feature-local planning, execution, review, ACK, and readiness reporting.
+
+Master startup must read these files first, in order:
+
+1. `.hermes-loop/master_state.json`
+2. `.hermes-loop/master_config.json`
+3. `.hermes-loop/master_blueprint.md`
+4. `.hermes-loop/prompts/master_god_prompt.md`
+5. `.hermes-loop/contracts/master_dispatch_template.json`
+6. Feature-local `slave_state.json` and referenced artifacts only for features
+   that Master is reviewing, holding, repairing, integrating, or queueing.
+
+Slave startup must read the Master-assigned feature registry entry, then:
+
+1. `.hermes-loop/prompts/slave_god_prompt.md`
+2. `.hermes-loop/contracts/slave_dispatch_template.json`
+3. `.hermes-loop/work/features/<feature-id>/slave_state.json`
+4. `.hermes-loop/work/features/<feature-id>/blueprint.md`
+
+Launchers and prompts must not use legacy `blueprint.md` or
+`god_loop_prompt.md` for active execution after migration.
+
 ### Master Config And Dispatch Contracts
 
 `.hermes-loop/config.json` is legacy root-loop phase metadata. It should move to
@@ -149,8 +202,9 @@ controller files.
 
 Active Master configuration lives in `.hermes-loop/master_config.json`. It may
 hold default worktree roots, allowed target branches, Git/GitHub integration
-defaults, status/report settings, and global policy knobs that are not
-per-feature state. It must not contain executable phase-loop ordering.
+defaults, status/report settings, approval verification sources, maintainer or
+automation allowlists, trusted signing keys, and global policy knobs that are
+not per-feature state. It must not contain executable phase-loop ordering.
 
 The old `.hermes-loop/contracts/god_dispatch_template.json` is a legacy
 phase-loop dispatch contract because it is populated from `state.json` and phase
@@ -317,6 +371,17 @@ create `merge_approval_request.json`. A valid approval must come from a human
 maintainer or trusted repository automation outside both the Master and Slave
 execution loops.
 
+Approval artifacts live outside feature-local work directories:
+
+- `.hermes-loop/approvals/<feature-id>/merge_approval_request.json`
+- `.hermes-loop/approvals/<feature-id>/merge_approval.json`
+
+The `approvals/` tree is Master/external-owned. Slave Gods may read approval
+state if needed, but may not create, edit, move, or delete approval artifacts.
+Feature registry entries may reference approval paths, but feature-local
+`work/features/<feature-id>/...` artifacts must not be the write authority for
+approval.
+
 Required schema:
 
 ```json
@@ -333,6 +398,11 @@ Required schema:
   "master_review_ref": ".hermes-loop/work/features/feature-id/master_review.json",
   "integrated_tests_ref": ".hermes-loop/work/features/feature-id/integrated_tests.json",
   "merge_strategy": "no_ff_or_pr",
+  "verification": {
+    "method": "maintainer_allowlist|git_signature|github_review|github_check|ci_artifact",
+    "ref": "maintainers.json#alice",
+    "status": "verified"
+  },
   "constraints": [],
   "timestamp": "2026-05-24T00:00:00Z"
 }
@@ -349,6 +419,11 @@ Rules:
 - A Master-authored approval is invalid. A trusted automation approval is valid
   only when `actor` identifies external repository automation and
   `created_by=external_to_master_and_slave`.
+- `verification.status` must be `verified`.
+- `verification.method` must use at least one locally checkable or API-checkable
+  source configured in `master_config.json`: maintainer allowlist, trusted git
+  signature, GitHub review, GitHub check/run id, signed commit/tag, or CI
+  artifact URL with a recorded digest.
 - Missing, stale, mismatched, or Slave-authored approval blocks merge.
 
 ## Migration
@@ -372,35 +447,45 @@ Migration steps:
    explicit migration audit.
 2. Update reporter, hardening helpers, launcher, and God prompts to use the
    compatibility reader instead of opening `.hermes-loop/state.json`,
-   `.hermes-loop/config.json`, or the legacy God dispatch template directly.
+   `.hermes-loop/config.json`, legacy `blueprint.md`, legacy
+   `god_loop_prompt.md`, or the legacy God dispatch template directly.
 3. Generate `.hermes-loop/master_state.json` from current `.hermes-loop/state.json`
    and `.hermes-loop/feature_lanes.json`.
-4. Generate `.hermes-loop/master_config.json` from the active parts of
+4. Generate `.hermes-loop/master_blueprint.md` from the active Master/Slave
+   architecture decisions. Phase0-18 execution ordering remains legacy-only.
+5. Generate `.hermes-loop/prompts/master_god_prompt.md` and
+   `.hermes-loop/prompts/slave_god_prompt.md` from the new role boundaries.
+6. Generate `.hermes-loop/master_config.json` from the active parts of
    `.hermes-loop/config.json`. Phase-loop ordering remains legacy-only.
-5. Generate `.hermes-loop/contracts/master_dispatch_template.json` and
+7. Generate `.hermes-loop/contracts/master_dispatch_template.json` and
    `.hermes-loop/contracts/slave_dispatch_template.json` from the new Master and
    Slave responsibilities.
-6. Generate every feature's required
+8. Generate every feature's required
    `.hermes-loop/work/features/<feature-id>/slave_state.json` and record its path
    in `master_state.features[].slave_state_path`.
-7. Validate `master_state.json`, `master_config.json`, dispatch contracts, slave
-   states, and derived queues before moving legacy files.
-8. Move old active root-loop control files to
+9. Create `.hermes-loop/approvals/` and migrate any existing approval-like
+   evidence as read-only historical evidence. Do not synthesize
+   `merge_approval.json`.
+10. Validate `master_state.json`, `master_blueprint.md`, prompts,
+   `master_config.json`, dispatch contracts, approval paths, slave states, and
+   derived queues before moving legacy files.
+11. Move old active root-loop control files to
    `.hermes-loop/legacy/root-loop/`.
-9. Leave minimal `.hermes-loop/state.json` and `.hermes-loop/config.json`
-   migration stubs only if needed by an
+12. Leave minimal `.hermes-loop/state.json`, `.hermes-loop/config.json`, and
+   `.hermes-loop/god_loop_prompt.md` migration stubs only if needed by an
    unreplaced external caller. The stub must say `active=false`, point to
-   `.hermes-loop/master_state.json` or `.hermes-loop/master_config.json`, and
-   must not contain executable phase lanes or active phase metadata.
-10. Generate `.hermes-loop/master_status.{json,md}` from `master_state.json`.
-11. Keep legacy readers for audit and migration reports only.
-12. Update prompts and blueprint text so old `state.json`, `config.json`, and
-   God dispatch template are described as legacy history, not active control.
+   the matching Master file, and must not contain executable phase lanes, active
+   phase metadata, or active prompts.
+13. Generate `.hermes-loop/master_status.{json,md}` from `master_state.json`.
+14. Keep legacy readers for audit and migration reports only.
+15. Update prompts and blueprint text so old `state.json`, `config.json`,
+   `blueprint.md`, `god_loop_prompt.md`, and God dispatch template are described
+   as legacy history, not active control.
 
-The implementation plan must treat reporter, hardening, launcher, God prompt,
-config migration, and dispatch-contract migration as one migration unit. Moving
-root-loop files before those readers and replacement contracts are in place is
-invalid.
+The implementation plan must treat reporter, hardening, launcher, Master/Slave
+prompts, Master blueprint migration, config migration, approval path setup, and
+dispatch-contract migration as one migration unit. Moving root-loop files before
+those readers and replacement contracts are in place is invalid.
 
 The migration must preserve phase0-18 evidence and the current feature-lane
 status:
@@ -416,17 +501,19 @@ status:
 - Missing history baseline: Master control is blocked.
 - Missing active-state compatibility reader during migration: migration is
   blocked before moving legacy files.
+- Missing or invalid `master_blueprint.md`, `master_god_prompt.md`, or
+  `slave_god_prompt.md`: Master control is blocked.
 - Missing or invalid `master_config.json`: Master control is blocked.
-- Active code still reading legacy `config.json` or legacy
-  `god_dispatch_template.json`: migration is blocked.
+- Active code still reading legacy `blueprint.md`, `god_loop_prompt.md`,
+  `config.json`, or legacy `god_dispatch_template.json`: migration is blocked.
 - Missing legacy root-loop files: warning unless required migration evidence is
   absent.
 - Missing required slave state file: that feature is blocked.
 - Missing slave ACK, review, or result: that feature is blocked.
 - Dirty slave worktree: feature cannot enter review or merge queue.
 - Missing or failed integrated tests: feature cannot enter merge queue.
-- Missing, stale, mismatched, self-signed, or Slave-authored `merge_approval`:
-  feature cannot be merged.
+- Missing, stale, mismatched, unverifiable, self-signed, Master-authored, or
+  Slave-authored `merge_approval`: feature cannot be merged.
 - GitHub unavailable: degrade to local-only and keep local gates.
 
 ## Testing
@@ -435,13 +522,18 @@ Add `tests/test_hermes_master_state.py` for:
 
 - migration from old `state.json` and `feature_lanes.json`;
 - migration order safety: compatibility readers, reporter, hardening, launcher,
-  prompts, config migration, and dispatch contracts are updated before root-loop
-  files move;
+  prompts, Master blueprint, config migration, approval path setup, and dispatch
+  contracts are updated before root-loop files move;
 - legacy root-loop isolation;
-- old `config.json` and `god_dispatch_template.json` are legacy-only after
-  migration;
+- old `blueprint.md`, `blueprint.zh.md`, `god_loop_prompt.md`, `config.json`,
+  and `god_dispatch_template.json` are legacy-only after migration;
+- `master_blueprint.md`, `master_god_prompt.md`, and `slave_god_prompt.md` are
+  the active blueprint and prompts;
 - `master_config.json`, `master_dispatch_template.json`, and
   `slave_dispatch_template.json` are the active config and dispatch contracts;
+- Master startup read-first order uses Master files, not legacy root-loop files;
+- Slave startup read-first order uses assigned feature registry plus Slave
+  prompt/contract/state/blueprint;
 - required `slave_state.json` generation and validation;
 - master state schema validation;
 - Master-owned feature registry fields are required for review and merge
@@ -455,6 +547,9 @@ Add `tests/test_hermes_master_state.py` for:
 - `merge_approval.json` rejects missing actor, wrong commit range, wrong target
   branch, stale test/review refs, self-signed Master approval, and Slave-authored
   approval;
+- `merge_approval.json` must live under `.hermes-loop/approvals/<feature-id>/`
+  and must include verified maintainer allowlist, trusted git signature, GitHub
+  review/check, signed commit/tag, or CI artifact evidence;
 - malformed `merge.status` ahead of feature state is blocked;
 - invalid or unexpectedly inactive `master_state.json` blocks active execution
   instead of falling back to legacy state;
@@ -469,8 +564,10 @@ Update existing tests:
   migration;
 - launcher and prompts use Master/Slave dispatch contracts, not legacy
   `god_dispatch_template.json`;
-- God prompt does not instruct active control through legacy `state.json` or
-  `config.json`;
+- launcher and prompts use active Master/Slave prompts, not legacy
+  `god_loop_prompt.md`;
+- God prompt does not instruct active control through legacy `state.json`,
+  `blueprint.md`, or `config.json`;
 - old `feature_lanes.json` is not treated as active source after migration;
 - compatibility status clearly reports legacy inputs as inactive.
 
@@ -486,9 +583,13 @@ python3 -m py_compile .hermes-loop/hermes_hardening.py .hermes-loop/hermes_repor
 
 - No placeholders remain.
 - `master_state.json` is the only active control-plane truth source.
+- `master_blueprint.md` and Master/Slave prompts replace legacy root-loop
+  blueprint and prompt files.
 - `master_config.json` and Master/Slave dispatch templates replace legacy
   phase-loop config and dispatch contracts.
 - Legacy root-loop files are isolated and read-only for audit.
+- Approval artifacts live under `.hermes-loop/approvals/` and require
+  externally verifiable authority.
 - Slave autonomy is feature-local and cannot mutate Master queues directly.
 - Slave state is required and referenced from `master_state.features[]`.
 - Migration order installs compatibility readers before moving legacy files.
