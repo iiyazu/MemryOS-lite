@@ -64,7 +64,8 @@ def master_slave_report():
         return error
     try:
         summary = module.summarize_master_slave_control(LOOP, project_root=PROJECT)
-        module.write_master_slave_status(LOOP, summary)
+        if summary.get("source") != ".hermes-loop/master_state.json":
+            module.write_master_slave_status(LOOP, summary)
         return summary
     except Exception as exc:
         return {"error": str(exc)}
@@ -282,9 +283,10 @@ def main():
 """
     if report.get("master_slave"):
         counts = report["master_slave"].get("counts", {})
+        total = counts.get("features", counts.get("total", 0))
         md += (
             "\n"
-            f"Master/slave features: {counts.get('features', 0)} total, "
+            f"Master/slave features: {total} total, "
             f"{counts.get('reviewable', 0)} reviewable, "
             f"{counts.get('mergeable', 0)} mergeable, "
             f"{counts.get('blocked', 0)} blocked.\n"

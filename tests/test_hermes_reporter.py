@@ -145,6 +145,7 @@ def test_reporter_handles_master_active_without_legacy_state_file(
 
     assert report["master"]["activation_state"] == "master_active"
     assert (loop / "master_status.json").exists()
+    assert not (loop / "master_slave_status.json").exists()
 
 
 def test_latest_markdown_surfaces_master_review_queue(
