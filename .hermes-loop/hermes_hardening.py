@@ -614,6 +614,28 @@ def _load_required_json(
     return payload
 
 
+def _current_target_head(loop: Path, target_branch: str | None) -> str | None:
+    if not target_branch:
+        return None
+    result = subprocess.run(
+        ["git", "-C", str(loop.parent), "rev-parse", target_branch],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _same_commit_ref(left: Any, right: Any) -> bool:
+    left_s = str(left or "")
+    right_s = str(right or "")
+    return bool(left_s and right_s) and (
+        left_s == right_s or left_s.startswith(right_s) or right_s.startswith(left_s)
+    )
+
+
 def validate_merge_queue_gate(loop_root: str | Path, feature: dict[str, Any]) -> dict[str, Any]:
     loop = Path(loop_root)
     errors: list[str] = []
@@ -693,6 +715,11 @@ def validate_merge_queue_gate(loop_root: str | Path, feature: dict[str, Any]) ->
             errors.append("gate evidence branch does not match feature branch")
         if master_review.get("target_branch") != feature.get("target_branch"):
             errors.append("gate evidence target_branch does not match feature target_branch")
+        current_target_head = _current_target_head(loop, feature.get("target_branch"))
+        if current_target_head is None:
+            errors.append("unable to resolve current target HEAD")
+        elif not _same_commit_ref(master_review.get("base_commit"), current_target_head):
+            errors.append("gate evidence base_commit does not match current target HEAD")
 
     merge = feature.get("merge", {})
     if merge.get("strategy") != "no_ff_merge_commit":

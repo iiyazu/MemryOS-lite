@@ -385,11 +385,12 @@ def write_gate_artifacts(loop: Path, feature_id: str = "v1-quarantine") -> None:
     )
 
 
-def test_merge_queue_gate_accepts_master_owned_evidence(tmp_path):
+def test_merge_queue_gate_accepts_master_owned_evidence(tmp_path, monkeypatch):
     hardening = load_hardening()
     loop = tmp_path / ".hermes-loop"
     state = feature_for_gate()
     write_gate_artifacts(loop)
+    monkeypatch.setattr(hardening, "_current_target_head", lambda _loop, _branch: "123456abcdef")
 
     result = hardening.validate_merge_queue_gate(loop, state["features"][0])
 
@@ -434,6 +435,32 @@ def test_merge_queue_gate_rejects_failed_integrated_tests(tmp_path):
 
     assert result["valid"] is False
     assert "integrated_tests status must be passed" in result["errors"]
+
+
+def test_merge_queue_gate_rejects_stale_target_base_commit(tmp_path, monkeypatch):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    state = feature_for_gate()
+    write_gate_artifacts(loop)
+    monkeypatch.setattr(hardening, "_current_target_head", lambda _loop, _branch: "current123")
+
+    result = hardening.validate_merge_queue_gate(loop, state["features"][0])
+
+    assert result["valid"] is False
+    assert "gate evidence base_commit does not match current target HEAD" in result["errors"]
+
+
+def test_merge_queue_gate_rejects_unresolved_target_branch(tmp_path, monkeypatch):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    state = feature_for_gate()
+    write_gate_artifacts(loop)
+    monkeypatch.setattr(hardening, "_current_target_head", lambda _loop, _branch: None)
+
+    result = hardening.validate_merge_queue_gate(loop, state["features"][0])
+
+    assert result["valid"] is False
+    assert "unable to resolve current target HEAD" in result["errors"]
 
 
 def valid_approval_bundle(loop: Path, feature_id: str = "v1-quarantine") -> dict:
