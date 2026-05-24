@@ -792,3 +792,94 @@ def test_held_after_merge_maps_to_held_not_merged():
     assert result["queues"]["merged"] == []
     assert result["counts"]["held"] == 1
     assert result["counts"]["merged"] == 0
+
+
+def test_activate_master_migration_moves_legacy_files_and_marks_master_active(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_legacy_inputs(loop)
+    hardening.prepare_master_migration(loop)
+
+    result = hardening.activate_master_migration(loop)
+
+    assert result["status"] == "activated"
+    state = json.loads((loop / "master_state.json").read_text())
+    assert state["activation_state"] == "master_active"
+    assert state["active"] is True
+    assert not (loop / "state.json").exists()
+    assert (loop / "legacy" / "root-loop" / "state.json").exists()
+    assert (loop / "legacy" / "root-loop" / "feature_lanes.json").exists()
+    assert (loop / "legacy" / "root-loop" / "config.json").exists()
+    assert (loop / "legacy" / "root-loop" / "god_loop_prompt.md").exists()
+    assert (loop / "legacy" / "root-loop" / "contracts" / "god_dispatch_template.json").exists()
+
+
+def test_activate_master_migration_refuses_invalid_pending_state(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_legacy_inputs(loop)
+    hardening.prepare_master_migration(loop)
+    state_path = loop / "master_state.json"
+    state = json.loads(state_path.read_text())
+    state["features"][0].pop("slave_state_path")
+    write_json(state_path, state)
+
+    result = hardening.activate_master_migration(loop)
+
+    assert result["status"] == "blocked"
+    assert (loop / "state.json").exists()
+    assert not (loop / "legacy" / "root-loop" / "state.json").exists()
+
+
+def test_activate_master_migration_rolls_back_mid_move_failure(tmp_path, monkeypatch):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_legacy_inputs(loop)
+    hardening.prepare_master_migration(loop)
+    original_move = hardening._move_if_exists
+    calls = {"count": 0}
+
+    def fail_after_first_move(source, destination):
+        calls["count"] += 1
+        original_move(source, destination)
+        if calls["count"] == 1:
+            raise RuntimeError("simulated move failure")
+
+    monkeypatch.setattr(hardening, "_move_if_exists", fail_after_first_move)
+
+    result = hardening.activate_master_migration(loop)
+
+    state = json.loads((loop / "master_state.json").read_text())
+    assert result["status"] == "blocked"
+    assert "simulated move failure" in result["errors"][0]
+    assert state["activation_state"] == "master_pending"
+    assert state["active"] is False
+    assert (loop / "state.json").exists()
+    assert not (loop / "legacy" / "root-loop" / "state.json").exists()
+
+
+def test_activate_master_migration_rolls_back_status_on_late_failure(tmp_path, monkeypatch):
+    hardening = load_hardening()
+    loop = tmp_path / ".hermes-loop"
+    write_legacy_inputs(loop)
+    hardening.prepare_master_migration(loop)
+    write_json(loop / "master_status.json", {"activation_state": "master_pending"})
+    (loop / "master_status.md").write_text("pending status\n")
+    original_replace = Path.replace
+
+    def fail_master_replace(self, target):
+        if self.name == "master_state.json.active.tmp":
+            raise RuntimeError("simulated master replace failure")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_master_replace)
+
+    result = hardening.activate_master_migration(loop)
+
+    state = json.loads((loop / "master_state.json").read_text())
+    status = json.loads((loop / "master_status.json").read_text())
+    assert result["status"] == "blocked"
+    assert "simulated master replace failure" in result["errors"][0]
+    assert state["activation_state"] == "master_pending"
+    assert status["activation_state"] == "master_pending"
+    assert (loop / "master_status.md").read_text() == "pending status\n"

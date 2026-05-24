@@ -35,6 +35,16 @@ MASTER_STATE_FILE = "master_state.json"
 MASTER_STATUS_JSON = "master_status.json"
 MASTER_STATUS_MD = "master_status.md"
 LEGACY_ROOT_LOOP_DIR = "legacy/root-loop"
+LEGACY_ROOT_FILES = [
+    "state.json",
+    "feature_lanes.json",
+    "master_slave_status.json",
+    "master_slave_status.md",
+    "config.json",
+    "blueprint.md",
+    "blueprint.zh.md",
+    "god_loop_prompt.md",
+]
 MASTER_ACTIVATION_STATES = {
     "legacy_active",
     "master_pending",
@@ -853,6 +863,122 @@ def validate_merge_decision(loop_root: str | Path, decision: dict[str, Any]) -> 
         errors.append(f"unsupported merge decision: {selected}")
 
     return {"valid": not errors, "errors": errors}
+
+
+def _move_if_exists(source: Path, destination: Path) -> None:
+    if source.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+
+
+def _rollback_moves(moved: list[tuple[Path, Path]]) -> None:
+    for original, moved_path in reversed(moved):
+        if moved_path.exists():
+            original.parent.mkdir(parents=True, exist_ok=True)
+            moved_path.replace(original)
+
+
+def _restore_legacy_sources(loop: Path, legacy_root: Path) -> None:
+    for name in LEGACY_ROOT_FILES:
+        moved_path = legacy_root / name
+        original = loop / name
+        if moved_path.exists() and not original.exists():
+            original.parent.mkdir(parents=True, exist_ok=True)
+            moved_path.replace(original)
+    moved_dispatch = legacy_root / "contracts" / "god_dispatch_template.json"
+    original_dispatch = loop / "contracts" / "god_dispatch_template.json"
+    if moved_dispatch.exists() and not original_dispatch.exists():
+        original_dispatch.parent.mkdir(parents=True, exist_ok=True)
+        moved_dispatch.replace(original_dispatch)
+
+
+def _snapshot_file(path: Path) -> str | None:
+    return path.read_text(encoding="utf-8") if path.exists() else None
+
+
+def _restore_file_snapshot(path: Path, content: str | None) -> None:
+    if content is None:
+        if path.exists():
+            path.unlink()
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def activate_master_migration(loop_root: str | Path) -> dict[str, Any]:
+    loop = Path(loop_root)
+    master_path = loop / MASTER_STATE_FILE
+    master_state = json.loads(master_path.read_text(encoding="utf-8"))
+    validation = validate_master_state(master_state)
+    if not validation["valid"] or master_state.get("activation_state") != "master_pending":
+        return {
+            "status": "blocked",
+            "errors": validation["errors"] + ["master_state must be valid master_pending before activation"],
+        }
+
+    required_files = [
+        loop / "master_blueprint.md",
+        loop / "master_config.json",
+        loop / "prompts" / "master_god_prompt.md",
+        loop / "prompts" / "slave_god_prompt.md",
+        loop / "contracts" / "master_dispatch_template.json",
+        loop / "contracts" / "slave_dispatch_template.json",
+    ]
+    missing = [str(path) for path in required_files if not path.exists()]
+    for feature in master_state["features"]:
+        slave_state = _controller_path(loop, feature["slave_state_path"])
+        if not slave_state.exists():
+            missing.append(str(slave_state))
+    if missing:
+        return {"status": "blocked", "errors": [f"missing activation file: {path}" for path in missing]}
+
+    active_state = dict(master_state)
+    active_state["activation_state"] = "master_active"
+    active_state["active"] = True
+    active_state["queues"] = derive_master_queues(active_state, loop_root=loop)["queues"]
+    validation = validate_master_state(active_state)
+    if not validation["valid"]:
+        return {"status": "blocked", "errors": validation["errors"]}
+
+    legacy_root = loop / LEGACY_ROOT_LOOP_DIR
+    pending_snapshot = json.loads(master_path.read_text(encoding="utf-8"))
+    staged_master = master_path.with_suffix(".json.active.tmp")
+    status_json = loop / MASTER_STATUS_JSON
+    status_md = loop / MASTER_STATUS_MD
+    status_json_snapshot = _snapshot_file(status_json)
+    status_md_snapshot = _snapshot_file(status_md)
+    staged_status_json = status_json.with_suffix(".json.active.tmp")
+    staged_status_md = status_md.with_suffix(".md.active.tmp")
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for name in LEGACY_ROOT_FILES:
+            source = loop / name
+            destination = legacy_root / name
+            _move_if_exists(source, destination)
+            if destination.exists():
+                moved.append((source, destination))
+        dispatch_source = loop / "contracts" / "god_dispatch_template.json"
+        dispatch_destination = legacy_root / "contracts" / "god_dispatch_template.json"
+        _move_if_exists(dispatch_source, dispatch_destination)
+        if dispatch_destination.exists():
+            moved.append((dispatch_source, dispatch_destination))
+        active_status = build_master_status(loop, active_state)
+        _write_master_status_files(active_status, staged_status_json, staged_status_md)
+        _write_json(staged_master, active_state)
+        staged_master.replace(master_path)
+        staged_status_json.replace(status_json)
+        staged_status_md.replace(status_md)
+    except Exception as exc:
+        _rollback_moves(moved)
+        _restore_legacy_sources(loop, legacy_root)
+        for staged in (staged_master, staged_status_json, staged_status_md):
+            if staged.exists():
+                staged.unlink()
+        _restore_file_snapshot(status_json, status_json_snapshot)
+        _restore_file_snapshot(status_md, status_md_snapshot)
+        _write_json(master_path, pending_snapshot)
+        return {"status": "blocked", "errors": [str(exc)]}
+    return {"status": "activated", "errors": []}
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
