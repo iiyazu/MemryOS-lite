@@ -68,7 +68,12 @@ Legacy root-loop files remain auditable but no longer drive new control flow.
   "history_baseline": ".hermes-loop/history/main_loop_phase0_18.json",
   "legacy_root_loop": ".hermes-loop/legacy/root-loop/",
   "master_policy": {},
-  "features": [],
+  "features": [
+    {
+      "id": "feature-id",
+      "slave_state_path": ".hermes-loop/work/features/feature-id/slave_state.json"
+    }
+  ],
   "queues": {},
   "decisions": [],
   "integration": {},
@@ -127,7 +132,7 @@ Slave may:
 
 - write `work/features/<feature-id>/blueprint.md`;
 - write feature-local brainstorm/spec/plan/execute/review/ACK artifacts;
-- maintain optional `work/features/<feature-id>/slave_state.json`;
+- maintain required `work/features/<feature-id>/slave_state.json`;
 - modify its own branch/worktree;
 - run local feature tests;
 - report readiness to Master.
@@ -174,6 +179,8 @@ Required local evidence:
 
 - feature branch;
 - feature worktree;
+- required slave state file at
+  `work/features/<feature-id>/slave_state.json`;
 - clean feature worktree;
 - committed feature changes;
 - feature ACK;
@@ -194,19 +201,41 @@ GitHub evidence can strengthen a decision but cannot replace local gates.
 
 ## Migration
 
+Migration must be staged so Hermes never has a period where no active state
+reader exists. Compatibility readers and launcher support are installed before
+old files move into the legacy directory.
+
 Migration steps:
 
-1. Read current `.hermes-loop/state.json`.
-2. Read current `.hermes-loop/feature_lanes.json`.
-3. Generate `.hermes-loop/master_state.json`.
-4. Move old active root-loop control files to
+1. Add compatibility readers that resolve the active controller state in this
+   order:
+   - `.hermes-loop/master_state.json` when present and active;
+   - `.hermes-loop/legacy/root-loop/state.json` only as read-only migration
+     input;
+   - current `.hermes-loop/state.json` only before the isolation move.
+2. Update reporter, hardening helpers, launcher, and God prompts to use the
+   compatibility reader instead of opening `.hermes-loop/state.json` directly.
+3. Generate `.hermes-loop/master_state.json` from current `.hermes-loop/state.json`
+   and `.hermes-loop/feature_lanes.json`.
+4. Generate every feature's required
+   `.hermes-loop/work/features/<feature-id>/slave_state.json` and record its path
+   in `master_state.features[].slave_state_path`.
+5. Validate `master_state.json`, slave states, and derived queues before moving
+   legacy files.
+6. Move old active root-loop control files to
    `.hermes-loop/legacy/root-loop/`.
-5. Generate `.hermes-loop/master_status.{json,md}` from `master_state.json`.
-6. Update reporter and hardening helpers to use `master_state.json` as the
-   active source.
-7. Keep legacy readers for audit and migration reports only.
-8. Update prompts and blueprint text so old `state.json` is described as
+7. Leave a minimal `.hermes-loop/state.json` migration stub only if needed by an
+   unreplaced external caller. The stub must say `active=false`, point to
+   `.hermes-loop/master_state.json`, and must not contain executable phase
+   lanes.
+8. Generate `.hermes-loop/master_status.{json,md}` from `master_state.json`.
+9. Keep legacy readers for audit and migration reports only.
+10. Update prompts and blueprint text so old `state.json` is described as
    legacy history, not active control.
+
+The implementation plan must treat reporter, hardening, launcher, and God prompt
+updates as one migration unit. Moving root-loop files before those readers are in
+place is invalid.
 
 The migration must preserve phase0-18 evidence and the current feature-lane
 status:
@@ -218,8 +247,11 @@ status:
 
 - Invalid `master_state.json`: reporter reports blocked and does not start God.
 - Missing history baseline: Master control is blocked.
+- Missing active-state compatibility reader during migration: migration is
+  blocked before moving legacy files.
 - Missing legacy root-loop files: warning unless required migration evidence is
   absent.
+- Missing required slave state file: that feature is blocked.
 - Missing slave ACK, review, or result: that feature is blocked.
 - Dirty slave worktree: feature cannot enter review or merge queue.
 - Missing or failed integrated tests: feature cannot enter merge queue.
@@ -231,7 +263,10 @@ status:
 Add `tests/test_hermes_master_state.py` for:
 
 - migration from old `state.json` and `feature_lanes.json`;
+- migration order safety: compatibility readers, reporter, hardening, launcher,
+  and prompts are updated before root-loop files move;
 - legacy root-loop isolation;
+- required `slave_state.json` generation and validation;
 - master state schema validation;
 - queue derivation and queue consistency;
 - `ready_for_master_review` not mergeable;
@@ -244,6 +279,9 @@ Update existing tests:
 
 - reporter refreshes `master_status.*` in DONE state;
 - hardening reads `master_state.json` as active source;
+- launcher does not directly read active `.hermes-loop/state.json` after
+  migration;
+- God prompt does not instruct active control through legacy `state.json`;
 - old `feature_lanes.json` is not treated as active source after migration;
 - compatibility status clearly reports legacy inputs as inactive.
 
@@ -261,6 +299,9 @@ python3 -m py_compile .hermes-loop/hermes_hardening.py .hermes-loop/hermes_repor
 - `master_state.json` is the only active control-plane truth source.
 - Legacy root-loop files are isolated and read-only for audit.
 - Slave autonomy is feature-local and cannot mutate Master queues directly.
+- Slave state is required and referenced from `master_state.features[]`.
+- Migration order installs compatibility readers before moving legacy files.
+- Launcher and God prompts are included in the migration scope.
 - Master autonomy is audit-driven and cannot merge without approval.
 - GitHub support is optional and cannot replace local gates.
 - MemoryOS product behavior is out of scope.
