@@ -1493,6 +1493,22 @@ def test_dispatcher_blocks_feature_when_worktree_is_missing(tmp_path):
     assert plan["counts"]["blocked_jobs"] == 1
 
 
+def test_scheduler_monitor_stops_when_master_completed():
+    monitor = (PROJECT / "xmuse" / "scheduler_monitor.sh").read_text()
+
+    assert 'if [ "$state" = "completed" ]; then' in monitor
+    assert "master completed; monitor stopping" in monitor
+    assert "exit 0" in monitor
+
+
+def test_scheduler_monitor_restarts_failed_or_stale_master():
+    monitor = (PROJECT / "xmuse" / "scheduler_monitor.sh").read_text()
+
+    assert 'module.complete_active_job(loop, exit_code=143, status="failed")' in monitor
+    assert 'if ! launcher_alive || [ "$state" != "running" ]; then' in monitor
+    assert "start_master" in monitor
+
+
 def test_prepare_then_activate_preserves_feature_statuses(tmp_path):
     hardening = load_hardening()
     loop = tmp_path / "xmuse"

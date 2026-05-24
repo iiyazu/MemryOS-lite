@@ -80,6 +80,11 @@ while true; do
     refresh_dispatch
 
     state="$(active_job_state || echo unknown)"
+    if [ "$state" = "completed" ]; then
+        log "master completed; monitor stopping"
+        refresh_report
+        exit 0
+    fi
     if ! launcher_alive || [ "$state" != "running" ]; then
         start_master
         sleep 5
