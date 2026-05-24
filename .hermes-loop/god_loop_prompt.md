@@ -184,6 +184,65 @@ research_lane : future phase/read-only comparison - may write only research.md
 review_lane   : current execute review - read-only, writes reviews/*.md
 ```
 
+## Master/Slave God Feature Model
+
+The default single-phase lane model remains valid. For parallel feature work,
+God may use a master/slave overlay without changing each node's existing
+authority:
+
+- `master_god`: integration owner, cross-feature conflict resolver, final merge
+  decider, and integrated-test gatekeeper.
+- `slave_god`: feature owner for one branch/worktree/blueprint slice. Each
+  slave may use the same research/plan/execute/review/subagent patterns inside
+  its feature boundary.
+- `plan/execute/review` permissions remain unchanged inside each slave feature:
+  execute may write feature code in that feature worktree; review stays
+  read-only; planning artifacts stay phase/feature-local.
+- Master God may have higher autonomy for integration decisions, but must not
+  merge feature work unless the slave reports usable ACK, passing review,
+  required artifacts, clean worktree, and a documented merge target.
+
+Parallel feature state lives in optional `.hermes-loop/feature_lanes.json`, not
+in root `state.json`. `state.json` remains the authoritative single controller
+state. A feature entry should include:
+
+```json
+{
+  "id": "archive-rag",
+  "name": "Archive RAG Boundary",
+  "state": "ready_for_master_review",
+  "branch": "feat/archive-rag",
+  "worktree": "/abs/path/to/worktree",
+  "slave_god": {
+    "role": "feature_owner",
+    "blueprint": "work/features/archive-rag/blueprint.md"
+  },
+  "artifacts": {
+    "result": "work/features/archive-rag/result.md",
+    "ack": "work/features/archive-rag/ack.json",
+    "review_verdict": "work/features/archive-rag/review_verdict.json"
+  },
+  "merge": {
+    "status": "ready_for_merge",
+    "target_branch": "feat/phase-2.5-3-retrieval-agent",
+    "strategy": "git_worktree"
+  }
+}
+```
+
+Master God responsibilities:
+
+1. Read `.hermes-loop/feature_lanes.json` when present.
+2. Treat each feature as isolated until its slave reports usable ACK and PASS
+   review.
+3. Run or require integrated tests before merging any feature into the master
+   branch.
+4. Prefer git worktrees or GitHub PRs for feature isolation.
+5. Do not use same-slice benchmark movement as the sole merge criterion.
+6. Do not merge dirty worktrees, missing ACK/review/result artifacts, or
+   feature work that changes default v3/v1/kernel constraints without explicit
+   master approval.
+
 Lane rules:
 
 1. `execute_lane` may enter the full chain:

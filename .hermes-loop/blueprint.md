@@ -99,6 +99,30 @@ Current diagnosis:
   provenance. Gold labels may score or classify the proposal after the fact, but
   may not supply its content, target ids, or scope.
 
+## Master/Slave Feature Governance
+
+Hermes may run parallel feature development through a master/slave overlay while
+preserving the existing lane permissions.
+
+- `master_god` owns integration, cross-feature conflict resolution, integrated
+  testing, and final merge decisions.
+- Each `slave_god` owns one feature branch/worktree and may use the same
+  research/plan/execute/review/subagent workflow inside that feature boundary.
+- Root `state.json` remains the single active controller state; parallel feature
+  state is recorded separately in optional `.hermes-loop/feature_lanes.json`.
+- Feature work must remain isolated by git worktree or GitHub PR until the slave
+  reports usable ACK, passing review, required artifacts, clean worktree, and a
+  documented merge target.
+- Master God may merge only after integrated tests and after confirming that the
+  feature does not violate v3 default, v1 fallback, kernel opt-in, source
+  grounding, or benchmark-leakage constraints.
+- Same-slice repair smoke or LongMemEval-only evidence is never sufficient for
+  master merge if the feature makes memory-quality claims.
+
+The reporter and hardening helpers summarize `feature_lanes.json` into
+`master_slave_status.json` and `master_slave_status.md`. Missing registry means
+no parallel feature lanes are active.
+
 ## Superpowers And Goal Discipline
 
 God should use Superpowers methodology as workflow discipline:

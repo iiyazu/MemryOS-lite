@@ -42,6 +42,24 @@ def controller_hardening_report(s):
         return {"error": str(exc)}
 
 
+def master_slave_report():
+    """Return optional master/slave feature-lane summary."""
+    module_path = LOOP / "hermes_hardening.py"
+    if not module_path.exists():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
+        if spec is None or spec.loader is None:
+            return {"error": "cannot load hermes_hardening.py"}
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        summary = module.summarize_master_slave_control(LOOP, project_root=PROJECT)
+        module.write_master_slave_status(LOOP, summary)
+        return summary
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def read_lock_pid() -> int | None:
     """Return the PID recorded in run.lock, if any."""
     if not LOCK_FILE.exists():
@@ -121,6 +139,7 @@ def generate_report(s):
     ex = s.get("execute_lane", {})
     pl = s.get("plan_lane", {})
     hardening = controller_hardening_report(s)
+    master_slave = master_slave_report()
 
     report = {
         "timestamp": now.isoformat(),
@@ -147,6 +166,8 @@ def generate_report(s):
     }
     if hardening is not None:
         report["controller_hardening"] = hardening
+    if master_slave is not None:
+        report["master_slave"] = master_slave
     return report
 
 
@@ -204,6 +225,14 @@ def main():
 | HB    | {hb_str} |
 | Action| {action} |
 """
+    if report.get("master_slave"):
+        counts = report["master_slave"].get("counts", {})
+        md += (
+            "\n"
+            f"Master/slave features: {counts.get('features', 0)} total, "
+            f"{counts.get('mergeable', 0)} mergeable, "
+            f"{counts.get('blocked', 0)} blocked.\n"
+        )
     (reports_dir / "latest.md").write_text(md)
     return report
 

@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import time
 from collections import Counter
 from pathlib import Path
@@ -28,6 +29,9 @@ STALE_CANDIDATE_FILES = (
     "plan_review.md",
     "plan_final.md",
 )
+FEATURE_LANES_FILE = "feature_lanes.json"
+MERGE_REQUEST_STATES = {"ready_for_master_review", "ready_for_merge", "merge_requested"}
+FEATURE_PASS_STATES = {"acked", "ready_for_master_review", "ready_for_merge", "merged"}
 
 
 def _read_json(path: Path) -> Any:
@@ -57,6 +61,31 @@ def _context_bundle_path(value: Any) -> str | None:
         if isinstance(path, str):
             return path
     return None
+
+
+def _resolve_controller_path(loop: Path, value: Any) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    if value.startswith(".hermes-loop/"):
+        return loop.parent / value
+    return loop / value
+
+
+def _git_status_short(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    result = subprocess.run(
+        ["git", "-C", str(path), "status", "--short"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
 
 
 def _pid_alive_default(pid: int) -> bool:
@@ -190,6 +219,312 @@ def complete_active_job(
     )
     _atomic_write_json(job_path, job)
     return {"ok": True, "path": str(job_path), **job}
+
+
+def load_feature_lanes(loop_root: str | Path) -> dict[str, Any]:
+    """Load optional master/slave feature-lane registry.
+
+    The registry is deliberately separate from ``state.json``. ``state.json``
+    remains the authoritative single-phase Hermes controller state, while
+    ``feature_lanes.json`` records parallel feature worktrees/branches that a
+    master God may later integrate.
+    """
+    loop = Path(loop_root)
+    registry_path = loop / FEATURE_LANES_FILE
+    if not registry_path.exists():
+        return {
+            "ok": True,
+            "state": "missing",
+            "path": str(registry_path),
+            "master_god": {},
+            "features": [],
+        }
+    try:
+        registry = _read_json(registry_path)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "state": "invalid",
+            "path": str(registry_path),
+            "error": f"invalid {FEATURE_LANES_FILE}: {exc}",
+            "master_god": {},
+            "features": [],
+        }
+    if not isinstance(registry, dict):
+        return {
+            "ok": False,
+            "state": "invalid",
+            "path": str(registry_path),
+            "error": f"{FEATURE_LANES_FILE} root is not an object",
+            "master_god": {},
+            "features": [],
+        }
+    features = registry.get("features", [])
+    if not isinstance(features, list):
+        return {
+            "ok": False,
+            "state": "invalid",
+            "path": str(registry_path),
+            "error": "features must be a list",
+            "master_god": registry.get("master_god", {}),
+            "features": [],
+        }
+    return {
+        "ok": True,
+        "state": "loaded",
+        "path": str(registry_path),
+        "master_god": registry.get("master_god", {}),
+        "features": features,
+    }
+
+
+def _artifact_gate(loop: Path, artifacts: dict[str, Any]) -> dict[str, Any]:
+    blockers: list[str] = []
+    paths: dict[str, str] = {}
+
+    ack_path = _resolve_controller_path(loop, artifacts.get("ack"))
+    review_path = _resolve_controller_path(loop, artifacts.get("review_verdict"))
+    result_path = _resolve_controller_path(loop, artifacts.get("result"))
+
+    if ack_path is None:
+        blockers.append("missing ack artifact path")
+    else:
+        paths["ack"] = str(ack_path)
+        if not ack_path.exists():
+            blockers.append("ack artifact does not exist")
+        else:
+            try:
+                ack = _read_json(ack_path)
+            except Exception as exc:
+                blockers.append(f"invalid ack artifact: {exc}")
+            else:
+                if not isinstance(ack, dict):
+                    blockers.append("ack artifact root is not an object")
+                elif str(ack.get("ack_level", "")).lower() != "usable":
+                    blockers.append("ack artifact is not usable")
+
+    if review_path is None:
+        blockers.append("missing review_verdict artifact path")
+    else:
+        paths["review_verdict"] = str(review_path)
+        if not review_path.exists():
+            blockers.append("review_verdict artifact does not exist")
+        else:
+            try:
+                review = _read_json(review_path)
+            except Exception as exc:
+                blockers.append(f"invalid review_verdict artifact: {exc}")
+            else:
+                verdict = str(review.get("verdict", "")).lower() if isinstance(review, dict) else ""
+                if verdict not in PROMOTION_PASS_VERDICTS:
+                    blockers.append("review_verdict artifact is not passing")
+
+    if result_path is None:
+        blockers.append("missing result artifact path")
+    else:
+        paths["result"] = str(result_path)
+        if not result_path.exists():
+            blockers.append("result artifact does not exist")
+
+    return {"ok": not blockers, "blockers": blockers, "paths": paths}
+
+
+def classify_feature_lane(
+    loop_root: str | Path,
+    feature: dict[str, Any],
+    *,
+    project_root: str | Path | None = None,
+) -> dict[str, Any]:
+    loop = Path(loop_root)
+    blockers: list[str] = []
+    warnings: list[str] = []
+    feature_id = str(feature.get("id") or "").strip()
+    if not feature_id:
+        blockers.append("feature id is required")
+        feature_id = "<missing>"
+
+    state = str(feature.get("state") or "planned").lower()
+    if state not in {
+        "planned",
+        "planning",
+        "executing",
+        "review",
+        "acked",
+        "ready_for_master_review",
+        "ready_for_merge",
+        "merge_requested",
+        "merged",
+        "blocked",
+        "held",
+    }:
+        blockers.append(f"unsupported feature state: {state}")
+
+    slave_god = feature.get("slave_god", {})
+    if not isinstance(slave_god, dict):
+        blockers.append("slave_god must be an object")
+        slave_god = {}
+
+    branch = feature.get("branch")
+    worktree = feature.get("worktree")
+    if state in FEATURE_PASS_STATES | {"merge_requested"} and not isinstance(branch, str):
+        blockers.append("merge-ready feature requires branch")
+    worktree_path = Path(worktree) if isinstance(worktree, str) and worktree else None
+    if state in FEATURE_PASS_STATES | {"merge_requested"}:
+        if worktree_path is None:
+            blockers.append("merge-ready feature requires worktree")
+        elif not worktree_path.exists():
+            blockers.append("feature worktree does not exist")
+
+    artifacts = feature.get("artifacts", {})
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+        blockers.append("artifacts must be an object")
+    if state in FEATURE_PASS_STATES | {"merge_requested"}:
+        artifact_gate = _artifact_gate(loop, artifacts)
+    else:
+        artifact_gate = {
+            "ok": True,
+            "blockers": [],
+            "paths": {},
+        }
+    blockers.extend(artifact_gate["blockers"])
+
+    merge = feature.get("merge", {})
+    if not isinstance(merge, dict):
+        merge = {}
+        blockers.append("merge must be an object")
+    merge_status = str(merge.get("status") or state).lower()
+    target_branch = str(merge.get("target_branch") or "").strip()
+    if merge_status in MERGE_REQUEST_STATES and not target_branch:
+        blockers.append("merge target_branch is required")
+
+    git_status = None
+    if worktree_path is not None and worktree_path.exists():
+        git_status = _git_status_short(worktree_path)
+        if git_status and merge_status in MERGE_REQUEST_STATES:
+            blockers.append("feature worktree has uncommitted changes")
+        elif git_status:
+            warnings.append("feature worktree has uncommitted changes")
+
+    mergeable = (
+        not blockers
+        and merge_status in MERGE_REQUEST_STATES
+        and artifact_gate.get("ok") is True
+    )
+    return {
+        "id": feature_id,
+        "name": feature.get("name"),
+        "state": state,
+        "slave_god": slave_god,
+        "branch": branch,
+        "worktree": str(worktree_path) if worktree_path is not None else None,
+        "merge": merge,
+        "merge_status": merge_status,
+        "mergeable": mergeable,
+        "blockers": blockers,
+        "warnings": warnings,
+        "artifact_gate": artifact_gate,
+        "git_status_short": git_status,
+        "project_root": str(project_root) if project_root is not None else str(loop.parent),
+    }
+
+
+def summarize_master_slave_control(
+    loop_root: str | Path,
+    *,
+    project_root: str | Path | None = None,
+) -> dict[str, Any]:
+    loop = Path(loop_root)
+    registry = load_feature_lanes(loop)
+    if not registry.get("ok"):
+        return {
+            "ok": False,
+            "state": registry.get("state"),
+            "path": registry.get("path"),
+            "error": registry.get("error"),
+            "master_god": registry.get("master_god", {}),
+            "features": [],
+            "merge_queue": [],
+            "blockers": [registry.get("error", "invalid feature registry")],
+        }
+
+    features = [
+        classify_feature_lane(loop, feature, project_root=project_root)
+        for feature in registry.get("features", [])
+        if isinstance(feature, dict)
+    ]
+    malformed_count = sum(
+        1 for feature in registry.get("features", []) if not isinstance(feature, dict)
+    )
+    blockers: list[str] = []
+    if malformed_count:
+        blockers.append(f"{malformed_count} feature entries are not objects")
+    for feature in features:
+        for blocker in feature["blockers"]:
+            blockers.append(f"{feature['id']}: {blocker}")
+
+    merge_queue = [
+        {
+            "id": feature["id"],
+            "branch": feature["branch"],
+            "worktree": feature["worktree"],
+            "target_branch": feature["merge"].get("target_branch"),
+            "strategy": feature["merge"].get("strategy", "git_worktree"),
+        }
+        for feature in features
+        if feature["mergeable"]
+    ]
+    return {
+        "ok": not blockers,
+        "state": registry.get("state"),
+        "path": registry.get("path"),
+        "master_god": registry.get("master_god", {}),
+        "features": features,
+        "merge_queue": merge_queue,
+        "blockers": blockers,
+        "counts": {
+            "features": len(features),
+            "mergeable": len(merge_queue),
+            "blocked": sum(1 for feature in features if feature["blockers"]),
+        },
+    }
+
+
+def write_master_slave_status(
+    loop_root: str | Path,
+    summary: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    loop = Path(loop_root)
+    payload = summary or summarize_master_slave_control(loop)
+    json_path = loop / "master_slave_status.json"
+    md_path = loop / "master_slave_status.md"
+    _atomic_write_json(json_path, payload)
+
+    lines = ["# Hermes Master/Slave Feature Status", ""]
+    lines.append(f"- registry: `{payload.get('path')}`")
+    lines.append(f"- ok: `{payload.get('ok')}`")
+    lines.append(f"- features: `{payload.get('counts', {}).get('features', 0)}`")
+    lines.append(f"- mergeable: `{payload.get('counts', {}).get('mergeable', 0)}`")
+    lines.append("")
+    for feature in payload.get("features", []):
+        lines.append(
+            f"- `{feature.get('id')}` state={feature.get('state')} "
+            f"mergeable={feature.get('mergeable')} branch={feature.get('branch')}"
+        )
+        for blocker in feature.get("blockers", []):
+            lines.append(f"  - blocker: {blocker}")
+        for warning in feature.get("warnings", []):
+            lines.append(f"  - warning: {warning}")
+    if payload.get("merge_queue"):
+        lines.append("")
+        lines.append("## Merge Queue")
+        for item in payload["merge_queue"]:
+            lines.append(
+                f"- `{item.get('id')}` {item.get('branch')} -> {item.get('target_branch')} "
+                f"via {item.get('strategy')}"
+            )
+    _atomic_write_text(md_path, "\n".join(lines) + "\n")
+    return {"json": str(json_path), "markdown": str(md_path)}
 
 
 def summarize_eval_report(path: str | Path) -> dict[str, Any]:
@@ -1071,6 +1406,7 @@ def run_phase_hardening(
     )
     config_gate = check_config_blueprint_consistency(loop)
     state_order_gate = check_state_phase_order(loop)
+    master_slave = summarize_master_slave_control(loop, project_root=loop.parent)
     if write:
         write_phase_status(
             loop,
@@ -1079,6 +1415,7 @@ def run_phase_hardening(
             ack_gate=ack_gate,
             stale_index=stale_index,
         )
+        write_master_slave_status(loop, master_slave)
     return {
         "phase_id": phase_id,
         "eval_runs": statuses,
@@ -1089,6 +1426,7 @@ def run_phase_hardening(
         "stale_index": stale_index,
         "config_gate": config_gate,
         "state_order_gate": state_order_gate,
+        "master_slave": master_slave,
     }
 
 

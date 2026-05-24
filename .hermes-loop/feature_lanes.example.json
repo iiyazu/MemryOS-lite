@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "master_god": {
+    "role": "integration_owner",
+    "merge_policy": "usable_ack_pass_review_clean_worktree_integrated_tests"
+  },
+  "features": [
+    {
+      "id": "archive-rag",
+      "name": "Archive RAG Boundary",
+      "state": "ready_for_master_review",
+      "branch": "feat/archive-rag",
+      "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag",
+      "slave_god": {
+        "role": "feature_owner",
+        "blueprint": "work/features/archive-rag/blueprint.md"
+      },
+      "artifacts": {
+        "result": "work/features/archive-rag/result.md",
+        "ack": "work/features/archive-rag/ack.json",
+        "review_verdict": "work/features/archive-rag/review_verdict.json"
+      },
+      "merge": {
+        "status": "ready_for_merge",
+        "target_branch": "feat/phase-2.5-3-retrieval-agent",
+        "strategy": "git_worktree"
+      }
+    }
+  ]
+}
