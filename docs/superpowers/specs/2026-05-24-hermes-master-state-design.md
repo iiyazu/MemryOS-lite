@@ -612,7 +612,12 @@ Required post-merge verification schema:
   "approved_head": "abcdef123456",
   "post_merge_head": "fedcba654321",
   "merge_commit": "fedcba654321",
+  "merge_strategy": "no_ff_merge_commit",
   "github_pr": null,
+  "approval_ref": ".hermes-loop/approvals/feature-id/merge_approval.json",
+  "approval_digest": "sha256:merge-approval-json-canonical-digest",
+  "approval_request_ref": ".hermes-loop/approvals/feature-id/merge_approval_request.json",
+  "approval_request_digest": "sha256:request-json-canonical-digest",
   "ancestry_check": {
     "command": "git merge-base --is-ancestor abcdef123456 fedcba654321",
     "status": "passed"
@@ -631,10 +636,14 @@ Required post-merge verification schema:
 }
 ```
 
-For `status=passed`, `post_merge_head` must be on `target_branch`,
+`status` may be `passed` or `failed`. For `status=passed`,
+`post_merge_head` must be on `target_branch`,
 `approved_head` must be an ancestor of `post_merge_head`, and each required
 verification command must have `status=passed` plus an artifact digest. Failed or
 missing post-merge verification prevents `merge_decision.decision=merged`.
+`approval_ref`, `approval_digest`, `approval_request_ref`,
+`approval_request_digest`, and `merge_strategy=no_ff_merge_commit` are required
+for every post-merge verification artifact.
 These ancestry rules apply to `merge_strategy=no_ff_merge_commit`; squash,
 rebase, fast-forward-only, and host-specific PR merge strategies are invalid for
 this design.
@@ -681,7 +690,7 @@ Required final decision schema for `decision=held` or `decision=rejected`:
   "feature_id": "feature-id",
   "decision": "held|rejected",
   "final_state": "held|rejected",
-  "blocked_gate": "master_review|integrated_tests|approval|merge_execution|post_merge_verification|policy",
+  "blocked_gate": "master_review|integrated_tests|approval|merge_execution|policy",
   "reasons": [
     "Human-readable reason tied to evidence."
   ],
@@ -702,7 +711,48 @@ Required final decision schema for `decision=held` or `decision=rejected`:
 For `decision=held` or `decision=rejected`, `reasons[]` and `blocked_gate` are
 required, evidence refs/digests are optional but must match if present, and
 `final_state=merged`, `merge_commit`, and post-merge verification refs are
-forbidden.
+forbidden. These decisions cover pre-merge blocks and merge execution failures
+where no merge commit reached the target branch.
+
+If the hold/reject occurs after approval but before merge execution,
+`approved_head`, `approval_ref`, `approval_digest`, `approval_request_ref`, and
+`approval_request_digest` are required. Before approval, those fields may be
+absent or null.
+
+Required final decision schema for `decision=held_after_merge`:
+
+```json
+{
+  "version": "1.0",
+  "feature_id": "feature-id",
+  "decision": "held_after_merge",
+  "final_state": "held_after_merge",
+  "blocked_gate": "post_merge_verification",
+  "reasons": [
+    "Post-merge verification failed after merge commit reached target branch."
+  ],
+  "target_branch": "main",
+  "approved_head": "abcdef123456",
+  "merge_strategy": "no_ff_merge_commit",
+  "merge_commit": "fedcba654321",
+  "github_pr": null,
+  "approval_ref": ".hermes-loop/approvals/feature-id/merge_approval.json",
+  "approval_digest": "sha256:merge-approval-json-canonical-digest",
+  "approval_request_ref": ".hermes-loop/approvals/feature-id/merge_approval_request.json",
+  "approval_request_digest": "sha256:request-json-canonical-digest",
+  "failed_post_merge_verification_ref": ".hermes-loop/approvals/feature-id/post_merge_verification.json",
+  "failed_post_merge_verification_digest": "sha256:failed-post-merge-verification-json-canonical-digest",
+  "next_action": "revert|repair_forward|manual_hold",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T00:00:00Z"
+}
+```
+
+`held_after_merge` is required when a merge commit has reached the target branch
+but post-merge verification failed or is incomplete. It must record the
+`merge_commit`, failed post-merge verification ref/digest, approval
+ref/digest, approval request ref/digest, and a `next_action` of `revert`,
+`repair_forward`, or `manual_hold`. It must not be reported as `merged`.
 
 ## Migration
 
@@ -826,6 +876,11 @@ status:
   provenance check is unverifiable and cannot be merged.
 - Missing, malformed, or failed `post_merge_verification`: feature cannot be
   marked merged.
+- Failed or incomplete post-merge verification after a merge commit reaches the
+  target branch must produce `merge_decision.decision=held_after_merge`, not
+  `merged` or plain `held`.
+- Plain `held` or `rejected` with `blocked_gate=post_merge_verification` is
+  invalid; use `held_after_merge` once a merge commit reaches the target branch.
 - Missing, malformed, digest-mismatched, conditionally invalid, or inconsistent
   `merge_decision`: feature cannot be marked merged.
 - GitHub unavailable: degrade to local-only and keep local gates.
@@ -895,11 +950,17 @@ Add `tests/test_hermes_master_state.py` for:
   approval refs/digests, approval request refs/digests, and post-merge
   verification refs/digests; `github_pr` is optional metadata only;
 - `merge_decision.json` for `decision=held|rejected` requires `blocked_gate`
-  and `reasons[]`, allows existing evidence refs/digests, and forbids
-  `final_state=merged`, `merge_commit`, and post-merge verification refs;
+  and `reasons[]`, allows existing evidence refs/digests, conditionally requires
+  approval refs after approval, and forbids `final_state=merged`, `merge_commit`,
+  and post-merge verification refs;
+- `merge_decision.json` for `decision=held_after_merge` requires merge commit,
+  failed post-merge verification ref/digest, approval refs/digests, approval
+  request refs/digests, and `next_action`;
 - `post_merge_verification.json` records target branch, pre/post HEAD, merge
-  commit, ancestry check, verification commands, result artifact digests, and
-  status;
+  commit, merge strategy, approval refs/digests, approval request refs/digests,
+  ancestry check, verification commands, result artifact digests, and status;
+- failed `post_merge_verification.json` after a merge commit reaches the target
+  branch produces `held_after_merge`, not plain `held` or `rejected`;
 - malformed `merge.status` ahead of feature state is blocked;
 - invalid or unexpectedly inactive `master_state.json` blocks active execution
   instead of falling back to legacy state;
