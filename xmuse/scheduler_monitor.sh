@@ -30,7 +30,7 @@ cleanup() {
 trap cleanup EXIT
 
 active_job_state() {
-    python3 - <<'PY'
+    python3 - <<'PY' 8>&-
 import importlib.util
 from pathlib import Path
 
@@ -64,13 +64,13 @@ start_master() {
 refresh_report() {
     XMUSE_REPORT_ONLY=1 python3 "$LOOP_ROOT/hermes_reporter.py" \
         >/tmp/xmuse_report_only_monitor.json \
-        2>/tmp/xmuse_report_only_monitor.err || true
+        2>/tmp/xmuse_report_only_monitor.err 8>&- || true
 }
 
 refresh_dispatch() {
     python3 "$LOOP_ROOT/multi_lane_dispatcher.py" --write \
         >/tmp/xmuse_dispatch_monitor.json \
-        2>/tmp/xmuse_dispatch_monitor.err || true
+        2>/tmp/xmuse_dispatch_monitor.err 8>&- || true
 }
 
 log "monitor started interval=${INTERVAL_SECONDS}s"
@@ -88,5 +88,5 @@ while true; do
         log "master alive active_job_state=${state}"
     fi
 
-    sleep "$INTERVAL_SECONDS"
+    sleep "$INTERVAL_SECONDS" 8>&-
 done
