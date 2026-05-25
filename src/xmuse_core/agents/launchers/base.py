@@ -1,0 +1,13 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Protocol
+
+from xmuse_core.agents.protocol import AgentOutput, StdoutMessage
+
+
+class LauncherAdapter(Protocol):
+    def build_command(self, feature_id: str, worktree: Path) -> list[str]: ...
+    def format_prompt(self, task: str, context: str) -> str: ...
+    def build_env(self, feature_id: str) -> dict[str, str]: ...
+    def parse_output(self, msg: StdoutMessage) -> AgentOutput | None: ...

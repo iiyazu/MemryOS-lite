@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from xmuse_core.agents.protocol import (
     PROTOCOL_VERSION,
     AgentOutput,
-    parse_stdout_line,
     format_stdin_message,
+    parse_stdout_line,
 )
 
 
@@ -60,7 +62,6 @@ def test_format_stdin_ping():
 
 def test_format_stdin_task():
     line = format_stdin_message("task", feature_id="f1", prompt="do it")
-    import json
     data = json.loads(line)
     assert data["type"] == "task"
     assert data["feature_id"] == "f1"
