@@ -258,11 +258,11 @@ class RedisDerivedCache:
                 key=key,
                 diagnostics={"latency_ms": _latency_ms(started)},
             )
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
         try:
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
             payload = json.loads(raw)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, UnicodeDecodeError) as exc:
             return CacheReadResult(
                 status=CacheStatus.CORRUPT,
                 key=key,

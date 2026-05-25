@@ -255,10 +255,10 @@ def test_public_cache_exports_include_derived_contract_types() -> None:
 
 class FakeRedis:
     def __init__(self) -> None:
-        self.values: dict[str, str] = {}
+        self.values: dict[str, bytes | str] = {}
         self.ttls: dict[str, int | None] = {}
 
-    def get(self, key: str) -> str | None:
+    def get(self, key: str) -> bytes | str | None:
         return self.values.get(key)
 
     def set(self, key: str, value: str, ex: int | None = None) -> bool:
@@ -325,6 +325,8 @@ def test_redis_derived_cache_round_trips_entry_with_ttl() -> None:
     assert read.entry is not None
     assert read.entry.payload == {"kind": "temporal"}
     assert client.ttls[key] == 30
+    assert key in client.values
+    assert f"memoryos:test:{key}" not in client.values
 
 
 def test_redis_derived_cache_reports_corrupt_and_stale() -> None:
@@ -341,6 +343,19 @@ def test_redis_derived_cache_reports_corrupt_and_stale() -> None:
     assert cache.get(old_schema_key).status == CacheStatus.STALE
 
 
+def test_redis_derived_cache_reports_corrupt_for_invalid_bytes() -> None:
+    client = FakeRedis()
+    cache = RedisDerivedCache(client, namespace="memoryos:test", default_ttl_s=60)
+    key = "memoryos:test:derived-cache-v1:query_analysis:invalid-bytes"
+    client.values[key] = b"\xff\xfe"
+
+    result = cache.get(key)
+
+    assert result.status == CacheStatus.CORRUPT
+    assert result.reason is not None
+    assert "latency_ms" in result.diagnostics
+
+
 def test_redis_derived_cache_errors_do_not_raise() -> None:
     cache = RedisDerivedCache(FailingRedis(), namespace="memoryos:test", default_ttl_s=60)
 
@@ -353,3 +368,12 @@ def test_create_derived_cache_defaults_to_noop_without_redis_url() -> None:
     cache = create_derived_cache(Settings(memoryos_redis_url=None))
 
     assert isinstance(cache, NoopDerivedCache)
+
+
+def test_create_derived_cache_uses_injected_redis_client() -> None:
+    cache = create_derived_cache(
+        Settings(memoryos_redis_url="redis://localhost:6379/0"),
+        redis_client=FakeRedis(),
+    )
+
+    assert isinstance(cache, RedisDerivedCache)
