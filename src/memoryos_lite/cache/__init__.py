@@ -14,9 +14,22 @@ from hashlib import sha256
 from importlib import import_module
 from typing import Any, Protocol
 
+from memoryos_lite.cache.derived import (
+    CACHE_ENTRY_VERSION,
+    CACHE_SCHEMA_VERSION,
+    CacheDiagnostics,
+    CacheEntry,
+    CacheFingerprint,
+    CacheKeyBuilder,
+    CachePayloadType,
+    CacheReadResult,
+    CacheScope,
+    CacheStatus,
+    CacheWriteResult,
+    DerivedCache,
+)
 from memoryos_lite.config import Settings
 
-CACHE_SCHEMA_VERSION = 1
 CACHE_KEY_VERSION = "keyv1"
 
 
@@ -183,8 +196,20 @@ def create_memory_cache(
 
 
 __all__ = [
+    "CACHE_ENTRY_VERSION",
+    "CACHE_SCHEMA_VERSION",
     "CacheRead",
+    "CacheDiagnostics",
+    "CacheEntry",
+    "CacheFingerprint",
+    "CacheKeyBuilder",
+    "CachePayloadType",
+    "CacheReadResult",
+    "CacheScope",
+    "CacheStatus",
+    "CacheWriteResult",
     "CacheWrite",
+    "DerivedCache",
     "MemoryCache",
     "NoopMemoryCache",
     "RedisMemoryCache",
