@@ -1,0 +1,13 @@
+{
+  "agents": [
+    {
+      "runtime": "codex",
+      "name": "codex-worker-1",
+      "capabilities": ["code", "test", "review"],
+      "session_config": {
+        "transport": "local",
+        "heartbeat_interval_s": 30
+      }
+    }
+  ]
+}

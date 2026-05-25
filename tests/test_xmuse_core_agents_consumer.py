@@ -46,9 +46,7 @@ async def test_run_dispatches_task():
     except asyncio.CancelledError:
         pass
 
-    mgr.dispatch.assert_called_once()
-    call_args = mgr.dispatch.call_args
-    assert call_args[0][1] == task  # second arg is the TaskDescriptor
+    mgr.dispatch_one_shot.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -56,11 +54,11 @@ async def test_fifo_order():
     reg = _make_registry()
     dispatch_order = []
 
-    async def mock_dispatch(agent, task):
-        dispatch_order.append(task.feature_id)
+    async def mock_dispatch(*, agent, feature_id, prompt, worktree):
+        dispatch_order.append(feature_id)
 
     mgr = AsyncMock()
-    mgr.dispatch = mock_dispatch
+    mgr.dispatch_one_shot = mock_dispatch
     consumer = WorklistConsumer(reg, mgr, max_concurrent=4)
 
     for i in range(3):
@@ -84,11 +82,11 @@ async def test_exclude_runtime_for_review():
     reg = _make_registry()
     selected_agents = []
 
-    async def mock_dispatch(agent, task):
+    async def mock_dispatch(*, agent, feature_id, prompt, worktree):
         selected_agents.append(agent)
 
     mgr = AsyncMock()
-    mgr.dispatch = mock_dispatch
+    mgr.dispatch_one_shot = mock_dispatch
     consumer = WorklistConsumer(reg, mgr)
 
     task = TaskDescriptor(

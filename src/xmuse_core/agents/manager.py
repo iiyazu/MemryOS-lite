@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -206,3 +207,63 @@ class SessionManager:
                 "started_at": active.started_at,
             })
         self._state_file.write_text(json.dumps({"sessions": sessions}))
+
+    async def dispatch_one_shot(
+        self,
+        agent: AgentDescriptor,
+        feature_id: str,
+        prompt: str,
+        worktree: Path,
+        context: str = "",
+        timeout: float = 1800.0,
+    ) -> AgentOutput:
+        launcher = self._launchers[agent.runtime]
+        cmd = launcher.build_command(feature_id, worktree)
+        env = launcher.build_env(feature_id)
+        formatted = launcher.format_prompt(prompt, context)
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        active = ActiveSession(
+            session=LocalSession(process),
+            state=SessionState.RUNNING,
+            feature_id=feature_id,
+            agent=agent,
+        )
+        self._active[feature_id] = active
+        self._persist_active()
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(input=formatted.encode()),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+            self._active.pop(feature_id, None)
+            self._persist_active()
+            return AgentOutput(status="timeout", error_message="process timed out")
+
+        self._active.pop(feature_id, None)
+        self._persist_active()
+
+        stdout_str = stdout_bytes.decode(errors="replace")
+        stderr_str = stderr_bytes.decode(errors="replace")
+
+        if process.returncode == 0:
+            return AgentOutput(
+                status="success",
+                artifacts={"stdout": stdout_str, "stderr": stderr_str},
+            )
+        return AgentOutput(
+            status="error",
+            error_code=f"exit_{process.returncode}",
+            error_message=stderr_str[:500] or stdout_str[:500],
+            artifacts={"stdout": stdout_str, "stderr": stderr_str},
+        )

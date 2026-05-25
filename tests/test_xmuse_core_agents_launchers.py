@@ -10,7 +10,7 @@ from xmuse_core.agents.protocol import StdoutMessage
 def test_codex_build_command():
     launcher = CodexLauncher()
     cmd = launcher.build_command("my-feature", Path("/tmp/worktree"))
-    assert cmd == ["codex", "--cwd", "/tmp/worktree", "--quiet"]
+    assert cmd == ["codex", "exec", "--approval-mode", "full-auto", "--cwd", "/tmp/worktree"]
 
 
 def test_claude_code_build_command():

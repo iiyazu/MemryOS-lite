@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from xmuse_core.agents.registry import AgentRegistry, AgentRuntime
@@ -12,6 +13,7 @@ class TaskDescriptor:
     feature_id: str
     task_type: Literal["execute", "review", "rework"]
     prompt: str
+    worktree: str = "."
     required_capabilities: list[str] = field(default_factory=lambda: ["code"])
     developed_by_runtime: AgentRuntime | None = None
 
@@ -43,7 +45,12 @@ class WorklistConsumer:
                     task.required_capabilities,
                     exclude_runtime=task.developed_by_runtime,
                 )
-                await self._session_mgr.dispatch(agent, task)
+                await self._session_mgr.dispatch_one_shot(
+                    agent=agent,
+                    feature_id=task.feature_id,
+                    prompt=task.prompt,
+                    worktree=Path(task.worktree),
+                )
 
     async def enqueue(self, task: TaskDescriptor) -> None:
         await self._queue.put(task)
