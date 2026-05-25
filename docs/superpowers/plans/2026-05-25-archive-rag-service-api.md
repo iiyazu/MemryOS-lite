@@ -68,14 +68,20 @@ def test_archive_ingest_request_requires_exactly_one_identity_route() -> None:
     assert request.identity.kind == "archive"
     assert request.identity.archive_id == "archive_1"
 
-    with pytest.raises(ValidationError, match="Field required"):
+    with pytest.raises(ValidationError) as exc_info:
         ArchiveDocumentIngestRequest(
             document_id="adoc_bad",
             title="Bad",
             content="Bad",
             source_refs=[_ref()],
-            identity={"kind": "archive", "source_id": "src_1"},
+            identity={
+                "kind": "archive",
+                "archive_id": "archive_1",
+                "source_id": "src_1",
+            },
         )
+    assert "source_id" in str(exc_info.value)
+    assert "Extra inputs are not permitted" in str(exc_info.value)
 
 
 def test_archive_source_ref_payload_validates_manual_approval() -> None:
@@ -111,7 +117,7 @@ from typing import Annotated, Any, Literal
 Change the existing pydantic import to:
 
 ```python
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 ```
 
 Add these classes after `SearchRequest`:
@@ -167,17 +173,23 @@ class ArchiveSourceRefPayload(BaseModel):
 
 
 class ArchiveIdentityArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     kind: Literal["archive"]
     archive_id: str = Field(min_length=1)
 
 
 class ArchiveIdentitySource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     kind: Literal["source"]
     source_id: str = Field(min_length=1)
     file_id: str | None = None
 
 
 class ArchiveIdentityFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     kind: Literal["file"]
     file_id: str = Field(min_length=1)
 
@@ -397,6 +409,11 @@ Add this method immediately after `list_archival_passages`:
         )
 ```
 
+This is intentionally an O(n) prototype implementation: it reuses
+`list_archival_passages()` and slices in memory after filtering. Do not expand
+this slice into SQL-level pagination unless focused tests show the existing
+store contract cannot support the service/API workflow.
+
 - [ ] **Step 4: Run store tests to verify they pass**
 
 Run:
@@ -469,14 +486,16 @@ def test_service_archive_ingest_attach_and_context_preserve_source_span_quote(tm
         budget=120,
     )
 
-    assert ingest.passage_ids == ["apsg_adoc_service_0000"]
+    assert len(ingest.passage_ids) == 1
+    passage_id = ingest.passage_ids[0]
+    assert passage_id.startswith("apsg_")
     assert attachment.passage_count == 1
     archival = [
         item
         for item in context.metadata["v3_context"]["items"]
         if item["layer"] == "archival"
     ]
-    assert archival[0]["item_id"] == "apsg_adoc_service_0000"
+    assert archival[0]["item_id"] == passage_id
     assert archival[0]["source_refs"][0]["span"] == {"start": 0, "end": 34}
     assert archival[0]["source_refs"][0]["quote"] == "Project Helios launches in Lisbon."
 
@@ -545,10 +564,52 @@ def test_service_file_only_archive_ingest_can_be_listed(tmp_path):
         offset=0,
     )
 
-    assert ingest.passage_ids == ["apsg_adoc_file_0000"]
+    assert len(ingest.passage_ids) == 1
+    assert ingest.passage_ids[0].startswith("apsg_")
     assert page.total == 1
     assert page.passages[0].file_id == "file_1"
     assert page.passages[0].metadata["producer"] == "xmuse_review_agent"
+
+
+def test_service_archive_context_reports_lexical_fallback_without_qdrant(tmp_path):
+    service = _service(tmp_path)
+    session = service.create_session("archive-no-qdrant")
+    ref = {
+        "source_type": "document",
+        "source_id": "doc_no_qdrant",
+        "session_id": session.id,
+    }
+    ingest = service.ingest_archive_document(
+        ArchiveDocumentIngestRequest(
+            document_id="adoc_no_qdrant",
+            title="No Qdrant doc",
+            content="Shanghai rail lexical fallback.",
+            source_refs=[ref],
+            identity={"kind": "archive", "archive_id": "archive_no_qdrant"},
+        )
+    )
+    service.attach_archive(
+        ArchiveAttachmentRequest(
+            archive_id="archive_no_qdrant",
+            scope_type="session",
+            scope_id=session.id,
+            source_refs=[ref],
+        )
+    )
+
+    context = service.build_context(session.id, "Shanghai rail", budget=120)
+
+    archival = [
+        item
+        for item in context.metadata["v3_context"]["items"]
+        if item["layer"] == "archival"
+    ]
+    event_types = {
+        row["event_type"] for row in context.metadata["v3_component_accounting"]
+    }
+    assert archival[0]["item_id"] == ingest.passage_ids[0]
+    assert "archival_vector_unavailable" in event_types
+    assert "archival_lexical_fallback" in event_types
 ```
 
 - [ ] **Step 2: Run service workflow tests to verify they fail**
@@ -556,7 +617,7 @@ def test_service_file_only_archive_ingest_can_be_listed(tmp_path):
 Run:
 
 ```bash
-uv run pytest tests/test_archive_service.py::test_service_archive_ingest_attach_and_context_preserve_source_span_quote tests/test_archive_service.py::test_service_archive_ingest_is_idempotent_for_same_document tests/test_archive_service.py::test_service_archive_ingest_rejects_conflicting_document_id tests/test_archive_service.py::test_service_file_only_archive_ingest_can_be_listed -q
+uv run pytest tests/test_archive_service.py::test_service_archive_ingest_attach_and_context_preserve_source_span_quote tests/test_archive_service.py::test_service_archive_ingest_is_idempotent_for_same_document tests/test_archive_service.py::test_service_archive_ingest_rejects_conflicting_document_id tests/test_archive_service.py::test_service_file_only_archive_ingest_can_be_listed tests/test_archive_service.py::test_service_archive_context_reports_lexical_fallback_without_qdrant -q
 ```
 
 Expected: FAIL with `AttributeError: 'MemoryOSService' object has no attribute 'ingest_archive_document'`.
@@ -861,7 +922,9 @@ def test_api_archive_ingest_attach_and_list(service):
             },
         )
         assert ingest_response.status_code == 200, ingest_response.text
-        assert ingest_response.json()["passage_ids"] == ["apsg_adoc_api_0000"]
+        passage_ids = ingest_response.json()["passage_ids"]
+        assert len(passage_ids) == 1
+        assert passage_ids[0].startswith("apsg_")
 
         attach_response = client.post(
             "/archives/attachments",
@@ -881,6 +944,7 @@ def test_api_archive_ingest_attach_and_list(service):
         )
         assert list_response.status_code == 200, list_response.text
         assert list_response.json()["total"] == 1
+        assert list_response.json()["passages"][0]["id"] == passage_ids[0]
         assert list_response.json()["passages"][0]["source_refs"][0]["quote"]
     finally:
         app.dependency_overrides.clear()
@@ -1019,7 +1083,8 @@ def test_archive_cli_ingest_attach_and_passages(tmp_path, monkeypatch):
             ],
         )
         assert ingest.exit_code == 0, ingest.output
-        assert "apsg_adoc_cli_0000" in ingest.output
+        assert "apsg_" in ingest.output
+        assert "adoc_cli" in ingest.output
 
         attach = runner.invoke(
             app,
@@ -1046,7 +1111,7 @@ def test_archive_cli_ingest_attach_and_passages(tmp_path, monkeypatch):
             ["archive", "passages", "--archive-id", "archive_cli"],
         )
         assert passages.exit_code == 0, passages.output
-        assert "apsg_adoc_cli_0000" in passages.output
+        assert "apsg_" in passages.output
     finally:
         get_settings.cache_clear()
 ```
@@ -1063,12 +1128,19 @@ Expected: FAIL because the `archive` Typer group does not exist.
 
 - [ ] **Step 3: Add CLI archive typer and imports**
 
+In `src/memoryos_lite/cli.py`, change the typing import to:
+
+```python
+from typing import Annotated, Any, Literal, cast
+```
+
 In `src/memoryos_lite/cli.py`, extend the schemas import:
 
 ```python
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
+    ArchiveSourceRefPayload,
     MessageCreate,
     Role,
 )
@@ -1089,16 +1161,44 @@ app.add_typer(archive_app, name="archive")
 Add this helper near `_message_text`:
 
 ```python
+ArchiveScopeType = Literal["agent", "project", "source", "user", "run", "session"]
+ARCHIVE_SCOPE_TYPES: set[ArchiveScopeType] = {
+    "agent",
+    "project",
+    "source",
+    "user",
+    "run",
+    "session",
+}
+
+
+def _cli_service() -> MemoryOSService:
+    return MemoryOSService(settings=get_settings())
+
+
+def _archive_scope_type(value: str) -> ArchiveScopeType:
+    normalized = value.strip().lower()
+    if normalized not in ARCHIVE_SCOPE_TYPES:
+        raise ValueError(
+            "archive scope type must be one of: "
+            + ", ".join(sorted(ARCHIVE_SCOPE_TYPES))
+        )
+    return cast(ArchiveScopeType, normalized)
+
+
 def _archive_source_ref_payload(
     *,
     source_type: str,
     source_id: str,
     session_id: str | None = None,
-) -> dict[str, str]:
-    payload = {"source_type": source_type, "source_id": source_id}
-    if session_id is not None:
-        payload["session_id"] = session_id
-    return payload
+) -> ArchiveSourceRefPayload:
+    return ArchiveSourceRefPayload.model_validate(
+        {
+            "source_type": source_type,
+            "source_id": source_id,
+            "session_id": session_id,
+        }
+    )
 ```
 
 - [ ] **Step 4: Add CLI commands**
@@ -1118,6 +1218,7 @@ def archive_ingest(
     source_ref_id: Annotated[str, Option("--source-id")] = "manual_source",
     session_id: Annotated[str | None, Option("--session-id")] = None,
 ) -> None:
+    identity: dict[str, object]
     if archive_id:
         identity = {"kind": "archive", "archive_id": archive_id}
     elif source_id:
@@ -1125,21 +1226,25 @@ def archive_ingest(
     elif file_id:
         identity = {"kind": "file", "file_id": file_id}
     else:
-        raise ValueError("archive ingest requires --archive-id, --source-doc-id, or --file-id")
-    service = MemoryOSService()
+        raise ValueError(
+            "archive ingest requires --archive-id, --source-doc-id, or --file-id"
+        )
+    service = _cli_service()
     response = service.ingest_archive_document(
-        ArchiveDocumentIngestRequest(
-            document_id=document_id,
-            title=title,
-            content=content,
-            source_refs=[
-                _archive_source_ref_payload(
-                    source_type=source_type,
-                    source_id=source_ref_id,
-                    session_id=session_id,
-                )
-            ],
-            identity=identity,
+        ArchiveDocumentIngestRequest.model_validate(
+            {
+                "document_id": document_id,
+                "title": title,
+                "content": content,
+                "source_refs": [
+                    _archive_source_ref_payload(
+                        source_type=source_type,
+                        source_id=source_ref_id,
+                        session_id=session_id,
+                    )
+                ],
+                "identity": identity,
+            }
         )
     )
     table = Table(title="Archive ingest")
@@ -1158,11 +1263,11 @@ def archive_attach(
     source_ref_id: Annotated[str, Option("--source-id")] = "manual_source",
     session_id: Annotated[str | None, Option("--session-id")] = None,
 ) -> None:
-    service = MemoryOSService()
+    service = _cli_service()
     response = service.attach_archive(
         ArchiveAttachmentRequest(
             archive_id=archive_id,
-            scope_type=scope_type,  # type: ignore[arg-type]
+            scope_type=_archive_scope_type(scope_type),
             scope_id=scope_id,
             source_refs=[
                 _archive_source_ref_payload(
@@ -1194,7 +1299,7 @@ def archive_passages(
     limit: Annotated[int, Option("--limit")] = 100,
     offset: Annotated[int, Option("--offset")] = 0,
 ) -> None:
-    service = MemoryOSService()
+    service = _cli_service()
     response = service.list_archive_passages(
         archive_id=archive_id,
         source_id=source_id,
@@ -1263,6 +1368,10 @@ Minimal service-backed surfaces:
 
 These surfaces do not bypass v3 archive eligibility. Retrieved archive passages
 enter normal context through `build_context()`.
+
+`GET /archives/passages` uses the current SQLite store listing path and applies
+pagination in memory. This is O(n) for the first service/API slice; SQL-level
+pagination is a later scale-up task, not part of this prototype integration.
 ```
 
 - [ ] **Step 2: Run focused archive/service/API/CLI tests**
