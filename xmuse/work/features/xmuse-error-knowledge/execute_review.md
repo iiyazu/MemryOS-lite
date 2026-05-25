@@ -27,7 +27,7 @@ Checks:
 
 Verification:
 
-- `uv run pytest tests/test_xmuse_error_knowledge.py -q` -> `19 passed`.
+- `uv run pytest tests/test_xmuse_error_knowledge.py -q` -> `20 passed`.
 - `uv run ruff check .` -> `All checks passed!`
 - `uv run ruff check --no-cache xmuse/xmuse_error_knowledge.py tests/test_xmuse_error_knowledge.py` -> `All checks passed!`
 - `uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py -q` -> `57 passed`.

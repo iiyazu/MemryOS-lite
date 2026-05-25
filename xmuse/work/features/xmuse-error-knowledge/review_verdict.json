@@ -6,11 +6,9 @@
   "readiness_for_slave_ack": true,
   "required_repairs": [],
   "review_repairs_completed": [
-    "strict contract validation before normal knowledge writes",
-    "same-feature allowlisted retries remain method_candidate",
-    "marker-preserving human edits are kept and new drafts go to revisions",
-    "run and index objects include source_refs and source_digest",
-    "explicit Xmuse lint gate added because repository ruff excludes xmuse"
+    "partial terminal artifact extraction",
+    "focused regression coverage for missing result and review verdict artifacts",
+    "test fixtures tightened so unrelated cases do not rely on missing-file findings"
   ],
   "review_eval_decision": {
     "llm_answer": false,

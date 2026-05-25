@@ -29,23 +29,8 @@
   "verification_commands": [
     {
       "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
-      "exit_code": 1,
-      "result": "RED before implementation: failed because xmuse/xmuse_error_knowledge.py was missing"
-    },
-    {
-      "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
-      "exit_code": 1,
-      "result": "RED review regressions: 4 failed, 15 passed"
-    },
-    {
-      "command": "uv run ruff check --no-cache xmuse/xmuse_error_knowledge.py tests/test_xmuse_error_knowledge.py",
-      "exit_code": 1,
-      "result": "RED explicit Xmuse lint: 14 E501 errors"
-    },
-    {
-      "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
       "exit_code": 0,
-      "result": "19 passed"
+      "result": "20 passed in 0.42s"
     },
     {
       "command": "uv run ruff check .",
@@ -60,12 +45,17 @@
     {
       "command": "uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py -q",
       "exit_code": 0,
-      "result": "57 passed"
+      "result": "57 passed in 0.22s"
     },
     {
       "command": "uv run python xmuse/xmuse_error_knowledge.py --root . --run-id xmuse-error-knowledge-20260525T000000Z",
       "exit_code": 0,
       "result": "usable; 12 records, 7 clusters, 2 methods, 2 skill proposals"
+    },
+    {
+      "command": "python3 - <<'PY' ... index reference audit ... PY",
+      "exit_code": 0,
+      "result": "index references ok"
     }
   ],
   "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-error-knowledge"

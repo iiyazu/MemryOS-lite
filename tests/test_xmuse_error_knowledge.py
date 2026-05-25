@@ -233,6 +233,8 @@ def test_error_records_include_schema_source_digest_and_run_metadata(tmp_path: P
     knowledge = load_knowledge_module()
     write_required_inputs(tmp_path)
     ack_path = add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "partial"})
+    add_feature_artifact(tmp_path, "alpha", "result.md", "Status: blocked\n")
+    add_feature_artifact(tmp_path, "alpha", "review_verdict.json", {"verdict": "PASS"})
 
     knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-schema", now=NOW)
 
@@ -272,6 +274,8 @@ def test_digest_idempotency_and_duplicate_failures_do_not_inflate_counts(
             ]
         ),
     )
+    add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "usable"})
+    add_feature_artifact(tmp_path, "alpha", "review_verdict.json", {"verdict": "PASS"})
 
     knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-idem-1", now=NOW)
     knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-idem-2", now=NOW)
@@ -299,6 +303,8 @@ def test_distinct_failed_commands_create_distinct_records(tmp_path: Path) -> Non
             ]
         ),
     )
+    add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "usable"})
+    add_feature_artifact(tmp_path, "alpha", "review_verdict.json", {"verdict": "PASS"})
 
     knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-commands", now=NOW)
 
@@ -347,6 +353,26 @@ def test_scanner_extracts_missing_artifacts_invalid_json_mypy_and_hard_eval(
     }.issubset(fingerprints)
 
 
+def test_scanner_extracts_partially_missing_terminal_artifacts(tmp_path: Path) -> None:
+    knowledge = load_knowledge_module()
+    write_required_inputs(tmp_path)
+    add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "usable"})
+
+    knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-partial-missing", now=NOW)
+
+    records = error_records(tmp_path, "alpha")
+    fingerprints = {record["fingerprint"] for record in records}
+    paths = {record["source_ref"]["path"] for record in records}
+    assert fingerprints == {
+        "missing_required_artifact:result",
+        "missing_required_artifact:review_verdict",
+    }
+    assert paths == {
+        "xmuse/work/features/alpha/result.md",
+        "xmuse/work/features/alpha/review_verdict.json",
+    }
+
+
 def test_same_feature_retries_do_not_satisfy_cross_feature_promotion(tmp_path: Path) -> None:
     knowledge = load_knowledge_module()
     write_required_inputs(tmp_path)
@@ -356,6 +382,8 @@ def test_same_feature_retries_do_not_satisfy_cross_feature_promotion(tmp_path: P
         "result.md",
         "transient network timeout while fetching benchmark data\n",
     )
+    add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "usable"})
+    add_feature_artifact(tmp_path, "alpha", "review_verdict.json", {"verdict": "PASS"})
     add_feature_artifact(
         tmp_path,
         "alpha",
@@ -418,6 +446,8 @@ def test_markdown_only_diagnosis_cannot_confirm_root_cause(tmp_path: Path) -> No
         "result.md",
         "Root cause: the prompt probably confused the worker during review.\n",
     )
+    add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "usable"})
+    add_feature_artifact(tmp_path, "alpha", "review_verdict.json", {"verdict": "PASS"})
 
     knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-markdown", now=NOW)
 
@@ -433,12 +463,16 @@ def test_confirmed_root_cause_requires_verification_or_allowlisted_invariant(
     knowledge = load_knowledge_module()
     write_required_inputs(tmp_path)
     add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "blocked"})
+    add_feature_artifact(tmp_path, "alpha", "result.md", "Status: blocked\n")
+    add_feature_artifact(tmp_path, "alpha", "review_verdict.json", {"verdict": "PASS"})
     add_feature_artifact(
         tmp_path,
         "beta",
         "result.md",
         "verification evidence: uv run pytest tests/test_x.py -q failed\n",
     )
+    add_feature_artifact(tmp_path, "beta", "ack.json", {"ack_level": "usable"})
+    add_feature_artifact(tmp_path, "beta", "review_verdict.json", {"verdict": "PASS"})
 
     knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-confirmed", now=NOW)
 

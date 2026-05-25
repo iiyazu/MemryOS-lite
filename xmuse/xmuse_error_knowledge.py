@@ -456,12 +456,9 @@ class KnowledgeMaintainer:
             feature_id = feature_dir.name
             if feature_id == FEATURE_ID:
                 continue
-            present_terminal = [
-                name for name in FINAL_WORK_ARTIFACTS if (feature_dir / name).exists()
-            ]
-            if present_terminal:
-                continue
             for artifact in FINAL_WORK_ARTIFACTS:
+                if (feature_dir / artifact).exists():
+                    continue
                 artifact_type = artifact_type_for(feature_dir / artifact)
                 missing_path = feature_dir / artifact
                 findings.append(

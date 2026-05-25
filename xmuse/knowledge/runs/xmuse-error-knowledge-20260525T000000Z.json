@@ -48,7 +48,7 @@
   },
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "object_type": "knowledge_run",
-  "recorded_at": "2026-05-25T03:31:08Z",
+  "recorded_at": "2026-05-25T04:12:52Z",
   "scanned_artifacts": [
     "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
     "xmuse/master/features/memoryos-redis-cache-probe/master_review.json",
