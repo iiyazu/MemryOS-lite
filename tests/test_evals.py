@@ -83,6 +83,50 @@ def test_builtin_case_message_ids_are_stable():
     assert first[0].id == case.required_sources[0]
 
 
+def test_eval_evidence_selection_skips_generic_acknowledgements():
+    selected = _baseline_from_evidence(
+        "项目最终截止日期是哪天？",
+        [
+            EvidenceItem(
+                text="已记录最终截止日期。",
+                source_texts={"ack": "已记录最终截止日期。"},
+                origin="retrieved_message",
+            ),
+            EvidenceItem(
+                text="截止日期最终确定 11 月 1 日。",
+                source_texts={"final": "截止日期最终确定 11 月 1 日。"},
+                origin="retrieved_message",
+            ),
+        ],
+        context_tokens=20,
+    )
+
+    assert selected.answer == "截止日期最终确定 11 月 1 日"
+    assert selected.sources["final"] == "截止日期最终确定 11 月 1 日。"
+
+
+def test_eval_evidence_selection_prefers_update_evidence_for_slot_questions():
+    selected = _baseline_from_evidence(
+        "RPC 框架用什么？",
+        [
+            EvidenceItem(
+                text="架构设计：RPC 框架用 gRPC。",
+                source_texts={"old": "架构设计：RPC 框架用 gRPC。"},
+                origin="retrieved_message",
+            ),
+            EvidenceItem(
+                text="与合作团队对接，RPC 框架采用 Thrift。",
+                source_texts={"new": "与合作团队对接，RPC 框架采用 Thrift。"},
+                origin="retrieved_message",
+            ),
+        ],
+        context_tokens=20,
+    )
+
+    assert selected.answer == "Thrift"
+    assert selected.sources["new"] == "与合作团队对接，RPC 框架采用 Thrift。"
+
+
 @pytest.mark.parametrize(
     ("question", "expected"),
     [
@@ -625,6 +669,21 @@ def test_memoryos_baseline_preserves_required_sources(tmp_path):
         run_id="source-memoryos",
         baselines=["memoryos_lite"],
         isolated=True,
+    )
+
+    assert results
+    assert all(result.source_accuracy == 1.0 for result in results)
+
+
+def test_memoryos_v3_default_preserves_hard_eval_source_accuracy(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+
+    results = run_eval(
+        settings,
+        run_id="hard-default-v3",
+        baselines=["memoryos_lite"],
+        isolated=True,
+        case_set="hard",
     )
 
     assert results

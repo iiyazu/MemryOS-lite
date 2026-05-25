@@ -1,41 +1,57 @@
 # Context Bundle: benchmark-layer-organization
 
 feature_id: benchmark-layer-organization
+updated_at: 2026-05-25T07:52:36Z
 worktree: /home/iiyatu/projects/python/memoryOS-benchmark-layer-organization
 branch: feat/benchmark-layer-organization
-target_branch: feat/phase-2.5-3-retrieval-agent
-dispatch_base: 4c4712df763c652952a8066060bdb8bb4b37ba0b
 
-## Active Inputs
+## Inputs Read
 
-- Root control-plane feature entry confirms branch `feat/benchmark-layer-organization`, worktree `/home/iiyatu/projects/python/memoryOS-benchmark-layer-organization`, target branch `feat/phase-2.5-3-retrieval-agent`.
-- Root feature `slave_state.json` was `planned` before this turn.
-- Blueprint goal is LoCoMo-first benchmark layer organization, with LongMemEval as a regression guard and no benchmark-specific hacks.
-- Allowed product files include recall search/pipeline, v3 composer, public diagnostics, public movement, public benchmarks, and evals.
+- `xmuse/prompts/slave_god_prompt.md`
+- `xmuse/work/features/benchmark-layer-organization/slave_state.json`
+- `xmuse/work/features/benchmark-layer-organization/blueprint.md`
+- `xmuse/jobs/benchmark-layer-organization.json`
+- `xmuse/contracts/slave_dispatch_template.json`
+- `xmuse/dispatch/features/benchmark-layer-organization/slave_dispatch_prompt.md`
 
-## Current Code Observations
+The assigned worktree does not carry `xmuse/prompts/slave_god_prompt.md` or
+`xmuse/work/features/benchmark-layer-organization/blueprint.md`; the current
+control-plane copies were read from `/home/iiyatu/projects/python/memoryOS`.
+Writes stayed under the assigned feature worktree and feature-local artifacts.
 
-- `RecallMemorySearcher` already supports direct hits, packet metadata, same-session neighbor expansion, session-diversified anchors, and diagnostics.
-- `RecallPipeline` serializes recall diagnostics and exposes `recall_evidence_packets`.
-- `V3ContextComposer` already records `component_accounting`, `final_context_trace`, component token/drop counts, and `locomo_neighbor_diagnostics`.
-- `public_case_diagnostics` already separates retrieval, selected context, rendered context, answer evidence, citation, judge status, failure class, movement status, and evidence handoff.
-- `public_case_movement` already emits `fail_to_pass`, `pass_to_fail`, `unchanged_pass`, `unchanged_fail`, and `new_case_no_baseline`.
+## Prior State
 
-## Bounded Slice
+- ACK was partial.
+- Review verdict was FAIL for full-blueprint readiness.
+- Previous implemented slices covered signed recall packet offsets and public
+  benchmark movement/source-metric summaries.
+- Remaining blockers included missing LLM credentials, absent ignored benchmark
+  data in the worktree, pre-existing full-project mypy failures, and a default
+  hard-eval mismatch.
 
-This Slave turn will not optimize benchmark scores or run full public LLM evals. The smallest useful real slice is to improve packet/neighbor diagnostics by making packet member offsets explicit and signed:
+## Current Repair Slice
 
-- Anchor offset: `0`.
-- Previous same-session neighbor: negative offset.
-- Next same-session neighbor: positive offset.
-- The same offset metadata should be visible in `recall_evidence_packets`, evidence metadata, recall diagnostics, and v3 final context trace metadata when selected/rendered.
+This pass repairs the default v3 hard-eval mismatch while preserving the v1
+fallback and v3 default. The deterministic eval evidence selector now:
 
-## Invariants To Preserve
+- ignores generic acknowledgement evidence during answer selection;
+- prefers update-marked evidence for ordinary slot-value questions, not only
+  explicit temporal questions;
+- widens habit/preference answer projection only when the v3 retrieved-message
+  path has competing restatements.
 
-- Default memory architecture remains `v3`.
-- `MEMORYOS_MEMORY_ARCH=v1` fallback remains available.
-- `MEMORYOS_RECALL_PIPELINE=v2` remains opt-in.
-- `MEMORYOS_AGENT_KERNEL=v1` remains opt-in.
-- SQLite remains authoritative.
-- No benchmark-specific case ids, answer strings, expected-source shortcuts, or dataset string overfitting.
-- Benchmark scores are diagnostic/gate evidence only.
+The documented hard eval command now reports `accuracy=1.00` and `source=1.00`
+under default settings. Local ignored symlinks were added for the public
+benchmark JSON files and baseline comparison reports so relative public smoke
+commands can resolve their inputs in this worktree.
+
+## Residual Blockers
+
+- Full public LongMemEval/LoCoMo LLM answer and judge gates remain blocked
+  because `OPENAI_API_KEY` and `DEEPSEEK_API_KEY` are unset.
+- Full-project `uv run mypy src` still fails with 90 pre-existing errors in 12
+  files. Targeted mypy for touched modules passes.
+
+No benchmark score target, case-id shortcut, hard-coded answer,
+archive-rag dependency, recall-pipeline default change, v1 fallback change, or
+kernel default change was introduced.

@@ -1,36 +1,69 @@
 {
   "feature_id": "benchmark-layer-organization",
   "ack_level": "partial",
-  "status": "bounded_slice_complete_full_blueprint_incomplete",
+  "status": "hard_gate_repair_complete_full_blueprint_blocked",
   "branch": "feat/benchmark-layer-organization",
   "target_branch": "feat/phase-2.5-3-retrieval-agent",
   "worktree": "/home/iiyatu/projects/python/memoryOS-benchmark-layer-organization",
-  "head": "3b2a9730e8eb6cd1466ba42516083df5fbb723dc",
-  "head_ref": "3b2a973 feat: expose signed recall packet offsets",
+  "head_ref": "feat/benchmark-layer-organization",
+  "pre_repair_head": "8a6bc56",
+  "implemented_slice": "default v3 hard-eval evidence selection repaired; hard eval now reports accuracy=1.00/source=1.00 while preserving v1 fallback and v3 default",
   "verification_commands": [
     {
-      "command": "uv run pytest tests/test_episode_retrieval.py::test_recall_searcher_records_signed_packet_member_offsets tests/test_recall_pipeline.py::test_recall_pipeline_exposes_signed_packet_member_offsets tests/test_context_composer.py::test_v3_composer_final_trace_preserves_signed_packet_member_offsets -q",
-      "result": "3 failed before implementation with missing packet_member_neighbor_offsets; 3 passed in 3.36s after implementation"
+      "command": "uv run pytest tests/test_evals.py::test_memoryos_v3_default_preserves_hard_eval_source_accuracy -q",
+      "result": "RED failed before implementation with assert False"
+    },
+    {
+      "command": "uv run pytest tests/test_evals.py::test_eval_evidence_selection_skips_generic_acknowledgements tests/test_evals.py::test_eval_evidence_selection_prefers_update_evidence_for_slot_questions -q",
+      "result": "RED failed before implementation with 2 failures"
+    },
+    {
+      "command": "uv run pytest tests/test_evals.py::test_eval_evidence_selection_skips_generic_acknowledgements tests/test_evals.py::test_eval_evidence_selection_prefers_update_evidence_for_slot_questions tests/test_evals.py::test_memoryos_v3_default_preserves_hard_eval_source_accuracy -q",
+      "result": "3 passed in 34.10s"
+    },
+    {
+      "command": "uv run pytest tests/test_evals.py -q",
+      "result": "45 passed in 770.57s"
     },
     {
       "command": "uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py -q",
-      "result": "19 passed in 10.81s"
+      "result": "19 passed in 17.23s"
     },
     {
       "command": "uv run pytest tests/test_context_composer.py -q",
-      "result": "14 passed in 29.55s"
+      "result": "14 passed in 34.65s"
     },
     {
       "command": "uv run pytest tests/test_public_benchmarks.py tests/test_diagnostic_report.py -q",
-      "result": "91 passed in 131.00s (0:02:11)"
+      "result": "94 passed in 115.87s"
     },
     {
-      "command": "uv run ruff check src/memoryos_lite/retrieval/episode_searcher.py src/memoryos_lite/retrieval/recall_pipeline.py tests/test_episode_retrieval.py tests/test_recall_pipeline.py tests/test_context_composer.py",
-      "result": "All checks passed!"
+      "command": "uv run pytest -q",
+      "result": "605 passed, 1 warning in 968.49s"
     },
     {
-      "command": "uv run python - <<'PY'\nfrom memoryos_lite.config import Settings\ns = Settings()\nprint('resolved_memory_arch', s.resolved_memory_arch)\nprint('resolved_recall_pipeline', s.resolved_recall_pipeline)\nprint('resolved_agent_kernel', s.resolved_agent_kernel)\nprint('v1_fallback', Settings(memoryos_memory_arch='v1').resolved_memory_arch)\nPY",
-      "result": "resolved_memory_arch v3; resolved_recall_pipeline v1; resolved_agent_kernel off; v1_fallback v1"
+      "command": "uv run ruff check .",
+      "result": "All checks passed"
+    },
+    {
+      "command": "uv run mypy src/memoryos_lite/evals.py src/memoryos_lite/public_case_movement.py src/memoryos_lite/public_case_diagnostics.py src/memoryos_lite/public_benchmarks.py",
+      "result": "Success: no issues found in 4 source files"
+    },
+    {
+      "command": "uv run mypy src",
+      "result": "Failed with 90 pre-existing project-wide errors in 12 files"
+    },
+    {
+      "command": "uv run memoryos eval run --case-set hard --baseline memoryos_lite",
+      "result": "accuracy=1.00/source=1.00; report .memoryos/evals/run_20260525_071141.json"
+    },
+    {
+      "command": "MEMORYOS_RECALL_PIPELINE=v2 MEMORYOS_EMBEDDING_PROVIDER=none uv run memoryos eval public --benchmark longmemeval --data-path benchmarks/longmemeval/longmemeval.json --baseline memoryos_lite --limit 10 --no-llm-answer --no-llm-judge --run-id routeb_lme10_after_benchmark_layer_organization_hardgate_repair_no_llm --comparison-report .memoryos/evals/routeb_lme50_llm_20260524_longmemeval.json",
+      "result": "Diagnostic report and movement summary written"
+    },
+    {
+      "command": "MEMORYOS_RECALL_PIPELINE=v2 MEMORYOS_EMBEDDING_PROVIDER=none uv run memoryos eval public --benchmark locomo --data-path benchmarks/locomo/locomo10.json --baseline memoryos_lite --limit 10 --no-llm-answer --no-llm-judge --run-id routeb_locomo10_after_benchmark_layer_organization_hardgate_repair_no_llm --comparison-report .memoryos/evals/routeb_locomo50_llm_20260524_locomo.json",
+      "result": "Diagnostic report and movement summary written"
     }
   ],
   "v3_default_preserved": true,
@@ -39,22 +72,19 @@
   "kernel_default_unchanged": true,
   "sqlite_authority_preserved": true,
   "benchmark_improvement_claim": false,
-  "locomo_longmemeval_decision": {
-    "locomo": "not_run_no_score_or_case_movement_claim",
-    "longmemeval": "not_run_regression_guard_pending"
-  },
   "review_eval_decision": {
     "review_verdict": "FAIL",
-    "reason": "bounded diagnostic slice passed focused verification, but full blueprint and public eval gates are incomplete"
+    "reason": "bounded hard-gate repair passed, but full blueprint gates remain blocked by missing public LLM credentials and project-wide mypy failures"
   },
   "artifacts": {
     "context_bundle": "xmuse/work/features/benchmark-layer-organization/context_bundle.md",
-    "brainstorm": "xmuse/work/features/benchmark-layer-organization/brainstorm.md",
     "plan_final": "xmuse/work/features/benchmark-layer-organization/plan_final.md",
+    "execute_goal": "xmuse/work/features/benchmark-layer-organization/execute_goal.md",
     "result": "xmuse/work/features/benchmark-layer-organization/result.md",
     "execute_review": "xmuse/work/features/benchmark-layer-organization/execute_review.md",
     "review_verdict": "xmuse/work/features/benchmark-layer-organization/review_verdict.json",
     "ack": "xmuse/work/features/benchmark-layer-organization/ack.json",
-    "slave_state": "xmuse/work/features/benchmark-layer-organization/slave_state.json"
+    "slave_state": "xmuse/work/features/benchmark-layer-organization/slave_state.json",
+    "feature_amendment_proposal": "xmuse/work/features/benchmark-layer-organization/feature_amendment_proposal.json"
   }
 }

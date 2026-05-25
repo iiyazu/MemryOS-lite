@@ -1,120 +1,63 @@
-# Benchmark Layer Organization Implementation Plan
+# Plan Final: benchmark-layer-organization
 
 feature_id: benchmark-layer-organization
+updated_at: 2026-05-25T07:52:36Z
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+## Goal
 
-**Goal:** Improve LoCoMo-style packet/neighbor diagnostics by preserving signed neighbor offsets from recall packets through v3 context trace metadata.
+Repair the in-authority hard-eval regression left by the previous partial ACK:
+the documented default command `uv run memoryos eval run --case-set hard
+--baseline memoryos_lite` reported `0.56/0.56` on the v3 default path even
+though the v1 fallback path reported `1.00/1.00`.
 
-**Architecture:** Add explicit packet member offset metadata at the recall search layer, serialize it through `RecallPipeline`, and rely on existing `V3ContextComposer` accounting to preserve selected item metadata in final context trace rows. The change is diagnostic-only and does not alter default architecture, v2 opt-in behavior, v1 fallback, kernel defaults, or benchmark score targets.
+## Files
 
-**Tech Stack:** Python 3.11+, pytest, MemoryOS Lite recall/v3 context contracts.
+Product:
 
----
+- `src/memoryos_lite/evals.py`
 
-### Task 1: RED Tests For Signed Packet Offsets
+Tests:
 
-**Files:**
-- Modify: `tests/test_episode_retrieval.py`
-- Modify: `tests/test_recall_pipeline.py`
-- Modify: `tests/test_context_composer.py`
+- `tests/test_evals.py`
 
-- [ ] **Step 1: Add failing recall searcher test**
+Artifacts:
 
-Add a test that builds a D1 packet around an anchor with one previous and one next message. Assert `packet_member_neighbor_offsets` is present and equals:
+- `xmuse/work/features/benchmark-layer-organization/*`
 
-```python
-[
-    {"message_id": "d1_prev", "neighbor_offset": -1},
-    {"message_id": "d1_anchor", "neighbor_offset": 0},
-    {"message_id": "d1_next", "neighbor_offset": 1},
-]
-```
+Ignored local runtime setup:
 
-- [ ] **Step 2: Add failing recall pipeline test**
+- `benchmarks/longmemeval/longmemeval.json`
+- `benchmarks/locomo/locomo10.json`
+- `.memoryos/evals/routeb_lme50_llm_20260524_longmemeval.json`
+- `.memoryos/evals/routeb_locomo50_llm_20260524_locomo.json`
 
-Add a test that uses `RecallPipeline.build_context()` and asserts the same offset metadata is visible in `package.metadata["recall_evidence_packets"]` and selected evidence metadata.
+## TDD Steps
 
-- [ ] **Step 3: Add failing v3 composer test**
+1. RED: add a default-v3 hard eval test and focused evidence-selection tests.
+2. GREEN: skip generic acknowledgements during eval answer selection, prefer
+   update evidence for slot questions, and preserve competing v3 restatements
+   for habit/preference questions.
+3. REFACTOR: keep the change inside eval answer projection and avoid changing
+   v1 fallback, v3 defaults, retrieval-pipeline defaults, or public benchmark
+   scoring semantics.
 
-Add a test that opts into `v3` context construction and asserts the selected recall row in `metadata["final_context_trace"]` contains `packet_member_neighbor_offsets`.
+## Gates
 
-- [ ] **Step 4: Verify RED**
+- New focused RED/GREEN eval tests.
+- `tests/test_evals.py`.
+- Focused recall, context composer, and public diagnostics suites.
+- Hard eval default command.
+- Full pytest.
+- Ruff.
+- Targeted mypy for touched modules.
+- Full-project mypy recorded as residual blocker if still failing.
+- Public no-LLM relative-path smoke diagnostics.
 
-Run:
+## Non-Goals
 
-```bash
-uv run pytest tests/test_episode_retrieval.py::test_recall_searcher_records_signed_packet_member_offsets tests/test_recall_pipeline.py::test_recall_pipeline_exposes_signed_packet_member_offsets tests/test_context_composer.py::test_v3_composer_final_trace_preserves_signed_packet_member_offsets -q
-```
-
-Expected: all three tests fail because `packet_member_neighbor_offsets` is missing.
-
-### Task 2: Minimal Implementation
-
-**Files:**
-- Modify: `src/memoryos_lite/retrieval/episode_searcher.py`
-- Modify: `src/memoryos_lite/retrieval/recall_pipeline.py`
-
-- [ ] **Step 1: Add packet member offset metadata**
-
-In `_packet_metadata`, compute each member's signed offset relative to the anchor position and include:
-
-```python
-"packet_member_neighbor_offsets": [
-    {"message_id": entry.message_id, "neighbor_offset": entry.position - anchor.position}
-    for entry in member_entries
-],
-```
-
-- [ ] **Step 2: Serialize offsets in packet summaries**
-
-In `_packet_summaries`, include:
-
-```python
-"packet_member_neighbor_offsets": list(
-    hit.packet_metadata.get("packet_member_neighbor_offsets", [])
-),
-```
-
-- [ ] **Step 3: Verify GREEN**
-
-Run the RED command again. Expected: pass.
-
-### Task 3: Focused Regression
-
-- [ ] **Step 1: Run focused recall tests**
-
-```bash
-uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py -q
-```
-
-- [ ] **Step 2: Run focused composer tests**
-
-```bash
-uv run pytest tests/test_context_composer.py -q
-```
-
-- [ ] **Step 3: Run focused public diagnostics tests**
-
-```bash
-uv run pytest tests/test_public_benchmarks.py tests/test_diagnostic_report.py -q
-```
-
-- [ ] **Step 4: Check defaults with config tests or targeted assertions**
-
-Use existing tests or a small Python check to confirm default memory arch remains `v3`, v1 fallback remains configurable, recall pipeline v2 remains opt-in, and agent kernel default is unchanged.
-
-### Task 4: Handoff Artifacts
-
-**Files:**
-- Create or update: `xmuse/work/features/benchmark-layer-organization/result.md`
-- Create or update: `xmuse/work/features/benchmark-layer-organization/execute_review.md`
-- Create or update: `xmuse/work/features/benchmark-layer-organization/review_verdict.json`
-- Create or update: `xmuse/work/features/benchmark-layer-organization/ack.json`
-- Update: `xmuse/work/features/benchmark-layer-organization/slave_state.json`
-
-- [ ] **Step 1: Record commands and outcomes in `result.md`**
-- [ ] **Step 2: Self-review invariants and leakage criteria in `execute_review.md`**
-- [ ] **Step 3: Write `review_verdict.json`**
-- [ ] **Step 4: Write `ack.json` with `ack_level` based on actual verification**
-- [ ] **Step 5: Update `slave_state.json`**
+- No benchmark score optimization.
+- No public LLM full-chain claim without provider credentials.
+- No default change for `MEMORYOS_RECALL_PIPELINE`, `MEMORYOS_MEMORY_ARCH`, or
+  `MEMORYOS_AGENT_KERNEL`.
+- No archive-rag work.
+- No project-wide mypy cleanup outside this feature slice.

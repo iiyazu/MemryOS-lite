@@ -308,7 +308,7 @@ class V3ContextComposer:
             diagnostic = self._diagnostic(item, included=True, dropped=False)
             row = self._accounting_row(diagnostic, rendered_index=rendered_index)
             final_trace.append(row)
-            rendered_index_by_item[(row["component"], item.item_id)] = rendered_index
+            rendered_index_by_item[(str(row["component"]), item.item_id)] = rendered_index
 
         accounting: list[dict[str, object]] = []
         seen_select_rows: set[tuple[str, str | None, bool, bool, str]] = set()
@@ -333,13 +333,16 @@ class V3ContextComposer:
             if diagnostic.event_type == "select" and key in seen_select_rows:
                 continue
             seen_select_rows.add(key)
-            rendered_index = (
+            selected_rendered_index = (
                 rendered_index_by_item.get((component, diagnostic.item_id))
                 if diagnostic.included and diagnostic.item_id is not None
                 else None
             )
             accounting.append(
-                self._accounting_row(diagnostic, rendered_index=rendered_index)
+                self._accounting_row(
+                    diagnostic,
+                    rendered_index=selected_rendered_index,
+                )
             )
 
         token_totals: dict[str, int] = {}
@@ -347,13 +350,13 @@ class V3ContextComposer:
         drop_counts: dict[str, int] = {}
         for row in accounting:
             component = str(row["component"])
-            if row["included"]:
+            if row["included"] is True:
                 token_totals[component] = token_totals.get(component, 0) + int(
-                    row["estimated_tokens"]
+                    self._int_value(row["estimated_tokens"])
                 )
                 included_counts[component] = included_counts.get(component, 0) + 1
                 drop_counts.setdefault(component, 0)
-            if row["dropped"]:
+            if row["dropped"] is True:
                 drop_counts[component] = drop_counts.get(component, 0) + 1
                 included_counts.setdefault(component, 0)
                 token_totals.setdefault(component, 0)
@@ -361,6 +364,7 @@ class V3ContextComposer:
         locomo_rows = [
             row for row in accounting
             if row["component"] == "recall"
+            and isinstance(row["metadata"], dict)
             and (
                 bool(row["metadata"].get("benchmark_session_id"))
                 or bool(row["metadata"].get("packet_session_id"))
@@ -379,6 +383,12 @@ class V3ContextComposer:
                 "locomo_neighbor_diagnostics": locomo_rows,
             }
         )
+
+    @staticmethod
+    def _int_value(value: object) -> int:
+        if isinstance(value, int):
+            return value
+        return 0
 
     def _archival_eligibility_diagnostics(
         self,

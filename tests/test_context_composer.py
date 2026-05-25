@@ -401,6 +401,50 @@ def test_v3_composer_final_context_trace_flattens_selected_source_refs(tmp_path)
     assert all(row["dropped"] is False for row in trace)
 
 
+def test_v3_composer_final_trace_preserves_signed_packet_member_offsets(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    for message_id, content in [
+        ("d1_prev", "Lena packed the notebooks."),
+        ("d1_anchor", "Lena chose the target cafe."),
+        ("d1_next", "She ordered jasmine tea."),
+    ]:
+        store.add_message(
+            Message(
+                id=message_id,
+                session_id="ses_1",
+                role=Role.USER,
+                content=content,
+                metadata={"benchmark_session_id": "D1"},
+                token_count=len(content.split()),
+            )
+        )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="target cafe",
+            budget=100,
+        )
+    )
+
+    trace = package.metadata["final_context_trace"]
+    anchor_row = next(
+        row for row in trace
+        if row["component"] == "recall" and row["item_id"] == "d1_anchor"
+    )
+    assert anchor_row["metadata"]["packet_member_neighbor_offsets"] == [
+        {"message_id": "d1_prev", "neighbor_offset": -1},
+        {"message_id": "d1_anchor", "neighbor_offset": 0},
+        {"message_id": "d1_next", "neighbor_offset": 1},
+    ]
+
+
 def test_v3_composer_keeps_locomo_neighbor_in_same_benchmark_session(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
     store = create_store(settings)
