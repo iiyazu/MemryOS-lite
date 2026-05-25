@@ -1067,27 +1067,40 @@ class KnowledgeMaintainer:
             proposal_id = stable_id("proposal", method["method_id"])
             proposal_dir_rel = f"xmuse/knowledge/skill_proposals/{proposal_id}"
             manifest_rel = f"{proposal_dir_rel}/manifest.json"
+            manifest_path = self.root / manifest_rel
             body = self.render_skill_proposal(method, proposal_id)
             digest = sha256_text(body)
-            manifest = {
-                "schema_version": SCHEMA_VERSION,
-                "object_type": "skill_proposal_manifest",
-                "proposal_id": proposal_id,
-                "knowledge_run_id": self.run_id,
-                "extractor_version": EXTRACTOR_VERSION,
-                "created_at": self.now,
-                "updated_at": self.now,
-                "status": "draft",
-                "quarantined": True,
-                "activation_status": "not_installed",
-                "method_ids": [method["method_id"]],
-                "source_refs": unique_source_refs(method.get("source_refs", [])),
-                "source_digest": source_digest_for_refs(
-                    unique_source_refs(method.get("source_refs", []))
-                ),
-                "last_generated_digest": digest,
-                "tombstones": [],
-            }
+            if manifest_path.exists():
+                manifest = _read_json(manifest_path)
+                if not isinstance(manifest, dict):
+                    manifest = {}
+            else:
+                manifest = {
+                    "knowledge_run_id": self.run_id,
+                    "created_at": self.now,
+                }
+            source_refs = unique_source_refs(method.get("source_refs", []))
+            tombstones = manifest.get("tombstones")
+            manifest.update(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "object_type": "skill_proposal_manifest",
+                    "proposal_id": proposal_id,
+                    "extractor_version": EXTRACTOR_VERSION,
+                    "updated_at": self.now,
+                    "status": "draft",
+                    "quarantined": True,
+                    "activation_status": "not_installed",
+                    "method_ids": [method["method_id"]],
+                    "source_refs": source_refs,
+                    "source_digest": source_digest_for_refs(source_refs),
+                    "last_generated_digest": digest,
+                    "last_knowledge_run_id": self.run_id,
+                    "tombstones": tombstones if isinstance(tombstones, list) else [],
+                }
+            )
+            manifest.setdefault("knowledge_run_id", self.run_id)
+            manifest.setdefault("created_at", self.now)
             self.write_current_or_revision(proposal_dir_rel, body, digest)
             self.write_json(manifest_rel, manifest, object_write=True)
             for subdir in ("revisions", "tombstones"):

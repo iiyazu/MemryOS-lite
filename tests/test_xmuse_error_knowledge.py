@@ -684,6 +684,38 @@ def test_human_edit_below_generated_digest_marker_is_not_overwritten(
     assert "Draft" in revisions[0].read_text(encoding="utf-8")
 
 
+def test_existing_skill_proposal_tombstones_are_preserved(tmp_path: Path) -> None:
+    knowledge = load_knowledge_module()
+    write_required_inputs(tmp_path)
+    add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "blocked"})
+    add_feature_artifact(tmp_path, "beta", "ack.json", {"ack_level": "partial"})
+    knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-proposal-1", now=NOW)
+    manifest_path = next(
+        (tmp_path / "xmuse/knowledge/skill_proposals").glob("*/manifest.json")
+    )
+    manifest = read_json(manifest_path)
+    assert isinstance(manifest, dict)
+    original_created_at = manifest["created_at"]
+    tombstone = {
+        "recorded_at": NOW,
+        "reason": "human archived an earlier proposal revision",
+    }
+    manifest["tombstones"] = [tombstone]
+    write_json(manifest_path, manifest)
+
+    knowledge.run_knowledge_maintenance(
+        tmp_path,
+        run_id="krun-proposal-2",
+        now="2026-05-25T01:00:00Z",
+    )
+
+    updated = read_json(manifest_path)
+    assert isinstance(updated, dict)
+    assert updated["created_at"] == original_created_at
+    assert updated["updated_at"] == "2026-05-25T01:00:00Z"
+    assert updated["tombstones"] == [tombstone]
+
+
 def test_run_and_index_objects_include_source_refs_and_digest_metadata(
     tmp_path: Path,
 ) -> None:

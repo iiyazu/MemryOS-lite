@@ -10,7 +10,7 @@
   "feature_id": "xmuse-error-knowledge",
   "head_ref": "feat/xmuse-error-knowledge@HEAD",
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
-  "last_updated": "2026-05-25T05:05:26Z",
+  "last_updated": "2026-05-25T06:32:17Z",
   "mode": "feature_local_single_god",
   "review_verdict": "PASS",
   "state": "ready_for_master_review",

@@ -5,6 +5,65 @@
   "kernel_default_unchanged": true,
   "readiness_for_slave_ack": true,
   "required_repairs": [],
+  "review_repairs_completed": [
+    "partial terminal artifact extraction",
+    "focused regression coverage for missing result and review verdict artifacts",
+    "structured JSON blocking finding extraction",
+    "stale target gate extraction",
+    "missing explicit approval blocker extraction",
+    "deterministic invariant duplicate collapse",
+    "cluster occurrence pruning for missing record files",
+    "test fixtures tightened so unrelated cases do not rely on missing-file findings",
+    "skill proposal manifest tombstone and created_at preservation",
+    "focused regression coverage for rerun preservation of proposal tombstones and created_at"
+  ],
+  "verification_evidence": [
+    {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py::test_json_blocking_findings_stale_gates_and_approval_absence_are_extracted -q",
+      "exit_code": 1,
+      "result": "RED: failed before scanner repair because JSON blocking_findings only produced review_verdict_not_pass"
+    },
+    {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py::test_rerun_prunes_cluster_occurrences_for_missing_record_files -q",
+      "exit_code": 1,
+      "result": "RED: failed before cluster pruning because a missing record occurrence remained in the cluster count"
+    },
+    {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py::test_existing_skill_proposal_tombstones_are_preserved -q",
+      "exit_code": 1,
+      "result": "RED: failed before repair because skill proposal manifest tombstones were reset to []"
+    },
+    {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
+      "exit_code": 0,
+      "result": "23 passed in 0.58s"
+    },
+    {
+      "command": "uv run ruff check .",
+      "exit_code": 0,
+      "result": "All checks passed!"
+    },
+    {
+      "command": "uv run ruff check --no-cache xmuse/xmuse_error_knowledge.py tests/test_xmuse_error_knowledge.py",
+      "exit_code": 0,
+      "result": "All checks passed!"
+    },
+    {
+      "command": "uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py -q",
+      "exit_code": 0,
+      "result": "57 passed in 0.21s"
+    },
+    {
+      "command": "uv run python xmuse/xmuse_error_knowledge.py --root . --run-id xmuse-error-knowledge-20260525T000000Z",
+      "exit_code": 0,
+      "result": "usable; 22 records, 13 clusters, 2 methods, 2 skill proposals"
+    },
+    {
+      "command": "python3 - <<'PY' ... index reference audit ... PY",
+      "exit_code": 0,
+      "result": "index references ok"
+    }
+  ],
   "review_eval_decision": {
     "llm_answer": false,
     "llm_judge": false,
@@ -20,16 +79,6 @@
     "reason": "Xmuse control-plane maintenance only; no MemoryOS answer path changed",
     "scope": "not_applicable"
   },
-  "review_repairs_completed": [
-    "partial terminal artifact extraction",
-    "focused regression coverage for missing result and review verdict artifacts",
-    "structured JSON blocking finding extraction",
-    "stale target gate extraction",
-    "missing explicit approval blocker extraction",
-    "deterministic invariant duplicate collapse",
-    "cluster occurrence pruning for missing record files",
-    "test fixtures tightened so unrelated cases do not rely on missing-file findings"
-  ],
   "v1_fallback_preserved": true,
   "v3_default_preserved": true,
   "verdict": "PASS"

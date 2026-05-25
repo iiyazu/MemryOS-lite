@@ -4,6 +4,7 @@
   "extractor_version": "xmuse-error-knowledge-2026-05-25",
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "last_generated_digest": "sha256:51428357be499b4496be0680e15e1284810d6b9fbfd3d05fee8bd0f25cbbbd10",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "method_ids": [
     "method-2f8f1ecf20f40c39"
   ],
@@ -35,5 +36,5 @@
   ],
   "status": "draft",
   "tombstones": [],
-  "updated_at": "2026-05-25T05:02:56Z"
+  "updated_at": "2026-05-25T06:30:10Z"
 }
