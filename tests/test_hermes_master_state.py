@@ -94,6 +94,24 @@ def test_master_state_accepts_pending_inactive_state():
     assert result["errors"] == []
 
 
+def test_hardening_validate_master_state_delegates_to_core_schema(monkeypatch):
+    hardening = load_hardening()
+    sentinel_state = {"sentinel": True}
+    sentinel_result = {"valid": True, "errors": ["from core"]}
+    calls = []
+
+    def fake_core_validate(state: dict) -> dict:
+        calls.append(state)
+        return sentinel_result
+
+    monkeypatch.setattr(hardening, "_core_validate_master_state", fake_core_validate)
+
+    result = hardening.validate_master_state(sentinel_state)
+
+    assert result is sentinel_result
+    assert calls == [sentinel_state]
+
+
 def valid_feature_amendment(action: str = "create_feature") -> dict:
     return {
         "version": "1.0",
@@ -189,6 +207,32 @@ def test_active_controller_uses_master_state_when_active(tmp_path):
     assert result["source"] == "master"
     assert result["execution_allowed"] is True
     assert result["state"]["activation_state"] == "master_active"
+
+
+def test_hardening_resolve_active_controller_delegates_to_core_state(
+    tmp_path, monkeypatch
+):
+    hardening = load_hardening()
+    loop = tmp_path / "xmuse"
+    sentinel_result = {
+        "source": "master",
+        "path": str(loop / "master_state.json"),
+        "state": {"activation_state": "master_active"},
+        "execution_allowed": True,
+        "errors": [],
+    }
+    calls = []
+
+    def fake_core_resolve(loop_root: Path, *, audit: bool = False) -> dict:
+        calls.append((loop_root, audit))
+        return sentinel_result
+
+    monkeypatch.setattr(hardening, "_core_resolve_active_controller", fake_core_resolve)
+
+    result = hardening.resolve_active_controller(loop, audit=True)
+
+    assert result is sentinel_result
+    assert calls == [(loop, True)]
 
 
 def test_active_controller_blocks_invalid_master_without_legacy_fallback(tmp_path):
@@ -946,6 +990,61 @@ def test_ready_for_merge_without_gate_evidence_is_blocked(tmp_path):
     assert result["queues"]["blocked"] == ["v1-quarantine"]
     assert result["counts"]["mergeable"] == 0
     assert "merge gate failed for v1-quarantine" in result["errors"][0]
+
+
+def test_hardening_derive_master_queues_delegates_to_core_with_merge_gate(
+    tmp_path, monkeypatch
+):
+    hardening = load_hardening()
+    loop = tmp_path / "xmuse"
+    state = base_master_state()
+    feature = _master_feature_from_test("v1-quarantine")
+    state["features"] = [feature]
+    gate_calls = []
+
+    def fake_merge_gate(loop_root: Path, candidate: dict) -> dict:
+        gate_calls.append((loop_root, candidate["id"]))
+        return {"valid": True, "errors": []}
+
+    def fake_core_derive(
+        master_state: dict,
+        *,
+        merge_gate_validator=None,
+        missing_validator_reason: str,
+    ) -> dict:
+        assert master_state is state
+        assert missing_validator_reason == "loop_root is required"
+        assert merge_gate_validator is not None
+        gate = merge_gate_validator(feature)
+        assert gate == {"valid": True, "errors": []}
+        return {
+            "queues": {
+                "planning_queue": [],
+                "active_lanes": [],
+                "master_review_queue": [],
+                "merge_queue": ["v1-quarantine"],
+                "held": [],
+                "blocked": [],
+                "merged": [],
+            },
+            "counts": {
+                "total": 1,
+                "reviewable": 0,
+                "mergeable": 1,
+                "held": 0,
+                "blocked": 0,
+                "merged": 0,
+            },
+            "errors": [],
+        }
+
+    monkeypatch.setattr(hardening, "validate_merge_queue_gate", fake_merge_gate)
+    monkeypatch.setattr(hardening, "_core_derive_master_queues", fake_core_derive)
+
+    result = hardening.derive_master_queues(state, loop_root=loop)
+
+    assert result["queues"]["merge_queue"] == ["v1-quarantine"]
+    assert gate_calls == [(loop, "v1-quarantine")]
 
 
 def test_feature_local_repair_states_remain_active_for_slave_autonomy():
@@ -2271,3 +2370,47 @@ def test_prepare_then_activate_preserves_feature_statuses(tmp_path):
     assert (loop / "legacy" / "root-loop" / "state.json").exists()
     assert (loop / "master_status.json").exists()
     assert (loop / "master_status.md").exists()
+
+
+def test_hardening_write_master_status_uses_core_markdown_builder(
+    tmp_path, monkeypatch
+):
+    hardening = load_hardening()
+    loop = tmp_path / "xmuse"
+    state = base_master_state()
+    sentinel_status = {
+        "version": "1.0",
+        "source": "xmuse/master_state.json",
+        "activation_state": "master_active",
+        "counts": {
+            "total": 0,
+            "reviewable": 0,
+            "mergeable": 0,
+            "held": 0,
+            "blocked": 0,
+            "merged": 0,
+        },
+        "queues": {},
+        "errors": [],
+    }
+    calls = []
+
+    def fake_core_build(master_state: dict, **kwargs) -> dict:
+        assert master_state is state
+        assert kwargs["merge_gate_validator"] is not None
+        calls.append("build")
+        return sentinel_status
+
+    def fake_core_markdown(status: dict) -> str:
+        assert status is sentinel_status
+        calls.append("markdown")
+        return "core markdown\n"
+
+    monkeypatch.setattr(hardening, "_core_build_master_status", fake_core_build)
+    monkeypatch.setattr(hardening, "_core_master_status_markdown", fake_core_markdown)
+
+    result = hardening.write_master_status(loop, state)
+
+    assert result is sentinel_status
+    assert (loop / "master_status.md").read_text(encoding="utf-8") == "core markdown\n"
+    assert calls == ["build", "markdown"]

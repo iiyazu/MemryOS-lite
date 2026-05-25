@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402,I001
 """Hermes hardening helpers for launcher state, active jobs, and promotion gates.
 
 Writes are limited to explicit controller artifacts such as state, active job,
@@ -15,10 +16,46 @@ import math
 import os
 import re
 import subprocess
+import sys
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+_SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+if _SRC_ROOT.exists() and str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+
+from xmuse_core.core.paths import (
+    controller_display_path as _core_controller_display_path,
+    controller_path as _core_controller_path,
+    resolve_controller_path as _core_resolve_controller_path,
+)
+from xmuse_core.core.schema import (
+    FEATURE_AMENDMENT_ACTIONS as _CORE_FEATURE_AMENDMENT_ACTIONS,
+    FEATURE_LOCAL_ACTIVE_STATES as _CORE_FEATURE_LOCAL_ACTIVE_STATES,
+    MASTER_ACTIVATION_STATES as _CORE_MASTER_ACTIVATION_STATES,
+    MASTER_BLOCKED_STATES as _CORE_MASTER_BLOCKED_STATES,
+    MASTER_HELD_STATES as _CORE_MASTER_HELD_STATES,
+    MASTER_QUEUE_NAMES as _CORE_MASTER_QUEUE_NAMES,
+    MASTER_REVIEW_STATES as _CORE_MASTER_REVIEW_STATES,
+    MERGE_REQUEST_STATES as _CORE_MERGE_REQUEST_STATES,
+    REQUIRED_FEATURE_AMENDMENT_KEYS as _CORE_REQUIRED_FEATURE_AMENDMENT_KEYS,
+    REQUIRED_FEATURE_ARTIFACT_KEYS as _CORE_REQUIRED_FEATURE_ARTIFACT_KEYS,
+    REQUIRED_FEATURE_KEYS as _CORE_REQUIRED_FEATURE_KEYS,
+    REQUIRED_MASTER_STATE_KEYS as _CORE_REQUIRED_MASTER_STATE_KEYS,
+    STATE_RANK as _CORE_STATE_RANK,
+    TARGET_BRANCH_STATES as _CORE_TARGET_BRANCH_STATES,
+    validate_master_state as _core_validate_master_state,
+)
+from xmuse_core.core.state import (
+    resolve_active_controller as _core_resolve_active_controller,
+)
+from xmuse_core.core.status import (
+    build_master_status as _core_build_master_status,
+    derive_master_queues as _core_derive_master_queues,
+    master_status_markdown as _core_master_status_markdown,
+)
 
 PROMOTION_PASS_VERDICTS = {"pass", "passed", "usable", "usable_ack", "ack", "approved"}
 STALE_CANDIDATE_FILES = (
@@ -191,6 +228,21 @@ MERGE_REQUEST_STATES = {"ready_for_merge", "merge_requested"}
 TARGET_BRANCH_STATES = MASTER_REVIEW_STATES | MERGE_REQUEST_STATES
 FEATURE_PASS_STATES = {"acked", "ready_for_master_review", "ready_for_merge", "merged"}
 
+MASTER_ACTIVATION_STATES = _CORE_MASTER_ACTIVATION_STATES
+MASTER_QUEUE_NAMES = _CORE_MASTER_QUEUE_NAMES
+FEATURE_AMENDMENT_ACTIONS = _CORE_FEATURE_AMENDMENT_ACTIONS
+REQUIRED_FEATURE_AMENDMENT_KEYS = _CORE_REQUIRED_FEATURE_AMENDMENT_KEYS
+REQUIRED_MASTER_STATE_KEYS = _CORE_REQUIRED_MASTER_STATE_KEYS
+REQUIRED_FEATURE_KEYS = _CORE_REQUIRED_FEATURE_KEYS
+REQUIRED_FEATURE_ARTIFACT_KEYS = _CORE_REQUIRED_FEATURE_ARTIFACT_KEYS
+STATE_RANK = _CORE_STATE_RANK
+FEATURE_LOCAL_ACTIVE_STATES = _CORE_FEATURE_LOCAL_ACTIVE_STATES
+MASTER_HELD_STATES = _CORE_MASTER_HELD_STATES
+MASTER_BLOCKED_STATES = _CORE_MASTER_BLOCKED_STATES
+MASTER_REVIEW_STATES = _CORE_MASTER_REVIEW_STATES
+MERGE_REQUEST_STATES = _CORE_MERGE_REQUEST_STATES
+TARGET_BRANCH_STATES = _CORE_TARGET_BRANCH_STATES
+
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -280,80 +332,7 @@ def _validate_feature_amendment(
 
 
 def validate_master_state(state: dict[str, Any]) -> dict[str, Any]:
-    errors: list[str] = []
-    _append_missing(errors, state, REQUIRED_MASTER_STATE_KEYS, "master_state")
-
-    activation_state = state.get("activation_state")
-    if activation_state not in MASTER_ACTIVATION_STATES:
-        errors.append(f"invalid activation_state: {activation_state}")
-
-    active = state.get("active")
-    if activation_state == "master_active" and active is not True:
-        errors.append("active must be true when activation_state is master_active")
-    if activation_state != "master_active" and active is not False:
-        errors.append("active must be false unless activation_state is master_active")
-
-    if state.get("mode") != "master_control":
-        errors.append("mode must be master_control")
-
-    prompts = state.get("prompts", {})
-    if not isinstance(prompts, dict) or {"master", "slave"} - set(prompts):
-        errors.append("prompts must include master and slave")
-
-    dispatch_contracts = state.get("dispatch_contracts", {})
-    if not isinstance(dispatch_contracts, dict) or {"master", "slave"} - set(dispatch_contracts):
-        errors.append("dispatch_contracts must include master and slave")
-
-    queues = state.get("queues", {})
-    if not isinstance(queues, dict):
-        errors.append("queues must be an object")
-    else:
-        missing_queues = MASTER_QUEUE_NAMES - set(queues)
-        if missing_queues:
-            errors.append("queues missing required keys: " + ", ".join(sorted(missing_queues)))
-
-    features = state.get("features", [])
-    if not isinstance(features, list):
-        errors.append("features must be a list")
-    else:
-        seen: set[str] = set()
-        for feature in features:
-            if not isinstance(feature, dict):
-                errors.append("feature entries must be objects")
-                continue
-            feature_id = feature.get("id", "<missing>")
-            if feature_id in seen:
-                errors.append(f"duplicate feature id: {feature_id}")
-            seen.add(feature_id)
-            _append_missing(errors, feature, REQUIRED_FEATURE_KEYS, f"feature {feature_id}")
-            artifacts = feature.get("artifacts", {})
-            if not isinstance(artifacts, dict):
-                errors.append(f"feature {feature_id} artifacts must be an object")
-            else:
-                _append_missing(
-                    errors,
-                    artifacts,
-                    REQUIRED_FEATURE_ARTIFACT_KEYS,
-                    f"feature {feature_id} artifacts",
-                )
-
-    amendments = state.get("feature_amendments", [])
-    if not isinstance(amendments, list):
-        errors.append("feature_amendments must be a list")
-    else:
-        seen_amendments: set[str] = set()
-        for index, amendment in enumerate(amendments):
-            if not isinstance(amendment, dict):
-                errors.append(f"feature_amendments[{index}] must be an object")
-                continue
-            amendment_id = amendment.get("amendment_id")
-            if isinstance(amendment_id, str) and amendment_id:
-                if amendment_id in seen_amendments:
-                    errors.append(f"duplicate feature amendment id: {amendment_id}")
-                seen_amendments.add(amendment_id)
-            _validate_feature_amendment(amendment, errors, index)
-
-    return {"valid": not errors, "errors": errors}
+    return _core_validate_master_state(state)
 
 
 def _load_json_path(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
@@ -369,77 +348,7 @@ def _load_json_path(path: Path) -> tuple[dict[str, Any] | None, list[str]]:
 
 
 def resolve_active_controller(loop_root: str | Path, *, audit: bool = False) -> dict[str, Any]:
-    loop = Path(loop_root)
-    master_path = loop / MASTER_STATE_FILE
-    legacy_isolated = loop / LEGACY_ROOT_LOOP_DIR / "state.json"
-    legacy_current = loop / "state.json"
-
-    if master_path.exists():
-        master_state, load_errors = _load_json_path(master_path)
-        if master_state is None:
-            return {
-                "source": "blocked",
-                "path": str(master_path),
-                "state": None,
-                "execution_allowed": False,
-                "errors": load_errors,
-            }
-        validation = validate_master_state(master_state)
-        if not validation["valid"]:
-            return {
-                "source": "blocked",
-                "path": str(master_path),
-                "state": master_state,
-                "execution_allowed": False,
-                "errors": validation["errors"],
-            }
-        if master_state["activation_state"] == "master_active":
-            return {
-                "source": "master",
-                "path": str(master_path),
-                "state": master_state,
-                "execution_allowed": True,
-                "errors": [],
-            }
-        if master_state["activation_state"] == "master_pending":
-            legacy_source = legacy_isolated if legacy_isolated.exists() else legacy_current
-            return {
-                "source": "master_pending",
-                "path": str(master_path),
-                "legacy_source": str(legacy_source),
-                "state": master_state,
-                "execution_allowed": False,
-                "errors": [],
-            }
-        return {
-            "source": "blocked",
-            "path": str(master_path),
-            "state": master_state,
-            "execution_allowed": False,
-            "errors": [
-                f"activation_state does not allow execution: {master_state['activation_state']}"
-            ],
-        }
-
-    if legacy_isolated.exists():
-        legacy_state, load_errors = _load_json_path(legacy_isolated)
-        errors = load_errors if load_errors else ["isolated legacy root-loop is audit-only"]
-        return {
-            "source": "legacy_isolated",
-            "path": str(legacy_isolated),
-            "state": legacy_state if audit else None,
-            "execution_allowed": False,
-            "errors": load_errors if audit else errors,
-        }
-
-    legacy_state, load_errors = _load_json_path(legacy_current)
-    return {
-        "source": "legacy_root",
-        "path": str(legacy_current),
-        "state": legacy_state,
-        "execution_allowed": legacy_state is not None,
-        "errors": load_errors,
-    }
+    return _core_resolve_active_controller(loop_root, audit=audit)
 
 
 def _project_relative(path: Path) -> str:
@@ -527,60 +436,18 @@ def _active_template_json(relative_path: str, fallback: dict[str, Any]) -> dict[
 def derive_master_queues(
     master_state: dict[str, Any], *, loop_root: str | Path | None = None
 ) -> dict[str, Any]:
-    queues = _empty_master_queues()
-    errors: list[str] = []
+    merge_gate_validator = None
+    if loop_root is not None:
+        loop = Path(loop_root)
 
-    for feature in master_state.get("features", []):
-        feature_id = feature["id"]
-        state = feature.get("state")
-        merge_status = feature.get("merge", {}).get("status", state)
+        def merge_gate_validator(feature: dict[str, Any]) -> dict[str, Any]:
+            return validate_merge_queue_gate(loop, feature)
 
-        if STATE_RANK.get(merge_status, 99) > STATE_RANK.get(state, -1) and state not in {
-            "ready_for_merge",
-            "merge_requested",
-        }:
-            queues["blocked"].append(feature_id)
-            errors.append(
-                f"merge.status {merge_status} is ahead of feature.state {state} for {feature_id}"
-            )
-            continue
-
-        if state == "planned":
-            queues["planning_queue"].append(feature_id)
-        elif state in FEATURE_LOCAL_ACTIVE_STATES:
-            queues["active_lanes"].append(feature_id)
-        elif state == "ready_for_master_review":
-            queues["master_review_queue"].append(feature_id)
-        elif state in {"ready_for_merge", "merge_requested"}:
-            if loop_root is None:
-                queues["blocked"].append(feature_id)
-                errors.append(f"merge gate failed for {feature_id}: loop_root is required")
-                continue
-            gate = validate_merge_queue_gate(loop_root, feature)
-            if gate["valid"]:
-                queues["merge_queue"].append(feature_id)
-            else:
-                queues["blocked"].append(feature_id)
-                errors.append(f"merge gate failed for {feature_id}: " + "; ".join(gate["errors"]))
-        elif state in MASTER_HELD_STATES:
-            queues["held"].append(feature_id)
-        elif state == "merged":
-            queues["merged"].append(feature_id)
-        elif state in MASTER_BLOCKED_STATES:
-            queues["blocked"].append(feature_id)
-        else:
-            queues["blocked"].append(feature_id)
-            errors.append(f"unknown feature state for {feature_id}: {state}")
-
-    counts = {
-        "total": len(master_state.get("features", [])),
-        "reviewable": len(queues["master_review_queue"]),
-        "mergeable": len(queues["merge_queue"]),
-        "held": len(queues["held"]),
-        "blocked": len(queues["blocked"]),
-        "merged": len(queues["merged"]),
-    }
-    return {"queues": queues, "counts": counts, "errors": errors}
+    return _core_derive_master_queues(
+        master_state,
+        merge_gate_validator=merge_gate_validator,
+        missing_validator_reason="loop_root is required",
+    )
 
 
 def _optional_artifact_json(loop: Path, ref: str | None) -> dict[str, Any] | None:
@@ -679,32 +546,20 @@ def classify_feature_reconcile_state(
 
 def build_master_status(loop_root: str | Path, master_state: dict[str, Any]) -> dict[str, Any]:
     loop = Path(loop_root)
-    derived = derive_master_queues(master_state, loop_root=loop)
-    return {
-        "version": "1.0",
-        "source": "xmuse/master_state.json",
-        "activation_state": master_state.get("activation_state"),
-        "counts": derived["counts"],
-        "queues": derived["queues"],
-        "errors": derived["errors"],
-    }
+
+    def merge_gate_validator(feature: dict[str, Any]) -> dict[str, Any]:
+        return validate_merge_queue_gate(loop, feature)
+
+    return _core_build_master_status(
+        master_state,
+        merge_gate_validator=merge_gate_validator,
+        missing_validator_reason="loop_root is required",
+    )
 
 
 def _write_master_status_files(status: dict[str, Any], json_path: Path, md_path: Path) -> None:
     _write_json(json_path, status)
-    lines = [
-        "# Hermes Master Status",
-        "",
-        f"- activation_state: {status['activation_state']}",
-        f"- total: {status['counts']['total']}",
-        f"- reviewable: {status['counts']['reviewable']}",
-        f"- mergeable: {status['counts']['mergeable']}",
-        f"- held: {status['counts']['held']}",
-        f"- blocked: {status['counts']['blocked']}",
-        f"- merged: {status['counts']['merged']}",
-        "",
-    ]
-    md_path.write_text("\n".join(lines), encoding="utf-8")
+    md_path.write_text(_core_master_status_markdown(status), encoding="utf-8")
 
 
 def write_master_status(loop_root: str | Path, master_state: dict[str, Any]) -> dict[str, Any]:
@@ -855,9 +710,7 @@ def prepare_master_migration(loop_root: str | Path) -> dict[str, Any]:
 
 
 def _controller_path(loop: Path, ref: str) -> Path:
-    if ref.startswith("xmuse/"):
-        return loop.parent / ref
-    return loop / ref
+    return _core_controller_path(loop, ref)
 
 
 def _load_required_json(
@@ -1388,22 +1241,12 @@ def _context_bundle_path(value: Any) -> str | None:
 
 
 def _resolve_controller_path(loop: Path, value: Any) -> Path | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    path = Path(value)
-    if path.is_absolute():
-        return path
-    if value.startswith("xmuse/"):
-        return loop.parent / value
-    return loop / value
+    return _core_resolve_controller_path(loop, value)
 
 
 def _controller_display_path(loop: Path, path: Path) -> str:
     """Return stable project-relative controller paths for reports."""
-    try:
-        return path.resolve().relative_to(loop.parent.resolve()).as_posix()
-    except ValueError:
-        return str(path)
+    return _core_controller_display_path(loop, path)
 
 
 def _git_status_short(path: Path) -> str | None:

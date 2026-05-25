@@ -1,0 +1,22 @@
+{
+  "feature_id": "xmuse-core-state-extraction",
+  "verdict": "PASS",
+  "blocking_findings": [],
+  "required_repairs": [],
+  "review_eval_decision": "pass_for_slave_ack",
+  "ready_for_slave_ack": true,
+  "ready_for_merge": false,
+  "notes": [
+    "PASS means usable Slave ACK may be produced for Master review.",
+    "PASS does not lift the control-plane merge quarantine or authorize merge queue placement."
+  ],
+  "blast_radius": {
+    "control_plane_only": true,
+    "state_schema_change": false,
+    "launcher_change": false,
+    "reporter_change": false,
+    "migration_required": true,
+    "product_code_change": false,
+    "memoryos_runtime_change": false
+  }
+}
