@@ -91,3 +91,51 @@ def test_api_search_accepts_bare_query(service):
         assert isinstance(response.json(), list)
     finally:
         app.dependency_overrides.clear()
+
+
+def test_api_archive_ingest_attach_and_list(service):
+    app.dependency_overrides[get_service] = lambda: service
+    client = TestClient(app)
+    try:
+        session_response = client.post("/sessions", json={"title": "api-archive"})
+        assert session_response.status_code == 200
+        session_id = session_response.json()["id"]
+        ref = {"source_type": "document", "source_id": "doc_api", "session_id": session_id}
+
+        ingest_response = client.post(
+            "/archives/ingest",
+            json={
+                "document_id": "adoc_api",
+                "title": "API archive",
+                "content": "API archive says Project Helios launches in Lisbon.",
+                "source_refs": [ref],
+                "identity": {"kind": "archive", "archive_id": "archive_api"},
+            },
+        )
+        assert ingest_response.status_code == 200, ingest_response.text
+        passage_ids = ingest_response.json()["passage_ids"]
+        assert len(passage_ids) == 1
+        assert passage_ids[0].startswith("apsg_")
+
+        attach_response = client.post(
+            "/archives/attachments",
+            json={
+                "archive_id": "archive_api",
+                "scope_type": "session",
+                "scope_id": session_id,
+                "source_refs": [ref],
+            },
+        )
+        assert attach_response.status_code == 200, attach_response.text
+        assert attach_response.json()["passage_count"] == 1
+
+        list_response = client.get(
+            "/archives/passages",
+            params={"archive_id": "archive_api", "limit": 10, "offset": 0},
+        )
+        assert list_response.status_code == 200, list_response.text
+        assert list_response.json()["total"] == 1
+        assert list_response.json()["passages"][0]["id"] == passage_ids[0]
+        assert list_response.json()["passages"][0]["source_refs"][0]["quote"]
+    finally:
+        app.dependency_overrides.clear()

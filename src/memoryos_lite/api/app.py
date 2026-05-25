@@ -6,6 +6,11 @@ from prometheus_client import make_asgi_app
 
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
+    ArchiveAttachmentRequest,
+    ArchiveAttachmentResponse,
+    ArchiveDocumentIngestRequest,
+    ArchiveDocumentIngestResponse,
+    ArchivePassageListResponse,
     BuildContextRequest,
     CreateSessionRequest,
     IngestResponse,
@@ -76,6 +81,50 @@ def build_context(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/archives/ingest", response_model=ArchiveDocumentIngestResponse)
+def ingest_archive_document(
+    request: ArchiveDocumentIngestRequest,
+    service: ServiceDep,
+) -> ArchiveDocumentIngestResponse:
+    try:
+        return service.ingest_archive_document(request)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 409 if "conflict" in detail else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@app.post("/archives/attachments", response_model=ArchiveAttachmentResponse)
+def attach_archive(
+    request: ArchiveAttachmentRequest,
+    service: ServiceDep,
+) -> ArchiveAttachmentResponse:
+    try:
+        return service.attach_archive(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/archives/passages", response_model=ArchivePassageListResponse)
+def list_archive_passages(
+    service: ServiceDep,
+    archive_id: str | None = None,
+    source_id: str | None = None,
+    file_id: str | None = None,
+    producer: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> ArchivePassageListResponse:
+    return service.list_archive_passages(
+        archive_id=archive_id,
+        source_id=source_id,
+        file_id=file_id,
+        producer=producer,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.post("/memory/search")
