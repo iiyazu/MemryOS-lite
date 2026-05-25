@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     memoryos_archival_qdrant_url: str | None = None
     memoryos_archival_qdrant_collection: str = "memoryos_archival_passages"
 
+    # Middleware
+    memoryos_api_key: str | None = None
+    memoryos_cors_origins: str = "*"
+    memoryos_log_format: str = "text"
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 
     @field_validator(

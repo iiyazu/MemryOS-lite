@@ -31,6 +31,19 @@ ServiceDep = Annotated[MemoryOSService, Depends(get_service)]
 app = FastAPI(title="MemoryOS Lite", version="0.1.0")
 app.mount("/metrics", make_asgi_app())
 
+# Middleware (registration order is reverse of request processing order)
+from memoryos_lite.config import Settings as _Settings
+from memoryos_lite.middleware import (
+    ApiKeyAuthMiddleware,
+    RequestIdMiddleware,
+    StructuredLoggingMiddleware,
+)
+
+_settings = _Settings()
+app.add_middleware(StructuredLoggingMiddleware)
+app.add_middleware(ApiKeyAuthMiddleware, api_key=_settings.memoryos_api_key)
+app.add_middleware(RequestIdMiddleware)
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
