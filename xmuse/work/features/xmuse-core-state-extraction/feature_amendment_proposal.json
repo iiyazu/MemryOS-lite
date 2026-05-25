@@ -1,0 +1,14 @@
+{
+  "feature_id": "xmuse-core-state-extraction",
+  "proposal_required": false,
+  "status": "not_requested",
+  "reason": "The assigned blueprint is actionable without scope changes.",
+  "policy_preserved": {
+    "v1_fallback_preserved": true,
+    "kernel_opt_in_preserved": true,
+    "no_benchmark_score_targets": true,
+    "no_gate_lowering": true
+  },
+  "writes_master_state": false,
+  "writes_master_amendments": false
+}

@@ -1,0 +1,68 @@
+{
+  "feature_id": "xmuse-core-state-extraction",
+  "ack_level": "usable",
+  "branch": "feat/xmuse-core-state-extraction",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-core-state-extraction",
+  "head_ref": "5f69b712a3adb22e9840dc211d1ff200c7f68ecb",
+  "working_tree_changes": true,
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_xmuse_core_*.py -q",
+      "result": "12 passed in 0.06s"
+    },
+    {
+      "command": "uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py -q",
+      "result": "117 passed in 0.48s"
+    },
+    {
+      "command": "uv run ruff check src/xmuse_core xmuse/hermes_hardening.py xmuse/hermes_reporter.py tests/test_hermes_*.py tests/test_xmuse_core_*.py",
+      "result": "All checks passed"
+    },
+    {
+      "command": "uv run mypy src/xmuse_core",
+      "result": "Success: no issues found in 6 source files"
+    },
+    {
+      "command": "python3 -m py_compile $(find src/xmuse_core -name '*.py' -print | sort) xmuse/hermes_hardening.py xmuse/hermes_reporter.py",
+      "result": "passed"
+    },
+    {
+      "command": "bash -n xmuse/god_launcher.sh",
+      "result": "passed"
+    },
+    {
+      "command": "no-start reporter import smoke",
+      "result": "report source xmuse/master_state.json"
+    },
+    {
+      "command": "python3 xmuse/hermes_hardening.py --help",
+      "result": "imports cleanly and prints CLI usage"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "attempted; interrupted after 6 unrelated FastEmbed/Hugging Face ConnectTimeout failures in MemoryOS benchmark tests, with 514 passed and 1 warning in 2919.03s"
+    }
+  ],
+  "full_regression": {
+    "command": "uv run pytest -q",
+    "status": "blocked_unrelated",
+    "evidence": "6 failed, 514 passed, 1 warning in 2919.03s before interrupt",
+    "reason": "Failures were in MemoryOS public benchmark/LongMemEval tests that attempted FastEmbed/Hugging Face model metadata downloads and raised httpx.ConnectTimeout; product benchmark paths are outside this control-plane migration scope."
+  },
+  "v3_default_preserved": true,
+  "v1_fallback_preserved": true,
+  "kernel_default_unchanged": true,
+  "benchmark_improvement_claim": false,
+  "review_eval_decision": "pass_for_slave_ack",
+  "review_verdict": "PASS",
+  "merge_readiness": "not_requested_control_plane_quarantine_applies",
+  "blast_radius": {
+    "control_plane_only": true,
+    "state_schema_change": false,
+    "launcher_change": false,
+    "reporter_change": false,
+    "migration_required": true,
+    "product_code_change": false,
+    "memoryos_runtime_change": false
+  }
+}

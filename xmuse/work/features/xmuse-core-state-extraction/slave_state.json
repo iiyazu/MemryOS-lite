@@ -24,8 +24,8 @@
   },
   "feature_class": "control_plane_migration",
   "feature_id": "xmuse-core-state-extraction",
-  "last_updated": "2026-05-24T17:57:44Z",
-  "migration_stage": "migration_pending",
+  "last_updated": "2026-05-25T04:16:33Z",
+  "migration_stage": "migration_validated",
   "mode": "feature_local_single_god",
   "runner": {
     "agent_id": "slave-god-xmuse-core-state-extraction",
@@ -34,7 +34,7 @@
     "task_id": null,
     "type": "local_codex"
   },
-  "state": "planned",
-  "summary": "Blueprint-only planned lane for extracting xmuse state/status core into src/xmuse_core with compatibility-first shim behavior.",
+  "state": "ready_for_master_review",
+  "summary": "State/status core extraction implemented in src/xmuse_core with hermes_hardening compatibility shim and feature-local verification artifacts.",
   "version": "1.0"
 }
