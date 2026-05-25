@@ -1,0 +1,33 @@
+{
+  "created_at": "2026-05-25T04:51:03Z",
+  "deterministic_invariant": null,
+  "evidence": "Full repository mypy gate failed outside xmuse scope.",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_id": "xmuse-console",
+  "fingerprint": "failed_command:mypy-gate",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_seen_at": "2026-05-25T08:34:58Z",
+  "object_type": "error_record",
+  "promotion_suppressed": false,
+  "record_id": "error-0937a6db29d8cddd",
+  "root_cause_status": "suspected",
+  "schema_version": "1.0",
+  "source_digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+  "source_ref": {
+    "artifact_type": "ack",
+    "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+    "feature_id": "xmuse-console",
+    "path": "xmuse/work/features/xmuse-console/ack.json"
+  },
+  "source_refs": [
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/ack.json"
+    }
+  ],
+  "summary": "Command failed: mypy gate",
+  "verification_evidence": false
+}

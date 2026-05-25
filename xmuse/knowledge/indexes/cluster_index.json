@@ -1,0 +1,120 @@
+{
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "object_type": "cluster_index",
+  "paths": {
+    "cluster-09818672992ae0f6": "xmuse/knowledge/clusters/cluster-09818672992ae0f6.json",
+    "cluster-236357c1778130da": "xmuse/knowledge/clusters/cluster-236357c1778130da.json",
+    "cluster-43149bac4071d5cb": "xmuse/knowledge/clusters/cluster-43149bac4071d5cb.json",
+    "cluster-7002b034397a332d": "xmuse/knowledge/clusters/cluster-7002b034397a332d.json",
+    "cluster-7d49279e10c0890f": "xmuse/knowledge/clusters/cluster-7d49279e10c0890f.json",
+    "cluster-a3e78813b85c9f81": "xmuse/knowledge/clusters/cluster-a3e78813b85c9f81.json",
+    "cluster-b39ffcb2eae2d721": "xmuse/knowledge/clusters/cluster-b39ffcb2eae2d721.json",
+    "cluster-b818e87f8417930d": "xmuse/knowledge/clusters/cluster-b818e87f8417930d.json",
+    "cluster-c82f71ad0b6730d9": "xmuse/knowledge/clusters/cluster-c82f71ad0b6730d9.json",
+    "cluster-cae2add8c9883251": "xmuse/knowledge/clusters/cluster-cae2add8c9883251.json",
+    "cluster-e0e0c29e8c244ed3": "xmuse/knowledge/clusters/cluster-e0e0c29e8c244ed3.json",
+    "cluster-f2d456e1634c87fb": "xmuse/knowledge/clusters/cluster-f2d456e1634c87fb.json",
+    "cluster-f913e09b9dc18e51": "xmuse/knowledge/clusters/cluster-f913e09b9dc18e51.json"
+  },
+  "schema_version": "1.0",
+  "source_digest": "sha256:007f48df592cd26b3197091d090159aac0c947a9ef800970e452b328da3f9d09",
+  "source_refs": [
+    {
+      "artifact_type": "integrated_tests",
+      "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    },
+    {
+      "artifact_type": "master_review",
+      "digest": "sha256:ce4ab0bf1cffc8a11066d035bb3e3dc8e4b68b59699550fe360b63f34e9f94ee",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/master_review.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:b04c8ac84672381aa779cba062e3b9592ef2669da6e316dac112aee72a40665b",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/ack.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "execute_review",
+      "digest": "sha256:c8b033ba63a0dd4ef612fa4e24e22d18f7315a698e68fe4dc9231fa5f91d7598",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/execute_review.md"
+    },
+    {
+      "artifact_type": "result",
+      "digest": "sha256:7ab53b5f2cc09bfc79ed59e31775d7401ae130b245f0b78a3da1bc09a7339609",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/result.md"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/review_verdict.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "slave_state",
+      "digest": "sha256:1d4ddde7c455c7f365479b85d6928a938ff298cc76edcc2dd93d7011928a529f",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/slave_state.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:dd1e8d85a40dcc36dd41d5bce741a5d0b75d10cb48af8795c62ddc16e4d486bf",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/ack.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:ed7a6abee0ae34e72c3313780aa4e19d6faca194322535549b86e83785b605fc",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/review_verdict.json"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/ack.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9fbf779879086306a872fe370b675403d57525043f69449d0eea95eb4afed18e",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/review_verdict.json"
+    },
+    {
+      "artifact_type": "slave_state",
+      "digest": "sha256:7690196171217569ad8a2738182eb1975511c6919bfce899b4107f374997ece5",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/slave_state.json"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:281d97130217f00d76de1cc56c6feb3411a0f700fe20bf12862436f71305354f",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/ack.json"
+    },
+    {
+      "artifact_type": "result",
+      "digest": "sha256:bb4fde73c7f9c129e2e7ed0c8fe35ad1709c96fa959beb726371b3754f33a108",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/result.md"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:d5552618eca9d822429a5c4d0b19adc860410e5c12bb0d7aeabc519d3ba5d20d",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/review_verdict.json"
+    }
+  ],
+  "updated_at": "2026-05-25T08:34:58Z"
+}

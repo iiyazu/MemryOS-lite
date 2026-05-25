@@ -1,24 +1,18 @@
 {
-  "version": "1.0",
-  "feature_id": "xmuse-error-knowledge",
-  "mode": "feature_local_single_god",
-  "state": "planned",
-  "runner": {
-    "type": "local_codex",
-    "protocol": "hermes-local",
-    "agent_id": "slave-god-xmuse-error-knowledge",
-    "endpoint": null,
-    "task_id": null
+  "ack_level": "usable",
+  "artifacts": {
+    "ack": "xmuse/work/features/xmuse-error-knowledge/ack.json",
+    "knowledge_run": "xmuse/knowledge/runs/xmuse-error-knowledge-20260525T000000Z.json",
+    "result": "xmuse/work/features/xmuse-error-knowledge/result.md",
+    "review_verdict": "xmuse/work/features/xmuse-error-knowledge/review_verdict.json"
   },
   "branch": "feat/xmuse-error-knowledge",
-  "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-error-knowledge",
-  "artifacts": {
-    "result": "work/features/xmuse-error-knowledge/result.md",
-    "ack": "work/features/xmuse-error-knowledge/ack.json",
-    "review_verdict": "work/features/xmuse-error-knowledge/review_verdict.json"
-  },
-  "last_updated": "2026-05-25T02:45:57Z",
-  "notes": [
-    "Registered from orphan blueprint. Must honor knowledge_maintainer no-op bootstrap rules when contract is missing or invalid."
-  ]
+  "feature_id": "xmuse-error-knowledge",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_updated": "2026-05-25T08:34:58Z",
+  "mode": "feature_local_single_god",
+  "review_verdict": "PASS",
+  "state": "ready_for_master_review",
+  "version": "1.0",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-error-knowledge"
 }
