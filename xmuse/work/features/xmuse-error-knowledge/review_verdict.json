@@ -5,11 +5,6 @@
   "kernel_default_unchanged": true,
   "readiness_for_slave_ack": true,
   "required_repairs": [],
-  "review_repairs_completed": [
-    "partial terminal artifact extraction",
-    "focused regression coverage for missing result and review verdict artifacts",
-    "test fixtures tightened so unrelated cases do not rely on missing-file findings"
-  ],
   "review_eval_decision": {
     "llm_answer": false,
     "llm_judge": false,
@@ -25,6 +20,16 @@
     "reason": "Xmuse control-plane maintenance only; no MemoryOS answer path changed",
     "scope": "not_applicable"
   },
+  "review_repairs_completed": [
+    "partial terminal artifact extraction",
+    "focused regression coverage for missing result and review verdict artifacts",
+    "structured JSON blocking finding extraction",
+    "stale target gate extraction",
+    "missing explicit approval blocker extraction",
+    "deterministic invariant duplicate collapse",
+    "cluster occurrence pruning for missing record files",
+    "test fixtures tightened so unrelated cases do not rely on missing-file findings"
+  ],
   "v1_fallback_preserved": true,
   "v3_default_preserved": true,
   "verdict": "PASS"

@@ -549,7 +549,91 @@ class KnowledgeMaintainer:
                         source_run_id=source_run_id,
                     )
                 )
+            if payload.get("stale_against_current_target_head") is True or (
+                status and "stale_target_head" in status
+            ):
+                findings.append(
+                    Finding(
+                        feature_id=feature_id,
+                        artifact_path=path,
+                        artifact_type=artifact_type,
+                        fingerprint="stale_target_head",
+                        summary="Integrated test evidence is stale against target HEAD",
+                        evidence=canonical_json(payload)[:500],
+                        root_cause_status="confirmed",
+                        deterministic_invariant="stale_target_head",
+                        source_run_id=source_run_id,
+                    )
+                )
+        findings.extend(
+            self.extract_json_text_findings(
+                payload,
+                path=path,
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                source_run_id=source_run_id,
+            )
+        )
+        return self.deduplicate_findings(findings)
+
+    def extract_json_text_findings(
+        self,
+        payload: dict[str, Any],
+        *,
+        path: Path,
+        feature_id: str,
+        artifact_type: str,
+        source_run_id: str | None,
+    ) -> list[Finding]:
+        findings: list[Finding] = []
+        for line in self.iter_json_evidence_lines(payload):
+            lower = line.lower()
+            finding = self.finding_from_markdown_line(
+                line,
+                lower,
+                path=path,
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                source_run_id=source_run_id,
+            )
+            if finding is not None:
+                findings.append(finding)
         return findings
+
+    def iter_json_evidence_lines(self, value: Any) -> list[str]:
+        lines: list[str] = []
+
+        def walk(item: Any) -> None:
+            if isinstance(item, dict):
+                command = item.get("command")
+                status = str(item.get("status", "")).lower()
+                if isinstance(command, str) and any(
+                    marker in status
+                    for marker in ("fail", "error", "interrupted", "blocked")
+                ):
+                    summary = item.get("summary")
+                    suffix = f": {summary}" if isinstance(summary, str) and summary else ""
+                    lines.append(f"{command} failed{suffix}")
+                for nested in item.values():
+                    walk(nested)
+            elif isinstance(item, list):
+                for nested in item:
+                    walk(nested)
+            elif isinstance(item, str):
+                lines.append(item)
+
+        walk(value)
+        return lines
+
+    def deduplicate_findings(self, findings: list[Finding]) -> list[Finding]:
+        unique: dict[tuple[str, str], Finding] = {}
+        for finding in findings:
+            if finding.deterministic_invariant is not None:
+                key = (finding.fingerprint, finding.deterministic_invariant)
+            else:
+                key = (finding.fingerprint, finding.evidence)
+            unique[key] = finding
+        return list(unique.values())
 
     def extract_markdown_findings(
         self,
@@ -589,6 +673,7 @@ class KnowledgeMaintainer:
         path: Path,
         feature_id: str,
         artifact_type: str,
+        source_run_id: str | None = None,
     ) -> Finding | None:
         verification = "verification evidence" in lower
         command_match = re.search(
@@ -608,6 +693,7 @@ class KnowledgeMaintainer:
                 evidence=line[:500],
                 root_cause_status="confirmed" if verification else "suspected",
                 verification_evidence=verification,
+                source_run_id=source_run_id,
             )
         if "hard eval" in lower and (
             "baseline" in lower or "drift" in lower or "instead of stated" in lower
@@ -621,6 +707,7 @@ class KnowledgeMaintainer:
                 evidence=line[:500],
                 root_cause_status="suspected",
                 promotion_suppressed=True,
+                source_run_id=source_run_id,
             )
         if "network timeout" in lower or ("transient" in lower and "timeout" in lower):
             return Finding(
@@ -632,6 +719,48 @@ class KnowledgeMaintainer:
                 evidence=line[:500],
                 root_cause_status="suspected",
                 promotion_suppressed=True,
+                source_run_id=source_run_id,
+            )
+        if "stale_target_head" in lower or (
+            "stale" in lower and "target" in lower and "head" in lower
+        ):
+            return Finding(
+                feature_id=feature_id,
+                artifact_path=path,
+                artifact_type=artifact_type,
+                fingerprint="stale_target_head",
+                summary="Gate evidence is stale against target HEAD",
+                evidence=line[:500],
+                root_cause_status="confirmed",
+                deterministic_invariant="stale_target_head",
+                source_run_id=source_run_id,
+            )
+        if (
+            "external merge approval is absent" in lower
+            or "merge requested without explicit approval" in lower
+        ):
+            return Finding(
+                feature_id=feature_id,
+                artifact_path=path,
+                artifact_type=artifact_type,
+                fingerprint="merge_requested_without_approval",
+                summary="Merge is blocked by missing explicit approval",
+                evidence=line[:500],
+                root_cause_status="confirmed",
+                deterministic_invariant="merge_requested_without_approval",
+                source_run_id=source_run_id,
+            )
+        if "approval artifact digest mismatch" in lower:
+            return Finding(
+                feature_id=feature_id,
+                artifact_path=path,
+                artifact_type=artifact_type,
+                fingerprint="approval_artifact_digest_mismatch",
+                summary="Approval artifact digest mismatch reported",
+                evidence=line[:500],
+                root_cause_status="confirmed",
+                deterministic_invariant="approval_artifact_digest_mismatch",
+                source_run_id=source_run_id,
             )
         if "root cause:" in lower:
             return Finding(
@@ -642,6 +771,7 @@ class KnowledgeMaintainer:
                 summary="Markdown-only root cause diagnosis",
                 evidence=line[:500],
                 root_cause_status="suspected",
+                source_run_id=source_run_id,
             )
         return None
 
@@ -739,12 +869,34 @@ class KnowledgeMaintainer:
 
         clusters = []
         for cluster in by_cluster.values():
+            self.prune_missing_cluster_records(cluster)
             self.recompute_cluster(cluster)
             rel_path = f"xmuse/knowledge/clusters/{cluster['cluster_id']}.json"
             self.write_json(rel_path, cluster, object_write=True)
             self.generated["clusters"].append(cluster["cluster_id"])
             clusters.append(cluster)
         return clusters
+
+    def prune_missing_cluster_records(self, cluster: dict[str, Any]) -> None:
+        kept_occurrences = []
+        kept_refs = []
+        for occurrence in cluster.get("occurrences", []):
+            record_path = (
+                self.knowledge_dir
+                / "error_records"
+                / str(occurrence.get("feature_id", ""))
+                / f"{occurrence.get('record_id')}.json"
+            )
+            if not record_path.exists():
+                continue
+            kept_occurrences.append(occurrence)
+            record = _read_json(record_path)
+            if isinstance(record.get("source_ref"), dict):
+                kept_refs.append(record["source_ref"])
+            elif isinstance(record.get("source_refs"), list):
+                kept_refs.extend(record["source_refs"])
+        cluster["occurrences"] = kept_occurrences
+        cluster["source_refs"] = unique_source_refs(kept_refs)
 
     def add_record_to_cluster(self, cluster: dict[str, Any], record: dict[str, Any]) -> None:
         occurrence = {

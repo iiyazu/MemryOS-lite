@@ -373,6 +373,76 @@ def test_scanner_extracts_partially_missing_terminal_artifacts(tmp_path: Path) -
     }
 
 
+def test_json_blocking_findings_stale_gates_and_approval_absence_are_extracted(
+    tmp_path: Path,
+) -> None:
+    knowledge = load_knowledge_module()
+    write_required_inputs(tmp_path)
+    add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "usable"})
+    add_feature_artifact(tmp_path, "alpha", "result.md", "Status: blocked\n")
+    add_feature_artifact(
+        tmp_path,
+        "alpha",
+        "review_verdict.json",
+        {
+            "verdict": "FAIL",
+            "blocking_findings": [
+                "uv run mypy src fails with 82 errors in 11 files",
+                "Root cause: review evidence is incomplete.",
+            ],
+        },
+    )
+    write_json(
+        tmp_path / "xmuse/master/features/beta/integrated_tests.json",
+        {
+            "feature_id": "beta",
+            "status": "failed_stale_target_head",
+            "stale_against_current_target_head": True,
+            "merge_readiness_blockers": [
+                "external merge approval is absent",
+            ],
+            "commands": [
+                {
+                    "command": "uv run pytest -q",
+                    "status": "failed",
+                    "summary": "3 failed, 20 passed",
+                },
+            ],
+        },
+    )
+
+    knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-json-blockers", now=NOW)
+
+    records = error_records(tmp_path)
+    by_feature = {}
+    for record in records:
+        by_feature.setdefault(record["feature_id"], set()).add(record["fingerprint"])
+    assert {
+        "review_verdict_not_pass",
+        "failed_command:uv-run-mypy-src",
+        "markdown_diagnosis:free-form-root-cause",
+    }.issubset(by_feature["alpha"])
+    assert {
+        "integrated_tests_not_passed",
+        "failed_command:uv-run-pytest-q",
+        "stale_target_head",
+        "merge_requested_without_approval",
+    }.issubset(by_feature["beta"])
+    beta_records = [record for record in records if record["feature_id"] == "beta"]
+    beta_fingerprints = [record["fingerprint"] for record in beta_records]
+    assert beta_fingerprints.count("stale_target_head") == 1
+    assert beta_fingerprints.count("merge_requested_without_approval") == 1
+    deterministic = {
+        record["fingerprint"]: record["deterministic_invariant"]
+        for record in beta_records
+    }
+    assert deterministic["stale_target_head"] == "stale_target_head"
+    assert (
+        deterministic["merge_requested_without_approval"]
+        == "merge_requested_without_approval"
+    )
+
+
 def test_same_feature_retries_do_not_satisfy_cross_feature_promotion(tmp_path: Path) -> None:
     knowledge = load_knowledge_module()
     write_required_inputs(tmp_path)
@@ -504,6 +574,48 @@ def test_partial_write_failure_does_not_leave_indexes_pointing_to_missing_object
         index = read_json(index_path)
         for rel_path in index["paths"].values():
             assert (tmp_path / rel_path).exists(), rel_path
+
+
+def test_rerun_prunes_cluster_occurrences_for_missing_record_files(
+    tmp_path: Path,
+) -> None:
+    knowledge = load_knowledge_module()
+    write_required_inputs(tmp_path)
+    add_feature_artifact(tmp_path, "alpha", "ack.json", {"ack_level": "blocked"})
+    add_feature_artifact(tmp_path, "beta", "ack.json", {"ack_level": "partial"})
+    knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-prune-1", now=NOW)
+
+    cluster_path = next(
+        path
+        for path in (tmp_path / "xmuse/knowledge/clusters").glob("*.json")
+        if read_json(path)["fingerprint"] == "ack_non_usable"
+    )
+    cluster = read_json(cluster_path)
+    cluster["occurrences"].append(
+        {
+            "record_id": "error-missing",
+            "feature_id": "alpha",
+            "source_digest": "sha256:missing",
+            "source_path": "xmuse/work/features/alpha/ack.json",
+            "root_cause_status": "confirmed",
+            "deterministic_invariant": "ack_non_usable",
+        }
+    )
+    write_json(cluster_path, cluster)
+
+    knowledge.run_knowledge_maintenance(tmp_path, run_id="krun-prune-2", now=NOW)
+
+    repaired = read_json(cluster_path)
+    assert repaired["occurrence_count"] == 2
+    assert {item["record_id"] for item in repaired["occurrences"]} != {"error-missing"}
+    for occurrence in repaired["occurrences"]:
+        record_path = (
+            tmp_path
+            / "xmuse/knowledge/error_records"
+            / occurrence["feature_id"]
+            / f"{occurrence['record_id']}.json"
+        )
+        assert record_path.exists()
 
 
 def test_generated_methods_and_skill_proposals_are_local_quarantined_drafts(

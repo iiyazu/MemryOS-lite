@@ -1,0 +1,35 @@
+{
+  "created_at": "2026-05-25T04:51:03Z",
+  "deterministic_invariant": null,
+  "evidence": "uv run mypy src fails with 82 errors in 11 files.",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_id": "archive-rag",
+  "fingerprint": "failed_command:uv-run-mypy-src",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_seen_at": "2026-05-25T05:02:56Z",
+  "object_type": "error_record",
+  "promotion_suppressed": false,
+  "record_id": "error-f042b5143f8f867a",
+  "root_cause_status": "suspected",
+  "schema_version": "1.0",
+  "source_digest": "sha256:1d4ddde7c455c7f365479b85d6928a938ff298cc76edcc2dd93d7011928a529f",
+  "source_ref": {
+    "artifact_type": "slave_state",
+    "digest": "sha256:1d4ddde7c455c7f365479b85d6928a938ff298cc76edcc2dd93d7011928a529f",
+    "feature_id": "archive-rag",
+    "path": "xmuse/work/features/archive-rag/slave_state.json",
+    "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+  },
+  "source_refs": [
+    {
+      "artifact_type": "slave_state",
+      "digest": "sha256:1d4ddde7c455c7f365479b85d6928a938ff298cc76edcc2dd93d7011928a529f",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/slave_state.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    }
+  ],
+  "summary": "Command failed: uv run mypy src",
+  "verification_evidence": false
+}

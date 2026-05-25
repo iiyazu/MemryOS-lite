@@ -28,9 +28,19 @@
   "v3_default_preserved": true,
   "verification_commands": [
     {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py::test_json_blocking_findings_stale_gates_and_approval_absence_are_extracted -q",
+      "exit_code": 1,
+      "result": "RED: failed before scanner repair because JSON blocking_findings only produced review_verdict_not_pass"
+    },
+    {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py::test_rerun_prunes_cluster_occurrences_for_missing_record_files -q",
+      "exit_code": 1,
+      "result": "RED: failed before cluster pruning because a missing record occurrence remained in the cluster count"
+    },
+    {
       "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
       "exit_code": 0,
-      "result": "20 passed in 0.42s"
+      "result": "22 passed in 0.51s"
     },
     {
       "command": "uv run ruff check .",
@@ -50,7 +60,7 @@
     {
       "command": "uv run python xmuse/xmuse_error_knowledge.py --root . --run-id xmuse-error-knowledge-20260525T000000Z",
       "exit_code": 0,
-      "result": "usable; 12 records, 7 clusters, 2 methods, 2 skill proposals"
+      "result": "usable; 22 records, 13 clusters, 2 methods, 2 skill proposals"
     },
     {
       "command": "python3 - <<'PY' ... index reference audit ... PY",

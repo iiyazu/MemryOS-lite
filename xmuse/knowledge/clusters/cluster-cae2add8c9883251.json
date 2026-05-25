@@ -9,9 +9,9 @@
   "fingerprint": "baseline_drift:hard-eval",
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
-  "last_seen_at": "2026-05-25T04:12:52Z",
+  "last_seen_at": "2026-05-25T05:02:56Z",
   "object_type": "cluster",
-  "occurrence_count": 2,
+  "occurrence_count": 4,
   "occurrences": [
     {
       "deterministic_invariant": null,
@@ -30,6 +30,26 @@
       "source_digest": "sha256:c8b033ba63a0dd4ef612fa4e24e22d18f7315a698e68fe4dc9231fa5f91d7598",
       "source_path": "xmuse/work/features/archive-rag/execute_review.md",
       "verification_evidence": false
+    },
+    {
+      "deterministic_invariant": null,
+      "feature_id": "archive-rag",
+      "record_id": "error-66584b31b8de9b35",
+      "root_cause_status": "suspected",
+      "source_digest": "sha256:b04c8ac84672381aa779cba062e3b9592ef2669da6e316dac112aee72a40665b",
+      "source_path": "xmuse/work/features/archive-rag/ack.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
+      "verification_evidence": false
+    },
+    {
+      "deterministic_invariant": null,
+      "feature_id": "archive-rag",
+      "record_id": "error-9805033446c6ec68",
+      "root_cause_status": "suspected",
+      "source_digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
+      "source_path": "xmuse/work/features/archive-rag/review_verdict.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
+      "verification_evidence": false
     }
   ],
   "promotion_blockers": [
@@ -38,9 +58,16 @@
   "promotion_stage": "method_candidate",
   "root_cause_status": "suspected",
   "schema_version": "1.0",
-  "source_digest": "sha256:2d7421dae8e6ef07098f5434520f121c030d0d0e5a7183a15611c406a5db2223",
-  "source_digest_count": 2,
+  "source_digest": "sha256:a288fcaf99482c977a986056af7d2a43b114ac2f1183ac3254761684e64f93f1",
+  "source_digest_count": 4,
   "source_refs": [
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:b04c8ac84672381aa779cba062e3b9592ef2669da6e316dac112aee72a40665b",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/ack.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
     {
       "artifact_type": "execute_review",
       "digest": "sha256:c8b033ba63a0dd4ef612fa4e24e22d18f7315a698e68fe4dc9231fa5f91d7598",
@@ -52,9 +79,18 @@
       "digest": "sha256:7ab53b5f2cc09bfc79ed59e31775d7401ae130b245f0b78a3da1bc09a7339609",
       "feature_id": "archive-rag",
       "path": "xmuse/work/features/archive-rag/result.md"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/review_verdict.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
     }
   ],
-  "source_run_count": 0,
-  "source_run_ids": [],
+  "source_run_count": 1,
+  "source_run_ids": [
+    "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+  ],
   "summary": "Hard eval drift or baseline mismatch reported"
 }

@@ -4,21 +4,34 @@
   "object_type": "cluster_index",
   "paths": {
     "cluster-09818672992ae0f6": "xmuse/knowledge/clusters/cluster-09818672992ae0f6.json",
+    "cluster-236357c1778130da": "xmuse/knowledge/clusters/cluster-236357c1778130da.json",
     "cluster-43149bac4071d5cb": "xmuse/knowledge/clusters/cluster-43149bac4071d5cb.json",
+    "cluster-7002b034397a332d": "xmuse/knowledge/clusters/cluster-7002b034397a332d.json",
+    "cluster-7d49279e10c0890f": "xmuse/knowledge/clusters/cluster-7d49279e10c0890f.json",
     "cluster-a3e78813b85c9f81": "xmuse/knowledge/clusters/cluster-a3e78813b85c9f81.json",
+    "cluster-b39ffcb2eae2d721": "xmuse/knowledge/clusters/cluster-b39ffcb2eae2d721.json",
+    "cluster-b818e87f8417930d": "xmuse/knowledge/clusters/cluster-b818e87f8417930d.json",
     "cluster-c82f71ad0b6730d9": "xmuse/knowledge/clusters/cluster-c82f71ad0b6730d9.json",
     "cluster-cae2add8c9883251": "xmuse/knowledge/clusters/cluster-cae2add8c9883251.json",
     "cluster-e0e0c29e8c244ed3": "xmuse/knowledge/clusters/cluster-e0e0c29e8c244ed3.json",
+    "cluster-f2d456e1634c87fb": "xmuse/knowledge/clusters/cluster-f2d456e1634c87fb.json",
     "cluster-f913e09b9dc18e51": "xmuse/knowledge/clusters/cluster-f913e09b9dc18e51.json"
   },
   "schema_version": "1.0",
-  "source_digest": "sha256:09d89122b7c1d5e6dc82f1a92ed237d012500fc1c5d289e0b0ace5b538a4884e",
+  "source_digest": "sha256:007f48df592cd26b3197091d090159aac0c947a9ef800970e452b328da3f9d09",
   "source_refs": [
     {
       "artifact_type": "integrated_tests",
       "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
       "feature_id": "memoryos-redis-cache-probe",
       "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    },
+    {
+      "artifact_type": "master_review",
+      "digest": "sha256:ce4ab0bf1cffc8a11066d035bb3e3dc8e4b68b59699550fe360b63f34e9f94ee",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/master_review.json",
       "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
     },
     {
@@ -48,6 +61,13 @@
       "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
     },
     {
+      "artifact_type": "slave_state",
+      "digest": "sha256:1d4ddde7c455c7f365479b85d6928a938ff298cc76edcc2dd93d7011928a529f",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/slave_state.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
       "artifact_type": "ack",
       "digest": "sha256:dd1e8d85a40dcc36dd41d5bce741a5d0b75d10cb48af8795c62ddc16e4d486bf",
       "feature_id": "benchmark-layer-organization",
@@ -72,6 +92,12 @@
       "path": "xmuse/work/features/xmuse-console/review_verdict.json"
     },
     {
+      "artifact_type": "slave_state",
+      "digest": "sha256:7690196171217569ad8a2738182eb1975511c6919bfce899b4107f374997ece5",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/slave_state.json"
+    },
+    {
       "artifact_type": "ack",
       "digest": "sha256:281d97130217f00d76de1cc56c6feb3411a0f700fe20bf12862436f71305354f",
       "feature_id": "xmuse-core-state-extraction",
@@ -90,5 +116,5 @@
       "path": "xmuse/work/features/xmuse-core-state-extraction/review_verdict.json"
     }
   ],
-  "updated_at": "2026-05-25T04:12:52Z"
+  "updated_at": "2026-05-25T05:02:56Z"
 }

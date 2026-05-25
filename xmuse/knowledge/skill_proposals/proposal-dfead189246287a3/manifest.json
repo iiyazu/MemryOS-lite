@@ -1,6 +1,6 @@
 {
   "activation_status": "not_installed",
-  "created_at": "2026-05-25T04:12:52Z",
+  "created_at": "2026-05-25T05:02:56Z",
   "extractor_version": "xmuse-error-knowledge-2026-05-25",
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "last_generated_digest": "sha256:51428357be499b4496be0680e15e1284810d6b9fbfd3d05fee8bd0f25cbbbd10",
@@ -35,5 +35,5 @@
   ],
   "status": "draft",
   "tombstones": [],
-  "updated_at": "2026-05-25T04:12:52Z"
+  "updated_at": "2026-05-25T05:02:56Z"
 }

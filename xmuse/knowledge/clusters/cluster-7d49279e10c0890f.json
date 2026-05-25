@@ -1,12 +1,12 @@
 {
-  "cluster_id": "cluster-f913e09b9dc18e51",
-  "created_at": "2026-05-25T03:14:40Z",
+  "cluster_id": "cluster-7d49279e10c0890f",
+  "created_at": "2026-05-25T04:51:03Z",
   "extractor_version": "xmuse-error-knowledge-2026-05-25",
   "feature_count": 1,
   "feature_ids": [
     "memoryos-redis-cache-probe"
   ],
-  "fingerprint": "integrated_tests_not_passed",
+  "fingerprint": "failed_command:uv-run-pytest-q",
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "last_seen_at": "2026-05-25T05:02:56Z",
@@ -14,10 +14,10 @@
   "occurrence_count": 1,
   "occurrences": [
     {
-      "deterministic_invariant": "integrated_tests_not_passed",
+      "deterministic_invariant": null,
       "feature_id": "memoryos-redis-cache-probe",
-      "record_id": "error-20ea51daefe75709",
-      "root_cause_status": "confirmed",
+      "record_id": "error-7e5c86e04947a5ac",
+      "root_cause_status": "suspected",
       "source_digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
       "source_path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
       "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
@@ -26,7 +26,7 @@
   ],
   "promotion_blockers": [],
   "promotion_stage": "observed",
-  "root_cause_status": "confirmed",
+  "root_cause_status": "suspected",
   "schema_version": "1.0",
   "source_digest": "sha256:e1275c78ebcae46a0127187a27a7aaa03e6fbd02d1f553d4847875db06966e60",
   "source_digest_count": 1,
@@ -43,5 +43,5 @@
   "source_run_ids": [
     "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
   ],
-  "summary": "Integrated tests status is failed_stale_target_head"
+  "summary": "Command failed: uv run pytest -q"
 }

@@ -1,8 +1,8 @@
 {
   "counts": {
-    "blocked_clusters": 1,
-    "clusters": 7,
-    "error_records": 12,
+    "blocked_clusters": 3,
+    "clusters": 13,
+    "error_records": 22,
     "methods": 2,
     "promoted_clusters": 2,
     "skill_proposals": 2
@@ -19,23 +19,39 @@
       "cluster-09818672992ae0f6",
       "cluster-e0e0c29e8c244ed3",
       "cluster-43149bac4071d5cb",
+      "cluster-b39ffcb2eae2d721",
       "cluster-cae2add8c9883251",
+      "cluster-236357c1778130da",
       "cluster-a3e78813b85c9f81",
-      "cluster-f913e09b9dc18e51"
+      "cluster-7002b034397a332d",
+      "cluster-f2d456e1634c87fb",
+      "cluster-f913e09b9dc18e51",
+      "cluster-b818e87f8417930d",
+      "cluster-7d49279e10c0890f"
     ],
     "error_records": [
       "error-7e1661a390f34c92",
       "error-dd4f002e33a55bef",
       "error-fbe5571abaf3cd07",
       "error-0343cda365e52653",
+      "error-08001c22a1c9d494",
+      "error-66584b31b8de9b35",
       "error-e54509a553c92a48",
       "error-a75ca33a08f04bcb",
+      "error-0937a6db29d8cddd",
       "error-8316d6d2e881eca1",
       "error-28d9684ad4d9fef5",
+      "error-9805033446c6ec68",
       "error-b289fd7c4c1d98bf",
       "error-31be7534a6b01b0d",
       "error-1642c977f22f23c0",
-      "error-20ea51daefe75709"
+      "error-f042b5143f8f867a",
+      "error-190c8b81e65967c4",
+      "error-8d8f5489aaaa9814",
+      "error-20ea51daefe75709",
+      "error-b3ceb3f76004e5aa",
+      "error-7e5c86e04947a5ac",
+      "error-a1010865fb5357dd"
     ],
     "methods": [
       "method-2f8f1ecf20f40c39",
@@ -48,7 +64,7 @@
   },
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "object_type": "knowledge_run",
-  "recorded_at": "2026-05-25T04:12:52Z",
+  "recorded_at": "2026-05-25T05:02:56Z",
   "scanned_artifacts": [
     "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
     "xmuse/master/features/memoryos-redis-cache-probe/master_review.json",
@@ -79,13 +95,20 @@
     "xmuse/work/features/xmuse-core-state-extraction/slave_state.json"
   ],
   "schema_version": "1.0",
-  "source_digest": "sha256:09d89122b7c1d5e6dc82f1a92ed237d012500fc1c5d289e0b0ace5b538a4884e",
+  "source_digest": "sha256:007f48df592cd26b3197091d090159aac0c947a9ef800970e452b328da3f9d09",
   "source_refs": [
     {
       "artifact_type": "integrated_tests",
       "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
       "feature_id": "memoryos-redis-cache-probe",
       "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    },
+    {
+      "artifact_type": "master_review",
+      "digest": "sha256:ce4ab0bf1cffc8a11066d035bb3e3dc8e4b68b59699550fe360b63f34e9f94ee",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/master_review.json",
       "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
     },
     {
@@ -115,6 +138,13 @@
       "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
     },
     {
+      "artifact_type": "slave_state",
+      "digest": "sha256:1d4ddde7c455c7f365479b85d6928a938ff298cc76edcc2dd93d7011928a529f",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/slave_state.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
       "artifact_type": "ack",
       "digest": "sha256:dd1e8d85a40dcc36dd41d5bce741a5d0b75d10cb48af8795c62ddc16e4d486bf",
       "feature_id": "benchmark-layer-organization",
@@ -137,6 +167,12 @@
       "digest": "sha256:9fbf779879086306a872fe370b675403d57525043f69449d0eea95eb4afed18e",
       "feature_id": "xmuse-console",
       "path": "xmuse/work/features/xmuse-console/review_verdict.json"
+    },
+    {
+      "artifact_type": "slave_state",
+      "digest": "sha256:7690196171217569ad8a2738182eb1975511c6919bfce899b4107f374997ece5",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/slave_state.json"
     },
     {
       "artifact_type": "ack",

@@ -1,18 +1,19 @@
 {
-  "created_at": "2026-05-25T03:14:40Z",
-  "deterministic_invariant": "review_verdict_not_pass",
-  "evidence": "{\"blocking_findings\":[{\"evidence\":\"Command exited 1 with `Found 82 errors in 11 files (checked 58 source files)`.\",\"finding\":\"Required full verification command `uv run mypy src` fails.\",\"id\":\"MY-001\",\"severity\":\"blocking\"},{\"evidence\":\"`uv run memoryos eval run --case-set hard --baseline memoryos_lite` completed with accuracy=0.56 and source_hit=0.56 over 16 cases. Rerunning with MEMORYOS_ARCHIVAL_VECTOR_ENABLED=false produced the same 0.56/0.56 result.\",\"finding\":\"Required hard eval does not m",
+  "created_at": "2026-05-25T04:51:03Z",
+  "deterministic_invariant": null,
+  "evidence": "Required hard eval does not match the stated baseline.",
   "extractor_version": "xmuse-error-knowledge-2026-05-25",
   "feature_id": "archive-rag",
-  "fingerprint": "review_verdict_not_pass",
+  "fingerprint": "baseline_drift:hard-eval",
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
   "last_seen_at": "2026-05-25T05:02:56Z",
   "object_type": "error_record",
-  "promotion_suppressed": false,
-  "record_id": "error-28d9684ad4d9fef5",
-  "root_cause_status": "confirmed",
+  "promotion_suppressed": true,
+  "record_id": "error-9805033446c6ec68",
+  "root_cause_status": "suspected",
   "schema_version": "1.0",
+  "source_digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
   "source_ref": {
     "artifact_type": "review_verdict",
     "digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
@@ -29,6 +30,6 @@
       "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
     }
   ],
-  "summary": "Review verdict is FAIL",
+  "summary": "Hard eval drift or baseline mismatch reported",
   "verification_evidence": false
 }
