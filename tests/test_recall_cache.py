@@ -118,6 +118,16 @@ def test_recall_pipeline_emits_unified_cache_metadata_on_hit(tmp_path) -> None:
     assert second.metadata["cache"]["scope"] == "recall_context_package"
     assert second.metadata["cache"]["key_version"] == "derived-cache-v1"
     assert second.metadata["cache"]["backend"] in {"redis", "noop"}
+    assert second.metadata["query_analysis_cache"]["status"] != "hit"
+    assert (
+        second.metadata["query_analysis_cache"]["fallback_reason"]
+        == "recall_context_package_hit"
+    )
+    assert second.metadata["recall_candidate_cache"]["status"] != "hit"
+    assert (
+        second.metadata["recall_candidate_cache"]["fallback_reason"]
+        == "recall_context_package_hit"
+    )
 
 
 def test_recall_candidate_cache_hits_when_context_budget_changes(tmp_path) -> None:

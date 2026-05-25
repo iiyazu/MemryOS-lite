@@ -135,12 +135,12 @@ class RecallPipeline:
                     package.metadata["recall_cache"] = recall_cache_status
                     package.metadata["query_analysis_cache"] = self._cache_status(
                         CacheScope.QUERY_ANALYSIS,
-                        CacheStatus.HIT,
+                        CacheStatus.DISABLED,
                         reason="recall_context_package_hit",
                     )
                     package.metadata["recall_candidate_cache"] = self._cache_status(
                         CacheScope.RECALL_CANDIDATES,
-                        CacheStatus.HIT,
+                        CacheStatus.DISABLED,
                         reason="recall_context_package_hit",
                     )
                     package.metadata["recall_memory_watermark"] = memory_watermark
