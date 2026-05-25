@@ -1,0 +1,50 @@
+{
+  "artifact_digests": {
+    "ack": "sha256:df47f83adfc7b68f7e691ff8c8dc16410c99055c28e2910ecd18c3b4366b0816",
+    "master_review": "sha256:bfb27a5ef0c921b0734d108e6657f2722cc469ec6dbbf915812581b726758552"
+  },
+  "base_commit": "d070a78de01b1feff94cbd1929ae9de2b1aee756",
+  "branch": "feat/xmuse-core-state-extraction",
+  "commands": [
+    {
+      "command": "uv run pytest tests/test_xmuse_core_*.py -q",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "command": "uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py -q",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "command": "uv run ruff check src/xmuse_core xmuse/hermes_hardening.py xmuse/hermes_reporter.py tests/test_hermes_*.py tests/test_xmuse_core_*.py",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "command": "uv run mypy src/xmuse_core",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "command": "python3 -m py_compile $(find src/xmuse_core -name '*.py' -print | sort) xmuse/hermes_hardening.py xmuse/hermes_reporter.py",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "command": "bash -n xmuse/god_launcher.sh",
+      "exit_code": 0,
+      "status": "passed"
+    }
+  ],
+  "feature_id": "xmuse-core-state-extraction",
+  "head_commit": "5c16d1b8fdd48de09c0ef6a181a82060abbcc8ba",
+  "master_review_ref": "xmuse/master/features/xmuse-core-state-extraction/master_review.json",
+  "recorded_at": "2026-05-25T09:45:00+00:00",
+  "recorded_by": "master-god",
+  "slave_ack_ref": "xmuse/work/features/xmuse-core-state-extraction/ack.json",
+  "status": "passed",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "version": "1.0",
+  "worktree_clean": true
+}

@@ -1,0 +1,23 @@
+{
+  "artifact_digests": {
+    "ack": "sha256:df47f83adfc7b68f7e691ff8c8dc16410c99055c28e2910ecd18c3b4366b0816",
+    "result": "sha256:4f0dfa96bc6273ec065e427b2a959b9a05cfdd083206ceb1d98b992cdfad3d6a",
+    "review_verdict": "sha256:42cc978ad957797197e35d748f2aa7b2aceb15802559b29f043246ead34fa30e"
+  },
+  "base_commit": "d070a78de01b1feff94cbd1929ae9de2b1aee756",
+  "blocking_findings": [],
+  "branch": "feat/xmuse-core-state-extraction",
+  "feature_id": "xmuse-core-state-extraction",
+  "head_commit": "5c16d1b8fdd48de09c0ef6a181a82060abbcc8ba",
+  "merge_decision": "not_merged",
+  "next_gate": "integrated_tests",
+  "recorded_at": "2026-05-25T05:34:09.709667+00:00",
+  "recorded_by": "master-god",
+  "review_summary": "Deterministic Master review accepted Slave usable ACK, PASS review, result artifact, recorded branches, and clean feature worktree.",
+  "slave_ack_ref": "work/features/xmuse-core-state-extraction/ack.json",
+  "slave_result_ref": "work/features/xmuse-core-state-extraction/result.md",
+  "slave_review_ref": "work/features/xmuse-core-state-extraction/review_verdict.json",
+  "status": "accepted",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "version": "1.0"
+}
