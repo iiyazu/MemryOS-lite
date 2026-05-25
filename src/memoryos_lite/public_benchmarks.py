@@ -376,6 +376,11 @@ def run_public_benchmark(
                     movement_baseline_source=(
                         baseline_case.source if baseline_case is not None else None
                     ),
+                    baseline_source_metrics=(
+                        baseline_case.source_metrics()
+                        if baseline_case is not None
+                        else None
+                    ),
                 )
             )
         # Collect source mapping before store resets for next case
@@ -884,6 +889,7 @@ def _to_public_result(
     answer_evidence: list[AnswerEvidence] | None = None,
     baseline_verdict: str | None = None,
     movement_baseline_source: str | None = None,
+    baseline_source_metrics: dict[str, bool | None] | None = None,
 ) -> PublicBenchmarkResult:
     source_set = set(source_ids)
     expected_source_set = set(public_case.expected_source_ids)
@@ -958,6 +964,7 @@ def _to_public_result(
         answer_evidence=answer_evidence_payload,
         baseline_verdict=baseline_verdict,
         movement_baseline_source=movement_baseline_source,
+        baseline_source_metrics=baseline_source_metrics,
     )
     planner_input = _model_visible_planner_input(
         question=public_case.case.question,

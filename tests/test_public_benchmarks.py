@@ -2918,6 +2918,72 @@ def test_public_case_movement_from_comparison_report_pairs(tmp_path):
     ]
 
 
+def test_public_case_movement_summary_reports_source_metric_movement_and_omits_missing_values():
+    from memoryos_lite.public_case_movement import build_public_case_movement_summary
+
+    summary = build_public_case_movement_summary(
+        [
+            {
+                "case_id": "metric-improved",
+                "source_hit": True,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": False}
+                },
+            },
+            {
+                "case_id": "metric-regressed",
+                "source_hit": False,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": True}
+                },
+            },
+            {
+                "case_id": "metric-unchanged-hit",
+                "source_hit": True,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": True}
+                },
+            },
+            {
+                "case_id": "metric-unchanged-miss",
+                "source_hit": False,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": False}
+                },
+            },
+            {
+                "case_id": "metric-missing-current",
+                "source_hit": None,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": False}
+                },
+            },
+            {
+                "case_id": "metric-missing-baseline",
+                "source_hit": True,
+                "case_diagnostics": {"baseline_source_metrics": {}},
+            },
+        ]
+    )
+
+    source_hit_movement = summary["source_metric_movement"]["source_hit"]
+    assert source_hit_movement == {
+        "improved": ["metric-improved"],
+        "regressed": ["metric-regressed"],
+        "unchanged_hit": ["metric-unchanged-hit"],
+        "unchanged_miss": ["metric-unchanged-miss"],
+    }
+    assert summary["counts"]["source_metric_movement"]["source_hit"] == {
+        "improved": 1,
+        "regressed": 1,
+        "unchanged_hit": 1,
+        "unchanged_miss": 1,
+    }
+    assert "missing baseline or current metric values are omitted" in summary[
+        "diagnostic_note"
+    ]
+
+
 def test_public_case_movement_missing_baseline_is_not_anti_demo_evidence():
     from memoryos_lite.public_case_diagnostics import build_case_diagnostics
 
@@ -3026,7 +3092,7 @@ def test_public_benchmark_writes_case_movement_summary_for_comparison_report(tmp
                         {
                             "question": "What color is the missing movement marker?",
                             "answer": "violet",
-                            "evidence": ["D1:1"],
+                            "evidence": ["D9:9"],
                         }
                     ],
                 },
@@ -3059,28 +3125,37 @@ def test_public_benchmark_writes_case_movement_summary_for_comparison_report(tmp
             [
                 {
                     "benchmark": "locomo",
-                    "baseline": "sliding_window",
+                    "baseline": "memoryos_lite",
                     "case_id": "move_fail_to_pass_qa_001",
                     "verdict": "fail",
+                    "source_hit": False,
+                    "planned_evidence_source_hit_at_5": False,
+                    "episode_source_hit_at_10": False,
                 },
                 {
                     "benchmark": "locomo",
-                    "baseline": "sliding_window",
+                    "baseline": "memoryos_lite",
                     "case_id": "move_pass_to_fail_qa_001",
                     "verdict": "pass",
+                    "source_hit": True,
+                    "planned_evidence_source_hit_at_5": True,
+                    "episode_source_hit_at_10": True,
                 },
             ]
         ),
         encoding="utf-8",
     )
-    settings = Settings(data_dir=tmp_path / ".memoryos")
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_recall_pipeline="v2",
+    )
 
     run_public_benchmark(
         settings,
         benchmark="locomo",
         data_path=data_path,
         run_id="movement-summary",
-        baselines=["sliding_window"],
+        baselines=["memoryos_lite"],
         llm_answer=False,
         llm_judge=False,
         comparison_report_paths=[previous_report_path],
@@ -3103,6 +3178,28 @@ def test_public_benchmark_writes_case_movement_summary_for_comparison_report(tmp
     }
     assert "retrieval_miss" in summary["failure_classes"]
     assert "render_drop" in summary["failure_boundaries"]
+    assert summary["source_metric_movement"]["source_hit"]["improved"] == [
+        "move_fail_to_pass_qa_001"
+    ]
+    assert summary["source_metric_movement"]["source_hit"]["regressed"] == [
+        "move_pass_to_fail_qa_001"
+    ]
+    for metric in (
+        "planned_evidence_source_hit_at_5",
+        "episode_source_hit_at_10",
+    ):
+        assert summary["source_metric_movement"][metric]["improved"] == [
+            "move_fail_to_pass_qa_001"
+        ]
+        assert summary["source_metric_movement"][metric]["regressed"] == [
+            "move_pass_to_fail_qa_001"
+        ]
+    assert summary["counts"]["source_metric_movement"]["source_hit"] == {
+        "improved": 1,
+        "regressed": 1,
+        "unchanged_hit": 0,
+        "unchanged_miss": 0,
+    }
 
 
 def test_public_benchmark_case_diagnostics_are_append_only(tmp_path):

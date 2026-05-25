@@ -1,0 +1,74 @@
+{
+  "feature_id": "benchmark-layer-organization",
+  "ack_level": "partial",
+  "status": "bounded_rework_complete_full_blueprint_blocked",
+  "branch": "feat/benchmark-layer-organization",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-benchmark-layer-organization",
+  "head_ref": "feat/benchmark-layer-organization",
+  "pre_artifact_head": "6ab377073d758e8244bb0e9d3ac58701905a826b",
+  "implemented_slice": "regular public benchmark comparison summaries include source-metric movement separate from verdict movement, with missing metric values documented as omitted",
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_writes_case_movement_summary_for_comparison_report -q",
+      "result": "RED failed before implementation; GREEN passed in 7.68s"
+    },
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py::test_public_case_movement_summary_reports_source_metric_movement_and_omits_missing_values tests/test_public_benchmarks.py::test_public_benchmark_writes_case_movement_summary_for_comparison_report -q",
+      "result": "RED failed on missing diagnostic note; GREEN passed in 7.62s"
+    },
+    {
+      "command": "uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py -q",
+      "result": "19 passed in 8.91s"
+    },
+    {
+      "command": "uv run pytest tests/test_context_composer.py -q",
+      "result": "14 passed in 17.89s"
+    },
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py tests/test_diagnostic_report.py -q",
+      "result": "93 passed in 117.98s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "601 passed, 1 warning in 944.11s"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed"
+    },
+    {
+      "command": "uv run mypy src/memoryos_lite/public_case_movement.py src/memoryos_lite/public_case_diagnostics.py src/memoryos_lite/public_benchmarks.py",
+      "result": "Success: no issues found in 3 source files"
+    },
+    {
+      "command": "uv run mypy src",
+      "result": "Failed with 90 pre-existing project-wide errors in 12 files"
+    },
+    {
+      "command": "uv run memoryos eval run --case-set hard --baseline memoryos_lite",
+      "result": "Exited 0 but reported accuracy=0.56/source=0.56"
+    }
+  ],
+  "v3_default_preserved": true,
+  "v1_fallback_preserved": true,
+  "recall_pipeline_v2_opt_in_preserved": true,
+  "kernel_default_unchanged": true,
+  "sqlite_authority_preserved": true,
+  "benchmark_improvement_claim": false,
+  "review_eval_decision": {
+    "review_verdict": "FAIL",
+    "reason": "bounded diagnostics repair passed, but full blueprint gates remain blocked"
+  },
+  "artifacts": {
+    "context_bundle": "xmuse/work/features/benchmark-layer-organization/context_bundle.md",
+    "plan_final": "xmuse/work/features/benchmark-layer-organization/plan_final.md",
+    "execute_goal": "xmuse/work/features/benchmark-layer-organization/execute_goal.md",
+    "result": "xmuse/work/features/benchmark-layer-organization/result.md",
+    "execute_review": "xmuse/work/features/benchmark-layer-organization/execute_review.md",
+    "review_verdict": "xmuse/work/features/benchmark-layer-organization/review_verdict.json",
+    "ack": "xmuse/work/features/benchmark-layer-organization/ack.json",
+    "slave_state": "xmuse/work/features/benchmark-layer-organization/slave_state.json",
+    "feature_amendment_proposal": "xmuse/work/features/benchmark-layer-organization/feature_amendment_proposal.json"
+  }
+}

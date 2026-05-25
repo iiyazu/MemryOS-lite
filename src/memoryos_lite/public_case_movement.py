@@ -33,6 +33,17 @@ FAILURE_BOUNDARY_KEYS = (
     "none",
     "unknown",
 )
+SOURCE_METRIC_KEYS = (
+    "source_hit",
+    "planned_evidence_source_hit_at_5",
+    "episode_source_hit_at_10",
+)
+SOURCE_METRIC_MOVEMENT_KEYS = (
+    "improved",
+    "regressed",
+    "unchanged_hit",
+    "unchanged_miss",
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +53,16 @@ class BaselineCaseVerdict:
     case_id: str
     verdict: str
     source: str
+    source_hit: bool | None = None
+    planned_evidence_source_hit_at_5: bool | None = None
+    episode_source_hit_at_10: bool | None = None
+
+    def source_metrics(self) -> dict[str, bool | None]:
+        return {
+            "source_hit": self.source_hit,
+            "planned_evidence_source_hit_at_5": self.planned_evidence_source_hit_at_5,
+            "episode_source_hit_at_10": self.episode_source_hit_at_10,
+        }
 
 
 MovementKey = tuple[str, str, str]
@@ -68,6 +89,13 @@ def load_public_case_movement(paths: Iterable[Path]) -> dict[MovementKey, Baseli
                 case_id=case_id,
                 verdict=verdict,
                 source=str(path),
+                source_hit=_bool_or_none(row.get("source_hit")),
+                planned_evidence_source_hit_at_5=_bool_or_none(
+                    row.get("planned_evidence_source_hit_at_5")
+                ),
+                episode_source_hit_at_10=_bool_or_none(
+                    row.get("episode_source_hit_at_10")
+                ),
             )
     return comparison
 
@@ -98,6 +126,10 @@ def build_public_case_movement_summary(
     failure_boundaries: dict[str, list[str]] = {
         key: [] for key in FAILURE_BOUNDARY_KEYS
     }
+    source_metric_movement: dict[str, dict[str, list[str]]] = {
+        metric: {key: [] for key in SOURCE_METRIC_MOVEMENT_KEYS}
+        for metric in SOURCE_METRIC_KEYS
+    }
     total_cases = 0
 
     for row in rows:
@@ -108,12 +140,22 @@ def build_public_case_movement_summary(
         _append_grouped(movement, _row_movement_status(row), case_id)
         _append_grouped(failure_classes, _row_failure_class(row), case_id)
         _append_grouped(failure_boundaries, _row_failure_boundary(row), case_id)
+        baseline_metrics = _row_baseline_source_metrics(row)
+        for metric in SOURCE_METRIC_KEYS:
+            _append_source_metric_movement(
+                source_metric_movement,
+                metric,
+                baseline_metrics.get(metric),
+                _bool_or_none(row.get(metric)),
+                case_id,
+            )
 
     return {
         "total_cases": total_cases,
         "movement": movement,
         "failure_classes": failure_classes,
         "failure_boundaries": failure_boundaries,
+        "source_metric_movement": source_metric_movement,
         "counts": {
             "movement": {key: len(value) for key, value in movement.items()},
             "failure_classes": {
@@ -122,12 +164,21 @@ def build_public_case_movement_summary(
             "failure_boundaries": {
                 key: len(value) for key, value in failure_boundaries.items()
             },
+            "source_metric_movement": {
+                metric: {
+                    key: len(value)
+                    for key, value in metric_movement.items()
+                }
+                for metric, metric_movement in source_metric_movement.items()
+            },
         },
         "source_hit_semantics": "final_projection_source_overlap",
         "diagnostic_note": (
             "Movement summarizes verdict changes. Failure boundaries come from "
             "case_diagnostics.evidence_handoff and do not infer retrieval "
-            "localization from public source_hit."
+            "localization from public source_hit. Source-metric movement uses "
+            "comparison-report metrics; cases with missing baseline or current "
+            "metric values are omitted from source-metric movement buckets."
         ),
     }
 
@@ -186,8 +237,47 @@ def _row_failure_boundary(row: dict[str, Any]) -> str:
     return boundary if isinstance(boundary, str) and boundary else "unknown"
 
 
+def _row_baseline_source_metrics(row: dict[str, Any]) -> dict[str, bool | None]:
+    diagnostics = row.get("case_diagnostics")
+    metrics: object = None
+    if isinstance(diagnostics, dict):
+        metrics = diagnostics.get("baseline_source_metrics")
+    if not isinstance(metrics, dict):
+        metrics = row.get("baseline_source_metrics")
+    if not isinstance(metrics, dict):
+        return {}
+    return {
+        metric: _bool_or_none(metrics.get(metric))
+        for metric in SOURCE_METRIC_KEYS
+    }
+
+
+def _append_source_metric_movement(
+    groups: dict[str, dict[str, list[str]]],
+    metric: str,
+    baseline_value: bool | None,
+    current_value: bool | None,
+    case_id: str,
+) -> None:
+    if baseline_value is None or current_value is None:
+        return
+    if baseline_value is False and current_value is True:
+        bucket = "improved"
+    elif baseline_value is True and current_value is False:
+        bucket = "regressed"
+    elif baseline_value is True and current_value is True:
+        bucket = "unchanged_hit"
+    else:
+        bucket = "unchanged_miss"
+    _append_grouped(groups[metric], bucket, case_id)
+
+
 def _append_grouped(groups: dict[str, list[str]], key: str, case_id: str) -> None:
     bucket = key or "unknown"
     groups.setdefault(bucket, [])
     if case_id not in groups[bucket]:
         groups[bucket].append(case_id)
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None

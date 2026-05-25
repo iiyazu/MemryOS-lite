@@ -1,0 +1,33 @@
+{
+  "feature_id": "benchmark-layer-organization",
+  "proposal_type": "master_decision_needed",
+  "created_at": "2026-05-25T06:43:25Z",
+  "status": "feature_local_evidence_only",
+  "reason": "The bounded diagnostic repair is complete, but full blueprint readiness is blocked by missing public LLM credentials, absent raw public data files in the feature worktree, project-wide mypy failures, and a hard-eval baseline mismatch that is not caused by this slice.",
+  "options": [
+    {
+      "id": "provide_external_gates",
+      "description": "Provide LLM credentials and public benchmark data in the feature worktree, then rerun full public LongMemEval and LoCoMo comparison gates."
+    },
+    {
+      "id": "split_gate_cleanup",
+      "description": "Split project-wide mypy cleanup and hard-eval baseline reconciliation into separate lanes before requiring those gates for this diagnostic feature."
+    },
+    {
+      "id": "accept_partial_diagnostic_slice",
+      "description": "Treat this branch as a partial diagnostic artifact improvement with no aggregate benchmark movement claim."
+    }
+  ],
+  "preserves": {
+    "v1_fallback": true,
+    "kernel_opt_in": true,
+    "no_benchmark_score_targets": true,
+    "no_gate_lowering": true
+  },
+  "forbidden_writes_avoided": [
+    "xmuse/master_state.json",
+    "xmuse/master_status.json",
+    "xmuse/master/features/benchmark-layer-organization/master_review.json",
+    "xmuse/approvals/benchmark-layer-organization/*"
+  ]
+}

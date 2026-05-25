@@ -1,0 +1,33 @@
+{
+  "feature_id": "benchmark-layer-organization",
+  "version": "1.0",
+  "mode": "feature_local_single_god",
+  "state": "feature_blocked",
+  "last_dispatch_reason": "feature-local ACK or review requires autonomous Slave repair",
+  "last_updated": "2026-05-25T06:43:25Z",
+  "runner": {
+    "agent_id": "slave-god-benchmark-layer-organization",
+    "type": "local_codex",
+    "protocol": "hermes-local",
+    "endpoint": null,
+    "task_id": null
+  },
+  "summary": {
+    "ack_level": "partial",
+    "review_verdict": "FAIL",
+    "head_ref": "feat/benchmark-layer-organization",
+    "pre_artifact_head": "6ab377073d758e8244bb0e9d3ac58701905a826b",
+    "implemented_slice": "regular public benchmark comparison summaries include source-metric movement separate from verdict movement, with missing metric values documented as omitted",
+    "reason": "bounded repair passed focused and full pytest plus ruff and targeted mypy; full blueprint remains blocked by missing LLM credentials, missing public data files in the feature worktree, pre-existing mypy failures, and hard-eval baseline mismatch"
+  },
+  "artifacts": {
+    "context_bundle": "work/features/benchmark-layer-organization/context_bundle.md",
+    "plan_final": "work/features/benchmark-layer-organization/plan_final.md",
+    "execute_goal": "work/features/benchmark-layer-organization/execute_goal.md",
+    "result": "work/features/benchmark-layer-organization/result.md",
+    "execute_review": "work/features/benchmark-layer-organization/execute_review.md",
+    "review_verdict": "work/features/benchmark-layer-organization/review_verdict.json",
+    "ack": "work/features/benchmark-layer-organization/ack.json",
+    "feature_amendment_proposal": "work/features/benchmark-layer-organization/feature_amendment_proposal.json"
+  }
+}

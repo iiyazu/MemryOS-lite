@@ -1,0 +1,80 @@
+{
+  "feature_id": "benchmark-layer-organization",
+  "verdict": "FAIL",
+  "reviewed_at": "2026-05-25T06:43:25Z",
+  "branch": "feat/benchmark-layer-organization",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-benchmark-layer-organization",
+  "pre_artifact_head": "6ab377073d758e8244bb0e9d3ac58701905a826b",
+  "implemented_slice": "regular public benchmark comparison summaries now include source-metric movement separate from verdict movement, with missing metric values documented as omitted",
+  "passes_bounded_slice_review": true,
+  "passes_full_blueprint_review": false,
+  "blockers": [
+    "Full public LongMemEval 50 and LoCoMo 50 LLM answer/judge comparison gates were not run because OPENAI_API_KEY and DEEPSEEK_API_KEY are unset.",
+    "The feature worktree does not contain benchmarks/longmemeval/longmemeval.json or benchmarks/locomo/locomo10.json; no-LLM diagnostics used absolute source-checkout data paths.",
+    "Full-project `uv run mypy src` fails with 90 pre-existing errors in 12 files.",
+    "`uv run memoryos eval run --case-set hard --baseline memoryos_lite` reports accuracy=0.56/source=0.56, contrary to the AGENTS.md documented 1.00/1.00 baseline."
+  ],
+  "invariants": {
+    "v3_default_preserved": true,
+    "v1_fallback_preserved": true,
+    "recall_pipeline_v2_opt_in_preserved": true,
+    "agent_kernel_default_unchanged": true,
+    "sqlite_authority_preserved": true
+  },
+  "leakage_checks": {
+    "benchmark_specific_hacks": false,
+    "case_id_rules": false,
+    "hard_coded_answers": false,
+    "expected_source_shortcuts": false,
+    "archive_rag_scope_touched": false,
+    "benchmark_score_targeting": false
+  },
+  "verification": [
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py::test_public_benchmark_writes_case_movement_summary_for_comparison_report -q",
+      "result": "RED failed with KeyError: 'source_metric_movement'; GREEN passed in 7.68s"
+    },
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py::test_public_case_movement_summary_reports_source_metric_movement_and_omits_missing_values tests/test_public_benchmarks.py::test_public_benchmark_writes_case_movement_summary_for_comparison_report -q",
+      "result": "RED failed on missing diagnostic note; GREEN passed in 7.62s"
+    },
+    {
+      "command": "uv run pytest tests/test_episode_retrieval.py tests/test_recall_pipeline.py -q",
+      "result": "19 passed in 8.91s"
+    },
+    {
+      "command": "uv run pytest tests/test_context_composer.py -q",
+      "result": "14 passed in 17.89s"
+    },
+    {
+      "command": "uv run pytest tests/test_public_benchmarks.py tests/test_diagnostic_report.py -q",
+      "result": "93 passed in 117.98s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "601 passed, 1 warning in 944.11s"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed"
+    },
+    {
+      "command": "uv run mypy src/memoryos_lite/public_case_movement.py src/memoryos_lite/public_case_diagnostics.py src/memoryos_lite/public_benchmarks.py",
+      "result": "Success: no issues found in 3 source files"
+    },
+    {
+      "command": "uv run mypy src",
+      "result": "FAIL: 90 errors in 12 files"
+    },
+    {
+      "command": "uv run memoryos eval run --case-set hard --baseline memoryos_lite",
+      "result": "Exited 0; reported accuracy=0.56/source=0.56"
+    }
+  ],
+  "benchmark_claim": {
+    "aggregate_improvement_claimed": false,
+    "locomo_improvement_claimed": false,
+    "longmemeval_improvement_claimed": false,
+    "diagnostic_artifact_improvement": true
+  }
+}
