@@ -11,6 +11,7 @@ def test_redis_cache_config_defaults_to_disabled() -> None:
     settings = Settings()
 
     assert settings.memoryos_redis_url is None
+    assert settings.memoryos_recall_cache_enabled is False
     assert settings.memoryos_cache_namespace == "memoryos:v1"
     assert settings.memoryos_cache_default_ttl_s == 300
 

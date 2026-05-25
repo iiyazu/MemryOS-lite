@@ -2,6 +2,7 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
@@ -563,6 +564,79 @@ class MemoryStore:
             )
             records = list(db.scalars(stmt))
         return [self._episode_from_record(row) for row in records]
+
+    def session_memory_watermark(self, session_id: str) -> str:
+        """Return a compact revision marker for cache keys.
+
+        SQLite remains authoritative; cache users include this value in derived
+        cache keys so writes naturally select a new key instead of stale data.
+        """
+        with self.db() as db:
+            scoped_parts = [
+                self._watermark_part(
+                    db,
+                    "messages",
+                    MessageRecord.id,
+                    MessageRecord.created_at,
+                    MessageRecord.session_id == session_id,
+                ),
+                self._watermark_part(
+                    db,
+                    "episodes",
+                    EpisodeRecord.id,
+                    EpisodeRecord.created_at,
+                    EpisodeRecord.session_id == session_id,
+                ),
+                self._watermark_part(
+                    db,
+                    "pages",
+                    PageRecord.id,
+                    PageRecord.updated_at,
+                    PageRecord.session_id == session_id,
+                ),
+                self._item_watermark_part(
+                    db,
+                    session_id,
+                ),
+            ]
+            global_parts = [
+                self._watermark_part(
+                    db,
+                    "core",
+                    CoreMemoryBlockRecord.id,
+                    CoreMemoryBlockRecord.updated_at,
+                    None,
+                ),
+                self._watermark_part(
+                    db,
+                    "archive_docs",
+                    ArchivalDocumentRecord.id,
+                    ArchivalDocumentRecord.updated_at,
+                    None,
+                ),
+                self._watermark_part(
+                    db,
+                    "archive_chunks",
+                    ArchivalChunkRecord.id,
+                    ArchivalChunkRecord.updated_at,
+                    None,
+                ),
+                self._watermark_part(
+                    db,
+                    "archive_passages",
+                    ArchivalPassageRecord.id,
+                    ArchivalPassageRecord.updated_at,
+                    None,
+                ),
+                self._watermark_part(
+                    db,
+                    "archive_memories",
+                    ArchivalMemoryRecord.id,
+                    ArchivalMemoryRecord.updated_at,
+                    None,
+                ),
+            ]
+        return "|".join([*scoped_parts, *global_parts])
 
     def ensure_episodes_for_session(self, session_id: str) -> int:
         with self.db() as db:
@@ -1928,6 +2002,58 @@ class MemoryStore:
                 return False
             record.content = content
         return True
+
+    @staticmethod
+    def _watermark_part(
+        db: DbSession,
+        name: str,
+        id_column: Any,
+        timestamp_column: Any,
+        predicate: Any | None,
+    ) -> str:
+        stmt = select(func.count(id_column), func.max(timestamp_column))
+        if predicate is not None:
+            stmt = stmt.where(predicate)
+        count, latest = db.execute(stmt).one()
+        if isinstance(latest, datetime):
+            latest_text = latest.isoformat()
+        else:
+            latest_text = "none"
+        return f"{name}:{int(count or 0)}:{latest_text}"
+
+    @staticmethod
+    def _item_watermark_part(db: DbSession, session_id: str) -> str:
+        rows = list(
+            db.execute(
+                select(
+                    ItemRecord.id,
+                    ItemRecord.content,
+                    ItemRecord.source_message_ids_json,
+                    ItemRecord.created_at,
+                )
+                .where(ItemRecord.session_id == session_id)
+                .order_by(ItemRecord.id.asc())
+            )
+        )
+        latest = max((row.created_at for row in rows), default=None)
+        latest_text = latest.isoformat() if isinstance(latest, datetime) else "none"
+        digest_payload = [
+            {
+                "id": row.id,
+                "content": row.content,
+                "source_message_ids": row.source_message_ids_json,
+            }
+            for row in rows
+        ]
+        digest = sha256(
+            json.dumps(
+                digest_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return f"items:{len(rows)}:{latest_text}:{digest}"
 
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)

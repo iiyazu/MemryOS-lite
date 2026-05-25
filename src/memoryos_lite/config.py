@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     memoryos_llm_timeout_s: float = 60.0
     memoryos_qdrant_timeout_s: float = 10.0
     memoryos_redis_url: str | None = None
+    memoryos_recall_cache_enabled: bool = False
     memoryos_cache_namespace: str = "memoryos:v1"
     memoryos_cache_default_ttl_s: int = 300
     agent_max_tool_turns: int = 10
