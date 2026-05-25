@@ -30,14 +30,14 @@ class CachePayloadType(StrEnum):
 
 
 class CacheStatus(StrEnum):
-    DISABLED = "disabled"
     HIT = "hit"
     MISS = "miss"
     STALE = "stale"
     CORRUPT = "corrupt"
+    INVALID = "invalid"
     ERROR = "error"
+    DISABLED = "disabled"
     STORED = "stored"
-    SKIPPED = "skipped"
 
 
 class CacheFingerprint(BaseModel):
@@ -61,14 +61,14 @@ class CacheEntry(BaseModel):
     payload: dict[str, Any]
     created_at: datetime
     ttl_s: int | None = None
-    authority: dict[str, str | None] = Field(default_factory=dict)
+    authority: dict[str, str] = Field(default_factory=dict)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def fill_authority(self) -> CacheEntry:
         authority = dict(self.authority)
         authority.setdefault("store", "sqlite")
-        authority.setdefault("store_revision", self.fingerprint.watermark_hash)
+        authority.setdefault("store_revision", self.fingerprint.watermark_hash or "none")
         authority.setdefault("source", "derived")
         self.authority = authority
         return self
@@ -99,9 +99,11 @@ class CacheDiagnostics(BaseModel):
 
 
 class DerivedCache(Protocol):
-    def read(self, key: str) -> CacheReadResult: ...
+    backend_name: str
 
-    def write(
+    def get(self, key: str) -> CacheReadResult: ...
+
+    def set(
         self,
         key: str,
         entry: CacheEntry,
@@ -109,10 +111,16 @@ class DerivedCache(Protocol):
         ttl_s: int | None = None,
     ) -> CacheWriteResult: ...
 
+    def delete(self, key: str) -> CacheWriteResult: ...
+
+    def status(self) -> CacheDiagnostics: ...
+
 
 class CacheKeyBuilder:
     def __init__(self, *, namespace: str) -> None:
         self.namespace = namespace.strip(":")
+        if not self.namespace:
+            raise ValueError("cache namespace must not be empty")
 
     def build_key(
         self,
