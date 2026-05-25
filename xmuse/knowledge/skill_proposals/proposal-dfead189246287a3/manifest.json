@@ -1,0 +1,39 @@
+{
+  "activation_status": "not_installed",
+  "created_at": "2026-05-25T03:31:08Z",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_generated_digest": "sha256:51428357be499b4496be0680e15e1284810d6b9fbfd3d05fee8bd0f25cbbbd10",
+  "method_ids": [
+    "method-2f8f1ecf20f40c39"
+  ],
+  "object_type": "skill_proposal_manifest",
+  "proposal_id": "proposal-dfead189246287a3",
+  "quarantined": true,
+  "schema_version": "1.0",
+  "source_digest": "sha256:fab7fc622d1b506a0b15343252202c793c294b5bfa7bde0376a5cf49523d1274",
+  "source_refs": [
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:b04c8ac84672381aa779cba062e3b9592ef2669da6e316dac112aee72a40665b",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/ack.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:dd1e8d85a40dcc36dd41d5bce741a5d0b75d10cb48af8795c62ddc16e4d486bf",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/ack.json"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/ack.json"
+    }
+  ],
+  "status": "draft",
+  "tombstones": [],
+  "updated_at": "2026-05-25T03:31:08Z"
+}

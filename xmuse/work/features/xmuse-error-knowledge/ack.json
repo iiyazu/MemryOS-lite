@@ -1,0 +1,72 @@
+{
+  "ack_level": "usable",
+  "benchmark_improvement_claim_flag": false,
+  "blockers": [],
+  "branch": "feat/xmuse-error-knowledge",
+  "feature_id": "xmuse-error-knowledge",
+  "head_ref": "feat/xmuse-error-knowledge@HEAD",
+  "kernel_default_unchanged": true,
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "recall_v2_opt_in_preserved": true,
+  "review_eval_decision": {
+    "llm_answer": false,
+    "llm_judge": false,
+    "locomo": {
+      "reason": "not applicable",
+      "run": false
+    },
+    "longmemeval": {
+      "reason": "not applicable",
+      "run": false
+    },
+    "promotion_gate": "not_applicable",
+    "reason": "Xmuse control-plane maintenance only; no MemoryOS answer path changed",
+    "scope": "not_applicable"
+  },
+  "review_verdict": "PASS",
+  "v1_fallback_preserved": true,
+  "v3_default_preserved": true,
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
+      "exit_code": 1,
+      "result": "RED before implementation: failed because xmuse/xmuse_error_knowledge.py was missing"
+    },
+    {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
+      "exit_code": 1,
+      "result": "RED review regressions: 4 failed, 15 passed"
+    },
+    {
+      "command": "uv run ruff check --no-cache xmuse/xmuse_error_knowledge.py tests/test_xmuse_error_knowledge.py",
+      "exit_code": 1,
+      "result": "RED explicit Xmuse lint: 14 E501 errors"
+    },
+    {
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
+      "exit_code": 0,
+      "result": "19 passed"
+    },
+    {
+      "command": "uv run ruff check .",
+      "exit_code": 0,
+      "result": "All checks passed!"
+    },
+    {
+      "command": "uv run ruff check --no-cache xmuse/xmuse_error_knowledge.py tests/test_xmuse_error_knowledge.py",
+      "exit_code": 0,
+      "result": "All checks passed!"
+    },
+    {
+      "command": "uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py -q",
+      "exit_code": 0,
+      "result": "57 passed"
+    },
+    {
+      "command": "uv run python xmuse/xmuse_error_knowledge.py --root . --run-id xmuse-error-knowledge-20260525T000000Z",
+      "exit_code": 0,
+      "result": "usable; 12 records, 7 clusters, 2 methods, 2 skill proposals"
+    }
+  ],
+  "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-error-knowledge"
+}

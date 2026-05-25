@@ -1,0 +1,52 @@
+{
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "object_type": "method_index",
+  "paths": {
+    "method-2f8f1ecf20f40c39": "xmuse/knowledge/methods/method-2f8f1ecf20f40c39/manifest.json",
+    "method-ff06264bbc1f1069": "xmuse/knowledge/methods/method-ff06264bbc1f1069/manifest.json"
+  },
+  "schema_version": "1.0",
+  "source_digest": "sha256:6ce91ff09da364695b5e58e03cb6accb8ddcf195319ccd9da0ac4b29b71d102c",
+  "source_refs": [
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:b04c8ac84672381aa779cba062e3b9592ef2669da6e316dac112aee72a40665b",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/ack.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/review_verdict.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:dd1e8d85a40dcc36dd41d5bce741a5d0b75d10cb48af8795c62ddc16e4d486bf",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/ack.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:ed7a6abee0ae34e72c3313780aa4e19d6faca194322535549b86e83785b605fc",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/review_verdict.json"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/ack.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9fbf779879086306a872fe370b675403d57525043f69449d0eea95eb4afed18e",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/review_verdict.json"
+    }
+  ],
+  "updated_at": "2026-05-25T03:31:08Z"
+}

@@ -1,0 +1,60 @@
+{
+  "cluster_id": "cluster-cae2add8c9883251",
+  "created_at": "2026-05-25T03:14:40Z",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_count": 1,
+  "feature_ids": [
+    "archive-rag"
+  ],
+  "fingerprint": "baseline_drift:hard-eval",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_seen_at": "2026-05-25T03:31:08Z",
+  "object_type": "cluster",
+  "occurrence_count": 2,
+  "occurrences": [
+    {
+      "deterministic_invariant": null,
+      "feature_id": "archive-rag",
+      "record_id": "error-8316d6d2e881eca1",
+      "root_cause_status": "suspected",
+      "source_digest": "sha256:7ab53b5f2cc09bfc79ed59e31775d7401ae130b245f0b78a3da1bc09a7339609",
+      "source_path": "xmuse/work/features/archive-rag/result.md",
+      "verification_evidence": false
+    },
+    {
+      "deterministic_invariant": null,
+      "feature_id": "archive-rag",
+      "record_id": "error-1642c977f22f23c0",
+      "root_cause_status": "suspected",
+      "source_digest": "sha256:c8b033ba63a0dd4ef612fa4e24e22d18f7315a698e68fe4dc9231fa5f91d7598",
+      "source_path": "xmuse/work/features/archive-rag/execute_review.md",
+      "verification_evidence": false
+    }
+  ],
+  "promotion_blockers": [
+    "same-feature recurrence is not cross-feature evidence"
+  ],
+  "promotion_stage": "method_candidate",
+  "root_cause_status": "suspected",
+  "schema_version": "1.0",
+  "source_digest": "sha256:2d7421dae8e6ef07098f5434520f121c030d0d0e5a7183a15611c406a5db2223",
+  "source_digest_count": 2,
+  "source_refs": [
+    {
+      "artifact_type": "execute_review",
+      "digest": "sha256:c8b033ba63a0dd4ef612fa4e24e22d18f7315a698e68fe4dc9231fa5f91d7598",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/execute_review.md"
+    },
+    {
+      "artifact_type": "result",
+      "digest": "sha256:7ab53b5f2cc09bfc79ed59e31775d7401ae130b245f0b78a3da1bc09a7339609",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/result.md"
+    }
+  ],
+  "source_run_count": 0,
+  "source_run_ids": [],
+  "summary": "Hard eval drift or baseline mismatch reported"
+}

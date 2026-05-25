@@ -1,0 +1,19 @@
+{
+  "ack_level": "usable",
+  "artifacts": {
+    "ack": "xmuse/work/features/xmuse-error-knowledge/ack.json",
+    "knowledge_run": "xmuse/knowledge/runs/xmuse-error-knowledge-20260525T000000Z.json",
+    "result": "xmuse/work/features/xmuse-error-knowledge/result.md",
+    "review_verdict": "xmuse/work/features/xmuse-error-knowledge/review_verdict.json"
+  },
+  "branch": "feat/xmuse-error-knowledge",
+  "feature_id": "xmuse-error-knowledge",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "head_commit": "HEAD",
+  "last_updated": "2026-05-25T03:31:08Z",
+  "mode": "feature_local_single_god",
+  "review_verdict": "PASS",
+  "state": "ready_for_master_review",
+  "version": "1.0",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-error-knowledge"
+}

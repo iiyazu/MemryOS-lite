@@ -1,0 +1,160 @@
+{
+  "counts": {
+    "blocked_clusters": 1,
+    "clusters": 7,
+    "error_records": 12,
+    "methods": 2,
+    "promoted_clusters": 2,
+    "skill_proposals": 2
+  },
+  "diagnostics": [
+    "missing optional input: xmuse/reports/latest.json",
+    "missing optional input: xmuse/reports/latest.md"
+  ],
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_id": "xmuse-error-knowledge",
+  "generated_or_updated": {
+    "clusters": [
+      "cluster-c82f71ad0b6730d9",
+      "cluster-09818672992ae0f6",
+      "cluster-e0e0c29e8c244ed3",
+      "cluster-43149bac4071d5cb",
+      "cluster-cae2add8c9883251",
+      "cluster-a3e78813b85c9f81",
+      "cluster-f913e09b9dc18e51"
+    ],
+    "error_records": [
+      "error-7e1661a390f34c92",
+      "error-dd4f002e33a55bef",
+      "error-fbe5571abaf3cd07",
+      "error-0343cda365e52653",
+      "error-e54509a553c92a48",
+      "error-a75ca33a08f04bcb",
+      "error-8316d6d2e881eca1",
+      "error-28d9684ad4d9fef5",
+      "error-b289fd7c4c1d98bf",
+      "error-31be7534a6b01b0d",
+      "error-1642c977f22f23c0",
+      "error-20ea51daefe75709"
+    ],
+    "methods": [
+      "method-2f8f1ecf20f40c39",
+      "method-ff06264bbc1f1069"
+    ],
+    "skill_proposals": [
+      "proposal-dfead189246287a3",
+      "proposal-7803fcdc2a3d198d"
+    ]
+  },
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "object_type": "knowledge_run",
+  "recorded_at": "2026-05-25T03:31:08Z",
+  "scanned_artifacts": [
+    "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+    "xmuse/master/features/memoryos-redis-cache-probe/master_review.json",
+    "xmuse/work/features/archive-rag/ack.json",
+    "xmuse/work/features/archive-rag/execute_review.md",
+    "xmuse/work/features/archive-rag/plan_final.md",
+    "xmuse/work/features/archive-rag/result.md",
+    "xmuse/work/features/archive-rag/review_verdict.json",
+    "xmuse/work/features/archive-rag/slave_state.json",
+    "xmuse/work/features/benchmark-layer-organization/ack.json",
+    "xmuse/work/features/benchmark-layer-organization/execute_review.md",
+    "xmuse/work/features/benchmark-layer-organization/plan_final.md",
+    "xmuse/work/features/benchmark-layer-organization/result.md",
+    "xmuse/work/features/benchmark-layer-organization/review_verdict.json",
+    "xmuse/work/features/benchmark-layer-organization/slave_state.json",
+    "xmuse/work/features/memoryos-redis-cache-probe/ack.json",
+    "xmuse/work/features/memoryos-redis-cache-probe/execute_review.md",
+    "xmuse/work/features/memoryos-redis-cache-probe/plan_final.md",
+    "xmuse/work/features/memoryos-redis-cache-probe/result.md",
+    "xmuse/work/features/memoryos-redis-cache-probe/review_verdict.json",
+    "xmuse/work/features/memoryos-redis-cache-probe/slave_state.json",
+    "xmuse/work/features/xmuse-console/ack.json",
+    "xmuse/work/features/xmuse-console/execute_review.md",
+    "xmuse/work/features/xmuse-console/plan_final.md",
+    "xmuse/work/features/xmuse-console/result.md",
+    "xmuse/work/features/xmuse-console/review_verdict.json",
+    "xmuse/work/features/xmuse-console/slave_state.json",
+    "xmuse/work/features/xmuse-core-state-extraction/slave_state.json"
+  ],
+  "schema_version": "1.0",
+  "source_digest": "sha256:09d89122b7c1d5e6dc82f1a92ed237d012500fc1c5d289e0b0ace5b538a4884e",
+  "source_refs": [
+    {
+      "artifact_type": "integrated_tests",
+      "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:b04c8ac84672381aa779cba062e3b9592ef2669da6e316dac112aee72a40665b",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/ack.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "execute_review",
+      "digest": "sha256:c8b033ba63a0dd4ef612fa4e24e22d18f7315a698e68fe4dc9231fa5f91d7598",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/execute_review.md"
+    },
+    {
+      "artifact_type": "result",
+      "digest": "sha256:7ab53b5f2cc09bfc79ed59e31775d7401ae130b245f0b78a3da1bc09a7339609",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/result.md"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/review_verdict.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:dd1e8d85a40dcc36dd41d5bce741a5d0b75d10cb48af8795c62ddc16e4d486bf",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/ack.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:ed7a6abee0ae34e72c3313780aa4e19d6faca194322535549b86e83785b605fc",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/review_verdict.json"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/ack.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9fbf779879086306a872fe370b675403d57525043f69449d0eea95eb4afed18e",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/review_verdict.json"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:281d97130217f00d76de1cc56c6feb3411a0f700fe20bf12862436f71305354f",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/ack.json"
+    },
+    {
+      "artifact_type": "result",
+      "digest": "sha256:bb4fde73c7f9c129e2e7ed0c8fe35ad1709c96fa959beb726371b3754f33a108",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/result.md"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:d5552618eca9d822429a5c4d0b19adc860410e5c12bb0d7aeabc519d3ba5d20d",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/review_verdict.json"
+    }
+  ]
+}
