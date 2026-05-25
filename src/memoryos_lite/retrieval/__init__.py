@@ -2,6 +2,7 @@
 
 from memoryos_lite.retrieval.archival_searcher import (
     ArchivalPassageHit,
+    ArchivalPassageReranker,
     ArchivalPassageSearcher,
 )
 from memoryos_lite.retrieval.base import (
@@ -47,6 +48,7 @@ __all__ = [
     "EmbeddingClient",
     "EmbeddingSearcher",
     "ArchivalPassageHit",
+    "ArchivalPassageReranker",
     "ArchivalPassageSearcher",
     "EpisodeHit",
     "EpisodeSearcher",

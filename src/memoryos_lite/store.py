@@ -1,10 +1,11 @@
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 from sqlalchemy import (
     Boolean,
@@ -58,6 +59,7 @@ from memoryos_lite.v3_contracts import (
     PromotionCandidate,
     SourceRef,
     SourceSpan,
+    SourceType,
     ensure_persisted_identity_scope,
 )
 
@@ -372,6 +374,14 @@ class PromotionCandidateRecord(Base):
     __table_args__ = (
         Index("ix_promotion_candidates_status_created", "status", "created_at"),
     )
+
+
+@dataclass(frozen=True)
+class ArchivalPassagePage:
+    passages: list[ArchivalPassage]
+    total: int
+    limit: int
+    offset: int
 
 
 class MemoryStore:
@@ -789,6 +799,14 @@ class MemoryStore:
         return result
 
     @staticmethod
+    @overload
+    def _aware(value: datetime) -> datetime: ...
+
+    @staticmethod
+    @overload
+    def _aware(value: None) -> None: ...
+
+    @staticmethod
     def _aware(value: datetime | None) -> datetime | None:
         if value is None or value.tzinfo is not None:
             return value
@@ -945,7 +963,9 @@ class MemoryStore:
         )
 
     @staticmethod
-    def _history_event_from_record(record: CoreMemoryHistoryRecord) -> MemoryHistoryEvent:
+    def _history_event_from_record(
+        record: CoreMemoryHistoryRecord | ArchivalMemoryHistoryRecord,
+    ) -> MemoryHistoryEvent:
         return MemoryHistoryEvent(
             id=record.id,
             memory_id=record.memory_id,
@@ -1242,6 +1262,84 @@ class MemoryStore:
             )
         return passage
 
+    def create_archival_ingest_records(
+        self,
+        *,
+        document: ArchivalDocument,
+        chunks: list[ArchivalChunk],
+        passages: list[ArchivalPassage],
+    ) -> tuple[ArchivalDocument, list[ArchivalChunk], list[ArchivalPassage]]:
+        self._require_source_refs(document.source_refs, "archival document write")
+        for chunk in chunks:
+            self._require_source_refs(chunk.source_refs, "archival chunk write")
+        for passage in passages:
+            self._require_source_refs(passage.source_refs, "archival passage write")
+            self._validate_archival_passage_identity(passage)
+        with self.db() as db:
+            db.add(
+                ArchivalDocumentRecord(
+                    id=document.id,
+                    archive_id=document.archive_id,
+                    title=document.title,
+                    text=document.text,
+                    version=document.version,
+                    source_id=document.source_id,
+                    file_id=document.file_id,
+                    tags_json=self._dump_json(document.tags),
+                    source_refs_json=self._dump_source_refs(document.source_refs),
+                    producer=document.producer,
+                    legacy_page_id=document.legacy_page_id,
+                    metadata_json=self._dump_json(document.metadata),
+                    created_at=document.created_at,
+                    updated_at=document.updated_at,
+                )
+            )
+            for chunk in chunks:
+                db.add(
+                    ArchivalChunkRecord(
+                        id=chunk.id,
+                        document_id=chunk.document_id,
+                        archive_id=chunk.archive_id,
+                        text=chunk.text,
+                        start=chunk.start,
+                        end=chunk.end,
+                        tags_json=self._dump_json(chunk.tags),
+                        source_refs_json=self._dump_source_refs(chunk.source_refs),
+                        metadata_json=self._dump_json(chunk.metadata),
+                        created_at=chunk.created_at,
+                        updated_at=chunk.updated_at,
+                    )
+                )
+            for passage in passages:
+                db.add(
+                    ArchivalPassageRecord(
+                        id=passage.id,
+                        document_id=passage.document_id,
+                        chunk_id=passage.chunk_id,
+                        archive_id=passage.archive_id,
+                        text=passage.text,
+                        citation_start=(
+                            passage.citation.start if passage.citation else None
+                        ),
+                        citation_end=passage.citation.end if passage.citation else None,
+                        source_id=passage.source_id,
+                        file_id=passage.file_id,
+                        scope_json=(
+                            passage.scope.model_dump_json()
+                            if passage.scope is not None
+                            else None
+                        ),
+                        tags_json=self._dump_json(passage.tags),
+                        score=passage.score,
+                        source_refs_json=self._dump_source_refs(passage.source_refs),
+                        legacy_item_id=passage.legacy_item_id,
+                        metadata_json=self._dump_json(passage.metadata),
+                        created_at=passage.created_at,
+                        updated_at=passage.updated_at,
+                    )
+                )
+        return document, chunks, passages
+
     def _archival_passage_from_memory(self, memory: ArchivalMemory) -> ArchivalPassage:
         scope = memory.identity_scope
         if scope is None and memory.archive_id is not None:
@@ -1346,10 +1444,12 @@ class MemoryStore:
 
     @staticmethod
     def _validate_archival_passage_identity(passage: ArchivalPassage) -> None:
-        if passage.archive_id and passage.source_id:
-            raise ValueError("agent/archive passages cannot set source_id")
-        if not passage.archive_id and not passage.source_id:
-            raise ValueError("agent/archive passages require archive_id")
+        if passage.archive_id and (passage.source_id or passage.file_id):
+            raise ValueError("agent/archive passages cannot set source_id or file_id")
+        if not passage.archive_id and not passage.source_id and not passage.file_id:
+            raise ValueError(
+                "agent/archive passages require archive_id, source_id, or file_id"
+            )
 
     def list_archival_passages(
         self,
@@ -1370,6 +1470,59 @@ class MemoryStore:
                 stmt = stmt.where(ArchivalPassageRecord.file_id == file_id)
             records = list(db.scalars(stmt))
         return [self._passage_from_record(record) for record in records]
+
+    def list_archival_passages_page(
+        self,
+        archive_id: str | None = None,
+        source_id: str | None = None,
+        file_id: str | None = None,
+        producer: str | None = None,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ArchivalPassagePage:
+        normalized_limit = min(max(limit, 1), 500)
+        normalized_offset = max(offset, 0)
+        passages = self.list_archival_passages(
+            archive_id=archive_id,
+            source_id=source_id,
+            file_id=file_id,
+        )
+        if producer is not None:
+            passages = [
+                passage
+                for passage in passages
+                if str(passage.metadata.get("producer") or "") == producer
+            ]
+        total = len(passages)
+        return ArchivalPassagePage(
+            passages=passages[normalized_offset : normalized_offset + normalized_limit],
+            total=total,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )
+
+    def get_archival_passages_by_ids(
+        self,
+        passage_ids: list[str],
+    ) -> dict[str, ArchivalPassage]:
+        ids = self._dedupe_strings(passage_ids)
+        if not ids:
+            return {}
+        with self.db() as db:
+            stmt = (
+                select(ArchivalPassageRecord)
+                .where(ArchivalPassageRecord.id.in_(ids))
+                .order_by(
+                    ArchivalPassageRecord.created_at.asc(),
+                    ArchivalPassageRecord.id.asc(),
+                )
+            )
+            records = list(db.scalars(stmt))
+        return {
+            record.id: self._passage_from_record(record)
+            for record in records
+        }
 
     def resolve_attached_archive_ids(
         self,
@@ -1423,13 +1576,15 @@ class MemoryStore:
             or (passage.source_id is not None and passage.source_id in source_ids)
         ]
         eligible_ids = {passage.id for passage in eligible_passages}
+        scope_excluded_passages = [
+            passage for passage in all_passages if passage.id not in eligible_ids
+        ]
         return ArchiveEligibilityResult(
             scope=scope,
             eligible_archive_ids=eligible_archive_ids,
             eligible_passages=eligible_passages,
-            scope_excluded_passage_ids=[
-                passage.id for passage in all_passages if passage.id not in eligible_ids
-            ],
+            scope_excluded_passages=scope_excluded_passages,
+            scope_excluded_passage_ids=[passage.id for passage in scope_excluded_passages],
         )
 
     def create_archive_attachment(self, attachment: ArchiveAttachment) -> ArchiveAttachment:
@@ -1637,7 +1792,11 @@ class MemoryStore:
         archive_id: str,
         title: str,
     ) -> ArchivalDocument:
-        ref = SourceRef(source_type="message", source_id=message.id, session_id=message.session_id)
+        ref = SourceRef(
+            source_type=SourceType.MESSAGE,
+            source_id=message.id,
+            session_id=message.session_id,
+        )
         return self.create_archival_document(
             ArchivalDocument(
                 id=f"adoc_{message.id}",
@@ -1656,17 +1815,25 @@ class MemoryStore:
         text: str,
         source_refs: list[SourceRef],
     ) -> ArchivalPassage:
+        start = document.text.find(text)
+        if start < 0:
+            raise ValueError("archival passage text must appear in document text")
+        citation = SourceSpan(start=start, end=start + len(text))
+        passage_source_refs = [
+            source_ref.model_copy(update={"span": citation, "quote": text})
+            for source_ref in source_refs
+        ]
         return self.create_archival_passage(
             ArchivalPassage(
                 id=f"apsg_{document.id}",
                 document_id=document.id,
                 archive_id=document.archive_id,
                 text=text,
-                citation=SourceSpan(start=0, end=len(text)),
+                citation=citation,
                 source_id=None if document.archive_id else document.source_id,
                 file_id=None if document.archive_id else document.file_id,
                 tags=list(document.tags),
-                source_refs=source_refs,
+                source_refs=passage_source_refs,
                 metadata={"producer": document.producer},
             )
         )

@@ -959,6 +959,29 @@ def test_fastembed_provider_falls_back_to_no_embedding_when_unavailable(tmp_path
     assert service.embedding_client is None
 
 
+def test_service_wires_archival_qdrant_separately_from_page_qdrant(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        qdrant_url=":memory:",
+        qdrant_collection="memoryos_pages_test",
+        memoryos_archival_vector_enabled=True,
+        memoryos_archival_qdrant_url=":memory:",
+        memoryos_archival_qdrant_collection="memoryos_archival_passages_test",
+    )
+
+    service = MemoryOSService(
+        settings=settings,
+        embedding_client=DeterministicEmbeddingClient(),
+    )
+
+    assert service.qdrant_store is not None
+    assert service.archival_qdrant_store is not None
+    assert service.qdrant_store.collection == "memoryos_pages_test"
+    assert service.archival_qdrant_store.collection == "memoryos_archival_passages_test"
+    assert service.qdrant_store.collection != service.archival_qdrant_store.collection
+    assert service.v3_context_composer.archival_searcher.vector_index is not None
+
+
 def test_item_extractor_heuristic(service):
     session = service.create_session("test")
     page = MemoryPage(

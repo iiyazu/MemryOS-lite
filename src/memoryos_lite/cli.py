@@ -3,7 +3,7 @@ import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, cast
 
 import uvicorn
 from langchain_core.messages import AIMessage, HumanMessage
@@ -16,13 +16,21 @@ from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import EvalResult, run_eval, run_eval_llm
 from memoryos_lite.llm_judge import JudgeVerdict
 from memoryos_lite.public_benchmarks import PublicBenchmarkResult, run_public_benchmark
-from memoryos_lite.schemas import MessageCreate, Role
+from memoryos_lite.schemas import (
+    ArchiveAttachmentRequest,
+    ArchiveDocumentIngestRequest,
+    ArchiveSourceRefPayload,
+    MessageCreate,
+    Role,
+)
 
 app = Typer(help="MemoryOS Lite CLI")
 demo_app = Typer(help="Run local demos")
 eval_app = Typer(help="Run benchmark tasks")
+archive_app = Typer(help="Ingest and inspect source-backed archive documents")
 app.add_typer(demo_app, name="demo")
 app.add_typer(eval_app, name="eval")
+app.add_typer(archive_app, name="archive")
 console = Console()
 EVAL_TABLE_COLUMNS = [
     "baseline",
@@ -178,6 +186,46 @@ def _first_message_id(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+ArchiveScopeType = Literal["agent", "project", "source", "user", "run", "session"]
+ARCHIVE_SCOPE_TYPES: set[ArchiveScopeType] = {
+    "agent",
+    "project",
+    "source",
+    "user",
+    "run",
+    "session",
+}
+
+
+def _cli_service() -> MemoryOSService:
+    return MemoryOSService(settings=get_settings())
+
+
+def _archive_scope_type(value: str) -> ArchiveScopeType:
+    normalized = value.strip().lower()
+    if normalized not in ARCHIVE_SCOPE_TYPES:
+        raise ValueError(
+            "archive scope type must be one of: "
+            + ", ".join(sorted(ARCHIVE_SCOPE_TYPES))
+        )
+    return cast(ArchiveScopeType, normalized)
+
+
+def _archive_source_ref_payload(
+    *,
+    source_type: str,
+    source_id: str,
+    session_id: str | None = None,
+) -> ArchiveSourceRefPayload:
+    return ArchiveSourceRefPayload.model_validate(
+        {
+            "source_type": source_type,
+            "source_id": source_id,
+            "session_id": session_id,
+        }
+    )
+
+
 @demo_app.command("agent")
 def demo_agent(
     data_dir: Annotated[
@@ -273,6 +321,121 @@ def _run_agent_demo(data_dir: Path) -> None:
     ]
     console.print("\n[bold]Agent trace[/bold]")
     console.print(", ".join(trace_types), markup=False)
+
+
+@archive_app.command("ingest")
+def archive_ingest(
+    document_id: Annotated[str, Option("--document-id")],
+    archive_id: Annotated[str | None, Option("--archive-id")] = None,
+    source_id: Annotated[str | None, Option("--source-doc-id")] = None,
+    file_id: Annotated[str | None, Option("--file-id")] = None,
+    title: Annotated[str, Option("--title")] = "Archive document",
+    content: Annotated[str, Option("--content")] = "",
+    source_type: Annotated[str, Option("--source-type")] = "document",
+    source_ref_id: Annotated[str, Option("--source-id")] = "manual_source",
+    session_id: Annotated[str | None, Option("--session-id")] = None,
+) -> None:
+    identity: dict[str, object]
+    if archive_id:
+        identity = {"kind": "archive", "archive_id": archive_id}
+    elif source_id:
+        identity = {"kind": "source", "source_id": source_id, "file_id": file_id}
+    elif file_id:
+        identity = {"kind": "file", "file_id": file_id}
+    else:
+        raise ValueError(
+            "archive ingest requires --archive-id, --source-doc-id, or --file-id"
+        )
+    service = _cli_service()
+    response = service.ingest_archive_document(
+        ArchiveDocumentIngestRequest.model_validate(
+            {
+                "document_id": document_id,
+                "title": title,
+                "content": content,
+                "source_refs": [
+                    _archive_source_ref_payload(
+                        source_type=source_type,
+                        source_id=source_ref_id,
+                        session_id=session_id,
+                    )
+                ],
+                "identity": identity,
+            }
+        )
+    )
+    table = Table(title="Archive ingest")
+    table.add_column("document")
+    table.add_column("passages")
+    table.add_row(response.document_id, ", ".join(response.passage_ids))
+    console.print(table)
+
+
+@archive_app.command("attach")
+def archive_attach(
+    archive_id: Annotated[str, Option("--archive-id")],
+    scope_type: Annotated[str, Option("--scope-type")],
+    scope_id: Annotated[str, Option("--scope-id")],
+    source_type: Annotated[str, Option("--source-type")] = "document",
+    source_ref_id: Annotated[str, Option("--source-id")] = "manual_source",
+    session_id: Annotated[str | None, Option("--session-id")] = None,
+) -> None:
+    service = _cli_service()
+    response = service.attach_archive(
+        ArchiveAttachmentRequest(
+            archive_id=archive_id,
+            scope_type=_archive_scope_type(scope_type),
+            scope_id=scope_id,
+            source_refs=[
+                _archive_source_ref_payload(
+                    source_type=source_type,
+                    source_id=source_ref_id,
+                    session_id=session_id,
+                )
+            ],
+        )
+    )
+    table = Table(title="Archive attachment")
+    table.add_column("archive")
+    table.add_column("scope")
+    table.add_column("passages")
+    table.add_row(
+        response.archive_id,
+        f"{response.scope_type}:{response.scope_id}",
+        str(response.passage_count),
+    )
+    console.print(table)
+
+
+@archive_app.command("passages")
+def archive_passages(
+    archive_id: Annotated[str | None, Option("--archive-id")] = None,
+    source_id: Annotated[str | None, Option("--source-doc-id")] = None,
+    file_id: Annotated[str | None, Option("--file-id")] = None,
+    producer: Annotated[str | None, Option("--producer")] = None,
+    limit: Annotated[int, Option("--limit")] = 100,
+    offset: Annotated[int, Option("--offset")] = 0,
+) -> None:
+    service = _cli_service()
+    response = service.list_archive_passages(
+        archive_id=archive_id,
+        source_id=source_id,
+        file_id=file_id,
+        producer=producer,
+        limit=limit,
+        offset=offset,
+    )
+    table = Table(title="Archive passages")
+    table.add_column("id")
+    table.add_column("archive")
+    table.add_column("source")
+    for passage in response.passages:
+        table.add_row(
+            passage.id,
+            passage.archive_id or "",
+            passage.source_id or passage.file_id or "",
+        )
+    console.print(table)
 
 
 @eval_app.command("run")

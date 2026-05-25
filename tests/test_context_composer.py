@@ -8,6 +8,14 @@ from memoryos_lite.memory_lifecycle import (
     MemoryLifecycleService,
     archival_to_core_candidate,
 )
+from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
+from memoryos_lite.retrieval.archival_vector import (
+    ArchivalEmbeddingConfig,
+    ArchivalVectorIndex,
+)
+from memoryos_lite.retrieval.providers.qdrant_archival import (
+    QdrantArchivalPassageStore,
+)
 from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
@@ -26,6 +34,41 @@ class WordTokenizer(TokenEstimator):
         return len(text.split())
 
 
+class TinyEmbeddingClient:
+    @property
+    def dim(self) -> int:
+        return 3
+
+    def embed(self, text: str) -> list[float]:
+        normalized = text.lower()
+        if normalized == "favorite transport" or "semantic-target" in normalized:
+            return [1.0, 0.0, 0.0]
+        if "favorite transport" in normalized:
+            return [0.0, 1.0, 0.0]
+        return [0.0, 0.0, 1.0]
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed(text) for text in texts]
+
+
+def _vector_searcher(
+    store,
+    collection: str,
+) -> ArchivalPassageSearcher:
+    return ArchivalPassageSearcher(
+        vector_index=ArchivalVectorIndex(
+            embedding_client=TinyEmbeddingClient(),
+            vector_store=QdrantArchivalPassageStore(
+                url=":memory:",
+                collection=collection,
+                dim=3,
+            ),
+            config=ArchivalEmbeddingConfig(provider="test", model="tiny", dim=3),
+        ),
+        passage_loader=store.get_archival_passages_by_ids,
+    )
+
+
 def _ref(source_id: str = "msg_1") -> SourceRef:
     return SourceRef(source_type="message", source_id=source_id, session_id="ses_1")
 
@@ -35,6 +78,7 @@ def test_settings_default_to_v3_composer_with_kernel_off(tmp_path):
 
     assert settings.resolved_memory_arch == "v3"
     assert settings.resolved_agent_kernel == "off"
+    assert settings.memoryos_archival_vector_enabled is True
 
 
 def test_settings_resolve_v3_composer_and_kernel_flags(tmp_path):
@@ -241,6 +285,261 @@ def test_v3_composer_reports_archival_scope_eligibility(tmp_path):
     assert "archival_selected" in event_types
     assert "archival_eligible_no_match" in event_types
     assert "archival_scope_excluded" in event_types
+
+
+def test_v3_composer_scope_excluded_accounting_keeps_source_refs(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    attached_ref = _ref("msg_attached")
+    excluded_ref = _ref("msg_excluded")
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_attached",
+            archive_id="archive_attached",
+            text="Alice attached a Shanghai rail note.",
+            source_refs=[attached_ref],
+        )
+    )
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_excluded",
+            archive_id="archive_excluded",
+            text="Alice excluded a Shanghai rail note.",
+            source_refs=[excluded_ref],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_attached",
+            archive_id="archive_attached",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[attached_ref],
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="What did Alice archive about Shanghai rail?",
+            budget=80,
+        )
+    )
+
+    excluded = next(
+        row
+        for row in package.metadata["component_accounting"]
+        if row["event_type"] == "archival_scope_excluded"
+        and row["item_id"] == "apsg_excluded"
+    )
+    assert excluded["component"] == "archival"
+    assert excluded["source_ids"] == ["msg_excluded"]
+    assert excluded["source_refs"][0]["source_id"] == "msg_excluded"
+    assert excluded["included"] is False
+    assert excluded["dropped"] is False
+    assert excluded["metadata"]["archive_id"] == "archive_excluded"
+
+
+def test_v3_composer_reports_no_attached_archive_diagnostic(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="Is any archive attached?",
+            budget=80,
+        )
+    )
+
+    eligibility = package.metadata["archival_eligibility"]
+    assert eligibility["archival_no_attached_archive"] is True
+    assert any(
+        row["event_type"] == "archival_no_attached_archive"
+        and row["component"] == "archival"
+        and row["included"] is False
+        and row["dropped"] is False
+        for row in package.metadata["component_accounting"]
+    )
+
+
+def test_v3_composer_uses_archival_vector_search_with_source_refs(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_archival_vector_enabled=True,
+    )
+    store = create_store(settings)
+    store.reset()
+    target_ref = _ref("msg_target")
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_target",
+            archive_id="archive_attached",
+            text="semantic-target metro preference",
+            source_refs=[target_ref],
+        )
+    )
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_lexical",
+            archive_id="archive_attached",
+            text="favorite transport distractor",
+            source_refs=[_ref("msg_lexical")],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_attached",
+            archive_id="archive_attached",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[target_ref],
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+        archival_searcher=_vector_searcher(
+            store,
+            "memoryos_archival_composer_vector",
+        ),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="favorite transport",
+            budget=80,
+        )
+    )
+
+    archival_items = [item for item in package.items if item.layer == "archival"]
+    assert archival_items[0].item_id == "apsg_target"
+    assert archival_items[0].metadata["source"] == "archival_vector"
+    assert archival_items[0].source_refs[0].source_id == "msg_target"
+    selected = next(
+        row
+        for row in package.metadata["component_accounting"]
+        if row["event_type"] == "archival_selected"
+    )
+    assert selected["item_id"] == "apsg_target"
+    assert selected["source_ids"] == ["msg_target"]
+
+
+def test_v3_composer_records_archival_vector_fallback_diagnostics(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_archival_vector_enabled=True,
+    )
+    store = create_store(settings)
+    store.reset()
+    ref = _ref()
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_1",
+            archive_id="archive_attached",
+            text="Shanghai rail lexical fallback",
+            source_refs=[ref],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_attached",
+            archive_id="archive_attached",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[ref],
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="Shanghai rail",
+            budget=80,
+        )
+    )
+
+    event_types = {
+        row["event_type"] for row in package.metadata["component_accounting"]
+    }
+    assert "archival_vector_unavailable" in event_types
+    assert "archival_lexical_fallback" in event_types
+
+
+def test_v3_composer_filters_unattached_passage_before_archival_vector_search(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_archival_vector_enabled=True,
+    )
+    store = create_store(settings)
+    store.reset()
+    attached_ref = _ref("msg_attached")
+    unattached_ref = _ref("msg_unattached")
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_attached",
+            archive_id="archive_attached",
+            text="favorite transport attached fallback",
+            source_refs=[attached_ref],
+        )
+    )
+    store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_unattached",
+            archive_id="archive_unattached",
+            text="semantic-target unattached best vector",
+            source_refs=[unattached_ref],
+        )
+    )
+    store.create_archive_attachment(
+        ArchiveAttachment(
+            id="aatt_attached",
+            archive_id="archive_attached",
+            scope_type="session",
+            scope_id="ses_1",
+            source_refs=[attached_ref],
+        )
+    )
+
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+        archival_searcher=_vector_searcher(
+            store,
+            "memoryos_archival_composer_scope_filter",
+        ),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="favorite transport",
+            budget=80,
+        )
+    )
+
+    archival_item_ids = [item.item_id for item in package.items if item.layer == "archival"]
+    assert "apsg_unattached" not in archival_item_ids
+    assert package.metadata["archival_eligibility"]["selected_passage_ids"] == [
+        "apsg_attached"
+    ]
+    assert "apsg_unattached" in package.metadata["archival_eligibility"][
+        "scope_excluded_passage_ids"
+    ]
 
 
 def test_v3_composer_does_not_report_budget_dropped_archival_passages_as_selected(

@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 
 from memoryos_lite.config import Settings
 from memoryos_lite.core_memory import render_core_memory_blocks
-from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
+from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher, SearchMode
+from memoryos_lite.retrieval.archival_vector import ArchivalVectorDiagnostic
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import Message
 from memoryos_lite.store import MemoryStore
@@ -83,7 +84,7 @@ class V3ContextComposer:
             items=recall_items,
         )
         package.diagnostics.extend(recall_diagnostics)
-        archival_items, archival_eligibility = self._archival_items(
+        archival_items, archival_eligibility, archival_search_diagnostics = self._archival_items(
             request,
             query,
         )
@@ -114,6 +115,9 @@ class V3ContextComposer:
         )
         package.metadata["archival_eligibility"] = (
             archival_eligibility.diagnostics_payload()
+        )
+        package.diagnostics.extend(
+            self._archival_search_diagnostics(archival_search_diagnostics)
         )
         package.diagnostics.extend(
             self._archival_eligibility_diagnostics(
@@ -205,7 +209,7 @@ class V3ContextComposer:
         self,
         request: ContextComposerRequest,
         query: str,
-    ) -> tuple[list[ContextLayerItem], ArchiveEligibilityResult]:
+    ) -> tuple[list[ContextLayerItem], ArchiveEligibilityResult, list[ArchivalVectorDiagnostic]]:
         scope = ArchiveEligibilityScope(
             session_id=request.session_id,
             identity_scope=request.identity_scope,
@@ -214,7 +218,16 @@ class V3ContextComposer:
         )
         eligibility = self.store.list_archival_passages_for_scope(scope)
         passages = eligibility.eligible_passages
-        hits = self.archival_searcher.search(passages, query=query, top_k=5)
+        search_mode: SearchMode = (
+            "vector" if self.settings.memoryos_archival_vector_enabled else "text"
+        )
+        hits = self.archival_searcher.search(
+            passages,
+            query=query,
+            top_k=5,
+            mode=search_mode,
+        )
+        search_diagnostics = list(self.archival_searcher.last_diagnostics)
         selected_ids = [hit.passage.id for hit in hits]
         selected_id_set = set(selected_ids)
         no_match_ids = [
@@ -242,7 +255,7 @@ class V3ContextComposer:
             )
             for hit in hits
         ]
-        return items, eligibility
+        return items, eligibility, search_diagnostics
 
     @staticmethod
     def _source_ref_summary(source_ref: SourceRef) -> dict[str, str | None]:
@@ -322,6 +335,10 @@ class V3ContextComposer:
                 "archival_eligible_no_match",
                 "archival_scope_excluded",
                 "archival_no_attached_archive",
+                "archival_vector_unavailable",
+                "archival_lexical_fallback",
+                "archival_stale_vector_hit",
+                "archival_scope_excluded_vector_hit",
             }:
                 continue
             component = self._component_from_diagnostic(diagnostic)
@@ -364,7 +381,8 @@ class V3ContextComposer:
                 token_totals.setdefault(component, 0)
 
         locomo_rows = [
-            row for row in accounting
+            row
+            for row in accounting
             if row["component"] == "recall"
             and isinstance(row["metadata"], dict)
             and (
@@ -424,7 +442,11 @@ class V3ContextComposer:
                     },
                 )
             )
+        scope_excluded_by_id = {
+            passage.id: passage for passage in eligibility.scope_excluded_passages
+        }
         for passage_id in eligibility.scope_excluded_passage_ids:
+            excluded_passage = scope_excluded_by_id.get(passage_id)
             diagnostics.append(
                 DiagnosticEvent(
                     layer="archival",
@@ -433,8 +455,28 @@ class V3ContextComposer:
                     reason_code="archival_scope_excluded",
                     included=False,
                     dropped=False,
+                    source_refs=(
+                        list(excluded_passage.source_refs)
+                        if excluded_passage is not None
+                        else []
+                    ),
                     metadata={
                         "eligible_archive_ids": list(eligibility.eligible_archive_ids),
+                        "archive_id": (
+                            excluded_passage.archive_id
+                            if excluded_passage is not None
+                            else None
+                        ),
+                        "source_id": (
+                            excluded_passage.source_id
+                            if excluded_passage is not None
+                            else None
+                        ),
+                        "file_id": (
+                            excluded_passage.file_id
+                            if excluded_passage is not None
+                            else None
+                        ),
                     },
                 )
             )
@@ -454,6 +496,24 @@ class V3ContextComposer:
                 )
             )
         return diagnostics
+
+    def _archival_search_diagnostics(
+        self,
+        diagnostics: list[ArchivalVectorDiagnostic],
+    ) -> list[DiagnosticEvent]:
+        return [
+            DiagnosticEvent(
+                layer="archival",
+                event_type=diagnostic.event_type,
+                item_id=diagnostic.item_id,
+                reason_code=diagnostic.reason_code,
+                score=diagnostic.score,
+                included=False,
+                dropped=False,
+                metadata=diagnostic.metadata,
+            )
+            for diagnostic in diagnostics
+        ]
 
     def _recent_items(self, session_id: str) -> list[ContextLayerItem]:
         messages = self.store.list_messages(session_id)[-self.settings.recent_message_limit :]

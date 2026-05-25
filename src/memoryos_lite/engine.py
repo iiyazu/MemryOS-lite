@@ -1,3 +1,4 @@
+import hashlib
 import re
 import time
 from dataclasses import dataclass
@@ -16,6 +17,11 @@ from memoryos_lite.agent_kernel import (
 from memoryos_lite.agent_tool_registry import (
     executable_kernel_tool_names,
     get_kernel_tool_spec,
+)
+from memoryos_lite.archive_rag import (
+    ArchiveRAGDiagnostic,
+    ArchiveRAGIngestRequest,
+    MemoryOSArchiveRAG,
 )
 from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
@@ -42,12 +48,30 @@ from memoryos_lite.retrieval import (
     Searcher,
     SearchHit,
 )
+from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
+from memoryos_lite.retrieval.archival_vector import (
+    ArchivalEmbeddingConfig,
+    ArchivalVectorIndex,
+)
 from memoryos_lite.retrieval.evidence_representer import EvidenceCandidate, EvidenceRepresenter
 from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.retrieval.providers import OpenAIEmbeddingClient, QdrantEmbeddingStore
+from memoryos_lite.retrieval.providers import (
+    OpenAIEmbeddingClient,
+    QdrantArchivalPassageStore,
+    QdrantEmbeddingStore,
+)
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import (
+    ArchiveAttachmentRequest,
+    ArchiveAttachmentResponse,
+    ArchiveDiagnosticResponse,
+    ArchiveDocumentIngestRequest,
+    ArchiveDocumentIngestResponse,
+    ArchivePassageListResponse,
+    ArchivePassageResponse,
+    ArchiveSourceRefPayload,
+    ArchiveSourceSpanPayload,
     ContextEvidence,
     ContextPackage,
     ContextPage,
@@ -63,16 +87,20 @@ from memoryos_lite.schemas import (
     PatchOperation,
     Role,
     TraceEvent,
+    new_id,
     utc_now,
 )
 from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
 from memoryos_lite.v3_contracts import (
+    ArchivalPassage,
+    ArchiveAttachment,
     ContextComposerRequest,
     ContextLayerItem,
     ContextPackageV3,
     IdentityScope,
+    SourceRef,
     ToolPolicyRule,
 )
 
@@ -1455,6 +1483,38 @@ class MemoryOSService:
             if self.embedding_client is not None
             else None
         )
+        archival_qdrant_store: QdrantArchivalPassageStore | None = None
+        archival_vector_index: ArchivalVectorIndex | None = None
+        if (
+            self.settings.memoryos_archival_vector_enabled
+            and self.settings.memoryos_archival_qdrant_url
+            and self.embedding_client is not None
+        ):
+            try:
+                archival_qdrant_store = QdrantArchivalPassageStore(
+                    url=self.settings.memoryos_archival_qdrant_url,
+                    collection=self.settings.memoryos_archival_qdrant_collection,
+                    dim=self.embedding_client.dim,
+                    timeout=self.settings.memoryos_qdrant_timeout_s,
+                )
+                archival_vector_index = ArchivalVectorIndex(
+                    embedding_client=self.embedding_client,
+                    vector_store=archival_qdrant_store,
+                    config=ArchivalEmbeddingConfig(
+                        provider=self.settings.memoryos_embedding_provider,
+                        model=self.settings.memoryos_embedding_model,
+                        dim=self.embedding_client.dim,
+                    ),
+                )
+            except Exception as exc:
+                archival_qdrant_store = None
+                archival_vector_index = None
+                llm_init_error = str(exc)
+        self.archival_qdrant_store = archival_qdrant_store
+        self.archival_searcher = ArchivalPassageSearcher(
+            vector_index=archival_vector_index,
+            passage_loader=self.store.get_archival_passages_by_ids,
+        )
         chat_api_key = self.settings.chat_api_key
         query_rewriter = (
             QueryRewriter(
@@ -1494,6 +1554,7 @@ class MemoryOSService:
             settings=self.settings,
             tokenizer=self.tokenizer,
             recall_pipeline=self.recall_pipeline,
+            archival_searcher=self.archival_searcher,
         )
         self.agent_kernel = (
             SimpleAgentStepRunner(
@@ -1538,6 +1599,209 @@ class MemoryOSService:
                 item_llm = None
         self.item_extractor = ItemExtractor(self.settings, llm_client=item_llm)
         self.item_searcher = ItemSearcher(embedding_client=self.embedding_client)
+
+    def _archive_rag(self) -> MemoryOSArchiveRAG:
+        return MemoryOSArchiveRAG(self.store)
+
+    def _source_refs_from_payloads(
+        self,
+        payloads: list[ArchiveSourceRefPayload],
+    ) -> list[SourceRef]:
+        return [
+            SourceRef.model_validate(payload.model_dump(mode="json"))
+            for payload in payloads
+        ]
+
+    @staticmethod
+    def _archive_content_hash(content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _archive_identity_metadata(request: ArchiveDocumentIngestRequest) -> dict[str, str]:
+        identity = request.identity
+        if identity.kind == "archive":
+            return {"identity_kind": "archive", "archive_id": identity.archive_id}
+        if identity.kind == "source":
+            metadata = {"identity_kind": "source", "source_id": identity.source_id}
+            if identity.file_id is not None:
+                metadata["file_id"] = identity.file_id
+            return metadata
+        return {"identity_kind": "file", "file_id": identity.file_id}
+
+    @staticmethod
+    def _archive_diagnostic_response(
+        diagnostic: ArchiveRAGDiagnostic | ArchiveDiagnosticResponse,
+    ) -> ArchiveDiagnosticResponse:
+        if isinstance(diagnostic, ArchiveDiagnosticResponse):
+            return diagnostic
+        return ArchiveDiagnosticResponse(
+            event_type=diagnostic.event_type,
+            reason_code=diagnostic.reason_code,
+            item_id=diagnostic.item_id,
+            metadata=dict(diagnostic.metadata),
+        )
+
+    def ingest_archive_document(
+        self,
+        request: ArchiveDocumentIngestRequest,
+    ) -> ArchiveDocumentIngestResponse:
+        existing = self.store.get_archival_document(request.document_id)
+        identity_metadata = self._archive_identity_metadata(request)
+        content_hash = self._archive_content_hash(request.content)
+        if existing is not None:
+            existing_hash = str(existing.metadata.get("content_hash") or "")
+            existing_identity = {
+                key: str(existing.metadata[key])
+                for key in identity_metadata
+                if key in existing.metadata
+            }
+            if (
+                existing.text == request.content
+                and existing_hash == content_hash
+                and existing_identity == identity_metadata
+            ):
+                chunks = self.store.list_archival_chunks(document_id=existing.id)
+                passages = [
+                    passage
+                    for passage in self.store.list_archival_passages()
+                    if passage.document_id == existing.id
+                ]
+                return ArchiveDocumentIngestResponse(
+                    document_id=existing.id,
+                    chunk_ids=[chunk.id for chunk in chunks],
+                    passage_ids=[passage.id for passage in passages],
+                    diagnostics=[
+                        ArchiveDiagnosticResponse(
+                            event_type="archive_ingest_replayed",
+                            reason_code="archive_ingest_idempotent_replay",
+                            item_id=existing.id,
+                            metadata={"content_hash": content_hash},
+                        )
+                    ],
+                )
+            raise ValueError(f"archive document conflict: {request.document_id}")
+
+        identity = request.identity
+        archive_id = identity.archive_id if identity.kind == "archive" else None
+        if identity.kind == "source":
+            source_id = identity.source_id
+            file_id = identity.file_id
+        elif identity.kind == "file":
+            source_id = None
+            file_id = identity.file_id
+        else:
+            source_id = None
+            file_id = None
+        metadata = {
+            **request.metadata,
+            **identity_metadata,
+            "content_hash": content_hash,
+        }
+        result = self._archive_rag().ingest(
+            ArchiveRAGIngestRequest(
+                document_id=request.document_id,
+                archive_id=archive_id,
+                title=request.title,
+                content=request.content,
+                source_refs=self._source_refs_from_payloads(request.source_refs),
+                source_id=source_id,
+                file_id=file_id,
+                tags=list(request.tags),
+                metadata=metadata,
+                producer=request.producer,
+            )
+        )
+        return ArchiveDocumentIngestResponse(
+            document_id=result.document.id,
+            chunk_ids=[chunk.id for chunk in result.chunks],
+            passage_ids=[passage.id for passage in result.passages],
+            diagnostics=[
+                self._archive_diagnostic_response(diagnostic)
+                for diagnostic in result.diagnostics
+            ],
+        )
+
+    def attach_archive(
+        self,
+        request: ArchiveAttachmentRequest,
+    ) -> ArchiveAttachmentResponse:
+        attachment = self.store.create_archive_attachment(
+            ArchiveAttachment(
+                id=new_id("aatt"),
+                archive_id=request.archive_id,
+                scope_type=request.scope_type,
+                scope_id=request.scope_id,
+                source_refs=self._source_refs_from_payloads(request.source_refs),
+                metadata=dict(request.metadata),
+            )
+        )
+        passage_count = len(self.store.list_archival_passages(archive_id=request.archive_id))
+        diagnostics: list[ArchiveDiagnosticResponse] = []
+        if passage_count == 0:
+            diagnostics.append(
+                ArchiveDiagnosticResponse(
+                    event_type="archive_attachment_empty",
+                    reason_code="archive_has_no_passages",
+                    item_id=request.archive_id,
+                )
+            )
+        return ArchiveAttachmentResponse(
+            attachment_id=attachment.id,
+            archive_id=attachment.archive_id,
+            scope_type=attachment.scope_type,
+            scope_id=attachment.scope_id,
+            passage_count=passage_count,
+            diagnostics=diagnostics,
+        )
+
+    def list_archive_passages(
+        self,
+        *,
+        archive_id: str | None = None,
+        source_id: str | None = None,
+        file_id: str | None = None,
+        producer: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> ArchivePassageListResponse:
+        page = self.store.list_archival_passages_page(
+            archive_id=archive_id,
+            source_id=source_id,
+            file_id=file_id,
+            producer=producer,
+            limit=limit,
+            offset=offset,
+        )
+        return ArchivePassageListResponse(
+            passages=[self._archive_passage_response(passage) for passage in page.passages],
+            total=page.total,
+            limit=page.limit,
+            offset=page.offset,
+        )
+
+    def _archive_passage_response(self, passage: ArchivalPassage) -> ArchivePassageResponse:
+        citation = None
+        if passage.citation is not None:
+            citation = ArchiveSourceSpanPayload(
+                start=passage.citation.start,
+                end=passage.citation.end,
+            )
+        return ArchivePassageResponse(
+            id=passage.id,
+            document_id=passage.document_id,
+            chunk_id=passage.chunk_id,
+            archive_id=passage.archive_id,
+            source_id=passage.source_id,
+            file_id=passage.file_id,
+            text=passage.text,
+            citation=citation,
+            source_refs=[
+                ArchiveSourceRefPayload.model_validate(ref.model_dump(mode="json"))
+                for ref in passage.source_refs
+            ],
+            tags=list(passage.tags),
+            metadata=dict(passage.metadata),
+        )
 
     def _default_embedding_client(self) -> EmbeddingClient | None:
         provider = self.settings.memoryos_embedding_provider.strip().lower()
