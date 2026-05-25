@@ -1,9 +1,9 @@
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -192,6 +192,146 @@ class SearchRequest(BaseModel):
         if self.limit is not None and self.limit <= 0:
             raise ValueError("SearchRequest.limit must be positive")
         return self
+
+
+class ArchiveSourceSpanPayload(BaseModel):
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "ArchiveSourceSpanPayload":
+        if self.start > self.end:
+            raise ValueError("span start must be less than or equal to end")
+        return self
+
+
+class ArchiveIdentityScopePayload(BaseModel):
+    user_id: str | None = None
+    agent_id: str | None = None
+    run_id: str | None = None
+    session_id: str | None = None
+    project_id: str | None = None
+    archive_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class ArchiveSourceRefPayload(BaseModel):
+    source_type: Literal[
+        "message",
+        "episode",
+        "document",
+        "passage",
+        "memory",
+        "core_block",
+        "tool_call",
+        "approval",
+        "manual",
+    ]
+    source_id: str = Field(min_length=1)
+    session_id: str | None = None
+    identity_scope: ArchiveIdentityScopePayload | None = None
+    span: ArchiveSourceSpanPayload | None = None
+    quote: str | None = None
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    approval_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_manual_approval(self) -> "ArchiveSourceRefPayload":
+        if self.source_type == "manual" and not self.approval_id:
+            raise ValueError("manual source refs require approval_id")
+        return self
+
+
+class ArchiveIdentityArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["archive"]
+    archive_id: str = Field(min_length=1)
+
+
+class ArchiveIdentitySource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["source"]
+    source_id: str = Field(min_length=1)
+    file_id: str | None = None
+
+
+class ArchiveIdentityFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["file"]
+    file_id: str = Field(min_length=1)
+
+
+ArchiveDocumentIdentity = Annotated[
+    ArchiveIdentityArchive | ArchiveIdentitySource | ArchiveIdentityFile,
+    Field(discriminator="kind"),
+]
+
+
+class ArchiveDocumentIngestRequest(BaseModel):
+    document_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    content: str
+    source_refs: list[ArchiveSourceRefPayload] = Field(min_length=1)
+    identity: ArchiveDocumentIdentity
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    producer: str = "explicit_document"
+
+
+class ArchiveDiagnosticResponse(BaseModel):
+    event_type: str
+    reason_code: str
+    item_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArchiveDocumentIngestResponse(BaseModel):
+    document_id: str
+    chunk_ids: list[str]
+    passage_ids: list[str]
+    diagnostics: list[ArchiveDiagnosticResponse] = Field(default_factory=list)
+
+
+class ArchiveAttachmentRequest(BaseModel):
+    archive_id: str = Field(min_length=1)
+    scope_type: Literal["agent", "project", "source", "user", "run", "session"]
+    scope_id: str = Field(min_length=1)
+    source_refs: list[ArchiveSourceRefPayload] = Field(min_length=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArchiveAttachmentResponse(BaseModel):
+    attachment_id: str
+    archive_id: str
+    scope_type: str
+    scope_id: str
+    passage_count: int
+    diagnostics: list[ArchiveDiagnosticResponse] = Field(default_factory=list)
+
+
+class ArchivePassageResponse(BaseModel):
+    id: str
+    document_id: str | None = None
+    chunk_id: str | None = None
+    archive_id: str | None = None
+    source_id: str | None = None
+    file_id: str | None = None
+    text: str
+    citation: ArchiveSourceSpanPayload | None = None
+    source_refs: list[ArchiveSourceRefPayload] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArchivePassageListResponse(BaseModel):
+    passages: list[ArchivePassageResponse]
+    limit: int
+    offset: int
+    total: int
 
 
 class CreateSessionRequest(BaseModel):
