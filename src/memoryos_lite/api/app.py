@@ -173,3 +173,36 @@ def trace(session_id: str, service: ServiceDep) -> list[TraceEvent]:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return service.store.list_traces(session_id)
+
+
+@app.post("/sessions/{session_id}/ingest-batch")
+def ingest_batch(
+    session_id: str,
+    request: dict,
+    service: ServiceDep,
+):
+    try:
+        service._require_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    messages = request.get("messages", [])
+    results = []
+    for msg in messages:
+        msg_obj = MessageCreate(role=msg["role"], content=msg["content"])
+        results.append(service.ingest(session_id, msg_obj))
+    return results
+
+
+@app.get("/sessions/{session_id}/summary")
+def session_summary(session_id: str, service: ServiceDep):
+    try:
+        session = service._require_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    messages = service.store.list_messages(session_id)
+    return {
+        "session_id": session_id,
+        "title": getattr(session, "title", ""),
+        "message_count": len(messages),
+        "last_activity": messages[-1].get("ts") if messages else None,
+    }

@@ -36,7 +36,7 @@ class WorklistConsumer:
         while not self._shutdown_event.is_set():
             try:
                 task = await asyncio.wait_for(self._queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             async with self._semaphore:
                 agent = self._registry.select(

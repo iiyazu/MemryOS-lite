@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
 import signal
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +14,6 @@ from xmuse_core.agents.launchers.base import LauncherAdapter
 from xmuse_core.agents.protocol import (
     PROTOCOL_VERSION,
     AgentOutput,
-    StdoutMessage,
-    format_stdin_message,
 )
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
 from xmuse_core.agents.session import LocalSession
@@ -24,7 +21,7 @@ from xmuse_core.agents.session import LocalSession
 logger = logging.getLogger(__name__)
 
 
-class SessionState(str, Enum):
+class SessionState(StrEnum):
     PENDING = "pending"
     STARTING = "starting"
     RUNNING = "running"

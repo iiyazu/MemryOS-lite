@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
 
-class AgentRuntime(str, Enum):
+class AgentRuntime(StrEnum):
     CODEX = "codex"
     CLAUDE_CODE = "claude_code"
 
