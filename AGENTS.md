@@ -58,6 +58,7 @@ Important modules:
 
 ```bash
 uv run pytest -q
+uv run pytest -m "not slow" -q
 uv run ruff check .
 uv run mypy src
 make lint
@@ -70,6 +71,10 @@ uv run memoryos eval run --case-set hard --baseline memoryos_lite
 ```
 
 Use `uv` and Python 3.11+.
+
+- `pytest -m "not slow"`: daily dev verification (~5 min, 709 tests).
+- `pytest -m slow`: full eval pipelines only (~4.5 min, 12 tests).
+- `pytest -q`: full suite (~9.5 min, 721 tests, use for CI/pre-merge).
 
 ## Eval Commands
 
