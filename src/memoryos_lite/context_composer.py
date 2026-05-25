@@ -180,8 +180,13 @@ class V3ContextComposer:
                 "recall_planned_session_ids",
                 [],
             ),
+            "cache": recall.metadata.get("cache", {}),
             "recall_cache": recall.metadata.get("recall_cache", {}),
             "query_analysis_cache": recall.metadata.get("query_analysis_cache", {}),
+            "recall_candidate_cache": recall.metadata.get(
+                "recall_candidate_cache",
+                {},
+            ),
         }
         return [
             ContextLayerItem(

@@ -163,6 +163,30 @@ def test_v3_composer_builds_layered_context_package(tmp_path):
     assert all(item.estimated_tokens > 0 for item in package.items)
 
 
+def test_v3_composer_preserves_cache_diagnostics_metadata(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_recall_pipeline="v2",
+        memoryos_recall_cache_enabled=True,
+        memoryos_redis_url="redis://localhost:6379/0",
+    )
+    service = MemoryOSService(store=create_store(settings), settings=settings)
+    session = service.create_session("cache diagnostics")
+    service.ingest(
+        session.id,
+        MessageCreate(role=Role.USER, content="Bob moved to Shanghai."),
+    )
+
+    package = service.build_context(session.id, "Where did Bob move?")
+
+    v3_metadata = package.metadata["v3_context"]["metadata"]
+    assert "cache" in v3_metadata
+    assert "recall_cache" in v3_metadata
+    assert "query_analysis_cache" in v3_metadata
+    assert "recall_candidate_cache" in v3_metadata
+
+
 def test_v3_composer_filters_archival_passages_by_attached_scope(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
     store = create_store(settings)

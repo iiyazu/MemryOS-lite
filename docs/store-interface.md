@@ -181,3 +181,22 @@ relational source of truth.
 derived cache keys. It is not authoritative state. Cache users include it in
 Redis keys so message, episode, page, item, core-memory, or archival mutations
 select a new key and force recomputation from SQLite.
+
+## Derived Cache Semantics
+
+Derived cache is optional and never authoritative. SQLite remains the source of
+truth for memory state and source references; cached values are accelerators for
+recomputable retrieval products.
+
+The current derived cache may store query analysis results, recall candidate
+lists, and recall context packages. Keys include the memory architecture, recall
+pipeline, settings fingerprint, query hash, scope parameters, and a watermark
+derived from SQLite state. When the watermark changes, callers select a new key
+and recompute from SQLite. TTLs remain a fallback stale guard for entries that
+are otherwise well-formed.
+
+Redis read/write failures, corrupt entries, stale entries, and validation
+failures fall back to SQLite recomputation. Cache diagnostics are surfaced in
+`ContextPackage.metadata` and in v3 context layer metadata so callers can audit
+hit, miss, stale, corrupt, invalid, disabled, and write-status behavior without
+treating cache contents as state.
