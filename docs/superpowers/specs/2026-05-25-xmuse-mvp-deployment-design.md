@@ -37,10 +37,9 @@ xmuse_main.py (asyncio)
 ├── WorklistConsumer.run() (main loop)
 │   └── SessionManager.dispatch()
 │       ├── MemoryOSClient.build_context()
-│       ├── CodexLauncher → LocalSession (stdin/stdout)
+│       ├── CodexLauncher → codex exec (one-shot, stdin prompt)
 │       └── MemoryOSClient.ingest(result)
-├── FileWatcher: 监控 feature_lanes.json 变化 → 热加载新任务
-├── Heartbeat monitor: ping/pong every 30s
+├── Process timeout: 30min default → SIGTERM → SIGKILL
 └── Signal handler: SIGTERM/SIGINT → graceful_shutdown()
 ```
 
@@ -56,7 +55,7 @@ xmuse_main.py (asyncio)
 - 从 feature_lanes.json 加载初始任务并 enqueue
 - 启动 asyncio event loop
 - 注册 SIGTERM/SIGINT handler → graceful_shutdown
-- 可选：FileWatcher 监控 feature_lanes.json 变化
+- 启动时一次性加载 feature_lanes.json（修改后需重启生效）
 
 ### 4.2 feature_lanes.json（任务源）
 
@@ -110,15 +109,37 @@ xmuse_main.py (asyncio)
 
 配置通过 `--memoryos-url` 传入（默认 `http://127.0.0.1:8000`）。
 
-### 4.5 Codex CLI Session 适配
+### 4.5 Codex CLI 适配（one-shot 模式）
 
-当前 CodexLauncher.build_command 返回 `["codex", "--cwd", worktree, "--quiet"]`。
-实际 Codex CLI session 模式需要验证：
-- Codex 是否支持 stdin pipe 接收 JSON-line 指令？
-- 如果不支持，fallback 方案：每个 task 仍用 `codex exec --yolo` one-shot 模式，
-  但由 SessionManager 管理生命周期（spawn → wait → collect result）
+**关键事实**：Codex CLI 不支持 stdin/stdout 双向 JSON-line 协议。它是 TTY 应用，
+`codex exec` 子命令支持从 stdin pipe 读取 prompt，但不实现 hello/pong 握手。
 
-MVP 策略：先尝试 session 模式，如果 Codex CLI 不支持则 fallback 到 one-shot wrapper。
+MVP 策略：**使用 `codex exec` one-shot 模式**，跳过 session 协议层。
+
+```python
+class CodexLauncher:
+    def build_command(self, feature_id: str, worktree: Path) -> list[str]:
+        return [
+            "codex", "exec",
+            "--approval-mode", "full-auto",
+            "--cwd", str(worktree),
+        ]
+```
+
+执行流程：
+1. SessionManager spawn `codex exec` 进程
+2. 通过 stdin 传入 formatted prompt（一次性写入后关闭 stdin）
+3. 等待进程退出（timeout 由 SessionManager 管理）
+4. 收集 stdout 作为执行日志
+5. exit code 0 = success，非零 = failed
+
+**不使用的协议层**（MVP 跳过，留给未来 Claude Code 等支持双向协议的 runtime）：
+- hello/hello_ack 握手
+- ping/pong heartbeat
+- JSON-line stdout 解析
+
+**超时检测**：不用 ping/pong，改为进程级 timeout（默认 30min）。
+超时后 SIGTERM → grace 10s → SIGKILL。
 
 ### 4.6 Gate 逻辑（简化版）
 
