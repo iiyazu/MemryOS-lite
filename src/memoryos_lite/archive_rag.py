@@ -147,11 +147,11 @@ class MemoryOSArchiveRAG:
             for index, (chunk, span) in enumerate(zip(chunks, spans, strict=True))
         ]
 
-        document = self.store.create_archival_document(document)
-        chunks = [self.store.create_archival_chunk(chunk) for chunk in chunks]
-        passages = [
-            self.store.create_archival_passage(passage) for passage in passages
-        ]
+        document, chunks, passages = self.store.create_archival_ingest_records(
+            document=document,
+            chunks=chunks,
+            passages=passages,
+        )
         diagnostics: list[ArchiveRAGDiagnostic] = []
         if self.indexer is not None and passages:
             try:
@@ -206,7 +206,7 @@ class MemoryOSArchiveRAG:
             start=span.start,
             end=span.end,
             tags=list(request.tags),
-            source_refs=list(request.source_refs),
+            source_refs=self._source_refs_for_span(request.source_refs, span),
             metadata={"splitter_metadata": dict(span.metadata)},
         )
 
@@ -227,7 +227,7 @@ class MemoryOSArchiveRAG:
             source_id=None if request.archive_id else request.source_id,
             file_id=None if request.archive_id else request.file_id,
             tags=list(request.tags),
-            source_refs=list(request.source_refs),
+            source_refs=self._source_refs_for_span(request.source_refs, span),
             metadata={
                 "producer": request.producer,
                 "splitter_metadata": dict(span.metadata),
@@ -249,3 +249,14 @@ class MemoryOSArchiveRAG:
     @staticmethod
     def _passage_id(document_id: str, index: int) -> str:
         return f"apsg_{document_id}_{index:04d}"
+
+    @staticmethod
+    def _source_refs_for_span(
+        source_refs: list[SourceRef],
+        span: ArchiveTextSpan,
+    ) -> list[SourceRef]:
+        citation = SourceSpan(start=span.start, end=span.end)
+        return [
+            source_ref.model_copy(update={"span": citation, "quote": span.text})
+            for source_ref in source_refs
+        ]

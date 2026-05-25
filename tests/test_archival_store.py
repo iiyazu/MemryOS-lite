@@ -195,6 +195,29 @@ def test_archival_producer_helpers_preserve_message_source_refs(tmp_path):
     assert memory.source_refs[0].source_id == "msg_1"
 
 
+def test_archival_passage_from_document_uses_text_offset_for_citation(tmp_path):
+    store = _store(tmp_path)
+    message = Message(
+        id="msg_1",
+        session_id="ses_1",
+        role=Role.USER,
+        content="prefix Alice moved to Shanghai suffix",
+    )
+    document = store.create_archival_document_from_message(
+        message,
+        archive_id="archive_1",
+        title="message extract",
+    )
+
+    passage = store.create_archival_passage_from_document(
+        document,
+        text="Alice moved to Shanghai",
+        source_refs=document.source_refs,
+    )
+
+    assert passage.citation == SourceSpan(start=7, end=30)
+
+
 def test_archival_passage_invariants_and_attachment_scope_helper(tmp_path):
     store = _store(tmp_path)
     ref = _ref()

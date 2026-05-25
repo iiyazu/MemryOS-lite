@@ -92,18 +92,18 @@ class ArchivalPassageSearcher:
                 lexical_hits=lexical_hits,
                 top_k=top_k,
                 fallback_source="archival_vector",
+                vector_source="archival_vector",
             )
             return self._rerank_hits(hits, query=query, top_k=top_k)
         if mode == "hybrid":
-            hits = [
-                self._hit(
-                    hit.passage,
-                    hit.score,
-                    f"lexical={hit.score:.4f}; vector_unavailable",
-                    "archival_hybrid",
-                )
-                for hit in lexical_hits[:top_k]
-            ]
+            hits = self._vector_or_fallback(
+                candidates,
+                query,
+                lexical_hits=lexical_hits,
+                top_k=top_k,
+                fallback_source="archival_hybrid",
+                vector_source="archival_hybrid",
+            )
             return self._rerank_hits(hits, query=query, top_k=top_k)
         raise ValueError(f"unsupported archival passage search mode: {mode}")
 
@@ -163,6 +163,7 @@ class ArchivalPassageSearcher:
         lexical_hits: list[ArchivalPassageHit],
         top_k: int,
         fallback_source: str,
+        vector_source: str,
     ) -> list[ArchivalPassageHit]:
         if not candidates:
             return []
@@ -224,7 +225,7 @@ class ArchivalPassageSearcher:
                     passage,
                     vector_hit.score,
                     f"qdrant_cosine={vector_hit.score:.4f}",
-                    "archival_vector",
+                    vector_source,
                     metadata={
                         "vector_provider": self.vector_index.config.provider,
                         "vector_model": self.vector_index.config.model,

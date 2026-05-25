@@ -9,7 +9,7 @@ from memoryos_lite.archive_rag import (
 )
 from memoryos_lite.config import Settings
 from memoryos_lite.store import MemoryStore
-from memoryos_lite.v3_contracts import SourceRef
+from memoryos_lite.v3_contracts import SourceRef, SourceSpan
 
 
 def _store(tmp_path):
@@ -115,9 +115,19 @@ def test_archive_rag_boundary_uses_adapters_but_persists_memoryos_archival_recor
         "apsg_adoc_external_0000",
         "apsg_adoc_external_0001",
     ]
-    assert [passage.source_refs for passage in result.passages] == [[ref], [ref]]
+    assert [
+        passage.source_refs[0].source_id for passage in result.passages
+    ] == ["msg_source", "msg_source"]
     assert [passage.citation.start for passage in result.passages] == [0, 12]
     assert [passage.citation.end for passage in result.passages] == [10, 23]
+    assert [passage.source_refs[0].span for passage in result.passages] == [
+        SourceSpan(start=0, end=10),
+        SourceSpan(start=12, end=23),
+    ]
+    assert [passage.source_refs[0].quote for passage in result.passages] == [
+        "Alpha beta",
+        "Gamma delta",
+    ]
     assert indexer.indexed_ids == [
         "apsg_adoc_external_0000",
         "apsg_adoc_external_0001",
@@ -157,3 +167,60 @@ def test_archive_rag_boundary_rejects_invalid_splitter_spans_before_sqlite_write
     assert store.get_archival_document("adoc_bad") is None
     assert store.list_archival_chunks(document_id="adoc_bad") == []
     assert store.list_archival_passages(archive_id="archive_bad") == []
+
+
+def test_archive_rag_boundary_rolls_back_document_and_chunks_when_passage_write_fails(tmp_path):
+    store = _store(tmp_path)
+    service = MemoryOSArchiveRAG(
+        store,
+        parser=ExternalParser(),
+        splitter=ExternalSplitter(),
+    )
+
+    with pytest.raises(ValueError, match="require archive_id, source_id, or file_id"):
+        service.ingest(
+            ArchiveRAGIngestRequest(
+                document_id="adoc_partial",
+                archive_id=None,
+                source_id=None,
+                file_id=None,
+                title="Partial external document",
+                content="raw text",
+                source_refs=[_ref()],
+            )
+        )
+
+    assert store.get_archival_document("adoc_partial") is None
+    assert store.list_archival_chunks(document_id="adoc_partial") == []
+    assert store.list_archival_passages() == []
+
+
+def test_archive_rag_boundary_allows_file_only_source_ingest(tmp_path):
+    store = _store(tmp_path)
+    service = MemoryOSArchiveRAG(
+        store,
+        parser=ExternalParser(),
+        splitter=ExternalSplitter(),
+    )
+
+    result = service.ingest(
+        ArchiveRAGIngestRequest(
+            document_id="adoc_file_only",
+            archive_id=None,
+            source_id=None,
+            file_id="file_external",
+            title="File-only external document",
+            content="raw text",
+            source_refs=[_ref()],
+        )
+    )
+
+    assert result.document.file_id == "file_external"
+    assert [passage.file_id for passage in result.passages] == [
+        "file_external",
+        "file_external",
+    ]
+    assert [passage.id for passage in store.list_archival_passages(file_id="file_external")] == [
+        "apsg_adoc_file_only_0000",
+        "apsg_adoc_file_only_0001",
+    ]

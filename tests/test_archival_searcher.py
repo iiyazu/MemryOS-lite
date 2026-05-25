@@ -149,6 +149,38 @@ def test_archival_search_uses_vector_primary_and_rehydrates_hits_from_loader():
     assert hits[0].metadata["vector_provider"] == "test"
 
 
+def test_archival_hybrid_search_uses_vector_hits_when_available():
+    target = _passage(
+        "apsg_target",
+        "semantic-target metro preference",
+        tags=["transport"],
+    )
+    lexical_distractor = _passage(
+        "apsg_lexical",
+        "favorite transport distractor",
+        archive_id="archive_2",
+    )
+    searcher = ArchivalPassageSearcher(
+        vector_index=_vector_index("memoryos_archival_searcher_hybrid"),
+        passage_loader=lambda ids: {
+            passage.id: passage
+            for passage in [target, lexical_distractor]
+            if passage.id in ids
+        },
+    )
+
+    hits = searcher.search(
+        [target, lexical_distractor],
+        "favorite transport",
+        mode="hybrid",
+        top_k=1,
+    )
+
+    assert [hit.passage.id for hit in hits] == ["apsg_target"]
+    assert hits[0].source == "archival_hybrid"
+    assert "qdrant_cosine" in hits[0].reason
+
+
 def test_archival_search_falls_back_to_lexical_when_vector_unavailable():
     passage = _passage("apsg_lexical", "Shanghai rail lexical fallback")
     searcher = ArchivalPassageSearcher(
