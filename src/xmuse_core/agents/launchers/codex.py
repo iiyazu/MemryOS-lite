@@ -10,6 +10,7 @@ class CodexLauncher:
     def build_command(self, feature_id: str, worktree: Path) -> list[str]:
         return [
             "codex", "exec",
+            "-m", "gpt-5.5",
             "--dangerously-bypass-approvals-and-sandbox",
             "-C", str(worktree),
         ]
