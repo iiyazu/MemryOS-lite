@@ -63,6 +63,7 @@ Store methods:
 - `save_episode(episode)`
 - `list_episodes(session_id)`
 - `ensure_episodes_for_session(session_id)`
+- `session_memory_watermark(session_id)`
 - `set_episode_embedding(episode_id, embedding)`
 - `get_episode_embeddings(episode_ids)`
 
@@ -173,3 +174,10 @@ uv run alembic upgrade head
 Embeddings are stored as JSON text in SQLite via `EmbeddingType`. Qdrant can be
 enabled for ANN/vector experiments with `QDRANT_URL`, but SQLite remains the
 relational source of truth.
+
+## Derived Cache Watermarks
+
+`session_memory_watermark(session_id)` returns a compact revision marker for
+derived cache keys. It is not authoritative state. Cache users include it in
+Redis keys so message, episode, page, item, core-memory, or archival mutations
+select a new key and force recomputation from SQLite.

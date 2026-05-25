@@ -1,6 +1,17 @@
+from hashlib import sha256
+from typing import Any, cast
+
+from pydantic import ValidationError
+
+from memoryos_lite.cache import (
+    MemoryCache,
+    NoopMemoryCache,
+    build_cache_key,
+    create_memory_cache,
+)
 from memoryos_lite.config import Settings
 from memoryos_lite.retrieval.episode_searcher import EpisodeHit, RecallMemorySearcher
-from memoryos_lite.retrieval.query_analyzer import QueryAnalyzer
+from memoryos_lite.retrieval.query_analyzer import QueryAnalysis, QueryAnalyzer, QueryKind
 from memoryos_lite.schemas import ContextEvidence, ContextPackage
 from memoryos_lite.store import MemoryStore
 from memoryos_lite.tokenizer import TokenEstimator
@@ -17,12 +28,14 @@ class RecallPipeline:
         store: MemoryStore,
         settings: Settings,
         tokenizer: TokenEstimator | None = None,
+        cache: MemoryCache | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
         self.tokenizer = tokenizer or TokenEstimator()
         self.query_analyzer = QueryAnalyzer()
         self.recall_searcher = RecallMemorySearcher()
+        self.cache = cache if cache is not None else self._default_cache(settings)
 
     def build_context(
         self,
@@ -33,16 +46,51 @@ class RecallPipeline:
     ) -> ContextPackage:
         query = retrieval_query or task
         created = self.store.ensure_episodes_for_session(session_id)
+        memory_watermark = self.store.session_memory_watermark(session_id)
+        recall_cache_status = self._recall_cache_status("disabled")
+        recall_cache_key: str | None = None
+        if self.settings.memoryos_recall_cache_enabled:
+            recall_cache_key = build_cache_key(
+                scope="recall_candidates",
+                settings=self.settings,
+                session_id=session_id,
+                query=query,
+                memory_watermark=memory_watermark,
+                parameters={
+                    "budget": budget,
+                    "task_sha256": self._hash_text(task),
+                },
+            )
+            cached = self.cache.get_json(recall_cache_key)
+            recall_cache_status = self._recall_cache_status(
+                cached.status,
+                reason=cached.reason,
+            )
+            if cached.status == "hit" and cached.value is not None:
+                package = self._package_from_cache(cached.value)
+                if package is not None:
+                    package.metadata["episode_backfilled"] = created
+                    package.metadata["recall_cache"] = recall_cache_status
+                    package.metadata["query_analysis_cache"] = self._query_cache_status(
+                        "skipped",
+                        reason="recall_candidates_hit",
+                    )
+                    package.metadata["recall_memory_watermark"] = memory_watermark
+                    return package
+                recall_cache_status = self._recall_cache_status(
+                    "corrupt",
+                    reason="cached recall package failed validation",
+                )
         episodes = self.store.list_episodes(session_id)
         recall_entries: list[RecallMemoryEntry] = [
             episode_to_recall_entry(episode) for episode in episodes
         ]
-        analysis = self.query_analyzer.analyze(query)
+        analysis, query_cache_status = self._analyze_query(query)
         preserve_session_neighbors = any(
             "benchmark_session_id" in entry.temporal_scope for entry in recall_entries
         )
         hits = self.recall_searcher.search(
-            recall_entries,
+            cast(Any, recall_entries),
             query,
             top_k=10,
             analysis=analysis,
@@ -91,8 +139,12 @@ class RecallPipeline:
                     "recall_budget_dropped": dropped,
                     "budget_dropped_relevant": dropped,
                     "recall_diagnostics": recall_diagnostics,
+                    "recall_cache": recall_cache_status,
+                    "query_analysis_cache": query_cache_status,
+                    "recall_memory_watermark": memory_watermark,
                 }
             )
+            self._store_recall_package(recall_cache_key, package)
             return package
 
         planned_ids: list[str] = []
@@ -108,15 +160,14 @@ class RecallPipeline:
                     self._budget_drop_diagnostics([hit], budget_tokens=tokens)
                 )
                 continue
+            temporal_scope = self._hit_temporal_scope(hit)
             evidence_metadata = {
                 "origin": "episode",
                 "score": hit.score,
                 "neighbor_of": hit.neighbor_of,
                 "neighbor_offset": hit.rank_features.get("neighbor_offset"),
-                "benchmark_session_id": hit.episode.temporal_scope.get(
-                    "benchmark_session_id"
-                ),
-                "benchmark_date": hit.episode.temporal_scope.get("benchmark_date"),
+                "benchmark_session_id": temporal_scope.get("benchmark_session_id"),
+                "benchmark_date": temporal_scope.get("benchmark_date"),
                 "rank_features": dict(hit.rank_features),
             }
             evidence_metadata.update(hit.packet_metadata)
@@ -152,9 +203,121 @@ class RecallPipeline:
                 "recall_budget_dropped": dropped,
                 "budget_dropped_relevant": dropped,
                 "recall_diagnostics": planned_diagnostics,
+                "recall_cache": recall_cache_status,
+                "query_analysis_cache": query_cache_status,
+                "recall_memory_watermark": memory_watermark,
             }
         )
+        self._store_recall_package(recall_cache_key, package)
         return package
+
+    def _analyze_query(self, query: str) -> tuple[QueryAnalysis, dict[str, object]]:
+        if not self.settings.memoryos_recall_cache_enabled:
+            return self.query_analyzer.analyze(query), self._query_cache_status("disabled")
+
+        key = build_cache_key(
+            scope="query_analysis",
+            settings=self.settings,
+            query=query,
+        )
+        cached = self.cache.get_json(key)
+        if cached.status == "hit" and cached.value is not None:
+            try:
+                analysis = QueryAnalysis(QueryKind(str(cached.value["kind"])))
+                return analysis, self._query_cache_status("hit")
+            except (KeyError, ValueError, TypeError):
+                status = self._query_cache_status(
+                    "corrupt",
+                    reason="cached query analysis failed validation",
+                )
+        else:
+            status = self._query_cache_status(cached.status, reason=cached.reason)
+
+        analysis = self.query_analyzer.analyze(query)
+        write = self.cache.set_json(key, {"kind": analysis.kind.value})
+        status["write_status"] = write.status
+        if write.reason:
+            status["write_reason"] = write.reason
+        return analysis, status
+
+    def _store_recall_package(
+        self,
+        recall_cache_key: str | None,
+        package: ContextPackage,
+    ) -> None:
+        if not self.settings.memoryos_recall_cache_enabled or recall_cache_key is None:
+            return
+        write = self.cache.set_json(
+            recall_cache_key,
+            {"package": package.model_dump(mode="json")},
+        )
+        recall_cache = package.metadata.get("recall_cache")
+        if isinstance(recall_cache, dict):
+            recall_cache["write_status"] = write.status
+            if write.reason:
+                recall_cache["write_reason"] = write.reason
+
+    @staticmethod
+    def _package_from_cache(value: dict[str, Any]) -> ContextPackage | None:
+        package_value = value.get("package")
+        if not isinstance(package_value, dict):
+            return None
+        try:
+            return ContextPackage.model_validate(package_value)
+        except ValidationError:
+            return None
+
+    def _recall_cache_status(
+        self,
+        status: str,
+        *,
+        reason: str | None = None,
+    ) -> dict[str, object]:
+        return self._cache_status(
+            scope="recall_candidates",
+            status=status,
+            reason=reason,
+        )
+
+    def _query_cache_status(
+        self,
+        status: str,
+        *,
+        reason: str | None = None,
+    ) -> dict[str, object]:
+        return self._cache_status(
+            scope="query_analysis",
+            status=status,
+            reason=reason,
+        )
+
+    def _cache_status(
+        self,
+        *,
+        scope: str,
+        status: str,
+        reason: str | None = None,
+    ) -> dict[str, object]:
+        diagnostics: dict[str, object] = {
+            "enabled": self.settings.memoryos_recall_cache_enabled,
+            "scope": scope,
+            "status": status,
+            "namespace": self.settings.memoryos_cache_namespace.strip(":"),
+        }
+        if reason:
+            diagnostics["fallback_reason"] = reason
+        return diagnostics
+
+    @staticmethod
+    def _hash_text(text: str) -> str:
+        normalized = " ".join(text.split())
+        return sha256(normalized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _default_cache(settings: Settings) -> MemoryCache:
+        if not settings.memoryos_recall_cache_enabled:
+            return NoopMemoryCache()
+        return create_memory_cache(settings)
 
     def _serialize_diagnostics(
         self,
@@ -173,15 +336,14 @@ class RecallPipeline:
     ) -> list[dict[str, object]]:
         diagnostics: list[dict[str, object]] = []
         for hit in hits:
+            temporal_scope = self._hit_temporal_scope(hit)
             metadata = {
                 "reason": hit.reason,
                 "source": hit.source,
                 "neighbor_of": hit.neighbor_of,
                 "neighbor_offset": hit.rank_features.get("neighbor_offset"),
-                "benchmark_session_id": hit.episode.temporal_scope.get(
-                    "benchmark_session_id"
-                ),
-                "benchmark_date": hit.episode.temporal_scope.get("benchmark_date"),
+                "benchmark_session_id": temporal_scope.get("benchmark_session_id"),
+                "benchmark_date": temporal_scope.get("benchmark_date"),
                 "rank_features": dict(hit.rank_features),
             }
             metadata.update(hit.packet_metadata)
@@ -206,7 +368,9 @@ class RecallPipeline:
         seen: set[str] = set()
         session_ids: list[str] = []
         for hit in hits:
-            session_id = hit.episode.temporal_scope.get("benchmark_session_id")
+            session_id = RecallPipeline._hit_temporal_scope(hit).get(
+                "benchmark_session_id"
+            )
             if session_id is None:
                 continue
             value = str(session_id)
@@ -255,6 +419,13 @@ class RecallPipeline:
         return packets
 
     @staticmethod
+    def _hit_temporal_scope(hit: EpisodeHit) -> dict[str, object]:
+        scope = getattr(hit.episode, "temporal_scope", {})
+        return scope if isinstance(scope, dict) else {}
+
+    @staticmethod
     def _metadata_list(metadata: dict[str, object], key: str) -> list[object]:
-        value = metadata.get(key)
-        return list(value) if isinstance(value, list) else []
+        value = metadata.get(key, [])
+        if isinstance(value, list | tuple):
+            return list(value)
+        return []
