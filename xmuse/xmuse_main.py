@@ -49,10 +49,18 @@ def ensure_worktree(feature_id: str, branch: str | None = None) -> Path:
 
 
 def load_lanes(path: Path) -> list[TaskDescriptor]:
+    """Load lanes respecting depends_on: only enqueue lanes whose deps are done."""
     data = json.loads(path.read_text())
+    all_lanes = data.get("lanes", [])
+    done_ids = {l["feature_id"] for l in all_lanes if l.get("status") in ("done",)}
     tasks = []
-    for lane in data.get("lanes", []):
+    for lane in all_lanes:
         if lane.get("status") in ("done", "failed"):
+            continue
+        # Check dependencies
+        deps = lane.get("depends_on", [])
+        if deps and not all(d in done_ids for d in deps):
+            logger.debug("Skipping %s (unmet deps: %s)", lane["feature_id"], deps)
             continue
         # Auto-create worktree if not specified
         worktree = lane.get("worktree")

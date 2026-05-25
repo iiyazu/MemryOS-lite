@@ -35,11 +35,16 @@ class WorklistConsumer:
 
     async def run(self) -> None:
         self._running_task = asyncio.current_task()
+        self._in_flight = 0
         while not self._shutdown_event.is_set():
             try:
                 task = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except TimeoutError:
+                # Exit when queue is empty and nothing in flight
+                if self._in_flight == 0 and self._queue.empty():
+                    break
                 continue
+            self._in_flight += 1
             async with self._semaphore:
                 agent = self._registry.select(
                     task.required_capabilities,
@@ -51,6 +56,7 @@ class WorklistConsumer:
                     prompt=task.prompt,
                     worktree=Path(task.worktree),
                 )
+            self._in_flight -= 1
 
     async def enqueue(self, task: TaskDescriptor) -> None:
         await self._queue.put(task)
