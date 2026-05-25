@@ -264,6 +264,7 @@ class ArchiveEligibilityResult(BaseModel):
     scope: ArchiveEligibilityScope
     eligible_archive_ids: list[str] = Field(default_factory=list)
     eligible_passages: list[ArchivalPassage] = Field(default_factory=list)
+    scope_excluded_passages: list[ArchivalPassage] = Field(default_factory=list)
     scope_excluded_passage_ids: list[str] = Field(default_factory=list)
     no_match_passage_ids: list[str] = Field(default_factory=list)
     selected_passage_ids: list[str] = Field(default_factory=list)
@@ -297,6 +298,9 @@ class ArchiveEligibilityResult(BaseModel):
             "no_match_passage_ids": list(self.no_match_passage_ids),
             "archival_no_match": self.archival_no_match,
             "no_attached_archive": not self.eligible_archive_ids and not self.scope.source_ids,
+            "archival_no_attached_archive": (
+                not self.eligible_archive_ids and not self.scope.source_ids
+            ),
         }
 
 

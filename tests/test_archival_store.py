@@ -86,6 +86,36 @@ def test_archival_store_round_trips_documents_chunks_passages_and_attachments(tm
     ]
 
 
+def test_archival_store_batch_lookup_rehydrates_passages_by_id(tmp_path):
+    store = _store(tmp_path)
+    ref = _ref()
+    first = store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_first",
+            archive_id="archive_1",
+            text="First source-backed archival passage.",
+            source_refs=[ref],
+        )
+    )
+    second = store.create_archival_passage(
+        ArchivalPassage(
+            id="apsg_second",
+            archive_id="archive_1",
+            text="Second source-backed archival passage.",
+            source_refs=[_ref("msg_2")],
+        )
+    )
+
+    passages = store.get_archival_passages_by_ids(
+        ["apsg_second", "apsg_missing", "apsg_first"]
+    )
+
+    assert list(passages) == ["apsg_first", "apsg_second"]
+    assert passages["apsg_first"] == first
+    assert passages["apsg_second"] == second
+    assert "apsg_missing" not in passages
+
+
 def test_archival_memory_crud_records_history_and_rejects_sourceless_writes(tmp_path):
     store = _store(tmp_path)
     ref = _ref()

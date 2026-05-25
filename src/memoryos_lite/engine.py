@@ -42,10 +42,19 @@ from memoryos_lite.retrieval import (
     Searcher,
     SearchHit,
 )
+from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
+from memoryos_lite.retrieval.archival_vector import (
+    ArchivalEmbeddingConfig,
+    ArchivalVectorIndex,
+)
 from memoryos_lite.retrieval.evidence_representer import EvidenceCandidate, EvidenceRepresenter
 from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.retrieval.providers import OpenAIEmbeddingClient, QdrantEmbeddingStore
+from memoryos_lite.retrieval.providers import (
+    OpenAIEmbeddingClient,
+    QdrantArchivalPassageStore,
+    QdrantEmbeddingStore,
+)
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import (
     ContextEvidence,
@@ -1455,6 +1464,38 @@ class MemoryOSService:
             if self.embedding_client is not None
             else None
         )
+        archival_qdrant_store: QdrantArchivalPassageStore | None = None
+        archival_vector_index: ArchivalVectorIndex | None = None
+        if (
+            self.settings.memoryos_archival_vector_enabled
+            and self.settings.memoryos_archival_qdrant_url
+            and self.embedding_client is not None
+        ):
+            try:
+                archival_qdrant_store = QdrantArchivalPassageStore(
+                    url=self.settings.memoryos_archival_qdrant_url,
+                    collection=self.settings.memoryos_archival_qdrant_collection,
+                    dim=self.embedding_client.dim,
+                    timeout=self.settings.memoryos_qdrant_timeout_s,
+                )
+                archival_vector_index = ArchivalVectorIndex(
+                    embedding_client=self.embedding_client,
+                    vector_store=archival_qdrant_store,
+                    config=ArchivalEmbeddingConfig(
+                        provider=self.settings.memoryos_embedding_provider,
+                        model=self.settings.memoryos_embedding_model,
+                        dim=self.embedding_client.dim,
+                    ),
+                )
+            except Exception as exc:
+                archival_qdrant_store = None
+                archival_vector_index = None
+                llm_init_error = str(exc)
+        self.archival_qdrant_store = archival_qdrant_store
+        self.archival_searcher = ArchivalPassageSearcher(
+            vector_index=archival_vector_index,
+            passage_loader=self.store.get_archival_passages_by_ids,
+        )
         chat_api_key = self.settings.chat_api_key
         query_rewriter = (
             QueryRewriter(
@@ -1494,6 +1535,7 @@ class MemoryOSService:
             settings=self.settings,
             tokenizer=self.tokenizer,
             recall_pipeline=self.recall_pipeline,
+            archival_searcher=self.archival_searcher,
         )
         self.agent_kernel = (
             SimpleAgentStepRunner(

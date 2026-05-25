@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     agent_max_tool_turns: int = 10
     qdrant_url: str | None = None
     qdrant_collection: str = "memoryos_pages"
+    memoryos_archival_vector_enabled: bool = True
+    memoryos_archival_qdrant_url: str | None = None
+    memoryos_archival_qdrant_collection: str = "memoryos_archival_passages"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 

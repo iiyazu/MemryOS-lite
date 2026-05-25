@@ -1371,6 +1371,28 @@ class MemoryStore:
             records = list(db.scalars(stmt))
         return [self._passage_from_record(record) for record in records]
 
+    def get_archival_passages_by_ids(
+        self,
+        passage_ids: list[str],
+    ) -> dict[str, ArchivalPassage]:
+        ids = self._dedupe_strings(passage_ids)
+        if not ids:
+            return {}
+        with self.db() as db:
+            stmt = (
+                select(ArchivalPassageRecord)
+                .where(ArchivalPassageRecord.id.in_(ids))
+                .order_by(
+                    ArchivalPassageRecord.created_at.asc(),
+                    ArchivalPassageRecord.id.asc(),
+                )
+            )
+            records = list(db.scalars(stmt))
+        return {
+            record.id: self._passage_from_record(record)
+            for record in records
+        }
+
     def resolve_attached_archive_ids(
         self,
         scope: ArchiveEligibilityScope,
@@ -1423,13 +1445,15 @@ class MemoryStore:
             or (passage.source_id is not None and passage.source_id in source_ids)
         ]
         eligible_ids = {passage.id for passage in eligible_passages}
+        scope_excluded_passages = [
+            passage for passage in all_passages if passage.id not in eligible_ids
+        ]
         return ArchiveEligibilityResult(
             scope=scope,
             eligible_archive_ids=eligible_archive_ids,
             eligible_passages=eligible_passages,
-            scope_excluded_passage_ids=[
-                passage.id for passage in all_passages if passage.id not in eligible_ids
-            ],
+            scope_excluded_passages=scope_excluded_passages,
+            scope_excluded_passage_ids=[passage.id for passage in scope_excluded_passages],
         )
 
     def create_archive_attachment(self, attachment: ArchiveAttachment) -> ArchiveAttachment:

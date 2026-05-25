@@ -19,9 +19,28 @@ except ModuleNotFoundError as exc:
                 "QdrantEmbeddingStore requires the optional qdrant provider"
             ) from qdrant_import_error
 
+try:
+    from memoryos_lite.retrieval.providers.qdrant_archival import (
+        QdrantArchivalPassageStore,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name not in {
+        "memoryos_lite.retrieval.providers.qdrant_archival",
+        "qdrant_client",
+    }:
+        raise
+    qdrant_archival_import_error = exc
+
+    class QdrantArchivalPassageStore:  # type: ignore[no-redef]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise ImportError(
+                "QdrantArchivalPassageStore requires the optional qdrant provider"
+            ) from qdrant_archival_import_error
+
 __all__ = [
     "DeterministicEmbeddingClient",
     "FakePageDraftClient",
     "OpenAIEmbeddingClient",
+    "QdrantArchivalPassageStore",
     "QdrantEmbeddingStore",
 ]
