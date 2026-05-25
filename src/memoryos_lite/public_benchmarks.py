@@ -16,7 +16,10 @@ from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import BaselineOutput, _expand_baselines, _run_baseline
 from memoryos_lite.llm_judge import LLMJudge
 from memoryos_lite.public_case_diagnostics import build_case_diagnostics
-from memoryos_lite.public_case_movement import load_public_case_movement
+from memoryos_lite.public_case_movement import (
+    build_public_case_movement_summary,
+    load_public_case_movement,
+)
 from memoryos_lite.public_maintenance_planner import (
     EvalGoldSidecar,
     ModelVisiblePlannerInput,
@@ -243,7 +246,7 @@ def run_public_benchmark(
             "openai_api_key": None,
             "deepseek_api_key": settings.deepseek_api_key,
             "rot_safe_budget": 4_800,
-            "memoryos_embedding_provider": "fastembed",
+            "memoryos_embedding_provider": _public_embedding_provider(settings),
             "memoryos_recall_pipeline": settings.memoryos_recall_pipeline,
             "memoryos_rewrite_enabled": settings.memoryos_rewrite_enabled,
             "memoryos_rerank_enabled": settings.memoryos_rerank_enabled,
@@ -392,10 +395,30 @@ def run_public_benchmark(
         encoding="utf-8",
     )
 
+    report_rows = [result.to_report() for result in results]
     report_path.write_text(
-        json.dumps([result.to_report() for result in results], ensure_ascii=False, indent=2),
+        json.dumps(report_rows, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    if comparison_report_paths:
+        movement_summary_path = (
+            report_dir / f"{run_id}_{benchmark.lower()}_movement_summary.json"
+        )
+        movement_summary = build_public_case_movement_summary(report_rows)
+        movement_summary.update(
+            {
+                "comparison_report_paths": [
+                    str(path) for path in comparison_report_paths
+                ],
+                "llm_answer_requested": llm_answer,
+                "llm_judge_requested": llm_judge,
+                "provider_errors": provider_errors,
+            }
+        )
+        movement_summary_path.write_text(
+            json.dumps(movement_summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     if repair_smoke_baseline_report_path is not None:
         summary_path = (
             report_dir
@@ -413,6 +436,13 @@ def run_public_benchmark(
             encoding="utf-8",
         )
     return results
+
+
+def _public_embedding_provider(settings: Settings) -> str:
+    provider = settings.memoryos_embedding_provider.strip().lower()
+    if provider == "auto":
+        return "fastembed"
+    return settings.memoryos_embedding_provider
 
 
 def _validate_repair_smoke_request(

@@ -12,6 +12,11 @@ from memoryos_lite.longmemeval_manifest import create_manifest, load_manifest
 from memoryos_lite.public_benchmarks import run_public_benchmark
 
 
+@pytest.fixture(autouse=True)
+def _disable_fastembed_for_longmemeval_integration_tests(monkeypatch):
+    monkeypatch.setenv("MEMORYOS_EMBEDDING_PROVIDER", "none")
+
+
 @pytest.fixture()
 def synthetic_longmemeval(tmp_path: Path) -> Path:
     """Create a synthetic 10-case LongMemEval dataset."""

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from memoryos_lite.config import Settings
 from memoryos_lite.public_benchmarks import (
     PublicBenchmarkResult,
@@ -11,6 +13,11 @@ from memoryos_lite.public_benchmarks import (
 )
 from memoryos_lite.schemas import TraceEvent, utc_now
 from memoryos_lite.store import create_store
+
+
+@pytest.fixture(autouse=True)
+def _disable_fastembed_for_public_benchmark_item_tests(monkeypatch):
+    monkeypatch.setenv("MEMORYOS_EMBEDDING_PROVIDER", "none")
 
 
 def _make_store(tmp_path: Path):
