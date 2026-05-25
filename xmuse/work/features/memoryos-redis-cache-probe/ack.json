@@ -1,0 +1,56 @@
+{
+  "feature_id": "memoryos-redis-cache-probe",
+  "ack_level": "usable",
+  "scope": "bounded_phase_0_1_config_protocol_key_fallback_optional_adapter",
+  "full_blueprint_complete": false,
+  "branch": "feat/memoryos-redis-cache-probe",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe",
+  "dispatch_base": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
+  "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
+  "head_ref": "feat/memoryos-redis-cache-probe@fcccff6052e5073a6ebb98da4bc724ce8244edb2",
+  "verification_commands": [
+    {
+      "command": "uv run pytest tests/test_memory_cache.py -q",
+      "exit_code": 2,
+      "result": "RED: expected ImportError before implementation because build_cache_key was missing"
+    },
+    {
+      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py -q",
+      "exit_code": 0,
+      "result": "14 passed in 0.03s"
+    },
+    {
+      "command": "uv run ruff check src/memoryos_lite/config.py src/memoryos_lite/cache tests/test_config.py tests/test_memory_cache.py",
+      "exit_code": 0,
+      "result": "All checks passed!"
+    },
+    {
+      "command": "uv run pytest tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
+      "exit_code": 0,
+      "result": "3 passed in 1.47s"
+    },
+    {
+      "command": "git diff --check 4c4712df763c652952a8066060bdb8bb4b37ba0b..HEAD",
+      "exit_code": 0,
+      "result": "no whitespace errors"
+    }
+  ],
+  "v3_default_preserved": true,
+  "v1_fallback_preserved": true,
+  "recall_v2_opt_in_preserved": true,
+  "kernel_default_unchanged": true,
+  "sqlite_authority_preserved": true,
+  "redis_default_off_preserved": true,
+  "redis_derived_cache_only": true,
+  "source_refs_preserved_by_cache_round_trip": true,
+  "benchmark_improvement_claim_flag": false,
+  "review_verdict": "PASS",
+  "review_eval_decision": "pass_for_bounded_phase_0_1_only_master_review_and_integrated_tests_still_required",
+  "merge_decision": "not_requested_slave_must_not_merge",
+  "notes": [
+    "Adopted and repaired pre-dispatch feature-scoped dirty changes rather than discarding them.",
+    "Generated __pycache__ files were removed after final verification.",
+    "No full-suite, hard-eval, public benchmark, or benchmark score movement claim is made."
+  ]
+}

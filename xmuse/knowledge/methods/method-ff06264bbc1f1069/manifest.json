@@ -1,0 +1,40 @@
+{
+  "activation_status": "not_active",
+  "cluster_id": "cluster-a3e78813b85c9f81",
+  "created_at": "2026-05-25T03:14:40Z",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_count": 3,
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_generated_digest": "sha256:ca21671bdaa94b57ea669bdddddd1c40ef39703847ee28d85520f185af2645cc",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "method_id": "method-ff06264bbc1f1069",
+  "object_type": "method_manifest",
+  "occurrence_count": 3,
+  "quarantined": true,
+  "schema_version": "1.0",
+  "source_digest": "sha256:73a35851f3a0470099b618cef54c7291e907b90dffb76fe506fa2334598cd482",
+  "source_refs": [
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/review_verdict.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:ed7a6abee0ae34e72c3313780aa4e19d6faca194322535549b86e83785b605fc",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/review_verdict.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9fbf779879086306a872fe370b675403d57525043f69449d0eea95eb4afed18e",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/review_verdict.json"
+    }
+  ],
+  "status": "draft",
+  "tombstones": [],
+  "updated_at": "2026-05-25T08:34:58Z"
+}

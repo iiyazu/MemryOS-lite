@@ -1,0 +1,28 @@
+{
+  "artifacts": {
+    "ack": "work/features/xmuse-console/ack.json",
+    "integrated_tests": "xmuse/master/features/xmuse-console/integrated_tests.json",
+    "master_review": "xmuse/master/features/xmuse-console/master_review.json",
+    "merge_approval": "xmuse/approvals/xmuse-console/merge_approval.json",
+    "merge_approval_request": "xmuse/approvals/xmuse-console/merge_approval_request.json",
+    "merge_decision": "xmuse/approvals/xmuse-console/merge_decision.json",
+    "next_action": "xmuse/approvals/xmuse-console/next_action.json",
+    "post_merge_verification": "xmuse/approvals/xmuse-console/post_merge_verification.json",
+    "result": "work/features/xmuse-console/result.md",
+    "review_verdict": "work/features/xmuse-console/review_verdict.json"
+  },
+  "feature_id": "xmuse-console",
+  "last_updated": "2026-05-24T16:36:46Z",
+  "mode": "feature_local_single_god",
+  "runner": {
+    "agent_id": "slave-god-xmuse-console",
+    "endpoint": null,
+    "protocol": "hermes-local",
+    "task_id": null,
+    "type": "local_codex"
+  },
+  "state": "done_with_concerns",
+  "head": "f6466902c85c0f6b17f94f47f37a2c3dc37d346f",
+  "summary": "xmuse snapshot adapter, opt-in API, fixtures, tests, and static console shell implemented; full pytest and ruff pass; full mypy src fails in non-xmuse files.",
+  "version": "1.0"
+}

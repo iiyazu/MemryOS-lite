@@ -1,0 +1,33 @@
+{
+  "feature_id": "benchmark-layer-organization",
+  "version": "1.0",
+  "mode": "feature_local_single_god",
+  "state": "feature_blocked",
+  "last_dispatch_reason": "feature-local ACK or review requires autonomous Slave repair",
+  "last_updated": "2026-05-25T07:52:36Z",
+  "runner": {
+    "agent_id": "slave-god-benchmark-layer-organization",
+    "type": "local_codex",
+    "protocol": "hermes-local",
+    "endpoint": null,
+    "task_id": null
+  },
+  "summary": {
+    "ack_level": "partial",
+    "review_verdict": "FAIL",
+    "head_ref": "feat/benchmark-layer-organization",
+    "pre_repair_head": "8a6bc56",
+    "implemented_slice": "default v3 hard-eval evidence selection repaired; hard eval now reports accuracy=1.00/source=1.00 while preserving v1 fallback and v3 default",
+    "reason": "bounded hard-gate repair passed focused tests, full pytest, ruff, targeted mypy, and the default hard-eval command; full blueprint remains blocked by missing public LLM credentials and pre-existing project-wide mypy failures"
+  },
+  "artifacts": {
+    "context_bundle": "work/features/benchmark-layer-organization/context_bundle.md",
+    "plan_final": "work/features/benchmark-layer-organization/plan_final.md",
+    "execute_goal": "work/features/benchmark-layer-organization/execute_goal.md",
+    "result": "work/features/benchmark-layer-organization/result.md",
+    "execute_review": "work/features/benchmark-layer-organization/execute_review.md",
+    "review_verdict": "work/features/benchmark-layer-organization/review_verdict.json",
+    "ack": "work/features/benchmark-layer-organization/ack.json",
+    "feature_amendment_proposal": "work/features/benchmark-layer-organization/feature_amendment_proposal.json"
+  }
+}

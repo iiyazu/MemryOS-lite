@@ -1,0 +1,68 @@
+{
+  "role": "knowledge_maintainer",
+  "version": "1.0",
+  "runner_policy": {
+    "command": "codex exec --yolo",
+    "approval_policy": "never",
+    "skip_human_confirmation": true,
+    "nodes": [
+      "knowledge_maintainer"
+    ]
+  },
+  "allowed_writes": [
+    "xmuse/knowledge/**",
+    "xmuse/work/features/xmuse-error-knowledge/result.md",
+    "xmuse/work/features/xmuse-error-knowledge/review_verdict.json",
+    "xmuse/work/features/xmuse-error-knowledge/ack.json",
+    "xmuse/work/features/xmuse-error-knowledge/slave_state.json"
+  ],
+  "bootstrap_failure_writes": [
+    "xmuse/work/features/xmuse-error-knowledge/ack.json",
+    "xmuse/work/features/xmuse-error-knowledge/result.md"
+  ],
+  "required_inputs": [
+    "xmuse/master_state.json",
+    "xmuse/master_status.json",
+    "xmuse/contracts/master_dispatch_template.json",
+    "xmuse/contracts/slave_dispatch_template.json",
+    "xmuse/contracts/knowledge_maintainer_template.json"
+  ],
+  "optional_inputs": [
+    "xmuse/reports/latest.json",
+    "xmuse/reports/latest.md",
+    "xmuse/work/features/*/ack.json",
+    "xmuse/work/features/*/result.md",
+    "xmuse/work/features/*/review_verdict.json",
+    "xmuse/work/features/*/execute_review.md",
+    "xmuse/work/features/*/slave_state.json",
+    "xmuse/work/features/*/plan_final.md",
+    "xmuse/master/features/*/master_review.json",
+    "xmuse/master/features/*/integrated_tests.json",
+    "xmuse/approvals/*/merge_approval_request.json",
+    "xmuse/approvals/*/merge_approval.json",
+    "xmuse/approvals/*/merge_decision.json",
+    "xmuse/approvals/*/post_merge_verification.json"
+  ],
+  "forbidden_writes": [
+    "xmuse/master_state.json",
+    "xmuse/master_status.json",
+    "xmuse/master_status.md",
+    "xmuse/master/features/**",
+    "xmuse/approvals/**",
+    "xmuse/prompts/**",
+    ".codex/skills/**",
+    "src/memoryos_lite/**"
+  ],
+  "bootstrap_failure_mode": {
+    "ack_level": "blocked",
+    "may_write_only": [
+      "xmuse/work/features/xmuse-error-knowledge/ack.json",
+      "xmuse/work/features/xmuse-error-knowledge/result.md"
+    ],
+    "must_not_write": [
+      "xmuse/knowledge/**",
+      "xmuse/work/features/xmuse-error-knowledge/review_verdict.json",
+      "xmuse/work/features/xmuse-error-knowledge/slave_state.json"
+    ]
+  }
+}

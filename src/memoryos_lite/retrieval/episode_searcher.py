@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
@@ -113,7 +114,7 @@ def _diagnostic(
 
 @dataclass(frozen=True)
 class EpisodeHit:
-    episode: Episode | RecallMemoryEntry
+    episode: RecallMemoryEntry
     score: float
     reason: str
     source: str = "recall_memory"
@@ -126,7 +127,7 @@ class EpisodeHit:
 class RecallMemorySearcher:
     def search(
         self,
-        episodes: list[Episode | RecallMemoryEntry],
+        episodes: Sequence[Episode | RecallMemoryEntry],
         query: str,
         top_k: int = 5,
         analysis: QueryAnalysis | None = None,
@@ -178,7 +179,7 @@ class RecallMemorySearcher:
             adjusted = float(score) + token_overlap + role_boost + temporal_boost + session_boost
             if adjusted <= 0:
                 continue
-            features = {
+            features: dict[str, float] = {
                 "token_overlap": float(token_overlap),
                 "bm25_score": float(score),
                 "role_boost": role_boost,
@@ -186,8 +187,11 @@ class RecallMemorySearcher:
                 "session_boost": session_boost,
                 "adjusted_score": adjusted,
             }
+            feature_metadata: dict[str, object] = {
+                key: value for key, value in features.items()
+            }
             diagnostics = [
-                _diagnostic(entry, "direct_hit", adjusted, True, features),
+                _diagnostic(entry, "direct_hit", adjusted, True, feature_metadata),
                 _diagnostic(entry, "rank", adjusted, True, {"rank_features": features}),
             ]
             if role_boost > 0:
@@ -449,7 +453,7 @@ class RecallMemorySearcher:
 
     def _packet_member_entries(
         self,
-        anchor: Episode | RecallMemoryEntry,
+        anchor: RecallMemoryEntry,
         *,
         by_session_and_position: dict[tuple[str, int], RecallMemoryEntry],
         neighbors_before: int,
@@ -474,7 +478,7 @@ class RecallMemorySearcher:
 
     def _packet_metadata(
         self,
-        anchor: Episode | RecallMemoryEntry,
+        anchor: RecallMemoryEntry,
         *,
         member_entries: list[RecallMemoryEntry],
         packet_rank: int,
@@ -483,6 +487,13 @@ class RecallMemorySearcher:
         packet_session_id = anchor.temporal_scope.get("benchmark_session_id")
         packet_id = f"recall_packet:{packet_session_id}:{anchor.message_id}"
         member_message_ids = [entry.message_id for entry in member_entries]
+        member_neighbor_offsets = [
+            {
+                "message_id": entry.message_id,
+                "neighbor_offset": entry.position - anchor.position,
+            }
+            for entry in member_entries
+        ]
         member_source_ids = [
             source_ref.source_id
             for entry in member_entries
@@ -494,6 +505,7 @@ class RecallMemorySearcher:
             "packet_anchor_message_id": anchor.message_id,
             "packet_session_id": packet_session_id,
             "packet_member_message_ids": member_message_ids,
+            "packet_member_neighbor_offsets": member_neighbor_offsets,
             "packet_member_source_ids": member_source_ids,
             "packet_reason": packet_reason,
             "packet_rank": packet_rank,
@@ -566,11 +578,10 @@ class RecallMemorySearcher:
                             "rank_features": {
                                 "neighbor_of_rank": hit.score,
                                 "neighbor_offset": float(offset),
-                                "packet_rank": float(
-                                    hit.packet_metadata.get("packet_rank", 0.0)
-                                )
-                                if hit.packet_metadata
-                                else 0.0,
+                                "packet_rank": self._metadata_float(
+                                    hit.packet_metadata,
+                                    "packet_rank",
+                                ),
                             },
                             **neighbor.temporal_scope,
                             **packet_metadata,
@@ -582,11 +593,17 @@ class RecallMemorySearcher:
                     "neighbor_offset": float(offset),
                 }
                 if hit.packet_metadata:
-                    rank_features["packet_rank"] = float(
-                        hit.packet_metadata.get("packet_rank", 0.0)
+                    rank_features["packet_rank"] = self._metadata_float(
+                        hit.packet_metadata,
+                        "packet_rank",
                     )
                     rank_features["packet_member_count"] = float(
-                        len(hit.packet_metadata.get("packet_member_message_ids", []))
+                        len(
+                            self._metadata_list(
+                                hit.packet_metadata,
+                                "packet_member_message_ids",
+                            )
+                        )
                     )
                 selected.append(
                     EpisodeHit(
@@ -652,6 +669,18 @@ class RecallMemorySearcher:
             )
             break
         return selected
+
+    @staticmethod
+    def _metadata_float(metadata: dict[str, object], key: str) -> float:
+        value = metadata.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+        return 0.0
+
+    @staticmethod
+    def _metadata_list(metadata: dict[str, object], key: str) -> list[object]:
+        value = metadata.get(key)
+        return value if isinstance(value, list) else []
 
 
 class EpisodeSearcher:

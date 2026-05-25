@@ -1,0 +1,53 @@
+{
+  "feature_id": "xmuse-console",
+  "verdict": "FAIL",
+  "reviewed_head": "f6466902c85c0f6b17f94f47f37a2c3dc37d346f",
+  "implemented_feature_path": "PASS",
+  "promotion_gate": "FAIL",
+  "blockers": [
+    {
+      "id": "full-mypy-src",
+      "severity": "high",
+      "command": "uv run mypy src",
+      "result": "failed",
+      "summary": "Full repository mypy failed with 89 errors in 12 non-xmuse files. Scoped xmuse mypy passed."
+    }
+  ],
+  "checks": {
+    "read_only_behavior": "PASS",
+    "local_only_boundary": "PASS",
+    "disabled_by_default": "PASS",
+    "registry_only_lane_lookup": "PASS",
+    "path_traversal_resistance": "PASS",
+    "redaction": "PASS",
+    "fixture_independence": "PASS",
+    "contracts_visible": "PASS",
+    "deprecated_state_machine_inactive": "PASS",
+    "v3_default_preserved": "PASS",
+    "v1_fallback_preserved": "PASS",
+    "kernel_default_unchanged": "PASS",
+    "benchmark_improvement_claim": "PASS"
+  },
+  "verification": [
+    {
+      "command": "uv run pytest tests/test_xmuse_adapter.py tests/test_xmuse_snapshot.py tests/test_xmuse_api.py tests/test_xmuse_frontend.py tests/test_api.py -q",
+      "result": "21 passed in 10.53s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "result": "614 passed, 1 warning in 1282.92s"
+    },
+    {
+      "command": "uv run ruff check .",
+      "result": "All checks passed"
+    },
+    {
+      "command": "uv run mypy src/memoryos_lite/xmuse src/memoryos_lite/api/xmuse.py src/memoryos_lite/config.py",
+      "result": "Success: no issues found in 4 source files"
+    },
+    {
+      "command": "uv run mypy src",
+      "result": "failed: 89 errors in 12 non-xmuse files"
+    }
+  ]
+}

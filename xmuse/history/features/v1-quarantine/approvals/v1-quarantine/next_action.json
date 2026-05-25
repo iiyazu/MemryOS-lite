@@ -1,0 +1,12 @@
+{
+  "feature_id": "v1-quarantine",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T11:37:59Z",
+  "status": "awaiting_external_merge_approval_and_fresh_target_gate",
+  "reason": "Master review accepted and integrated tests passed against target 920237bd6082b905b847c5738b52f36070d5697a, but the feature policy requires explicit merge approval before the branch can be merged. Because recording this controller evidence advances the target branch, the final merge gate must be refreshed against the then-current target HEAD before merge.",
+  "master_review_ref": "xmuse/master/features/v1-quarantine/master_review.json",
+  "integrated_tests_ref": "xmuse/master/features/v1-quarantine/integrated_tests.json",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "feature_branch": "chore/v1-quarantine",
+  "merge_strategy": "no_ff_merge_commit"
+}

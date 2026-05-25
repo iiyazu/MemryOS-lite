@@ -1,0 +1,43 @@
+{
+  "cluster_id": "cluster-236357c1778130da",
+  "created_at": "2026-05-25T04:51:03Z",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_count": 1,
+  "feature_ids": [
+    "xmuse-console"
+  ],
+  "fingerprint": "failed_command:mypy-gate",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_seen_at": "2026-05-25T08:34:58Z",
+  "object_type": "cluster",
+  "occurrence_count": 1,
+  "occurrences": [
+    {
+      "deterministic_invariant": null,
+      "feature_id": "xmuse-console",
+      "record_id": "error-0937a6db29d8cddd",
+      "root_cause_status": "suspected",
+      "source_digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "source_path": "xmuse/work/features/xmuse-console/ack.json",
+      "verification_evidence": false
+    }
+  ],
+  "promotion_blockers": [],
+  "promotion_stage": "observed",
+  "root_cause_status": "suspected",
+  "schema_version": "1.0",
+  "source_digest": "sha256:b84aa8409214436d2764cbc6dca57d61ab15ebbcf155504f1d536fb7da0eb2d2",
+  "source_digest_count": 1,
+  "source_refs": [
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/ack.json"
+    }
+  ],
+  "source_run_count": 0,
+  "source_run_ids": [],
+  "summary": "Command failed: mypy gate"
+}

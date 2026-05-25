@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "amendment_id": "xmuse-console-rework-20260524T200728Z-amendment",
+  "action": "request_rework",
+  "status": "applied",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-24T20:07:28Z",
+  "affected_feature_ids": [
+    "xmuse-console"
+  ],
+  "target_feature_id": "xmuse-console",
+  "previous_state_reference": {
+    "master_state": "xmuse/master_state.json",
+    "rework_request": "xmuse/master/features/xmuse-console/rework_request.json",
+    "head_commit": "f6466902c85c0f6b17f94f47f37a2c3dc37d346f"
+  },
+  "reason": "ack_level is partial and review_verdict is FAIL, so Master review prerequisites are not satisfied.; promotion gate failed because uv run mypy src reports 89 errors in 12 non-xmuse files while scoped xmuse mypy passes.; Slave must classify the full-mypy failures against target-head evidence and either repair feature-induced issues, request Master-level hold for pre-existing failures, or propose a bounded re-scope.",
+  "preserved_policy_flags": {
+    "v3_default": true,
+    "v1_fallback": true,
+    "kernel_opt_in": true,
+    "diagnostic_only_benchmarks": true,
+    "same_slice_repair_smoke_not_promotion": true,
+    "review_gate": true,
+    "integrated_test_gate": true,
+    "external_approval_gate": true,
+    "fresh_target_gate": true
+  },
+  "gate_effect": "no_gate_lowering"
+}

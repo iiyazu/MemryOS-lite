@@ -100,7 +100,7 @@ Non-goals:
 
 ## State Excerpt
 
-Current state from `.hermes-loop/state.json`:
+Current state from `xmuse/state.json`:
 
 ```json
 {
@@ -117,7 +117,7 @@ Current state from `.hermes-loop/state.json`:
 
 ## Active Blueprint Sections
 
-Use `.hermes-loop/blueprint.md` as the active blueprint. Relevant sections:
+Use `xmuse/blueprint.md` as the active blueprint. Relevant sections:
 
 - Purpose
 - Current Baseline And Phase 8 Evidence
@@ -133,7 +133,7 @@ Use `.hermes-loop/blueprint.md` as the active blueprint. Relevant sections:
 
 Promoted phase-8 amendment:
 
-- `.hermes-loop/work/phase-8/blueprint_amendment.md`
+- `xmuse/work/phase-8/blueprint_amendment.md`
 
 The amendment adds the targeted LoCoMo reliability loop and says not to expand
 eval or promote the blueprint from aggregate score. It identifies LoCoMo
@@ -144,14 +144,14 @@ targets.
 
 MemoryOS files:
 
-- `.hermes-loop/state.json`
-- `.hermes-loop/blueprint.md`
-- `.hermes-loop/config.json`
-- `.hermes-loop/work/current_goal.md`
-- `.hermes-loop/work/phase-8/ack.json`
-- `.hermes-loop/work/phase-8/promotion_decision.md`
-- `.hermes-loop/work/phase-8/blueprint_amendment.md`
-- `.hermes-loop/work/phase-8/god_context.md`
+- `xmuse/state.json`
+- `xmuse/blueprint.md`
+- `xmuse/config.json`
+- `xmuse/work/current_goal.md`
+- `xmuse/work/phase-8/ack.json`
+- `xmuse/work/phase-8/promotion_decision.md`
+- `xmuse/work/phase-8/blueprint_amendment.md`
+- `xmuse/work/phase-8/god_context.md`
 - `.memoryos/evals/phase8_lme50_20260522T151605Z_longmemeval.json`
 - `.memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json`
 - `src/memoryos_lite/public_case_diagnostics.py`

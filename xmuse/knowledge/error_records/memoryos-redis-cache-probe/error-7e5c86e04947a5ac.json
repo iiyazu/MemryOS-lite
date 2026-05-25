@@ -1,0 +1,35 @@
+{
+  "created_at": "2026-05-25T04:51:03Z",
+  "deterministic_invariant": null,
+  "evidence": "uv run pytest -q failed: 9 failed, 524 passed, 1 warning in 2322.83s before KeyboardInterrupt; failures were FastEmbed/HuggingFace httpx.ConnectTimeout during public benchmark tests.",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_id": "memoryos-redis-cache-probe",
+  "fingerprint": "failed_command:uv-run-pytest-q",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_seen_at": "2026-05-25T08:34:58Z",
+  "object_type": "error_record",
+  "promotion_suppressed": false,
+  "record_id": "error-7e5c86e04947a5ac",
+  "root_cause_status": "suspected",
+  "schema_version": "1.0",
+  "source_digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
+  "source_ref": {
+    "artifact_type": "integrated_tests",
+    "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
+    "feature_id": "memoryos-redis-cache-probe",
+    "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+    "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+  },
+  "source_refs": [
+    {
+      "artifact_type": "integrated_tests",
+      "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    }
+  ],
+  "summary": "Command failed: uv run pytest -q",
+  "verification_evidence": false
+}

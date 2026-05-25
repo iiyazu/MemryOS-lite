@@ -22,6 +22,11 @@ from memoryos_lite.v3_contracts import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _disable_fastembed_for_public_benchmark_tests(monkeypatch):
+    monkeypatch.setenv("MEMORYOS_EMBEDDING_PROVIDER", "none")
+
+
 def _write_single_locomo_case(
     tmp_path,
     *,
@@ -137,6 +142,34 @@ def test_load_locomo_cases_maps_qa_evidence(tmp_path):
     assert cases[0].case.case_id == "sample_a_qa_001"
     assert cases[0].expected_source_ids == ["sample_a_qa_001:sample_a:D1:1"]
     assert cases[0].expected_session_ids == ["D1"]
+
+
+def test_public_benchmark_respects_explicit_embedding_provider_none(
+    tmp_path, monkeypatch
+):
+    from memoryos_lite.retrieval.providers.fastembed_client import FastEmbedClient
+
+    def fail_fastembed_init(self):
+        raise AssertionError("FastEmbedClient should not be constructed")
+
+    monkeypatch.setattr(FastEmbedClient, "__init__", fail_fastembed_init)
+    data_path = _write_single_locomo_case(tmp_path)
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_embedding_provider="none",
+    )
+
+    results = run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="public-no-embedding-test",
+        baselines=["sliding_window"],
+        llm_answer=False,
+        llm_judge=False,
+    )
+
+    assert len(results) == 1
 
 
 def test_cli_public_helpers_import_without_agent_answer_eval(monkeypatch):
@@ -2815,6 +2848,7 @@ def test_public_benchmark_case_diagnostics_classifies_unsupported_answer_separat
 
 def test_public_case_movement_from_comparison_report_pairs(tmp_path):
     from memoryos_lite.public_case_movement import (
+        build_public_case_movement_summary,
         load_public_case_movement,
         movement_status,
     )
@@ -2861,6 +2895,93 @@ def test_public_case_movement_from_comparison_report_pairs(tmp_path):
     assert movement_status("pass", "pass") == "unchanged_pass"
     assert movement_status("fail", "fail") == "unchanged_fail"
     assert movement_status("error", "fail") == "unchanged_fail"
+
+    summary = build_public_case_movement_summary(
+        [
+            {
+                "case_id": "case-new-failure-class",
+                "movement_status": "unchanged_fail",
+                "failure_class": "answer_not_supported_by_judge",
+                "case_diagnostics": {
+                    "evidence_handoff": {
+                        "failure_boundary": "custom_boundary",
+                    }
+                },
+            }
+        ]
+    )
+    assert summary["failure_classes"]["answer_not_supported_by_judge"] == [
+        "case-new-failure-class"
+    ]
+    assert summary["failure_boundaries"]["custom_boundary"] == [
+        "case-new-failure-class"
+    ]
+
+
+def test_public_case_movement_summary_reports_source_metric_movement_and_omits_missing_values():
+    from memoryos_lite.public_case_movement import build_public_case_movement_summary
+
+    summary = build_public_case_movement_summary(
+        [
+            {
+                "case_id": "metric-improved",
+                "source_hit": True,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": False}
+                },
+            },
+            {
+                "case_id": "metric-regressed",
+                "source_hit": False,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": True}
+                },
+            },
+            {
+                "case_id": "metric-unchanged-hit",
+                "source_hit": True,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": True}
+                },
+            },
+            {
+                "case_id": "metric-unchanged-miss",
+                "source_hit": False,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": False}
+                },
+            },
+            {
+                "case_id": "metric-missing-current",
+                "source_hit": None,
+                "case_diagnostics": {
+                    "baseline_source_metrics": {"source_hit": False}
+                },
+            },
+            {
+                "case_id": "metric-missing-baseline",
+                "source_hit": True,
+                "case_diagnostics": {"baseline_source_metrics": {}},
+            },
+        ]
+    )
+
+    source_hit_movement = summary["source_metric_movement"]["source_hit"]
+    assert source_hit_movement == {
+        "improved": ["metric-improved"],
+        "regressed": ["metric-regressed"],
+        "unchanged_hit": ["metric-unchanged-hit"],
+        "unchanged_miss": ["metric-unchanged-miss"],
+    }
+    assert summary["counts"]["source_metric_movement"]["source_hit"] == {
+        "improved": 1,
+        "regressed": 1,
+        "unchanged_hit": 1,
+        "unchanged_miss": 1,
+    }
+    assert "missing baseline or current metric values are omitted" in summary[
+        "diagnostic_note"
+    ]
 
 
 def test_public_case_movement_missing_baseline_is_not_anti_demo_evidence():
@@ -2930,6 +3051,155 @@ def test_public_benchmark_movement_status_uses_comparison_report(tmp_path):
     assert report["movement_status"] == "pass_to_fail"
     assert report["case_diagnostics"]["baseline_verdict"] == "pass"
     assert report["case_diagnostics"]["movement_baseline_source"] == str(previous_report_path)
+
+
+def test_public_benchmark_writes_case_movement_summary_for_comparison_report(tmp_path):
+    data_path = tmp_path / "locomo_movement_summary.json"
+    data_path.write_text(
+        json.dumps(
+            [
+                {
+                    "sample_id": "move_fail_to_pass",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Alice",
+                                "dia_id": "D1:1",
+                                "text": "The movement summary marker is emerald.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What color is the movement summary marker?",
+                            "answer": "emerald",
+                            "evidence": ["D1:1"],
+                        }
+                    ],
+                },
+                {
+                    "sample_id": "move_pass_to_fail",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Bob",
+                                "dia_id": "D1:1",
+                                "text": "The movement summary distractor is slate.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What color is the missing movement marker?",
+                            "answer": "violet",
+                            "evidence": ["D9:9"],
+                        }
+                    ],
+                },
+                {
+                    "sample_id": "move_new_case",
+                    "conversation": {
+                        "session_1": [
+                            {
+                                "speaker": "Casey",
+                                "dia_id": "D1:1",
+                                "text": "The newly tracked marker is bronze.",
+                            }
+                        ],
+                    },
+                    "qa": [
+                        {
+                            "question": "What color is the newly tracked marker?",
+                            "answer": "bronze",
+                            "evidence": ["D1:1"],
+                        }
+                    ],
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    previous_report_path = tmp_path / "previous.json"
+    previous_report_path.write_text(
+        json.dumps(
+            [
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "move_fail_to_pass_qa_001",
+                    "verdict": "fail",
+                    "source_hit": False,
+                    "planned_evidence_source_hit_at_5": False,
+                    "episode_source_hit_at_10": False,
+                },
+                {
+                    "benchmark": "locomo",
+                    "baseline": "memoryos_lite",
+                    "case_id": "move_pass_to_fail_qa_001",
+                    "verdict": "pass",
+                    "source_hit": True,
+                    "planned_evidence_source_hit_at_5": True,
+                    "episode_source_hit_at_10": True,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_recall_pipeline="v2",
+    )
+
+    run_public_benchmark(
+        settings,
+        benchmark="locomo",
+        data_path=data_path,
+        run_id="movement-summary",
+        baselines=["memoryos_lite"],
+        llm_answer=False,
+        llm_judge=False,
+        comparison_report_paths=[previous_report_path],
+    )
+
+    summary_path = settings.data_dir / "evals" / "movement-summary_locomo_movement_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["movement"]["fail_to_pass"] == ["move_fail_to_pass_qa_001"]
+    assert summary["movement"]["pass_to_fail"] == ["move_pass_to_fail_qa_001"]
+    assert summary["movement"]["unchanged_pass"] == []
+    assert summary["movement"]["unchanged_fail"] == []
+    assert summary["movement"]["new_case_no_baseline"] == ["move_new_case_qa_001"]
+    assert summary["counts"]["movement"] == {
+        "fail_to_pass": 1,
+        "pass_to_fail": 1,
+        "unchanged_pass": 0,
+        "unchanged_fail": 0,
+        "new_case_no_baseline": 1,
+    }
+    assert "retrieval_miss" in summary["failure_classes"]
+    assert "render_drop" in summary["failure_boundaries"]
+    assert summary["source_metric_movement"]["source_hit"]["improved"] == [
+        "move_fail_to_pass_qa_001"
+    ]
+    assert summary["source_metric_movement"]["source_hit"]["regressed"] == [
+        "move_pass_to_fail_qa_001"
+    ]
+    for metric in (
+        "planned_evidence_source_hit_at_5",
+        "episode_source_hit_at_10",
+    ):
+        assert summary["source_metric_movement"][metric]["improved"] == [
+            "move_fail_to_pass_qa_001"
+        ]
+        assert summary["source_metric_movement"][metric]["regressed"] == [
+            "move_pass_to_fail_qa_001"
+        ]
+    assert summary["counts"]["source_metric_movement"]["source_hit"] == {
+        "improved": 1,
+        "regressed": 1,
+        "unchanged_hit": 0,
+        "unchanged_miss": 0,
+    }
 
 
 def test_public_benchmark_case_diagnostics_are_append_only(tmp_path):

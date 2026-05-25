@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def load_reporter_module():
-    module_path = Path(__file__).resolve().parents[1] / ".hermes-loop" / "hermes_reporter.py"
+    module_path = Path(__file__).resolve().parents[1] / "xmuse" / "hermes_reporter.py"
     spec = importlib.util.spec_from_file_location("hermes_reporter", module_path)
     assert spec is not None
     assert spec.loader is not None
@@ -28,17 +28,17 @@ def base_master_state_for_reporter() -> dict:
         "mode": "master_control",
         "activation_state": "master_active",
         "active": True,
-        "history_baseline": ".hermes-loop/history/main_loop_phase0_18.json",
-        "legacy_root_loop": ".hermes-loop/legacy/root-loop/",
-        "master_blueprint": ".hermes-loop/master_blueprint.md",
-        "master_config": ".hermes-loop/master_config.json",
+        "history_baseline": "xmuse/history/main_loop_phase0_18.json",
+        "legacy_root_loop": "xmuse/legacy/root-loop/",
+        "master_blueprint": "xmuse/master_blueprint.md",
+        "master_config": "xmuse/master_config.json",
         "prompts": {
-            "master": ".hermes-loop/prompts/master_god_prompt.md",
-            "slave": ".hermes-loop/prompts/slave_god_prompt.md",
+            "master": "xmuse/prompts/master_god_prompt.md",
+            "slave": "xmuse/prompts/slave_god_prompt.md",
         },
         "dispatch_contracts": {
-            "master": ".hermes-loop/contracts/master_dispatch_template.json",
-            "slave": ".hermes-loop/contracts/slave_dispatch_template.json",
+            "master": "xmuse/contracts/master_dispatch_template.json",
+            "slave": "xmuse/contracts/slave_dispatch_template.json",
         },
         "master_policy": {},
         "features": [],
@@ -63,7 +63,7 @@ def test_done_state_refreshes_latest_report_without_starting_god(
     monkeypatch,
 ) -> None:
     reporter = load_reporter_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     state_file = loop / "state.json"
     state_file.write_text(
@@ -103,7 +103,7 @@ def test_done_state_refreshes_latest_report_without_starting_god(
 
 def test_reporter_refreshes_master_status_when_legacy_done(tmp_path: Path, monkeypatch) -> None:
     reporter = load_reporter_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     state_file = loop / "state.json"
     write_json(loop / "state.json", {"current_state": "DONE", "current_phase_idx": 18})
     master_state = base_master_state_for_reporter()
@@ -132,7 +132,7 @@ def test_reporter_handles_master_active_without_legacy_state_file(
     tmp_path: Path, monkeypatch
 ) -> None:
     reporter = load_reporter_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     state_file = loop / "state.json"
     write_json(loop / "master_state.json", base_master_state_for_reporter())
 
@@ -154,7 +154,7 @@ def test_god_alive_rejects_exited_active_job_even_with_fresh_heartbeat(
     tmp_path: Path, monkeypatch
 ) -> None:
     reporter = load_reporter_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     lock_file = loop / "run.lock"
     lock_file.write_text(f"pid={os.getpid()} run_id=test\n", encoding="utf-8")
@@ -165,7 +165,7 @@ def test_god_alive_rejects_exited_active_job_even_with_fresh_heartbeat(
         {
             "pid": 999999999,
             "phase_id": "master-control",
-            "prompt_file": ".hermes-loop/prompts/master_god_prompt.md",
+            "prompt_file": "xmuse/prompts/master_god_prompt.md",
             "attempt": 1,
             "output_path": "codex_output.log",
             "idle_timeout_seconds": 10800,
@@ -181,14 +181,14 @@ def test_god_alive_rejects_exited_active_job_even_with_fresh_heartbeat(
 
 def test_active_job_liveness_marks_dead_running_job_failed(tmp_path: Path, monkeypatch) -> None:
     reporter = load_reporter_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     write_json(
         loop / "active_job.json",
         {
             "pid": 999999999,
             "phase_id": "master-control",
-            "prompt_file": ".hermes-loop/prompts/master_god_prompt.md",
+            "prompt_file": "xmuse/prompts/master_god_prompt.md",
             "attempt": 1,
             "output_path": "codex_output.log",
             "idle_timeout_seconds": 10800,
@@ -209,7 +209,7 @@ def test_reporter_restarts_when_active_job_is_stale_despite_fresh_heartbeat(
     tmp_path: Path, monkeypatch
 ) -> None:
     reporter = load_reporter_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     state_file = loop / "state.json"
     lock_file = loop / "run.lock"
@@ -222,7 +222,7 @@ def test_reporter_restarts_when_active_job_is_stale_despite_fresh_heartbeat(
         {
             "pid": 999999999,
             "phase_id": "master-control",
-            "prompt_file": ".hermes-loop/prompts/master_god_prompt.md",
+            "prompt_file": "xmuse/prompts/master_god_prompt.md",
             "attempt": 1,
             "output_path": "codex_output.log",
             "idle_timeout_seconds": 10800,
@@ -249,12 +249,77 @@ def test_reporter_restarts_when_active_job_is_stale_despite_fresh_heartbeat(
     assert report["action"] == "started_ok"
 
 
+def test_reporter_report_only_env_never_starts_god(tmp_path: Path, monkeypatch) -> None:
+    reporter = load_reporter_module()
+    loop = tmp_path / "xmuse"
+    state_file = loop / "state.json"
+    write_json(loop / "master_state.json", base_master_state_for_reporter())
+    starts = {"count": 0}
+
+    def start_god() -> bool:
+        starts["count"] += 1
+        return True
+
+    monkeypatch.setattr(reporter, "LOOP", loop)
+    monkeypatch.setattr(reporter, "PROJECT", tmp_path)
+    monkeypatch.setattr(reporter, "LAUNCHER", loop / "god_launcher.sh")
+    monkeypatch.setattr(reporter, "STATE_FILE", state_file)
+    monkeypatch.setattr(reporter, "LOCK_FILE", loop / "run.lock")
+    monkeypatch.setattr(reporter, "start_god", start_god)
+    monkeypatch.setenv("XMUSE_REPORT_ONLY", "1")
+
+    report = reporter.main()
+
+    assert starts["count"] == 0
+    assert report["action"] == "report_only"
+    assert (loop / "reports" / "latest.json").exists()
+
+
+def test_reporter_report_only_does_not_mutate_stale_active_job(
+    tmp_path: Path, monkeypatch
+) -> None:
+    reporter = load_reporter_module()
+    loop = tmp_path / "xmuse"
+    state_file = loop / "state.json"
+    lock_file = loop / "run.lock"
+    write_json(loop / "master_state.json", base_master_state_for_reporter())
+    lock_file.write_text(f"pid={os.getpid()} run_id=test\n", encoding="utf-8")
+    heartbeat_ts = datetime.now(UTC).isoformat()
+    (loop / "heartbeat.log").write_text(f"GOD alive01 {heartbeat_ts}\n", encoding="utf-8")
+    write_json(
+        loop / "active_job.json",
+        {
+            "pid": 999999999,
+            "phase_id": "master-control",
+            "prompt_file": "xmuse/prompts/master_god_prompt.md",
+            "attempt": 1,
+            "output_path": "codex_output.log",
+            "idle_timeout_seconds": 10800,
+            "started_at": "2026-05-24T11:48:12Z",
+            "status": "running",
+        },
+    )
+    before = (loop / "active_job.json").read_text(encoding="utf-8")
+
+    monkeypatch.setattr(reporter, "LOOP", loop)
+    monkeypatch.setattr(reporter, "PROJECT", tmp_path)
+    monkeypatch.setattr(reporter, "LAUNCHER", loop / "god_launcher.sh")
+    monkeypatch.setattr(reporter, "STATE_FILE", state_file)
+    monkeypatch.setattr(reporter, "LOCK_FILE", lock_file)
+    monkeypatch.setenv("XMUSE_REPORT_ONLY", "1")
+
+    report = reporter.main()
+
+    assert report["action"] == "report_only"
+    assert (loop / "active_job.json").read_text(encoding="utf-8") == before
+
+
 def test_latest_markdown_surfaces_master_review_queue(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     reporter = load_reporter_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     state_file = loop / "state.json"
     state_file.write_text(

@@ -15,7 +15,11 @@ from memoryos_lite.retrieval.query_analyzer import QueryAnalysis, QueryAnalyzer,
 from memoryos_lite.schemas import ContextEvidence, ContextPackage
 from memoryos_lite.store import MemoryStore
 from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import DiagnosticEvent, episode_to_recall_entry
+from memoryos_lite.v3_contracts import (
+    DiagnosticEvent,
+    RecallMemoryEntry,
+    episode_to_recall_entry,
+)
 
 
 class RecallPipeline:
@@ -78,7 +82,9 @@ class RecallPipeline:
                     reason="cached recall package failed validation",
                 )
         episodes = self.store.list_episodes(session_id)
-        recall_entries = [episode_to_recall_entry(episode) for episode in episodes]
+        recall_entries: list[RecallMemoryEntry] = [
+            episode_to_recall_entry(episode) for episode in episodes
+        ]
         analysis, query_cache_status = self._analyze_query(query)
         preserve_session_neighbors = any(
             "benchmark_session_id" in entry.temporal_scope for entry in recall_entries
@@ -315,16 +321,16 @@ class RecallPipeline:
 
     def _serialize_diagnostics(
         self,
-        hits: list,
+        hits: list[EpisodeHit],
     ) -> list[dict[str, object]]:
         return [event for hit in hits for event in self._dump_hit_diagnostics(hit)]
 
-    def _dump_hit_diagnostics(self, hit) -> list[dict[str, object]]:
+    def _dump_hit_diagnostics(self, hit: EpisodeHit) -> list[dict[str, object]]:
         return [diagnostic.model_dump(mode="json") for diagnostic in hit.diagnostics]
 
     def _budget_drop_diagnostics(
         self,
-        hits: list,
+        hits: list[EpisodeHit],
         *,
         budget_tokens: int,
     ) -> list[dict[str, object]]:
@@ -374,8 +380,7 @@ class RecallPipeline:
             session_ids.append(value)
         return session_ids
 
-    @staticmethod
-    def _packet_summaries(hits: list[EpisodeHit]) -> list[dict[str, object]]:
+    def _packet_summaries(self, hits: list[EpisodeHit]) -> list[dict[str, object]]:
         seen: set[str] = set()
         packets: list[dict[str, object]] = []
         for hit in hits:
@@ -393,11 +398,15 @@ class RecallPipeline:
                         "packet_anchor_message_id"
                     ),
                     "packet_session_id": hit.packet_metadata.get("packet_session_id"),
-                    "packet_member_message_ids": RecallPipeline._metadata_list(
+                    "packet_member_message_ids": self._metadata_list(
                         hit.packet_metadata,
                         "packet_member_message_ids",
                     ),
-                    "packet_member_source_ids": RecallPipeline._metadata_list(
+                    "packet_member_neighbor_offsets": self._metadata_list(
+                        hit.packet_metadata,
+                        "packet_member_neighbor_offsets",
+                    ),
+                    "packet_member_source_ids": self._metadata_list(
                         hit.packet_metadata,
                         "packet_member_source_ids",
                     ),

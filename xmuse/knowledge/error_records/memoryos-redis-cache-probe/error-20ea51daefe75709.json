@@ -1,0 +1,34 @@
+{
+  "created_at": "2026-05-25T03:14:40Z",
+  "deterministic_invariant": "integrated_tests_not_passed",
+  "evidence": "{\"base_commit\":\"5f890c73a3130f927cac553dd8b9cd44e5c4a88a\",\"branch\":\"feat/memoryos-redis-cache-probe\",\"commands\":[{\"command\":\"git worktree add -b tmp/memoryos-redis-cache-probe-integration-r2 /home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration-r2 feat/phase-2.5-3-retrieval-agent\",\"phase\":\"integration_setup\",\"status\":\"passed\",\"summary\":\"Created integration worktree from target head 5f890c73a3130f927cac553dd8b9cd44e5c4a88a.\"},{\"command\":\"git merge --no-ff --no-edit feat/mem",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_id": "memoryos-redis-cache-probe",
+  "fingerprint": "integrated_tests_not_passed",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_seen_at": "2026-05-25T08:34:58Z",
+  "object_type": "error_record",
+  "promotion_suppressed": false,
+  "record_id": "error-20ea51daefe75709",
+  "root_cause_status": "confirmed",
+  "schema_version": "1.0",
+  "source_ref": {
+    "artifact_type": "integrated_tests",
+    "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
+    "feature_id": "memoryos-redis-cache-probe",
+    "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+    "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+  },
+  "source_refs": [
+    {
+      "artifact_type": "integrated_tests",
+      "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    }
+  ],
+  "summary": "Integrated tests status is failed_stale_target_head",
+  "verification_evidence": false
+}

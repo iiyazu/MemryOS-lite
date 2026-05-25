@@ -1,0 +1,29 @@
+{
+  "artifacts": {
+    "ack": "work/features/archive-rag/ack.json",
+    "execute_review": "work/features/archive-rag/execute_review.md",
+    "integrated_tests": "xmuse/master/features/archive-rag/integrated_tests.json",
+    "master_review": "xmuse/master/features/archive-rag/master_review.json",
+    "merge_approval": "xmuse/approvals/archive-rag/merge_approval.json",
+    "merge_approval_request": "xmuse/approvals/archive-rag/merge_approval_request.json",
+    "merge_decision": "xmuse/approvals/archive-rag/merge_decision.json",
+    "next_action": "xmuse/approvals/archive-rag/next_action.json",
+    "post_merge_verification": "xmuse/approvals/archive-rag/post_merge_verification.json",
+    "result": "work/features/archive-rag/result.md",
+    "review_verdict": "work/features/archive-rag/review_verdict.json"
+  },
+  "blockers": [
+    "uv run mypy src fails with 82 errors in 11 files.",
+    "uv run memoryos eval run --case-set hard --baseline memoryos_lite reports accuracy=0.56/source_hit=0.56 over 16 cases, below the stated 1.00/1.00 baseline."
+  ],
+  "branch": "feat/archive-rag",
+  "feature_id": "archive-rag",
+  "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
+  "last_updated": "2026-05-24T14:14:25Z",
+  "mode": "feature_local_single_god",
+  "review_verdict": "FAIL",
+  "state": "blocked",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "version": "1.0",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag"
+}

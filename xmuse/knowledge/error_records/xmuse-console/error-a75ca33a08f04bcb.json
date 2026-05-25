@@ -1,0 +1,32 @@
+{
+  "created_at": "2026-05-25T03:14:40Z",
+  "deterministic_invariant": "ack_non_usable",
+  "evidence": "{\"ack_level\":\"partial\",\"benchmark_improvement_claim\":false,\"branch\":\"feat/xmuse-console\",\"committed\":true,\"feature_id\":\"xmuse-console\",\"fixture_scenarios\":[\"healthy\",\"conflict\",\"missing_master_state\",\"damaged_optional\",\"runtime\",\"path_like\"],\"head\":\"f6466902c85c0f6b17f94f47f37a2c3dc37d346f\",\"head_ref\":\"feat/xmuse-console@f6466902c85c0f6b17f94f47f37a2c3dc37d346f\",\"kernel_default_unchanged\":true,\"known_limitations\":[\"Static console shell has lightweight Python file-content tests rather than a brow",
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "feature_id": "xmuse-console",
+  "fingerprint": "ack_non_usable",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "last_seen_at": "2026-05-25T08:34:58Z",
+  "object_type": "error_record",
+  "promotion_suppressed": false,
+  "record_id": "error-a75ca33a08f04bcb",
+  "root_cause_status": "confirmed",
+  "schema_version": "1.0",
+  "source_ref": {
+    "artifact_type": "ack",
+    "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+    "feature_id": "xmuse-console",
+    "path": "xmuse/work/features/xmuse-console/ack.json"
+  },
+  "source_refs": [
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/ack.json"
+    }
+  ],
+  "summary": "ACK level is partial",
+  "verification_evidence": false
+}

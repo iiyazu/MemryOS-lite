@@ -1,0 +1,129 @@
+{
+  "extractor_version": "xmuse-error-knowledge-2026-05-25",
+  "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
+  "object_type": "error_index",
+  "paths": {
+    "error-0343cda365e52653": "xmuse/knowledge/error_records/archive-rag/error-0343cda365e52653.json",
+    "error-08001c22a1c9d494": "xmuse/knowledge/error_records/archive-rag/error-08001c22a1c9d494.json",
+    "error-0937a6db29d8cddd": "xmuse/knowledge/error_records/xmuse-console/error-0937a6db29d8cddd.json",
+    "error-1642c977f22f23c0": "xmuse/knowledge/error_records/archive-rag/error-1642c977f22f23c0.json",
+    "error-190c8b81e65967c4": "xmuse/knowledge/error_records/xmuse-console/error-190c8b81e65967c4.json",
+    "error-20ea51daefe75709": "xmuse/knowledge/error_records/memoryos-redis-cache-probe/error-20ea51daefe75709.json",
+    "error-28d9684ad4d9fef5": "xmuse/knowledge/error_records/archive-rag/error-28d9684ad4d9fef5.json",
+    "error-31be7534a6b01b0d": "xmuse/knowledge/error_records/xmuse-console/error-31be7534a6b01b0d.json",
+    "error-66584b31b8de9b35": "xmuse/knowledge/error_records/archive-rag/error-66584b31b8de9b35.json",
+    "error-7e1661a390f34c92": "xmuse/knowledge/error_records/xmuse-core-state-extraction/error-7e1661a390f34c92.json",
+    "error-7e5c86e04947a5ac": "xmuse/knowledge/error_records/memoryos-redis-cache-probe/error-7e5c86e04947a5ac.json",
+    "error-8316d6d2e881eca1": "xmuse/knowledge/error_records/archive-rag/error-8316d6d2e881eca1.json",
+    "error-8d8f5489aaaa9814": "xmuse/knowledge/error_records/memoryos-redis-cache-probe/error-8d8f5489aaaa9814.json",
+    "error-9805033446c6ec68": "xmuse/knowledge/error_records/archive-rag/error-9805033446c6ec68.json",
+    "error-a1010865fb5357dd": "xmuse/knowledge/error_records/memoryos-redis-cache-probe/error-a1010865fb5357dd.json",
+    "error-a75ca33a08f04bcb": "xmuse/knowledge/error_records/xmuse-console/error-a75ca33a08f04bcb.json",
+    "error-b289fd7c4c1d98bf": "xmuse/knowledge/error_records/benchmark-layer-organization/error-b289fd7c4c1d98bf.json",
+    "error-b3ceb3f76004e5aa": "xmuse/knowledge/error_records/memoryos-redis-cache-probe/error-b3ceb3f76004e5aa.json",
+    "error-dd4f002e33a55bef": "xmuse/knowledge/error_records/xmuse-core-state-extraction/error-dd4f002e33a55bef.json",
+    "error-e54509a553c92a48": "xmuse/knowledge/error_records/benchmark-layer-organization/error-e54509a553c92a48.json",
+    "error-f042b5143f8f867a": "xmuse/knowledge/error_records/archive-rag/error-f042b5143f8f867a.json",
+    "error-fbe5571abaf3cd07": "xmuse/knowledge/error_records/xmuse-core-state-extraction/error-fbe5571abaf3cd07.json"
+  },
+  "schema_version": "1.0",
+  "source_digest": "sha256:007f48df592cd26b3197091d090159aac0c947a9ef800970e452b328da3f9d09",
+  "source_refs": [
+    {
+      "artifact_type": "integrated_tests",
+      "digest": "sha256:d1b708f658e6e30ce76cf67401c5f14b2528c790498dfe7958351bba8347f287",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    },
+    {
+      "artifact_type": "master_review",
+      "digest": "sha256:ce4ab0bf1cffc8a11066d035bb3e3dc8e4b68b59699550fe360b63f34e9f94ee",
+      "feature_id": "memoryos-redis-cache-probe",
+      "path": "xmuse/master/features/memoryos-redis-cache-probe/master_review.json",
+      "source_run_id": "fcccff6052e5073a6ebb98da4bc724ce8244edb2"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:b04c8ac84672381aa779cba062e3b9592ef2669da6e316dac112aee72a40665b",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/ack.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "execute_review",
+      "digest": "sha256:c8b033ba63a0dd4ef612fa4e24e22d18f7315a698e68fe4dc9231fa5f91d7598",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/execute_review.md"
+    },
+    {
+      "artifact_type": "result",
+      "digest": "sha256:7ab53b5f2cc09bfc79ed59e31775d7401ae130b245f0b78a3da1bc09a7339609",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/result.md"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9f9bd781d119e9242e740ac16b6a01210465ae3d1a6f34bdb834cffccb9b177c",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/review_verdict.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "slave_state",
+      "digest": "sha256:1d4ddde7c455c7f365479b85d6928a938ff298cc76edcc2dd93d7011928a529f",
+      "feature_id": "archive-rag",
+      "path": "xmuse/work/features/archive-rag/slave_state.json",
+      "source_run_id": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:dd1e8d85a40dcc36dd41d5bce741a5d0b75d10cb48af8795c62ddc16e4d486bf",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/ack.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:ed7a6abee0ae34e72c3313780aa4e19d6faca194322535549b86e83785b605fc",
+      "feature_id": "benchmark-layer-organization",
+      "path": "xmuse/work/features/benchmark-layer-organization/review_verdict.json"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:894690fa129cf41943b90c5a1989b5798dd98c3b48161eda52f2ddb5bc80358c",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/ack.json"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:9fbf779879086306a872fe370b675403d57525043f69449d0eea95eb4afed18e",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/review_verdict.json"
+    },
+    {
+      "artifact_type": "slave_state",
+      "digest": "sha256:7690196171217569ad8a2738182eb1975511c6919bfce899b4107f374997ece5",
+      "feature_id": "xmuse-console",
+      "path": "xmuse/work/features/xmuse-console/slave_state.json"
+    },
+    {
+      "artifact_type": "ack",
+      "digest": "sha256:281d97130217f00d76de1cc56c6feb3411a0f700fe20bf12862436f71305354f",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/ack.json"
+    },
+    {
+      "artifact_type": "result",
+      "digest": "sha256:bb4fde73c7f9c129e2e7ed0c8fe35ad1709c96fa959beb726371b3754f33a108",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/result.md"
+    },
+    {
+      "artifact_type": "review_verdict",
+      "digest": "sha256:d5552618eca9d822429a5c4d0b19adc860410e5c12bb0d7aeabc519d3ba5d20d",
+      "feature_id": "xmuse-core-state-extraction",
+      "path": "xmuse/work/features/xmuse-core-state-extraction/review_verdict.json"
+    }
+  ],
+  "updated_at": "2026-05-25T08:34:58Z"
+}

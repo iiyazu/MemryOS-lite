@@ -209,6 +209,32 @@ def test_recall_searcher_preserves_packet_neighbors_when_direct_hits_fill_top_k(
     assert neighbor.packet_metadata["packet_session_id"] == "D3"
 
 
+def test_recall_searcher_records_signed_packet_member_offsets():
+    entries = [
+        _recall_entry("d1_prev", "Lena packed the notebooks.", 1),
+        _recall_entry("d1_anchor", "Lena chose the target cafe.", 2),
+        _recall_entry("d1_next", "She ordered jasmine tea.", 3),
+    ]
+    for entry in entries:
+        entry.temporal_scope["benchmark_session_id"] = "D1"
+
+    hits = RecallMemorySearcher().search(
+        entries,
+        "target cafe",
+        top_k=1,
+        neighbors_before=1,
+        neighbors_after=1,
+        preserve_neighbors=True,
+    )
+
+    anchor = next(hit for hit in hits if hit.episode.message_id == "d1_anchor")
+    assert anchor.packet_metadata["packet_member_neighbor_offsets"] == [
+        {"message_id": "d1_prev", "neighbor_offset": -1},
+        {"message_id": "d1_anchor", "neighbor_offset": 0},
+        {"message_id": "d1_next", "neighbor_offset": 1},
+    ]
+
+
 def test_recall_searcher_boosts_assistant_source_queries():
     entries = [
         _recall_entry("msg_1", "I suggest using MemoryOS Lite.", 1, role=Role.ASSISTANT),

@@ -1,0 +1,120 @@
+{
+  "role": "master_god",
+  "version": "1.0",
+  "runner_policy": {
+    "command": "codex exec --yolo",
+    "approval_policy": "never",
+    "launcher": "xmuse/codex_node_launcher.sh",
+    "nodes": [
+      "master",
+      "slave",
+      "plan",
+      "execute",
+      "review"
+    ],
+    "skip_human_confirmation": true,
+    "human_gate_exceptions": [
+      "external merge approval",
+      "destructive out-of-scope cleanup",
+      "deletion of unrelated user work",
+      "gate lowering"
+    ]
+  },
+  "required_inputs": [
+    "xmuse/master_state.json",
+    "xmuse/master_config.json",
+    "xmuse/master_blueprint.md",
+    "xmuse/prompts/master_god_prompt.md",
+    "xmuse/contracts/master_dispatch_template.json",
+    "xmuse/work/features/<feature-id>/slave_state.json"
+  ],
+  "allowed_writes": [
+    "xmuse/master_state.json",
+    "xmuse/master_status.json",
+    "xmuse/master_status.md",
+    "xmuse/master/amendments/<amendment-id>.json",
+    "xmuse/master/features/<feature-id>/rework_request.json",
+    "xmuse/master/features/<feature-id>/master_review.json",
+    "xmuse/master/features/<feature-id>/integrated_tests.json",
+    "xmuse/approvals/<feature-id>/merge_approval_request.json",
+    "xmuse/approvals/<feature-id>/merge_decision.json",
+    "xmuse/approvals/<feature-id>/post_merge_verification.json",
+    "xmuse/reports/latest.json",
+    "xmuse/reports/latest.md"
+  ],
+  "forbidden_actions": [
+    "Do not use legacy root-loop state as active execution state.",
+    "Do not edit slave-owned ack/result/review_verdict artifacts.",
+    "Do not merge without external merge approval.",
+    "Do not accept stale target-base integrated test evidence.",
+    "Do not self-sign external approval.",
+    "Do not enable the kernel by default.",
+    "Do not remove v1 fallback.",
+    "Do not claim benchmark improvement from same-slice repair smoke."
+  ],
+  "required_artifacts": [
+    "master_review",
+    "rework_request",
+    "dynamic_feature_amendment",
+    "integrated_tests",
+    "merge_approval_request",
+    "merge_decision",
+    "post_merge_verification"
+  ],
+  "gates": {
+    "master_review": [
+      "slave ack_level usable",
+      "slave review verdict PASS",
+      "slave result exists",
+      "feature worktree clean",
+      "branch and target_branch recorded"
+    ],
+    "rework_request": [
+      "recorded_by master-god",
+      "names concrete engineering blockers",
+      "sets next feature-local state to repairing, reworking, feature_blocked, or active_repair",
+      "does not use benchmark score targets or pass-rate targets",
+      "does not lower Master review, integrated test, external approval, fresh target, v1 fallback, v3 default, or kernel opt-in gates"
+    ],
+    "dynamic_feature_amendment": [
+      "recorded_by master-god",
+      "amendment artifact lives under xmuse/master/amendments/",
+      "action is one of create_feature, split_feature, combine_features, rename_feature, rescope_feature, reorder_feature, hold_feature, resume_feature, archive_feature, request_bounded_repair, request_rework",
+      "policy_preserved includes v1 fallback, kernel opt-in, no benchmark score targets, and no_gate_lowering",
+      "gate_effect is no_gate_lowering"
+    ],
+    "integrated_tests": [
+      "target HEAD recorded",
+      "feature head recorded",
+      "integration ref recorded",
+      "commands and outcomes recorded",
+      "worktree clean"
+    ],
+    "merge": [
+      "external merge approval present",
+      "approval binds current request and evidence digests",
+      "target HEAD still matches integrated evidence",
+      "merge strategy is no_ff_merge_commit",
+      "post-merge verification is planned"
+    ]
+  },
+  "status_outputs": {
+    "queues": [
+      "planning_queue",
+      "active_lanes",
+      "master_review_queue",
+      "merge_queue",
+      "held",
+      "blocked",
+      "merged"
+    ],
+    "counts": [
+      "total",
+      "reviewable",
+      "mergeable",
+      "held",
+      "blocked",
+      "merged"
+    ]
+  }
+}

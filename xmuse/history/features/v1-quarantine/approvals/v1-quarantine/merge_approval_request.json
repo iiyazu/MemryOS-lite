@@ -1,0 +1,36 @@
+{
+  "approved_range": "920237bd6082b905b847c5738b52f36070d5697a..053281c571361e139eab379e27ecc100024dc698",
+  "base_commit": "920237bd6082b905b847c5738b52f36070d5697a",
+  "constraints": [
+    "external_approval_must_be_created_by_external_to_master_and_slave",
+    "fresh_target_gate_required_before_merge",
+    "same_slice_repair_smoke_not_promotion_evidence",
+    "benchmark_scores_are_diagnostic_only"
+  ],
+  "current_target_head_at_request": "d1d36d55bd2564f177f946f1ec5da209b448dd22",
+  "feature_id": "v1-quarantine",
+  "head_commit": "053281c571361e139eab379e27ecc100024dc698",
+  "integrated_tests_digest": "sha256:e31066acac3100250b262d922ea4ca51e4130955de64f801ce6073e7a7bb79d4",
+  "integrated_tests_ref": "xmuse/master/features/v1-quarantine/integrated_tests.json",
+  "master_review_digest": "sha256:6f724dcdaed7b80ccd4551220e411ef26090753db4c72cf17726c70a8cb368fb",
+  "master_review_ref": "xmuse/master/features/v1-quarantine/master_review.json",
+  "merge_blocked_until": "external_merge_approval_and_fresh_target_gate",
+  "merge_strategy": "no_ff_merge_commit",
+  "policy_snapshot": {
+    "feature_id": "v1-quarantine",
+    "fresh_target_gate_required_before_merge": true,
+    "merge_strategy": "no_ff_merge_commit",
+    "requires_explicit_merge_approval": true,
+    "requires_integrated_tests": true,
+    "target_branch": "feat/phase-2.5-3-retrieval-agent"
+  },
+  "policy_snapshot_digest": "sha256:3318c94def994f99e0cf56b45536285887c5263768fe0445cdc7534d24bd8b51",
+  "policy_snapshot_ref": "xmuse/master_state.json#features/v1-quarantine",
+  "request_digest": "sha256:b2b5d8b037e12ba85597a96b9d54b30fc7608d712f4173994fd079190232096c",
+  "request_id": "v1-quarantine-20260524T125221Z",
+  "requested_at": "2026-05-24T12:52:21Z",
+  "requested_by": "master-god",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "target_head_status": "stale",
+  "version": "1.0"
+}

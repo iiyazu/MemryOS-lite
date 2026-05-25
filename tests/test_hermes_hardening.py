@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def load_hardening_module():
-    module_path = Path(__file__).resolve().parents[1] / ".hermes-loop" / "hermes_hardening.py"
+    module_path = Path(__file__).resolve().parents[1] / "xmuse" / "hermes_hardening.py"
     spec = importlib.util.spec_from_file_location("hermes_hardening", module_path)
     assert spec is not None
     assert spec.loader is not None
@@ -194,7 +194,7 @@ def test_stale_partial_without_final_is_stalled(tmp_path: Path) -> None:
 
 def test_state_ack_gate_blocks_missing_active_phase_artifacts(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-8"
     phase_dir.mkdir(parents=True)
     write_json(loop / "state.json", {"phases": [{"id": "phase-8", "status": "completed"}]})
@@ -209,7 +209,7 @@ def test_state_ack_gate_blocks_missing_active_phase_artifacts(tmp_path: Path) ->
 
 def test_state_ack_gate_requires_usable_ack_and_passing_review(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-8"
     phase_dir.mkdir(parents=True)
     write_json(loop / "state.json", {"phases": [{"id": "phase-8", "status": "completed"}]})
@@ -231,7 +231,7 @@ def test_state_ack_gate_requires_usable_ack_and_passing_review(tmp_path: Path) -
 
 def test_review_eval_decision_blocks_missing_decision_for_passing_review(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     write_json(phase_dir / "review_verdict.json", {"verdict": "PASS", "decision": "advance"})
@@ -244,7 +244,7 @@ def test_review_eval_decision_blocks_missing_decision_for_passing_review(tmp_pat
 
 def test_review_eval_decision_allows_documented_control_plane_skip(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     write_json(
@@ -274,7 +274,7 @@ def test_review_eval_decision_blocks_advance_when_promotion_gate_not_satisfied(
     tmp_path: Path,
 ) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     write_json(
@@ -304,7 +304,7 @@ def test_review_eval_decision_blocks_milestone_without_both_public_benchmarks(
     tmp_path: Path,
 ) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     write_json(
@@ -332,7 +332,7 @@ def test_review_eval_decision_blocks_milestone_without_both_public_benchmarks(
 
 def test_execute_goal_contract_blocks_missing_goal(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     (loop / "work" / "phase-14").mkdir(parents=True)
 
     result = hardening.check_execute_goal_contract(loop, "phase-14")
@@ -343,7 +343,7 @@ def test_execute_goal_contract_blocks_missing_goal(tmp_path: Path) -> None:
 
 def test_execute_goal_contract_accepts_phase_local_goal(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     (phase_dir / "execute_goal.md").write_text(
@@ -371,7 +371,7 @@ def test_execute_goal_contract_accepts_phase_local_goal(tmp_path: Path) -> None:
 
 def test_execute_goal_contract_rejects_benchmark_score_targets(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     (phase_dir / "execute_goal.md").write_text(
@@ -399,7 +399,7 @@ def test_execute_goal_contract_rejects_benchmark_score_targets(tmp_path: Path) -
 
 def test_run_phase_hardening_reports_execute_goal_gate(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     (loop / "work" / "phase-14").mkdir(parents=True)
 
     result = hardening.run_phase_hardening(
@@ -414,7 +414,7 @@ def test_run_phase_hardening_reports_execute_goal_gate(tmp_path: Path) -> None:
 
 def test_execute_bootstrap_gate_blocks_execute_without_dispatch_plan(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-12"
     phase_dir.mkdir(parents=True)
     (phase_dir / "context_bundle.md").write_text("# phase: phase-12\n", encoding="utf-8")
@@ -437,7 +437,7 @@ def test_execute_bootstrap_gate_blocks_execute_without_dispatch_plan(tmp_path: P
 
 def test_execute_bootstrap_gate_allows_planned_execute(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-12"
     phase_dir.mkdir(parents=True)
     (phase_dir / "context_bundle.md").write_text("# phase: phase-12\n", encoding="utf-8")
@@ -459,7 +459,7 @@ def test_execute_bootstrap_gate_allows_planned_execute(tmp_path: Path) -> None:
 
 def test_dispatch_ready_gate_promotes_when_plan_final_exists(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     (phase_dir / "context_bundle.md").write_text("# phase: phase-14\n", encoding="utf-8")
@@ -484,7 +484,7 @@ def test_dispatch_ready_gate_promotes_when_plan_final_exists(tmp_path: Path) -> 
 
 def test_dispatch_ready_gate_stays_in_dispatch_when_plan_final_missing(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     (phase_dir / "context_bundle.md").write_text("# phase: phase-14\n", encoding="utf-8")
@@ -506,7 +506,7 @@ def test_dispatch_ready_gate_stays_in_dispatch_when_plan_final_missing(tmp_path:
 
 def test_promote_dispatch_to_execute_updates_state_and_status_atomically(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     (phase_dir / "context_bundle.md").write_text("# phase: phase-14\n", encoding="utf-8")
@@ -536,7 +536,7 @@ def test_promote_dispatch_to_execute_updates_state_and_status_atomically(tmp_pat
 
 def test_active_job_status_detects_stale_output_for_live_pid(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     log_path = loop / "codex_output.log"
     log_path.write_text("started\n", encoding="utf-8")
@@ -545,7 +545,7 @@ def test_active_job_status_detects_stale_output_for_live_pid(tmp_path: Path) -> 
         loop,
         pid=12345,
         phase_id="phase-14",
-        prompt_file=".hermes-loop/god_loop_prompt.md",
+        prompt_file="xmuse/god_loop_prompt.md",
         attempt=1,
         output_path="codex_output.log",
         idle_timeout_seconds=60,
@@ -566,7 +566,7 @@ def test_active_job_status_detects_stale_output_for_live_pid(tmp_path: Path) -> 
 
 def test_active_job_status_reports_running_when_output_is_fresh(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     log_path = loop / "codex_output.log"
     log_path.write_text("progress\n", encoding="utf-8")
@@ -575,7 +575,7 @@ def test_active_job_status_reports_running_when_output_is_fresh(tmp_path: Path) 
         loop,
         pid=12345,
         phase_id="phase-14",
-        prompt_file=".hermes-loop/god_loop_prompt.md",
+        prompt_file="xmuse/god_loop_prompt.md",
         attempt=1,
         output_path="codex_output.log",
         idle_timeout_seconds=60,
@@ -594,14 +594,14 @@ def test_active_job_status_reports_running_when_output_is_fresh(tmp_path: Path) 
 
 def test_complete_active_job_records_exit_code_without_losing_job_context(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     (loop / "codex_output.log").write_text("done\n", encoding="utf-8")
     hardening.write_active_job(
         loop,
         pid=12345,
         phase_id="phase-14",
-        prompt_file=".hermes-loop/god_loop_prompt.md",
+        prompt_file="xmuse/god_loop_prompt.md",
         attempt=1,
         output_path="codex_output.log",
         idle_timeout_seconds=60,
@@ -625,7 +625,7 @@ def test_complete_active_job_records_exit_code_without_losing_job_context(tmp_pa
 
 def test_execute_completion_gate_waits_until_result_exists(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     write_json(
@@ -645,7 +645,7 @@ def test_execute_completion_gate_waits_until_result_exists(tmp_path: Path) -> No
 
 def test_promote_execute_to_self_review_when_result_is_phase_bound(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     (phase_dir / "result.md").write_text("# phase: phase-14\n\nImplemented.\n", encoding="utf-8")
@@ -672,7 +672,7 @@ def test_promote_execute_to_self_review_when_result_is_phase_bound(tmp_path: Pat
 
 def test_execute_completion_gate_blocks_stale_result_phase_binding(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     (phase_dir / "result.md").write_text("# phase: phase-13\n\nOld result.\n", encoding="utf-8")
@@ -693,7 +693,7 @@ def test_execute_completion_gate_blocks_stale_result_phase_binding(tmp_path: Pat
 
 def test_run_phase_hardening_write_promotes_completed_execute(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     (phase_dir / "result.md").write_text("# phase: phase-14\n\nImplemented.\n", encoding="utf-8")
@@ -719,7 +719,7 @@ def test_run_phase_hardening_write_promotes_completed_execute(tmp_path: Path) ->
 
 
 def test_launcher_uses_stable_lockfile_without_unlinking() -> None:
-    launcher = (Path(__file__).resolve().parents[1] / ".hermes-loop" / "god_launcher.sh").read_text(
+    launcher = (Path(__file__).resolve().parents[1] / "xmuse" / "god_launcher.sh").read_text(
         encoding="utf-8"
     )
 
@@ -728,7 +728,7 @@ def test_launcher_uses_stable_lockfile_without_unlinking() -> None:
 
 
 def test_launcher_records_and_completes_active_codex_job() -> None:
-    launcher = (Path(__file__).resolve().parents[1] / ".hermes-loop" / "god_launcher.sh").read_text(
+    launcher = (Path(__file__).resolve().parents[1] / "xmuse" / "god_launcher.sh").read_text(
         encoding="utf-8"
     )
 
@@ -739,7 +739,7 @@ def test_launcher_records_and_completes_active_codex_job() -> None:
 
 
 def test_launcher_heartbeat_exits_with_launcher_parent() -> None:
-    launcher = (Path(__file__).resolve().parents[1] / ".hermes-loop" / "god_launcher.sh").read_text(
+    launcher = (Path(__file__).resolve().parents[1] / "xmuse" / "god_launcher.sh").read_text(
         encoding="utf-8"
     )
 
@@ -751,7 +751,7 @@ def test_launcher_heartbeat_exits_with_launcher_parent() -> None:
 
 
 def test_launcher_marks_active_job_failed_on_premature_exit() -> None:
-    launcher = (Path(__file__).resolve().parents[1] / ".hermes-loop" / "god_launcher.sh").read_text(
+    launcher = (Path(__file__).resolve().parents[1] / "xmuse" / "god_launcher.sh").read_text(
         encoding="utf-8"
     )
 
@@ -763,7 +763,7 @@ def test_launcher_marks_active_job_failed_on_premature_exit() -> None:
 
 
 def test_hermes_gitignore_covers_runtime_control_artifacts() -> None:
-    gitignore = (Path(__file__).resolve().parents[1] / ".hermes-loop" / ".gitignore").read_text(
+    gitignore = (Path(__file__).resolve().parents[1] / "xmuse" / ".gitignore").read_text(
         encoding="utf-8"
     )
 
@@ -791,7 +791,7 @@ def test_stale_artifact_index_marks_files_without_current_context_bundle(tmp_pat
 
 def test_config_blueprint_consistency_reports_missing_phase_heading(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     write_json(
         loop / "config.json",
@@ -816,7 +816,7 @@ def test_config_blueprint_consistency_reports_missing_phase_heading(tmp_path: Pa
 
 def test_state_phase_order_allows_documented_superseded_prior_phase(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     write_json(
         loop / "state.json",
         {
@@ -843,7 +843,7 @@ def test_state_phase_order_allows_documented_superseded_prior_phase(tmp_path: Pa
 
 def test_state_phase_order_blocks_undocumented_in_progress_prior_phase(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     write_json(
         loop / "state.json",
         {
@@ -870,7 +870,7 @@ def test_state_phase_order_blocks_undocumented_in_progress_prior_phase(tmp_path:
 
 def test_run_phase_hardening_uses_requested_phase_ack_and_stale_checks(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     phase_dir = loop / "work" / "phase-14"
     phase_dir.mkdir(parents=True)
     write_json(
@@ -918,7 +918,7 @@ def test_shard_resume_plan_uses_unique_run_ids_and_llm_flags() -> None:
 
 def test_master_slave_summary_allows_missing_registry(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
 
     summary = hardening.summarize_master_slave_control(loop, project_root=tmp_path)
@@ -937,7 +937,7 @@ def test_master_slave_summary_allows_missing_registry(tmp_path: Path) -> None:
 
 def test_master_state_supersedes_legacy_feature_lanes(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     write_json(
         loop / "feature_lanes.json",
@@ -950,17 +950,17 @@ def test_master_state_supersedes_legacy_feature_lanes(tmp_path: Path) -> None:
             "mode": "master_control",
             "activation_state": "master_active",
             "active": True,
-            "history_baseline": ".hermes-loop/history/main_loop_phase0_18.json",
-            "legacy_root_loop": ".hermes-loop/legacy/root-loop/",
-            "master_blueprint": ".hermes-loop/master_blueprint.md",
-            "master_config": ".hermes-loop/master_config.json",
+            "history_baseline": "xmuse/history/main_loop_phase0_18.json",
+            "legacy_root_loop": "xmuse/legacy/root-loop/",
+            "master_blueprint": "xmuse/master_blueprint.md",
+            "master_config": "xmuse/master_config.json",
             "prompts": {
-                "master": ".hermes-loop/prompts/master_god_prompt.md",
-                "slave": ".hermes-loop/prompts/slave_god_prompt.md",
+                "master": "xmuse/prompts/master_god_prompt.md",
+                "slave": "xmuse/prompts/slave_god_prompt.md",
             },
             "dispatch_contracts": {
-                "master": ".hermes-loop/contracts/master_dispatch_template.json",
-                "slave": ".hermes-loop/contracts/slave_dispatch_template.json",
+                "master": "xmuse/contracts/master_dispatch_template.json",
+                "slave": "xmuse/contracts/slave_dispatch_template.json",
             },
             "master_policy": {},
             "features": [],
@@ -982,7 +982,7 @@ def test_master_state_supersedes_legacy_feature_lanes(tmp_path: Path) -> None:
 
     summary = hardening.summarize_master_slave_control(loop)
 
-    assert summary["source"] == ".hermes-loop/master_state.json"
+    assert summary["source"] == "xmuse/master_state.json"
     assert summary["counts"]["total"] == 0
 
 
@@ -990,7 +990,7 @@ def test_master_slave_summary_queues_ready_feature_for_master_review_only(
     tmp_path: Path,
 ) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     feature_dir = loop / "work" / "features" / "archive-rag"
     worktree = tmp_path / "memoryOS-archive-rag"
     feature_dir.mkdir(parents=True)
@@ -1049,7 +1049,7 @@ def test_master_slave_summary_blocks_merge_without_integrated_tests(
     tmp_path: Path,
 ) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     feature_dir = loop / "work" / "features" / "archive-rag"
     worktree = tmp_path / "memoryOS-archive-rag"
     feature_dir.mkdir(parents=True)
@@ -1098,7 +1098,7 @@ def test_master_slave_summary_requires_integrated_tests_for_all_merge_requests(
     tmp_path: Path,
 ) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     feature_dir = loop / "work" / "features" / "archive-rag"
     worktree = tmp_path / "memoryOS-archive-rag"
     feature_dir.mkdir(parents=True)
@@ -1143,7 +1143,7 @@ def test_master_slave_summary_blocks_merge_status_ahead_of_feature_state(
     tmp_path: Path,
 ) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     feature_dir = loop / "work" / "features" / "archive-rag"
     feature_dir.mkdir(parents=True)
     write_json(
@@ -1181,7 +1181,7 @@ def test_master_slave_summary_blocks_merge_status_ahead_of_feature_state(
 
 def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     feature_dir = loop / "work" / "features" / "archive-rag"
     worktree = tmp_path / "memoryOS-archive-rag"
     feature_dir.mkdir(parents=True)
@@ -1240,19 +1240,19 @@ def test_master_slave_summary_queues_ready_feature_for_master_merge(tmp_path: Pa
             "strategy": "git_worktree",
         }
     ]
-    assert summary["path"] == ".hermes-loop/feature_lanes.json"
+    assert summary["path"] == "xmuse/feature_lanes.json"
     feature = summary["features"][0]
     assert feature["artifact_gate"]["paths"] == {
-        "ack": ".hermes-loop/work/features/archive-rag/ack.json",
-        "review_verdict": ".hermes-loop/work/features/archive-rag/review_verdict.json",
-        "result": ".hermes-loop/work/features/archive-rag/result.md",
-        "integrated_tests": ".hermes-loop/work/features/archive-rag/integrated_tests.json",
+        "ack": "xmuse/work/features/archive-rag/ack.json",
+        "review_verdict": "xmuse/work/features/archive-rag/review_verdict.json",
+        "result": "xmuse/work/features/archive-rag/result.md",
+        "integrated_tests": "xmuse/work/features/archive-rag/integrated_tests.json",
     }
 
 
 def test_master_slave_summary_blocks_ready_feature_without_ack(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     feature_dir = loop / "work" / "features" / "archive-rag"
     worktree = tmp_path / "memoryOS-archive-rag"
     feature_dir.mkdir(parents=True)
@@ -1293,7 +1293,7 @@ def test_master_slave_summary_blocks_ready_feature_without_ack(tmp_path: Path) -
 
 def test_master_slave_status_writer_emits_json_and_markdown(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
     summary = hardening.summarize_master_slave_control(loop, project_root=tmp_path)
 

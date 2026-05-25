@@ -29,6 +29,7 @@ def build_case_diagnostics(
     answer_evidence: list[dict[str, object]] | None = None,
     baseline_verdict: str | None = None,
     movement_baseline_source: str | None = None,
+    baseline_source_metrics: dict[str, bool | None] | None = None,
 ) -> dict[str, object]:
     expected_ids = _dedupe(expected_source_ids)
     retrieved_ids = _dedupe(
@@ -119,6 +120,7 @@ def build_case_diagnostics(
         "movement_status": movement,
         "baseline_verdict": baseline_verdict,
         "movement_baseline_source": movement_baseline_source,
+        "baseline_source_metrics": _bool_mapping(baseline_source_metrics),
         "kernel_trace_present": bool(kernel_trace_events),
         "archival_eligibility": archival_eligibility,
         "component_drop_counts": _v3_metadata_mapping(v3_context, "component_drop_counts"),
@@ -390,6 +392,12 @@ def _source_ids_from_source_refs(value: object) -> list[str]:
         if isinstance(source_id, str):
             ids.append(source_id)
     return ids
+
+
+def _bool_mapping(value: dict[str, bool | None] | None) -> dict[str, bool]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: item for key, item in value.items() if isinstance(item, bool)}
 
 
 def _dedupe(values: Iterable[str]) -> list[str]:

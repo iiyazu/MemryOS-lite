@@ -1,0 +1,8 @@
+{
+  "allowed_target_branches": [
+    "main",
+    "feat/phase-2.5-3-retrieval-agent"
+  ],
+  "merge_strategy": "no_ff_merge_commit",
+  "version": "1.0"
+}
