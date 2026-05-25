@@ -3,16 +3,18 @@
   "ack_level": "usable",
   "branch": "feat/xmuse-core-state-extraction",
   "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-core-state-extraction",
-  "head_ref": "5f69b712a3adb22e9840dc211d1ff200c7f68ecb",
+  "head_ref": "HEAD",
+  "implementation_commit": "655c628ecdcd8e8487caaab102bf39934aaf0773",
   "working_tree_changes": true,
+  "worktree_clean_at_ack": true,
   "verification_commands": [
     {
       "command": "uv run pytest tests/test_xmuse_core_*.py -q",
-      "result": "12 passed in 0.06s"
+      "result": "12 passed in 0.07s"
     },
     {
       "command": "uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py -q",
-      "result": "117 passed in 0.48s"
+      "result": "117 passed in 0.60s"
     },
     {
       "command": "uv run ruff check src/xmuse_core xmuse/hermes_hardening.py xmuse/hermes_reporter.py tests/test_hermes_*.py tests/test_xmuse_core_*.py",
@@ -32,7 +34,7 @@
     },
     {
       "command": "no-start reporter import smoke",
-      "result": "report source xmuse/master_state.json"
+      "result": "report source xmuse/master_state.json in a temporary loop root; no launcher existed or started"
     },
     {
       "command": "python3 xmuse/hermes_hardening.py --help",

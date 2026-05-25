@@ -4,6 +4,7 @@ Feature: `xmuse-core-state-extraction`
 Branch: `feat/xmuse-core-state-extraction`
 Worktree: `/home/iiyatu/projects/python/memoryOS-xmuse-core-state-extraction`
 Head before feature work: `5f69b712a3adb22e9840dc211d1ff200c7f68ecb`
+Implementation commit: `655c628ecdcd8e8487caaab102bf39934aaf0773`
 
 ## Summary
 
@@ -31,14 +32,19 @@ Implemented the approved control-plane migration slice by adding `src/xmuse_core
 
 ## Verification Evidence
 
-- `uv run pytest tests/test_xmuse_core_*.py -q` -> `12 passed in 0.06s`
-- `uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py -q` -> `117 passed in 0.48s`
+- `uv run pytest tests/test_xmuse_core_*.py -q` -> `12 passed in 0.07s`
+- `uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py -q` -> `117 passed in 0.60s`
 - `uv run ruff check src/xmuse_core xmuse/hermes_hardening.py xmuse/hermes_reporter.py tests/test_hermes_*.py tests/test_xmuse_core_*.py` -> `All checks passed!`
 - `uv run mypy src/xmuse_core` -> `Success: no issues found in 6 source files`
 - `python3 -m py_compile $(find src/xmuse_core -name '*.py' -print | sort) xmuse/hermes_hardening.py xmuse/hermes_reporter.py` -> pass
 - `bash -n xmuse/god_launcher.sh` -> pass
-- no-start reporter import smoke -> `xmuse/master_state.json`
+- no-start reporter import smoke in a temporary loop root -> `xmuse/master_state.json`; no launcher existed or started
 - `python3 xmuse/hermes_hardening.py --help` -> imports cleanly and prints CLI usage
+
+Fresh Slave-God reverification on `2026-05-25T05:20:20Z` confirmed the focused
+core and Hermes compatibility gates above. `ack.json` now records `HEAD` as the
+head ref and records the implementation commit separately, avoiding the previous
+pre-feature commit reference.
 
 ## Full Regression Note
 

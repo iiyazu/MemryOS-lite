@@ -1,7 +1,7 @@
 # xmuse-core-state-extraction Execute Review
 
 Feature: `xmuse-core-state-extraction`
-Recorded: `2026-05-25T04:16:33Z`
+Recorded: `2026-05-25T05:20:20Z`
 
 ## Review Checklist
 
@@ -23,10 +23,14 @@ Recorded: `2026-05-25T04:16:33Z`
 
 ## Evidence
 
-- Direct core tests: `12 passed`.
-- Hermes compatibility slice: `117 passed`.
+- Direct core tests: `12 passed` (`uv run pytest tests/test_xmuse_core_*.py -q`).
+- Hermes compatibility slice: `117 passed`
+  (`uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py -q`).
 - Ruff/mypy/static compile/bash syntax/no-start smoke/raw hardening import: pass.
+  The reporter smoke used a temporary loop root and did not start a launcher.
 - Full regression attempt: `6 failed, 514 passed, 1 warning in 2919.03s`, with failures caused by unrelated FastEmbed/Hugging Face `httpx.ConnectTimeout` paths in MemoryOS benchmark tests outside this feature boundary.
+- ACK artifact head reference corrected to `HEAD`; implementation commit recorded
+  separately as `655c628ecdcd8e8487caaab102bf39934aaf0773`.
 
 ## Remaining Master-Level Gates
 

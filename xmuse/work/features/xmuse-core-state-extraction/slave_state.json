@@ -24,7 +24,7 @@
   },
   "feature_class": "control_plane_migration",
   "feature_id": "xmuse-core-state-extraction",
-  "last_updated": "2026-05-25T04:16:33Z",
+  "last_updated": "2026-05-25T05:20:20Z",
   "migration_stage": "migration_validated",
   "mode": "feature_local_single_god",
   "runner": {
@@ -35,6 +35,6 @@
     "type": "local_codex"
   },
   "state": "ready_for_master_review",
-  "summary": "State/status core extraction implemented in src/xmuse_core with hermes_hardening compatibility shim and feature-local verification artifacts.",
+  "summary": "State/status core extraction implemented in src/xmuse_core with hermes_hardening compatibility shim, fresh focused verification, and corrected ACK head reference.",
   "version": "1.0"
 }
