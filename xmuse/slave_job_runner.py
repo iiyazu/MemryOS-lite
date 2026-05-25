@@ -94,15 +94,20 @@ def _artifact_ref(job: dict[str, Any], feature_id: str, name: str) -> str:
     artifacts = job.get("artifacts", {})
     if isinstance(artifacts, dict) and isinstance(artifacts.get(name), str):
         return artifacts[name]
+    if name == "result":
+        return f"xmuse/work/features/{feature_id}/result.md"
     return f"xmuse/work/features/{feature_id}/{name}.json"
 
 
 def _job_artifacts_blocked(loop: Path, feature_id: str, job: dict[str, Any]) -> bool:
     ack = _optional_json(_loop_path(loop, _artifact_ref(job, feature_id, "ack")))
     review = _optional_json(_loop_path(loop, _artifact_ref(job, feature_id, "review_verdict")))
-    if ack and str(ack.get("ack_level", "")).lower() != "usable":
+    result = _loop_path(loop, _artifact_ref(job, feature_id, "result"))
+    if not ack or str(ack.get("ack_level", "")).lower() != "usable":
         return True
-    if review and str(review.get("verdict", "")).lower() != "pass":
+    if not review or str(review.get("verdict", "")).lower() != "pass":
+        return True
+    if not result.is_file():
         return True
     return False
 
@@ -144,6 +149,50 @@ def _mark_runtime(job_path: Path, runtime: dict[str, Any]) -> None:
     _write_json(job_path, job)
 
 
+def _mark_feature_state(
+    loop: Path,
+    feature_id: str,
+    *,
+    state: str,
+    dispatch_status: str,
+    reason: str,
+) -> None:
+    master_state_path = loop / "master_state.json"
+    try:
+        master_state = _read_json(master_state_path)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        master_state = {}
+    slave_state_ref = None
+    features = master_state.get("features", [])
+    if isinstance(features, list):
+        for feature in features:
+            if not isinstance(feature, dict) or feature.get("id") != feature_id:
+                continue
+            current_state = str(feature.get("state") or "")
+            if state == "active" and current_state not in {"planned", "planning", "active"}:
+                break
+            feature["state"] = state
+            slave_god = feature.setdefault("slave_god", {})
+            if isinstance(slave_god, dict):
+                slave_god["dispatch_status"] = dispatch_status
+                slave_god["last_dispatch_reason"] = reason
+            slave_state_ref = feature.get("slave_state_path")
+            _write_json(master_state_path, master_state)
+            break
+
+    if not isinstance(slave_state_ref, str):
+        slave_state_ref = f"xmuse/work/features/{feature_id}/slave_state.json"
+    slave_state_path = _loop_path(loop, slave_state_ref)
+    try:
+        slave_state = _read_json(slave_state_path)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        return
+    slave_state["state"] = state
+    slave_state["last_updated"] = _now()
+    slave_state["last_dispatch_reason"] = reason
+    _write_json(slave_state_path, slave_state)
+
+
 def run_one(loop: Path, job_ref: str) -> int:
     job_path = _loop_path(loop, job_ref)
     job = _read_json(job_path)
@@ -172,6 +221,13 @@ def run_one(loop: Path, job_ref: str) -> int:
             "runner": "xmuse/slave_job_runner.py",
         },
     )
+    _mark_feature_state(
+        loop,
+        feature_id,
+        state="active",
+        dispatch_status="running",
+        reason="slave job runner started feature job",
+    )
     completed = subprocess.run(command, cwd=PROJECT, check=False)
     status = "completed" if completed.returncode == 0 else "failed"
     reason = None
@@ -181,6 +237,13 @@ def run_one(loop: Path, job_ref: str) -> int:
     elif completed.returncode == 0 and _job_artifacts_blocked(loop, feature_id, job):
         status = "artifact_blocked"
         reason = "feature-local artifacts are not usable"
+        _mark_feature_state(
+            loop,
+            feature_id,
+            state="repairing",
+            dispatch_status="rework_required",
+            reason=reason,
+        )
     runtime = {
         "status": status,
         "pid": os.getpid(),
@@ -215,6 +278,14 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
 
         job_path = _loop_path(loop, job_ref)
         if _job_is_running(job_path):
+            if not dry_run:
+                _mark_feature_state(
+                    loop,
+                    feature_id,
+                    state="active",
+                    dispatch_status="running",
+                    reason="slave job is already running",
+                )
             skipped.append({"feature_id": feature_id, "reason": "job already running"})
             continue
         runtime_status = _runtime_status(job_path)
@@ -229,6 +300,13 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
             started.append(feature_id)
             continue
 
+        _mark_feature_state(
+            loop,
+            feature_id,
+            state="active",
+            dispatch_status="running",
+            reason="slave job runner dispatched feature job",
+        )
         stdout_path, stderr_path = _job_log_paths(loop, feature_id)
         stdout_path.parent.mkdir(parents=True, exist_ok=True)
         with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
