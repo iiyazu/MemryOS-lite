@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -110,6 +111,29 @@ def _job_artifacts_blocked(loop: Path, feature_id: str, job: dict[str, Any]) -> 
     if not result.is_file():
         return True
     return False
+
+
+def _sync_feature_artifacts_from_worktree(
+    loop: Path, feature_id: str, job: dict[str, Any]
+) -> list[str]:
+    worktree = job.get("worktree")
+    if not isinstance(worktree, str) or not worktree:
+        return []
+    source = Path(worktree) / loop.name / "work" / "features" / feature_id
+    destination = loop / "work" / "features" / feature_id
+    if not source.is_dir():
+        return []
+    if source.resolve() == destination.resolve():
+        return []
+
+    copied: list[str] = []
+    for source_path in sorted(path for path in source.rglob("*") if path.is_file()):
+        relative = source_path.relative_to(source)
+        destination_path = destination / relative
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, destination_path)
+        copied.append(str(destination_path))
+    return copied
 
 
 def _job_log_paths(loop: Path, feature_id: str) -> tuple[Path, Path]:
@@ -236,6 +260,7 @@ def run_one(loop: Path, job_ref: str) -> int:
         reason="slave job runner started feature job",
     )
     completed = subprocess.run(command, cwd=PROJECT, check=False)
+    _sync_feature_artifacts_from_worktree(loop, feature_id, job)
     status = "completed" if completed.returncode == 0 else "failed"
     reason = None
     if completed.returncode != 0 and _job_has_api_transient_error(loop, feature_id):
@@ -310,6 +335,8 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
 
         job_path = _loop_path(loop, job_ref)
         if _job_is_running(job_path):
+            job_payload = _read_json(job_path)
+            _sync_feature_artifacts_from_worktree(loop, feature_id, job_payload)
             if not dry_run:
                 _mark_feature_state(
                     loop,
@@ -321,6 +348,8 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
             skipped.append({"feature_id": feature_id, "reason": "job already running"})
             continue
         runtime_status = _runtime_status(job_path)
+        if job_path.exists():
+            _sync_feature_artifacts_from_worktree(loop, feature_id, _read_json(job_path))
         if runtime_status == "completed" and _job_artifacts_blocked(loop, feature_id, job):
             runtime_status = "artifact_blocked"
         if runtime_status == "failed" and _job_has_api_transient_error(loop, feature_id):

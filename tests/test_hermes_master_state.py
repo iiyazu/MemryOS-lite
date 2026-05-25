@@ -1696,6 +1696,58 @@ def test_slave_job_runner_marks_running_planned_feature_active(tmp_path):
     assert slave_state["state"] == "active"
 
 
+def test_slave_job_runner_mirrors_running_worktree_feature_artifacts(tmp_path):
+    module_path = PROJECT / "xmuse" / "slave_job_runner.py"
+    spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)
+    runner = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(runner)
+    loop = tmp_path / "xmuse"
+    worktree = tmp_path / "memoryOS-feature"
+    source = worktree / "xmuse" / "work" / "features" / "running-feature"
+    write_json(source / "slave_state.json", {"feature_id": "running-feature", "state": "active"})
+    (source / "context_bundle.md").write_text("context\n", encoding="utf-8")
+    (source / "plan_final.md").write_text("plan\n", encoding="utf-8")
+    state = base_master_state()
+    feature = _master_feature_from_test("running-feature")
+    feature["state"] = "active"
+    feature["merge"]["status"] = "not_requested"
+    feature["worktree"] = str(worktree)
+    feature["slave_state_path"] = "xmuse/work/features/running-feature/slave_state.json"
+    state["features"] = [feature]
+    write_json(loop / "master_state.json", state)
+    write_json(
+        loop / "dispatch" / "multi_lane_dispatch.json",
+        {
+            "jobs": [
+                {
+                    "feature_id": "running-feature",
+                    "status": "queued",
+                    "job_ref": "xmuse/jobs/running-feature.json",
+                }
+            ]
+        },
+    )
+    write_json(
+        loop / "jobs" / "running-feature.json",
+        {
+            "feature_id": "running-feature",
+            "worktree": str(worktree),
+            "runtime": {"status": "running", "pid": str(os.getpid())},
+        },
+    )
+
+    result = runner.start_queued_jobs(loop)
+
+    mirrored = loop / "work" / "features" / "running-feature"
+    assert result["started"] == []
+    assert result["skipped"] == [
+        {"feature_id": "running-feature", "reason": "job already running"}
+    ]
+    assert (mirrored / "context_bundle.md").read_text(encoding="utf-8") == "context\n"
+    assert (mirrored / "plan_final.md").read_text(encoding="utf-8") == "plan\n"
+
+
 def test_slave_job_runner_does_not_restart_completed_job(tmp_path):
     module_path = PROJECT / "xmuse" / "slave_job_runner.py"
     spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)
@@ -1802,6 +1854,75 @@ def test_slave_job_runner_reconciles_existing_completed_job_to_master_review(tmp
     assert feature["state"] == "ready_for_master_review"
     assert feature["slave_god"]["dispatch_status"] == "ready_for_master_review"
     assert slave_state["state"] == "ready_for_master_review"
+
+
+def test_slave_job_runner_ingests_worktree_artifacts_before_completion_gate(tmp_path):
+    module_path = PROJECT / "xmuse" / "slave_job_runner.py"
+    spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)
+    runner = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(runner)
+    loop = tmp_path / "xmuse"
+    worktree = tmp_path / "memoryOS-old-completed"
+    source = worktree / "xmuse" / "work" / "features" / "old-completed-feature"
+    write_json(
+        source / "slave_state.json",
+        {"feature_id": "old-completed-feature", "state": "ready_for_master_review"},
+    )
+    write_json(
+        source / "ack.json",
+        {"feature_id": "old-completed-feature", "ack_level": "usable"},
+    )
+    write_json(
+        source / "review_verdict.json",
+        {"feature_id": "old-completed-feature", "verdict": "PASS"},
+    )
+    (source / "result.md").write_text("result\n", encoding="utf-8")
+    (source / "plan_final.md").write_text("plan\n", encoding="utf-8")
+    state = base_master_state()
+    feature = _master_feature_from_test("old-completed-feature")
+    feature["state"] = "active"
+    feature["merge"]["status"] = "not_requested"
+    feature["worktree"] = str(worktree)
+    feature["slave_state_path"] = "xmuse/work/features/old-completed-feature/slave_state.json"
+    state["features"] = [feature]
+    write_json(loop / "master_state.json", state)
+    write_json(
+        loop / "dispatch" / "multi_lane_dispatch.json",
+        {
+            "jobs": [
+                {
+                    "feature_id": "old-completed-feature",
+                    "status": "queued",
+                    "job_ref": "xmuse/jobs/old-completed-feature.json",
+                }
+            ]
+        },
+    )
+    write_json(
+        loop / "jobs" / "old-completed-feature.json",
+        {
+            "feature_id": "old-completed-feature",
+            "worktree": str(worktree),
+            "runtime": {"status": "completed", "pid": "12345", "exit_code": 0},
+        },
+    )
+
+    result = runner.start_queued_jobs(loop)
+
+    mirrored = loop / "work" / "features" / "old-completed-feature"
+    master_state = json.loads((loop / "master_state.json").read_text())
+    feature = master_state["features"][0]
+    assert result["started"] == []
+    assert result["skipped"] == [
+        {"feature_id": "old-completed-feature", "reason": "job already completed"}
+    ]
+    assert (mirrored / "ack.json").exists()
+    assert (mirrored / "review_verdict.json").exists()
+    assert (mirrored / "result.md").exists()
+    assert (mirrored / "plan_final.md").read_text(encoding="utf-8") == "plan\n"
+    assert feature["state"] == "ready_for_master_review"
+    assert feature["slave_god"]["dispatch_status"] == "ready_for_master_review"
 
 
 def test_slave_job_runner_marks_usable_completed_feature_ready_for_master_review(tmp_path):
