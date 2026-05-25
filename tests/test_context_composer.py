@@ -16,7 +16,7 @@ from memoryos_lite.retrieval.archival_vector import (
 from memoryos_lite.retrieval.providers.qdrant_archival import (
     QdrantArchivalPassageStore,
 )
-from memoryos_lite.schemas import Message, MessageCreate, Role
+from memoryos_lite.schemas import ContextEvidence, ContextPackage, Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
@@ -164,27 +164,70 @@ def test_v3_composer_builds_layered_context_package(tmp_path):
 
 
 def test_v3_composer_preserves_cache_diagnostics_metadata(tmp_path):
-    settings = Settings(
-        data_dir=tmp_path / ".memoryos",
-        memoryos_memory_arch="v3",
-        memoryos_recall_pipeline="v2",
-        memoryos_recall_cache_enabled=True,
-        memoryos_redis_url="redis://localhost:6379/0",
-    )
-    service = MemoryOSService(store=create_store(settings), settings=settings)
-    session = service.create_session("cache diagnostics")
-    service.ingest(
-        session.id,
-        MessageCreate(role=Role.USER, content="Bob moved to Shanghai."),
+    class FakeRecallPipeline:
+        def build_context(
+            self,
+            session_id: str,
+            task: str,
+            budget: int,
+            retrieval_query: str | None = None,
+        ) -> ContextPackage:
+            package = ContextPackage(session_id=session_id, task=task, task_tokens=4)
+            package.retrieved_evidence.append(
+                ContextEvidence(
+                    message_id="msg_bob",
+                    text="Bob moved to Shanghai.",
+                    role=Role.USER,
+                    reason="test recall",
+                    estimated_tokens=4,
+                )
+            )
+            package.metadata.update(
+                {
+                    "cache": {"status": "miss", "scope": "recall_context_package"},
+                    "recall_cache": {"status": "miss", "scope": "recall_context_package"},
+                    "query_analysis_cache": {"status": "hit", "scope": "query_analysis"},
+                    "recall_candidate_cache": {
+                        "status": "hit",
+                        "scope": "recall_candidates",
+                    },
+                }
+            )
+            return package
+
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+    store = create_store(settings)
+    store.reset()
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+        recall_pipeline=FakeRecallPipeline(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="Where did Bob move?",
+            budget=80,
+        )
     )
 
-    package = service.build_context(session.id, "Where did Bob move?")
-
-    v3_metadata = package.metadata["v3_context"]["metadata"]
-    assert "cache" in v3_metadata
-    assert "recall_cache" in v3_metadata
-    assert "query_analysis_cache" in v3_metadata
-    assert "recall_candidate_cache" in v3_metadata
+    v3_metadata = package.metadata
+    assert v3_metadata["cache"] == {
+        "status": "miss",
+        "scope": "recall_context_package",
+    }
+    assert v3_metadata["recall_cache"] == {
+        "status": "miss",
+        "scope": "recall_context_package",
+    }
+    assert v3_metadata["query_analysis_cache"] == {
+        "status": "hit",
+        "scope": "query_analysis",
+    }
+    assert v3_metadata["recall_candidate_cache"] == {
+        "status": "hit",
+        "scope": "recall_candidates",
+    }
 
 
 def test_v3_composer_filters_archival_passages_by_attached_scope(tmp_path):
