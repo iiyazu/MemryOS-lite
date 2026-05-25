@@ -145,6 +145,9 @@ Key shape:
 {namespace}:{entry_version}:{scope}:{fingerprint_hash}
 ```
 
+Changing `{namespace}` is treated as a full cache miss. Existing keys do not
+need migration because Redis entries are disposable derived results.
+
 The fingerprint hash is derived from structured inputs:
 
 - scope
@@ -155,6 +158,10 @@ The fingerprint hash is derived from structured inputs:
 - query hash
 - session id when scope is session-bound
 - budget and other scope parameters
+
+Scope parameters include budget, limit, neighbor policy, candidate count, and
+any future scope-specific retrieval parameters that can change the derived
+result.
 
 Business logic passes structured inputs to `CacheKeyBuilder`; it does not
 construct Redis keys directly.
@@ -344,7 +351,11 @@ and must not become score targets.
 ## Rollout Plan
 
 1. Introduce `DerivedCache`, `CacheEntry`, `CacheKeyBuilder`, and
-   `MemoryWatermarkProvider` while preserving current Redis behavior.
+   `MemoryWatermarkProvider` while preserving current Redis behavior. The first
+   watermark implementation must use lightweight aggregate queries such as
+   `count` and `max(updated_at)` or `max(rowid)` where available; it must not
+   perform full-table content hash scans except for the existing item-content
+   digest required to detect item text mutation.
 2. Migrate current v2 recall cache to use the new contract.
 3. Add diagnostics compatibility fields so existing metadata consumers keep
    working.
