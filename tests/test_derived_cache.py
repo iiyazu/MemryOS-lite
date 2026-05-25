@@ -3,6 +3,23 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import get_type_hints
 
+import pytest
+
+from memoryos_lite.cache import (
+    CacheEntry as ExportedCacheEntry,
+)
+from memoryos_lite.cache import (
+    CacheKeyBuilder as ExportedCacheKeyBuilder,
+)
+from memoryos_lite.cache import (
+    CacheScope as ExportedCacheScope,
+)
+from memoryos_lite.cache import (
+    CacheStatus as ExportedCacheStatus,
+)
+from memoryos_lite.cache import (
+    DerivedCache as ExportedDerivedCache,
+)
 from memoryos_lite.cache.derived import (
     CACHE_ENTRY_VERSION,
     CACHE_SCHEMA_VERSION,
@@ -97,7 +114,7 @@ def test_cache_entry_round_trip_contains_authority_and_payload_type() -> None:
         fingerprint_hash="fingerprint",
         memory_arch="v3",
         recall_pipeline="v2",
-        session_id=None,
+        session_hash=None,
     )
     entry = CacheEntry(
         scope=CacheScope.QUERY_ANALYSIS,
@@ -129,7 +146,7 @@ def test_cache_entry_authority_uses_none_revision_without_watermark() -> None:
         fingerprint_hash="fingerprint",
         memory_arch="v3",
         recall_pipeline="v2",
-        session_id=None,
+        session_hash=None,
     )
     entry = CacheEntry(
         scope=CacheScope.QUERY_ANALYSIS,
@@ -170,12 +187,9 @@ def test_derived_cache_protocol_matches_backend_contract() -> None:
 
 
 def test_cache_key_builder_rejects_empty_namespace_after_trimming() -> None:
-    try:
-        CacheKeyBuilder(namespace=":::")
-    except ValueError as exc:
-        assert "namespace" in str(exc)
-    else:
-        raise AssertionError("empty cache namespace should be rejected")
+    for namespace in (":::", "   "):
+        with pytest.raises(ValueError, match="namespace"):
+            CacheKeyBuilder(namespace=namespace)
 
 
 def test_cache_key_builder_distinguishes_none_and_empty_watermark() -> None:
@@ -198,3 +212,38 @@ def test_cache_key_builder_distinguishes_none_and_empty_watermark() -> None:
     assert none_watermark.watermark_hash is None
     assert empty_watermark.watermark_hash is not None
     assert none_watermark.fingerprint_hash != empty_watermark.fingerprint_hash
+
+
+def test_serialized_cache_entry_does_not_leak_session_id_or_query_plaintext() -> None:
+    settings = Settings(memoryos_memory_arch="v3", memoryos_recall_pipeline="v2")
+    builder = CacheKeyBuilder(namespace="memoryos:test")
+    fingerprint = builder.build_fingerprint(
+        scope=CacheScope.RECALL_CONTEXT_PACKAGE,
+        settings=settings,
+        query="Where did Bob move?",
+        session_id="ses_1",
+        watermark="wm",
+        parameters={"budget": 200},
+    )
+    entry = CacheEntry(
+        scope=CacheScope.RECALL_CONTEXT_PACKAGE,
+        payload_type=CachePayloadType.CONTEXT_PACKAGE,
+        fingerprint=fingerprint,
+        payload={"answer_kind": "context"},
+        created_at=datetime(2026, 5, 25, tzinfo=UTC),
+    )
+
+    dumped = entry.model_dump(mode="json")
+    raw_json = entry.model_dump_json()
+    assert "session_id" not in dumped["fingerprint"]
+    assert "session_hash" in dumped["fingerprint"]
+    assert "ses_1" not in raw_json
+    assert "Where did Bob move" not in raw_json
+
+
+def test_public_cache_exports_include_derived_contract_types() -> None:
+    assert ExportedCacheEntry is CacheEntry
+    assert ExportedCacheKeyBuilder is CacheKeyBuilder
+    assert ExportedCacheScope is CacheScope
+    assert ExportedCacheStatus is CacheStatus
+    assert ExportedDerivedCache is DerivedCache

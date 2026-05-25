@@ -49,7 +49,7 @@ class CacheFingerprint(BaseModel):
     fingerprint_hash: str
     memory_arch: str
     recall_pipeline: str
-    session_id: str | None = None
+    session_hash: str | None = None
 
 
 class CacheEntry(BaseModel):
@@ -118,7 +118,7 @@ class DerivedCache(Protocol):
 
 class CacheKeyBuilder:
     def __init__(self, *, namespace: str) -> None:
-        self.namespace = namespace.strip(":")
+        self.namespace = namespace.strip().strip(":").strip()
         if not self.namespace:
             raise ValueError("cache namespace must not be empty")
 
@@ -172,6 +172,7 @@ class CacheKeyBuilder:
         )
         watermark_hash = _hash_text(watermark) if watermark is not None else None
         query_hash = _hash_text(" ".join(query.split()))
+        session_hash = _hash_text(session_id) if session_id is not None else None
         parameters_hash = _hash_json(dict(parameters or {}))
         fingerprint_hash = _hash_json(
             {
@@ -181,7 +182,7 @@ class CacheKeyBuilder:
                 "watermark_hash": watermark_hash,
                 "query_hash": query_hash,
                 "parameters_hash": parameters_hash,
-                "session_id": session_id,
+                "session_hash": session_hash,
                 "memory_arch": memory_arch,
                 "recall_pipeline": recall_pipeline,
             }
@@ -195,7 +196,7 @@ class CacheKeyBuilder:
             fingerprint_hash=fingerprint_hash,
             memory_arch=memory_arch,
             recall_pipeline=recall_pipeline,
-            session_id=session_id,
+            session_hash=session_hash,
         )
 
 
