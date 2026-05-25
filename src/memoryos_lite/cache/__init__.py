@@ -27,6 +27,9 @@ from memoryos_lite.cache.derived import (
     CacheStatus,
     CacheWriteResult,
     DerivedCache,
+    NoopDerivedCache,
+    RedisDerivedCache,
+    create_derived_cache,
 )
 from memoryos_lite.config import Settings
 
@@ -211,8 +214,11 @@ __all__ = [
     "CacheWrite",
     "DerivedCache",
     "MemoryCache",
+    "NoopDerivedCache",
     "NoopMemoryCache",
+    "RedisDerivedCache",
     "RedisMemoryCache",
     "build_cache_key",
+    "create_derived_cache",
     "create_memory_cache",
 ]

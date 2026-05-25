@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import get_type_hints
 
@@ -30,6 +31,9 @@ from memoryos_lite.cache.derived import (
     CacheScope,
     CacheStatus,
     DerivedCache,
+    NoopDerivedCache,
+    RedisDerivedCache,
+    create_derived_cache,
 )
 from memoryos_lite.config import Settings
 
@@ -247,3 +251,105 @@ def test_public_cache_exports_include_derived_contract_types() -> None:
     assert ExportedCacheScope is CacheScope
     assert ExportedCacheStatus is CacheStatus
     assert ExportedDerivedCache is DerivedCache
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.ttls: dict[str, int | None] = {}
+
+    def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    def set(self, key: str, value: str, ex: int | None = None) -> bool:
+        self.values[key] = value
+        self.ttls[key] = ex
+        return True
+
+    def delete(self, key: str) -> int:
+        return 1 if self.values.pop(key, None) is not None else 0
+
+
+class FailingRedis:
+    def get(self, key: str) -> str | None:
+        raise TimeoutError("redis timed out")
+
+    def set(self, key: str, value: str, ex: int | None = None) -> bool:
+        raise TimeoutError("redis timed out")
+
+    def delete(self, key: str) -> int:
+        raise TimeoutError("redis timed out")
+
+
+def _entry() -> CacheEntry:
+    fingerprint = CacheFingerprint(
+        scope=CacheScope.QUERY_ANALYSIS,
+        settings_hash="settings",
+        watermark_hash=None,
+        query_hash="query",
+        parameters_hash="parameters",
+        fingerprint_hash="fingerprint",
+        memory_arch="v3",
+        recall_pipeline="v2",
+        session_hash=None,
+    )
+    return CacheEntry(
+        scope=CacheScope.QUERY_ANALYSIS,
+        payload_type=CachePayloadType.QUERY_ANALYSIS,
+        fingerprint=fingerprint,
+        payload={"kind": "temporal"},
+        created_at=datetime(2026, 5, 25, tzinfo=UTC),
+        ttl_s=60,
+    )
+
+
+def test_noop_derived_cache_is_disabled() -> None:
+    cache = NoopDerivedCache()
+
+    assert cache.backend_name == "noop"
+    assert cache.get("key").status == CacheStatus.DISABLED
+    assert cache.set("key", _entry()).status == CacheStatus.DISABLED
+    assert cache.delete("key").status == CacheStatus.DISABLED
+
+
+def test_redis_derived_cache_round_trips_entry_with_ttl() -> None:
+    client = FakeRedis()
+    cache = RedisDerivedCache(client, namespace="memoryos:test", default_ttl_s=60)
+    key = "memoryos:test:derived-cache-v1:query_analysis:fingerprint"
+
+    write = cache.set(key, _entry(), ttl_s=30)
+    read = cache.get(key)
+
+    assert write.status == CacheStatus.STORED
+    assert read.status == CacheStatus.HIT
+    assert read.entry is not None
+    assert read.entry.payload == {"kind": "temporal"}
+    assert client.ttls[key] == 30
+
+
+def test_redis_derived_cache_reports_corrupt_and_stale() -> None:
+    client = FakeRedis()
+    cache = RedisDerivedCache(client, namespace="memoryos:test", default_ttl_s=60)
+    bad_json_key = "memoryos:test:derived-cache-v1:query_analysis:bad-json"
+    old_schema_key = "memoryos:test:derived-cache-v1:query_analysis:old-schema"
+    client.values[bad_json_key] = "not-json"
+    client.values[old_schema_key] = json.dumps(
+        {"schema_version": 0, "entry_version": CACHE_ENTRY_VERSION, "payload": {}}
+    )
+
+    assert cache.get(bad_json_key).status == CacheStatus.CORRUPT
+    assert cache.get(old_schema_key).status == CacheStatus.STALE
+
+
+def test_redis_derived_cache_errors_do_not_raise() -> None:
+    cache = RedisDerivedCache(FailingRedis(), namespace="memoryos:test", default_ttl_s=60)
+
+    assert cache.get("key").status == CacheStatus.ERROR
+    assert cache.set("key", _entry()).status == CacheStatus.ERROR
+    assert cache.delete("key").status == CacheStatus.ERROR
+
+
+def test_create_derived_cache_defaults_to_noop_without_redis_url() -> None:
+    cache = create_derived_cache(Settings(memoryos_redis_url=None))
+
+    assert isinstance(cache, NoopDerivedCache)

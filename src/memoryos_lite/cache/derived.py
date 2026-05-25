@@ -7,9 +7,11 @@ from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
+from importlib import import_module
+from time import perf_counter
 from typing import Any, Protocol
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from memoryos_lite.config import Settings
 
@@ -200,6 +202,198 @@ class CacheKeyBuilder:
         )
 
 
+class NoopDerivedCache:
+    backend_name = "noop"
+
+    def get(self, key: str) -> CacheReadResult:
+        return CacheReadResult(status=CacheStatus.DISABLED, key=key)
+
+    def set(
+        self,
+        key: str,
+        entry: CacheEntry,
+        *,
+        ttl_s: int | None = None,
+    ) -> CacheWriteResult:
+        return CacheWriteResult(status=CacheStatus.DISABLED, key=key)
+
+    def delete(self, key: str) -> CacheWriteResult:
+        return CacheWriteResult(status=CacheStatus.DISABLED, key=key)
+
+    def status(self) -> CacheDiagnostics:
+        return CacheDiagnostics(
+            status=CacheStatus.DISABLED,
+            metadata={"backend": self.backend_name, "enabled": False},
+        )
+
+
+class RedisDerivedCache:
+    backend_name = "redis"
+
+    def __init__(
+        self,
+        client: Any,
+        *,
+        namespace: str,
+        default_ttl_s: int,
+    ) -> None:
+        self.client = client
+        self.namespace = namespace.strip().strip(":").strip()
+        self.default_ttl_s = default_ttl_s
+
+    def get(self, key: str) -> CacheReadResult:
+        started = perf_counter()
+        try:
+            raw = self.client.get(key)
+        except Exception as exc:  # Redis is optional; callers should recompute.
+            return CacheReadResult(
+                status=CacheStatus.ERROR,
+                key=key,
+                reason=str(exc),
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        if raw is None:
+            return CacheReadResult(
+                status=CacheStatus.MISS,
+                key=key,
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            return CacheReadResult(
+                status=CacheStatus.CORRUPT,
+                key=key,
+                reason=str(exc),
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        if not isinstance(payload, dict):
+            return CacheReadResult(
+                status=CacheStatus.CORRUPT,
+                key=key,
+                reason="cache entry is not an object",
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        if payload.get("schema_version") != CACHE_SCHEMA_VERSION:
+            return CacheReadResult(
+                status=CacheStatus.STALE,
+                key=key,
+                reason="cache schema version mismatch",
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        if payload.get("entry_version") != CACHE_ENTRY_VERSION:
+            return CacheReadResult(
+                status=CacheStatus.STALE,
+                key=key,
+                reason="cache entry version mismatch",
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        try:
+            entry = CacheEntry.model_validate(payload)
+        except ValidationError as exc:
+            return CacheReadResult(
+                status=CacheStatus.CORRUPT,
+                key=key,
+                reason=str(exc),
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        return CacheReadResult(
+            status=CacheStatus.HIT,
+            key=key,
+            entry=entry,
+            diagnostics={"latency_ms": _latency_ms(started)},
+        )
+
+    def set(
+        self,
+        key: str,
+        entry: CacheEntry,
+        *,
+        ttl_s: int | None = None,
+    ) -> CacheWriteResult:
+        started = perf_counter()
+        try:
+            self.client.set(
+                key,
+                entry.model_dump_json(),
+                ex=self.default_ttl_s if ttl_s is None else ttl_s,
+            )
+        except Exception as exc:  # Redis is optional; writes must not break callers.
+            return CacheWriteResult(
+                status=CacheStatus.ERROR,
+                key=key,
+                reason=str(exc),
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        return CacheWriteResult(
+            status=CacheStatus.STORED,
+            key=key,
+            diagnostics={"latency_ms": _latency_ms(started)},
+        )
+
+    def delete(self, key: str) -> CacheWriteResult:
+        started = perf_counter()
+        try:
+            self.client.delete(key)
+        except Exception as exc:  # Redis is optional; callers should continue.
+            return CacheWriteResult(
+                status=CacheStatus.ERROR,
+                key=key,
+                reason=str(exc),
+                diagnostics={"latency_ms": _latency_ms(started)},
+            )
+        return CacheWriteResult(
+            status=CacheStatus.STORED,
+            key=key,
+            diagnostics={"latency_ms": _latency_ms(started)},
+        )
+
+    def status(self) -> CacheDiagnostics:
+        return CacheDiagnostics(
+            status=CacheStatus.HIT,
+            metadata={
+                "backend": self.backend_name,
+                "enabled": True,
+                "namespace": self.namespace,
+            },
+        )
+
+
+def create_derived_cache(
+    settings: Settings,
+    *,
+    redis_client: Any | None = None,
+) -> DerivedCache:
+    if not settings.memoryos_redis_url:
+        return NoopDerivedCache()
+    if redis_client is not None:
+        return RedisDerivedCache(
+            redis_client,
+            namespace=settings.memoryos_cache_namespace,
+            default_ttl_s=settings.memoryos_cache_default_ttl_s,
+        )
+    try:
+        redis_module = import_module("redis")
+    except ImportError:
+        return NoopDerivedCache()
+    try:
+        client = redis_module.Redis.from_url(
+            settings.memoryos_redis_url,
+            socket_timeout=1.0,
+            socket_connect_timeout=1.0,
+            decode_responses=True,
+        )
+    except Exception:
+        return NoopDerivedCache()
+    return RedisDerivedCache(
+        client,
+        namespace=settings.memoryos_cache_namespace,
+        default_ttl_s=settings.memoryos_cache_default_ttl_s,
+    )
+
+
 def _hash_text(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
 
@@ -207,6 +401,10 @@ def _hash_text(value: str) -> str:
 def _hash_json(value: Mapping[str, Any]) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return _hash_text(raw)
+
+
+def _latency_ms(started: float) -> float:
+    return round((perf_counter() - started) * 1000, 3)
 
 
 __all__ = [
@@ -222,4 +420,7 @@ __all__ = [
     "CacheStatus",
     "CacheWriteResult",
     "DerivedCache",
+    "NoopDerivedCache",
+    "RedisDerivedCache",
+    "create_derived_cache",
 ]
