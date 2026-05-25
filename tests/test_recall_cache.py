@@ -10,11 +10,15 @@ class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
         self.ttls: dict[str, int | None] = {}
+        self.get_calls = 0
+        self.set_calls = 0
 
     def get(self, key: str) -> str | None:
+        self.get_calls += 1
         return self.values.get(key)
 
     def set(self, key: str, value: str, ex: int | None = None) -> bool:
+        self.set_calls += 1
         self.values[key] = value
         self.ttls[key] = ex
         return True
@@ -210,6 +214,8 @@ def test_recall_cache_disabled_does_not_read_or_write_even_with_cache_client(tmp
     assert searcher.calls == 2
     assert first.metadata["recall_cache"]["status"] == "disabled"
     assert second.metadata["recall_cache"]["status"] == "disabled"
+    assert cache.client.get_calls == 0
+    assert cache.client.set_calls == 0
     assert cache.client.values == {}
 
 
