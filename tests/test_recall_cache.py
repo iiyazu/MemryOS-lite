@@ -1,4 +1,4 @@
-from memoryos_lite.cache import RedisMemoryCache
+from memoryos_lite.cache import RedisDerivedCache
 from memoryos_lite.config import Settings
 from memoryos_lite.retrieval.episode_searcher import RecallMemorySearcher
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
@@ -45,8 +45,8 @@ def _settings(tmp_path, *, enabled: bool) -> Settings:
     )
 
 
-def _cache() -> RedisMemoryCache:
-    return RedisMemoryCache(FakeRedis(), namespace="memoryos:test", default_ttl_s=60)
+def _cache() -> RedisDerivedCache:
+    return RedisDerivedCache(FakeRedis(), namespace="memoryos:test", default_ttl_s=60)
 
 
 def _add_message(store, message_id: str, content: str) -> None:  # type: ignore[no-untyped-def]
@@ -91,6 +91,55 @@ def test_recall_cache_reuses_package_and_preserves_source_refs(tmp_path) -> None
     assert source_refs[0]["source_id"] == "msg_bob"
 
 
+def test_recall_pipeline_emits_unified_cache_metadata_on_hit(tmp_path) -> None:
+    settings = _settings(tmp_path, enabled=True)
+    store = create_store(settings)
+    store.reset()
+    _add_message(store, "msg_bob", "Bob moved to Shanghai.")
+    cache = _cache()
+    searcher = CountingSearcher()
+    pipeline = RecallPipeline(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+        cache=cache,
+    )
+    pipeline.recall_searcher = searcher
+
+    pipeline.build_context("ses", "Where did Bob move?", budget=200)
+    second = pipeline.build_context("ses", "Where did Bob move?", budget=200)
+
+    assert second.metadata["recall_cache"]["status"] == "hit"
+    assert second.metadata["cache"]["status"] == "hit"
+    assert second.metadata["cache"]["scope"] == "recall_context_package"
+    assert second.metadata["cache"]["key_version"] == "derived-cache-v1"
+    assert second.metadata["cache"]["backend"] in {"redis", "noop"}
+
+
+def test_recall_candidate_cache_hits_when_context_budget_changes(tmp_path) -> None:
+    settings = _settings(tmp_path, enabled=True)
+    store = create_store(settings)
+    store.reset()
+    _add_message(store, "msg_bob", "Bob moved to Shanghai.")
+    cache = _cache()
+    searcher = CountingSearcher()
+    pipeline = RecallPipeline(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+        cache=cache,
+    )
+    pipeline.recall_searcher = searcher
+
+    first = pipeline.build_context("ses", "Where did Bob move?", budget=200)
+    second = pipeline.build_context("ses", "Where did Bob move?", budget=120)
+
+    assert searcher.calls == 1
+    assert first.metadata["recall_candidate_cache"]["status"] == "miss"
+    assert second.metadata["cache"]["status"] == "miss"
+    assert second.metadata["recall_candidate_cache"]["status"] == "hit"
+
+
 def test_recall_cache_watermark_rejects_stale_package_after_session_mutation(tmp_path) -> None:
     settings = _settings(tmp_path, enabled=True)
     store = create_store(settings)
@@ -115,7 +164,7 @@ def test_recall_cache_watermark_rejects_stale_package_after_session_mutation(tmp
     assert "msg_berlin" in second.metadata["recall_candidate_message_ids"]
 
 
-def test_query_analysis_cache_hits_when_recall_cache_key_changes(tmp_path) -> None:
+def test_query_analysis_cache_hits_when_context_cache_key_changes(tmp_path) -> None:
     settings = _settings(tmp_path, enabled=True)
     store = create_store(settings)
     store.reset()
@@ -133,7 +182,7 @@ def test_query_analysis_cache_hits_when_recall_cache_key_changes(tmp_path) -> No
     first = pipeline.build_context("ses", "Where did Bob move?", budget=200)
     second = pipeline.build_context("ses", "Where did Bob move?", budget=120)
 
-    assert searcher.calls == 2
+    assert searcher.calls == 1
     assert first.metadata["recall_cache"]["status"] == "miss"
     assert second.metadata["recall_cache"]["status"] == "miss"
     assert first.metadata["query_analysis_cache"]["status"] == "miss"
