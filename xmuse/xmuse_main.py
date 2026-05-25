@@ -79,16 +79,33 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
     return tasks
 
 
+def update_lane_status(lanes_path: Path, feature_id: str, status: str) -> None:
+    """Write status back to feature_lanes.json after dispatch."""
+    data = json.loads(lanes_path.read_text())
+    for lane in data.get("lanes", []):
+        if lane["feature_id"] == feature_id:
+            lane["status"] = status
+            break
+    lanes_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    logger.info("Lane %s → %s", feature_id, status)
+
+
 async def main(args: argparse.Namespace) -> None:
     registry = AgentRegistry.from_file(Path(args.config))
     launchers = {AgentRuntime.CODEX: CodexLauncher()}
     state_file = Path("xmuse/active_sessions.json")
+    lanes_path = Path(args.lanes)
 
     memoryos = MemoryOSClient(base_url=args.memoryos_url)
     mgr = SessionManager(launchers=launchers, state_file=state_file)
-    consumer = WorklistConsumer(registry=registry, session_mgr=mgr, max_concurrent=args.concurrency)
+    consumer = WorklistConsumer(
+        registry=registry,
+        session_mgr=mgr,
+        max_concurrent=args.concurrency,
+        on_complete=lambda fid, st: update_lane_status(lanes_path, fid, st),
+    )
 
-    lanes = load_lanes(Path(args.lanes))
+    lanes = load_lanes(lanes_path)
     logger.info("Loaded %d pending lanes from %s", len(lanes), args.lanes)
     for task in lanes:
         await consumer.enqueue(task)

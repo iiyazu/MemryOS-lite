@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from xmuse_core.agents.registry import AgentRegistry, AgentRuntime
 
@@ -24,6 +24,7 @@ class WorklistConsumer:
         registry: AgentRegistry,
         session_mgr,
         max_concurrent: int = 4,
+        on_complete: Callable[[str, str], None] | None = None,
     ) -> None:
         self._queue: asyncio.Queue[TaskDescriptor] = asyncio.Queue()
         self._registry = registry
@@ -32,6 +33,7 @@ class WorklistConsumer:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._shutdown_event = asyncio.Event()
         self._running_task: asyncio.Task | None = None
+        self._on_complete = on_complete
 
     async def run(self) -> None:
         self._running_task = asyncio.current_task()
@@ -40,7 +42,6 @@ class WorklistConsumer:
             try:
                 task = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except TimeoutError:
-                # Exit when queue is empty and nothing in flight
                 if self._in_flight == 0 and self._queue.empty():
                     break
                 continue
@@ -50,12 +51,15 @@ class WorklistConsumer:
                     task.required_capabilities,
                     exclude_runtime=task.developed_by_runtime,
                 )
-                await self._session_mgr.dispatch_one_shot(
+                result = await self._session_mgr.dispatch_one_shot(
                     agent=agent,
                     feature_id=task.feature_id,
                     prompt=task.prompt,
                     worktree=Path(task.worktree),
                 )
+                status = "done" if result and result.status == "success" else "failed"
+                if self._on_complete:
+                    self._on_complete(task.feature_id, status)
             self._in_flight -= 1
 
     async def enqueue(self, task: TaskDescriptor) -> None:
