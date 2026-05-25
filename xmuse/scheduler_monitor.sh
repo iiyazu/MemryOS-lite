@@ -87,6 +87,23 @@ slave_jobs_need_master_reconcile() {
     python3 "$LOOP_ROOT/slave_job_runner.py" needs-master --loop "$LOOP_ROOT" 8>&-
 }
 
+master_has_review_or_merge_queue() {
+    python3 - <<'PY' 8>&-
+import json
+from pathlib import Path
+
+path = Path("xmuse/master_status.json")
+try:
+    status = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+queues = status.get("queues", {})
+if queues.get("master_review_queue") or queues.get("merge_queue"):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 log "monitor started interval=${INTERVAL_SECONDS}s"
 while true; do
     log "scheduler tick"
@@ -98,6 +115,13 @@ while true; do
         if dispatch_has_queued_jobs; then
             log "master completed but dispatch has queued jobs; continuing slave execution"
             start_queued_slave_jobs
+            refresh_report
+            if master_has_review_or_merge_queue; then
+                log "master review or merge queue has work; restarting master for decision"
+                start_master
+                sleep 5
+                refresh_report
+            fi
             if slave_jobs_need_master_reconcile; then
                 log "slave jobs finished; restarting master for reconcile"
                 start_master

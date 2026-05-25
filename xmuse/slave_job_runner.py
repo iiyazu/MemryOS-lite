@@ -338,13 +338,22 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
             job_payload = _read_json(job_path)
             _sync_feature_artifacts_from_worktree(loop, feature_id, job_payload)
             if not dry_run:
-                _mark_feature_state(
-                    loop,
-                    feature_id,
-                    state="active",
-                    dispatch_status="running",
-                    reason="slave job is already running",
-                )
+                if not _job_artifacts_blocked(loop, feature_id, job_payload):
+                    _mark_feature_state(
+                        loop,
+                        feature_id,
+                        state="ready_for_master_review",
+                        dispatch_status="ready_for_master_review",
+                        reason="running job artifacts are usable and ready for Master review",
+                    )
+                else:
+                    _mark_feature_state(
+                        loop,
+                        feature_id,
+                        state="active",
+                        dispatch_status="running",
+                        reason="slave job is already running",
+                    )
             skipped.append({"feature_id": feature_id, "reason": "job already running"})
             continue
         runtime_status = _runtime_status(job_path)
