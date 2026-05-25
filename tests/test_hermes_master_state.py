@@ -1680,6 +1680,61 @@ def test_slave_job_runner_does_not_restart_completed_job(tmp_path):
     assert summary["needs_master_reconcile"] is True
 
 
+def test_slave_job_runner_retries_completed_job_with_blocked_artifacts(tmp_path):
+    module_path = PROJECT / "xmuse" / "slave_job_runner.py"
+    spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)
+    runner = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(runner)
+    loop = tmp_path / "xmuse"
+    write_json(
+        loop / "dispatch" / "multi_lane_dispatch.json",
+        {
+            "jobs": [
+                {
+                    "feature_id": "blocked-feature",
+                    "status": "queued",
+                    "job_ref": "xmuse/jobs/blocked-feature.json",
+                    "artifacts": {
+                        "ack": "xmuse/work/features/blocked-feature/ack.json",
+                        "review_verdict": (
+                            "xmuse/work/features/blocked-feature/review_verdict.json"
+                        ),
+                    },
+                }
+            ]
+        },
+    )
+    write_json(
+        loop / "jobs" / "blocked-feature.json",
+        {
+            "feature_id": "blocked-feature",
+            "artifacts": {
+                "ack": "xmuse/work/features/blocked-feature/ack.json",
+                "review_verdict": "xmuse/work/features/blocked-feature/review_verdict.json",
+            },
+            "runtime": {"status": "completed", "pid": "12345", "exit_code": 0},
+        },
+    )
+    write_json(
+        loop / "work" / "features" / "blocked-feature" / "ack.json",
+        {"feature_id": "blocked-feature", "ack_level": "blocked"},
+    )
+    write_json(
+        loop / "work" / "features" / "blocked-feature" / "review_verdict.json",
+        {"feature_id": "blocked-feature", "verdict": "FAIL"},
+    )
+
+    result = runner.start_queued_jobs(loop, dry_run=True)
+    summary = runner.summarize_jobs(loop)
+
+    assert result["started"] == ["blocked-feature"]
+    assert result["skipped"] == []
+    assert summary["artifact_blocked"] == 1
+    assert summary["runnable"] == 1
+    assert summary["needs_master_reconcile"] is False
+
+
 def test_slave_job_runner_retries_transient_api_limited_failure(tmp_path):
     module_path = PROJECT / "xmuse" / "slave_job_runner.py"
     spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)

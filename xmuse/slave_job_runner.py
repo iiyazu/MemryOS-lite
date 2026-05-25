@@ -82,6 +82,31 @@ def _runtime_status(job_path: Path) -> str:
     return status
 
 
+def _optional_json(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _artifact_ref(job: dict[str, Any], feature_id: str, name: str) -> str:
+    artifacts = job.get("artifacts", {})
+    if isinstance(artifacts, dict) and isinstance(artifacts.get(name), str):
+        return artifacts[name]
+    return f"xmuse/work/features/{feature_id}/{name}.json"
+
+
+def _job_artifacts_blocked(loop: Path, feature_id: str, job: dict[str, Any]) -> bool:
+    ack = _optional_json(_loop_path(loop, _artifact_ref(job, feature_id, "ack")))
+    review = _optional_json(_loop_path(loop, _artifact_ref(job, feature_id, "review_verdict")))
+    if ack and str(ack.get("ack_level", "")).lower() != "usable":
+        return True
+    if review and str(review.get("verdict", "")).lower() != "pass":
+        return True
+    return False
+
+
 def _job_log_paths(loop: Path, feature_id: str) -> tuple[Path, Path]:
     logs = loop / "jobs" / "logs"
     safe_id = feature_id.replace("/", "_")
@@ -153,6 +178,9 @@ def run_one(loop: Path, job_ref: str) -> int:
     if completed.returncode != 0 and _job_has_api_transient_error(loop, feature_id):
         status = "api_transient_blocked"
         reason = "codex api transient limit or usage exhaustion"
+    elif completed.returncode == 0 and _job_artifacts_blocked(loop, feature_id, job):
+        status = "artifact_blocked"
+        reason = "feature-local artifacts are not usable"
     runtime = {
         "status": status,
         "pid": os.getpid(),
@@ -190,6 +218,8 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
             skipped.append({"feature_id": feature_id, "reason": "job already running"})
             continue
         runtime_status = _runtime_status(job_path)
+        if runtime_status == "completed" and _job_artifacts_blocked(loop, feature_id, job):
+            runtime_status = "artifact_blocked"
         if runtime_status == "failed" and _job_has_api_transient_error(loop, feature_id):
             runtime_status = "api_transient_blocked"
         if runtime_status in {"completed", "failed"}:
@@ -231,6 +261,7 @@ def summarize_jobs(loop: Path) -> dict[str, Any]:
         "completed": 0,
         "failed": 0,
         "api_transient_blocked": 0,
+        "artifact_blocked": 0,
         "stale_running": 0,
         "blocked": 0,
         "needs_master_reconcile": False,
@@ -246,17 +277,28 @@ def summarize_jobs(loop: Path) -> dict[str, Any]:
             continue
         summary["queued"] += 1
         runtime_status = _runtime_status(_loop_path(loop, job_ref))
+        if runtime_status == "completed" and _job_artifacts_blocked(
+            loop, str(job.get("feature_id") or ""), job
+        ):
+            runtime_status = "artifact_blocked"
         if runtime_status == "failed" and _job_has_api_transient_error(
             loop, str(job.get("feature_id") or "")
         ):
             runtime_status = "api_transient_blocked"
-        if runtime_status in {"missing", "not_started", "stale_running", "api_transient_blocked"}:
+        if runtime_status in {
+            "missing",
+            "not_started",
+            "stale_running",
+            "api_transient_blocked",
+            "artifact_blocked",
+        }:
             summary["runnable"] += 1
         if runtime_status in {
             "running",
             "completed",
             "failed",
             "api_transient_blocked",
+            "artifact_blocked",
             "stale_running",
         }:
             summary[runtime_status] += 1
