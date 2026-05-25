@@ -209,6 +209,13 @@ def run_one(loop: Path, job_ref: str) -> int:
                 "reason": "job command is missing or invalid",
             },
         )
+        _mark_feature_state(
+            loop,
+            feature_id,
+            state="repairing",
+            dispatch_status="rework_required",
+            reason="job command is missing or invalid",
+        )
         return 2
 
     started = _now()
@@ -234,9 +241,34 @@ def run_one(loop: Path, job_ref: str) -> int:
     if completed.returncode != 0 and _job_has_api_transient_error(loop, feature_id):
         status = "api_transient_blocked"
         reason = "codex api transient limit or usage exhaustion"
+        _mark_feature_state(
+            loop,
+            feature_id,
+            state="repairing",
+            dispatch_status="rework_required",
+            reason=reason,
+        )
     elif completed.returncode == 0 and _job_artifacts_blocked(loop, feature_id, job):
         status = "artifact_blocked"
         reason = "feature-local artifacts are not usable"
+        _mark_feature_state(
+            loop,
+            feature_id,
+            state="repairing",
+            dispatch_status="rework_required",
+            reason=reason,
+        )
+    elif completed.returncode == 0:
+        reason = "feature-local artifacts are usable and ready for Master review"
+        _mark_feature_state(
+            loop,
+            feature_id,
+            state="ready_for_master_review",
+            dispatch_status="ready_for_master_review",
+            reason=reason,
+        )
+    else:
+        reason = "slave job failed and requires autonomous retry"
         _mark_feature_state(
             loop,
             feature_id,
@@ -293,7 +325,15 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
             runtime_status = "artifact_blocked"
         if runtime_status == "failed" and _job_has_api_transient_error(loop, feature_id):
             runtime_status = "api_transient_blocked"
-        if runtime_status in {"completed", "failed"}:
+        if runtime_status == "completed":
+            if not dry_run:
+                _mark_feature_state(
+                    loop,
+                    feature_id,
+                    state="ready_for_master_review",
+                    dispatch_status="ready_for_master_review",
+                    reason="completed job artifacts are usable and ready for Master review",
+                )
             skipped.append({"feature_id": feature_id, "reason": f"job already {runtime_status}"})
             continue
         if dry_run:
@@ -369,6 +409,7 @@ def summarize_jobs(loop: Path) -> dict[str, Any]:
             "stale_running",
             "api_transient_blocked",
             "artifact_blocked",
+            "failed",
         }:
             summary["runnable"] += 1
         if runtime_status in {
