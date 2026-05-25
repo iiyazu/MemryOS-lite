@@ -51,17 +51,25 @@ class Settings(BaseSettings):
     memoryos_recall_cache_enabled: bool = False
     memoryos_cache_namespace: str = "memoryos:v1"
     memoryos_cache_default_ttl_s: int = 300
+    memoryos_cache_query_analysis_ttl_s: int = 3600
+    memoryos_cache_recall_candidates_ttl_s: int = 300
+    memoryos_cache_context_package_ttl_s: int = 300
     agent_max_tool_turns: int = 10
     qdrant_url: str | None = None
     qdrant_collection: str = "memoryos_pages"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 
-    @field_validator("memoryos_cache_default_ttl_s")
+    @field_validator(
+        "memoryos_cache_default_ttl_s",
+        "memoryos_cache_query_analysis_ttl_s",
+        "memoryos_cache_recall_candidates_ttl_s",
+        "memoryos_cache_context_package_ttl_s",
+    )
     @classmethod
-    def validate_cache_default_ttl(cls, value: int) -> int:
+    def validate_cache_ttl(cls, value: int) -> int:
         if value <= 0:
-            raise ValueError("MEMORYOS_CACHE_DEFAULT_TTL_S must be positive")
+            raise ValueError("cache TTL settings must be positive")
         return value
 
     @field_validator("memoryos_cache_namespace")

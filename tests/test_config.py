@@ -39,6 +39,23 @@ def test_redis_cache_ttl_must_be_positive() -> None:
         Settings(memoryos_cache_default_ttl_s=0)
 
 
+def test_derived_cache_scope_ttl_defaults_are_positive() -> None:
+    settings = Settings()
+
+    assert settings.memoryos_cache_query_analysis_ttl_s == 3600
+    assert settings.memoryos_cache_recall_candidates_ttl_s == 300
+    assert settings.memoryos_cache_context_package_ttl_s == 300
+
+
+def test_derived_cache_scope_ttls_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        Settings(memoryos_cache_query_analysis_ttl_s=0)
+    with pytest.raises(ValidationError):
+        Settings(memoryos_cache_recall_candidates_ttl_s=0)
+    with pytest.raises(ValidationError):
+        Settings(memoryos_cache_context_package_ttl_s=0)
+
+
 def test_redis_cache_namespace_must_not_be_empty() -> None:
     with pytest.raises(ValidationError):
         Settings(memoryos_cache_namespace=":")
