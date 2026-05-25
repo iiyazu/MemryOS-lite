@@ -942,6 +942,23 @@ def test_page_save_persists_embedding_and_hybrid_fuses_sources(tmp_path):
     assert "lexical" in hits[0].reason and "embedding" in hits[0].reason
 
 
+def test_fastembed_provider_falls_back_to_no_embedding_when_unavailable(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_embedding_provider="fastembed",
+    )
+    store = create_store(settings)
+    store.reset()
+
+    with patch(
+        "memoryos_lite.retrieval.providers.fastembed_client.FastEmbedClient",
+        side_effect=RuntimeError("model unavailable"),
+    ):
+        service = MemoryOSService(store=store, settings=settings)
+
+    assert service.embedding_client is None
+
+
 def test_item_extractor_heuristic(service):
     session = service.create_session("test")
     page = MemoryPage(

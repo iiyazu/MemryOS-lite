@@ -674,6 +674,10 @@ class ItemExtractor:
     def _extract_llm(self, page: MemoryPage, messages: list[Message]) -> list[MemoryItem]:
         from pydantic import BaseModel as _BaseModel
 
+        llm_client = self._llm_client
+        if llm_client is None:
+            raise RuntimeError("LLM item extraction requires an LLM client")
+
         class _ItemList(_BaseModel):
             items: list[MemoryItem]
 
@@ -699,7 +703,7 @@ class ItemExtractor:
                 f"\n\nTranscript:\n{transcript}"
             )
         )
-        result = self._llm_client.invoke([system, human])
+        result = llm_client.invoke([system, human])
         if not isinstance(result, _ItemList):
             raise TypeError("unexpected LLM output type")
         valid_ids = {m.id for m in messages if m.id in set(page.source_message_ids)}
@@ -1502,13 +1506,7 @@ class MemoryOSService:
                             effect="require_approval",
                             reason=f"{tool_name} requires explicit approval",
                         )
-                        for tool_name in sorted(executable_kernel_tool_names())
-                        if (
-                            get_kernel_tool_spec(tool_name) is not None
-                            and get_kernel_tool_spec(
-                                tool_name
-                            ).requires_approval_by_default
-                        )
+                        for tool_name in self._kernel_tool_names_requiring_approval()
                     ]
                 ),
                 tool_execution_manager=SimpleToolExecutionManager(store=self.store),
@@ -1544,11 +1542,14 @@ class MemoryOSService:
     def _default_embedding_client(self) -> EmbeddingClient | None:
         provider = self.settings.memoryos_embedding_provider.strip().lower()
         if provider == "fastembed":
-            from memoryos_lite.retrieval.providers.fastembed_client import (
-                FastEmbedClient,
-            )
+            try:
+                from memoryos_lite.retrieval.providers.fastembed_client import (
+                    FastEmbedClient,
+                )
 
-            return FastEmbedClient()
+                return FastEmbedClient()
+            except Exception:
+                return None
         if provider in {"none", "auto"}:
             return None
         if provider == "openai" and self.settings.openai_api_key:
@@ -1557,6 +1558,15 @@ class MemoryOSService:
             except Exception:
                 pass
         return None
+
+    @staticmethod
+    def _kernel_tool_names_requiring_approval() -> list[str]:
+        tool_names: list[str] = []
+        for tool_name in sorted(executable_kernel_tool_names()):
+            spec = get_kernel_tool_spec(tool_name)
+            if spec is not None and spec.requires_approval_by_default:
+                tool_names.append(tool_name)
+        return tool_names
 
     def create_session(self, title: str) -> Any:
         session = self.store.create_session(title)
