@@ -88,6 +88,23 @@ def _job_log_paths(loop: Path, feature_id: str) -> tuple[Path, Path]:
     return logs / f"{safe_id}.out", logs / f"{safe_id}.err"
 
 
+def _api_transient_error(text: str) -> bool:
+    markers = (
+        "429 Too Many Requests",
+        "You've hit your usage limit",
+        "exceeded retry limit, last status: 429",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _job_has_api_transient_error(loop: Path, feature_id: str) -> bool:
+    _, stderr_path = _job_log_paths(loop, feature_id)
+    try:
+        return _api_transient_error(stderr_path.read_text(encoding="utf-8", errors="ignore"))
+    except FileNotFoundError:
+        return False
+
+
 def _load_dispatch_jobs(loop: Path) -> list[dict[str, Any]]:
     plan = _read_json(loop / "dispatch" / "multi_lane_dispatch.json")
     jobs = plan.get("jobs", [])
@@ -105,6 +122,7 @@ def _mark_runtime(job_path: Path, runtime: dict[str, Any]) -> None:
 def run_one(loop: Path, job_ref: str) -> int:
     job_path = _loop_path(loop, job_ref)
     job = _read_json(job_path)
+    feature_id = str(job.get("feature_id") or job_path.stem)
     command = job.get("command")
     if not isinstance(command, list) or not all(isinstance(part, str) for part in command):
         _mark_runtime(
@@ -131,16 +149,23 @@ def run_one(loop: Path, job_ref: str) -> int:
     )
     completed = subprocess.run(command, cwd=PROJECT, check=False)
     status = "completed" if completed.returncode == 0 else "failed"
+    reason = None
+    if completed.returncode != 0 and _job_has_api_transient_error(loop, feature_id):
+        status = "api_transient_blocked"
+        reason = "codex api transient limit or usage exhaustion"
+    runtime = {
+        "status": status,
+        "pid": os.getpid(),
+        "started_at": started,
+        "completed_at": _now(),
+        "exit_code": completed.returncode,
+        "runner": "xmuse/slave_job_runner.py",
+    }
+    if reason:
+        runtime["reason"] = reason
     _mark_runtime(
         job_path,
-        {
-            "status": status,
-            "pid": os.getpid(),
-            "started_at": started,
-            "completed_at": _now(),
-            "exit_code": completed.returncode,
-            "runner": "xmuse/slave_job_runner.py",
-        },
+        runtime,
     )
     return completed.returncode
 
@@ -165,6 +190,8 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
             skipped.append({"feature_id": feature_id, "reason": "job already running"})
             continue
         runtime_status = _runtime_status(job_path)
+        if runtime_status == "failed" and _job_has_api_transient_error(loop, feature_id):
+            runtime_status = "api_transient_blocked"
         if runtime_status in {"completed", "failed"}:
             skipped.append({"feature_id": feature_id, "reason": f"job already {runtime_status}"})
             continue
@@ -203,6 +230,7 @@ def summarize_jobs(loop: Path) -> dict[str, Any]:
         "running": 0,
         "completed": 0,
         "failed": 0,
+        "api_transient_blocked": 0,
         "stale_running": 0,
         "blocked": 0,
         "needs_master_reconcile": False,
@@ -218,9 +246,19 @@ def summarize_jobs(loop: Path) -> dict[str, Any]:
             continue
         summary["queued"] += 1
         runtime_status = _runtime_status(_loop_path(loop, job_ref))
-        if runtime_status in {"missing", "not_started", "stale_running"}:
+        if runtime_status == "failed" and _job_has_api_transient_error(
+            loop, str(job.get("feature_id") or "")
+        ):
+            runtime_status = "api_transient_blocked"
+        if runtime_status in {"missing", "not_started", "stale_running", "api_transient_blocked"}:
             summary["runnable"] += 1
-        if runtime_status in {"running", "completed", "failed", "stale_running"}:
+        if runtime_status in {
+            "running",
+            "completed",
+            "failed",
+            "api_transient_blocked",
+            "stale_running",
+        }:
             summary[runtime_status] += 1
     summary["needs_master_reconcile"] = bool(
         (summary["completed"] or summary["failed"])

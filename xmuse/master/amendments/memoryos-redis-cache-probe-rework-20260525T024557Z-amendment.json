@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "amendment_id": "memoryos-redis-cache-probe-rework-2026-05-25T02:45:57Z",
+  "action": "request_rework",
+  "status": "applied",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-25T02:45:57Z",
+  "affected_feature_ids": [
+    "memoryos-redis-cache-probe"
+  ],
+  "target_feature_id": "memoryos-redis-cache-probe",
+  "previous_state_reference": {
+    "master_state": "xmuse/master_state.json",
+    "previous_state": "blocked_external",
+    "previous_dispatch_status": "master_hold_integration_failed",
+    "integrated_tests": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json"
+  },
+  "reason": "Failed or stale integrated evidence should return to feature-local rework unless the blocker is truly outside Slave authority.",
+  "preserved_policy_flags": {
+    "v3_default": true,
+    "v1_fallback": true,
+    "kernel_opt_in": true,
+    "diagnostic_only_benchmarks": true,
+    "same_slice_repair_smoke_not_promotion": true,
+    "review_gate": true,
+    "integrated_test_gate": true,
+    "external_approval_gate": true,
+    "fresh_target_gate": true
+  },
+  "gate_effect": "no_gate_lowering"
+}

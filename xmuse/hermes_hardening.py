@@ -629,6 +629,21 @@ def classify_feature_reconcile_state(
         and master_review
         and master_review.get("status") == "accepted"
         and integrated_tests
+        and integrated_tests.get("status") != "passed"
+    ):
+        return {
+            "state": "repairing",
+            "dispatch_status": "rework_required",
+            "head_commit": head_commit,
+            "reason": "integrated test gate requires Slave repair or refreshed evidence",
+        }
+
+    if (
+        ack_level in PROMOTION_PASS_VERDICTS
+        and verdict in PROMOTION_PASS_VERDICTS
+        and master_review
+        and master_review.get("status") == "accepted"
+        and integrated_tests
         and integrated_tests.get("status") == "passed"
     ):
         approval_ref = artifacts.get("merge_approval")

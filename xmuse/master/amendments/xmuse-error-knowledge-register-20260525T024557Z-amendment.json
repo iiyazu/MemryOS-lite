@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "amendment_id": "xmuse-error-knowledge-register-2026-05-25T02:45:57Z",
+  "action": "create_feature",
+  "status": "applied",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-25T02:45:57Z",
+  "affected_feature_ids": [
+    "xmuse-error-knowledge"
+  ],
+  "target_feature_id": "xmuse-error-knowledge",
+  "previous_state_reference": {
+    "orphan_blueprint": "xmuse/work/features/xmuse-error-knowledge/blueprint.md",
+    "previous_registry_state": "absent_from_master_state.features"
+  },
+  "reason": "Register orphan blueprint as a planned control-plane maintenance lane so dispatcher can launch a bounded Slave/maintainer run.",
+  "preserved_policy_flags": {
+    "v3_default": true,
+    "v1_fallback": true,
+    "kernel_opt_in": true,
+    "diagnostic_only_benchmarks": true,
+    "same_slice_repair_smoke_not_promotion": true,
+    "review_gate": true,
+    "integrated_test_gate": true,
+    "external_approval_gate": true,
+    "fresh_target_gate": true
+  },
+  "gate_effect": "no_gate_lowering"
+}

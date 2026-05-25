@@ -1030,6 +1030,36 @@ def test_reconcile_classifies_passed_integrated_gate_without_approval_as_approva
     assert result["head_commit"] == "abcdef123456"
 
 
+def test_reconcile_classifies_failed_integrated_gate_as_slave_rework(tmp_path):
+    hardening = load_hardening()
+    loop = tmp_path / "xmuse"
+    feature = _master_feature_from_test("memoryos-redis-cache-probe")
+    feature["state"] = "approval_blocked"
+    feature["slave_god"]["dispatch_status"] = "approval_required"
+    write_gate_artifacts(loop, "memoryos-redis-cache-probe")
+    integrated = (
+        loop
+        / "master"
+        / "features"
+        / "memoryos-redis-cache-probe"
+        / "integrated_tests.json"
+    )
+    payload = json.loads(integrated.read_text())
+    payload["status"] = "failed_stale_target_head"
+    payload["merge_readiness_blockers"] = [
+        "full integrated suite did not pass on the integration ref",
+        "integration evidence target_base_commit is stale against current target HEAD",
+    ]
+    write_json(integrated, payload)
+
+    result = hardening.classify_feature_reconcile_state(loop, feature)
+
+    assert result["state"] == "repairing"
+    assert result["dispatch_status"] == "rework_required"
+    assert result["head_commit"] == "abcdef123456"
+    assert "integrated test gate requires Slave repair" in result["reason"]
+
+
 def test_merge_status_ahead_of_feature_state_blocks_feature():
     hardening = load_hardening()
     state = base_master_state()
@@ -1648,6 +1678,46 @@ def test_slave_job_runner_does_not_restart_completed_job(tmp_path):
     ]
     assert summary["completed"] == 1
     assert summary["needs_master_reconcile"] is True
+
+
+def test_slave_job_runner_retries_transient_api_limited_failure(tmp_path):
+    module_path = PROJECT / "xmuse" / "slave_job_runner.py"
+    spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)
+    runner = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(runner)
+    loop = tmp_path / "xmuse"
+    write_json(
+        loop / "dispatch" / "multi_lane_dispatch.json",
+        {
+            "jobs": [
+                {
+                    "feature_id": "api-limited-feature",
+                    "status": "queued",
+                    "job_ref": "xmuse/jobs/api-limited-feature.json",
+                }
+            ]
+        },
+    )
+    write_json(
+        loop / "jobs" / "api-limited-feature.json",
+        {
+            "feature_id": "api-limited-feature",
+            "runtime": {"status": "failed", "pid": "12345", "exit_code": 1},
+        },
+    )
+    log_path = loop / "jobs" / "logs" / "api-limited-feature.err"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("ERROR: exceeded retry limit, last status: 429 Too Many Requests\n")
+
+    result = runner.start_queued_jobs(loop, dry_run=True)
+    summary = runner.summarize_jobs(loop)
+
+    assert result["started"] == ["api-limited-feature"]
+    assert result["skipped"] == []
+    assert summary["api_transient_blocked"] == 1
+    assert summary["runnable"] == 1
+    assert summary["needs_master_reconcile"] is False
 
 
 def test_prepare_then_activate_preserves_feature_statuses(tmp_path):

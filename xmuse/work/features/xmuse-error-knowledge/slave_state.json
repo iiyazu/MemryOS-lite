@@ -1,0 +1,24 @@
+{
+  "version": "1.0",
+  "feature_id": "xmuse-error-knowledge",
+  "mode": "feature_local_single_god",
+  "state": "planned",
+  "runner": {
+    "type": "local_codex",
+    "protocol": "hermes-local",
+    "agent_id": "slave-god-xmuse-error-knowledge",
+    "endpoint": null,
+    "task_id": null
+  },
+  "branch": "feat/xmuse-error-knowledge",
+  "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-error-knowledge",
+  "artifacts": {
+    "result": "work/features/xmuse-error-knowledge/result.md",
+    "ack": "work/features/xmuse-error-knowledge/ack.json",
+    "review_verdict": "work/features/xmuse-error-knowledge/review_verdict.json"
+  },
+  "last_updated": "2026-05-25T02:45:57Z",
+  "notes": [
+    "Registered from orphan blueprint. Must honor knowledge_maintainer no-op bootstrap rules when contract is missing or invalid."
+  ]
+}

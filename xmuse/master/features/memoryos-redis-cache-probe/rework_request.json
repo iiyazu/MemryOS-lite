@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "feature_id": "memoryos-redis-cache-probe",
+  "recorded_by": "master-god",
+  "recorded_at": "2026-05-25T02:45:57Z",
+  "action": "request_rework",
+  "requested_state": "repairing",
+  "dispatch_status": "rework_required",
+  "reason": "Integrated test evidence failed or became stale; this is a Slave rework/refreshed-evidence signal, not an external approval block.",
+  "blockers": [
+    "full integrated suite did not pass on the integration ref",
+    "integration evidence target_base_commit is stale against current target HEAD",
+    "external approval remains unavailable until fresh integrated evidence passes"
+  ],
+  "expected_next_evidence": [
+    "feature-local audit of whether Redis cache changes contribute to integrated failures",
+    "refreshed result.md, ack.json, and review_verdict.json when repair/audit completes",
+    "no benchmark-score target; benchmark/eval output may only diagnose regressions or missing evidence"
+  ],
+  "policy_preserved": {
+    "v3_default": true,
+    "v1_fallback": true,
+    "kernel_opt_in": true,
+    "redis_default_off": true,
+    "sqlite_authority": true,
+    "no_gate_lowering": true
+  }
+}
