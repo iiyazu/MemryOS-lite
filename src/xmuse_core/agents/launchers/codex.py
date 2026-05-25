@@ -8,7 +8,11 @@ from xmuse_core.agents.protocol import AgentOutput, StdoutMessage
 
 class CodexLauncher:
     def build_command(self, feature_id: str, worktree: Path) -> list[str]:
-        return ["codex", "exec", "--approval-mode", "full-auto", "--cwd", str(worktree)]
+        return [
+            "codex", "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-C", str(worktree),
+        ]
 
     def format_prompt(self, task: str, context: str) -> str:
         if context:
