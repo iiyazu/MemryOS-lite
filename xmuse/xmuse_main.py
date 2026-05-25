@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,18 +22,50 @@ from xmuse_core.agents.registry import AgentRegistry, AgentRuntime
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("xmuse")
 
+WORKTREE_BASE = Path("/home/iiyatu/projects/python")
+
+
+def ensure_worktree(feature_id: str, branch: str | None = None) -> Path:
+    """Create or reuse a git worktree for the given feature."""
+    wt_path = WORKTREE_BASE / f"memoryOS-{feature_id}"
+    if wt_path.exists():
+        return wt_path
+    branch_name = branch or f"feat/{feature_id}"
+    result = subprocess.run(
+        ["git", "worktree", "add", "-b", branch_name, str(wt_path), "HEAD"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        # Branch may already exist, try without -b
+        subprocess.run(
+            ["git", "worktree", "add", str(wt_path), branch_name],
+            capture_output=True, text=True,
+        )
+    if wt_path.exists():
+        logger.info("Worktree ready: %s", wt_path)
+    else:
+        logger.warning("Failed to create worktree for %s: %s", feature_id, result.stderr)
+    return wt_path
+
 
 def load_lanes(path: Path) -> list[TaskDescriptor]:
     data = json.loads(path.read_text())
     tasks = []
     for lane in data.get("lanes", []):
-        if lane.get("status") == "done":
+        if lane.get("status") in ("done", "failed"):
             continue
+        # Auto-create worktree if not specified
+        worktree = lane.get("worktree")
+        if not worktree or worktree == ".":
+            wt_path = ensure_worktree(
+                lane["feature_id"], branch=lane.get("branch")
+            )
+            worktree = str(wt_path)
         tasks.append(TaskDescriptor(
             feature_id=lane["feature_id"],
             task_type=lane.get("task_type", "execute"),
             prompt=lane["prompt"],
-            worktree=lane.get("worktree", "."),
+            worktree=worktree,
             required_capabilities=lane.get("capabilities", ["code"]),
         ))
     return tasks
