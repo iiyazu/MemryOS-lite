@@ -1,3 +1,118 @@
 {
-  "lanes": []
+  "lanes": [
+    {
+      "feature_id": "auto-discovery",
+      "task_type": "execute",
+      "status": "done",
+      "branch": "feat/auto-discovery"
+    },
+    {
+      "feature_id": "quality-gate",
+      "task_type": "execute",
+      "prompt": "Implement src/xmuse_core/agents/quality_gate.py — a post-dispatch quality gate.\n\nRequirements:\n1. Class QualityGate with async method `check(worktree: Path) -> GateResult`\n2. GateResult dataclass: passed: bool, errors: list[str], checks: dict[str, bool]\n3. Checks to run (all in the worktree):\n   - pytest: `uv run pytest tests/ -x -q` → pass if exit 0\n   - ruff: `uv run ruff check src/ xmuse/` → pass if exit 0\n   - diff_sanity: git diff --stat HEAD~1 → fail if >1000 insertions\n4. Each check runs as asyncio.create_subprocess_exec\n5. If any check fails, GateResult.passed = False, errors contains the failure output\n6. Add tests in tests/test_xmuse_quality_gate.py that mock subprocess results\n\nExisting context:\n- src/xmuse_core/agents/manager.py has dispatch_one_shot returning AgentOutput\n- bootstrap_gate.sh exists as shell reference but we need a Python async version\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/quality-gate",
+      "capabilities": ["code", "test"]
+    },
+    {
+      "feature_id": "rework-loop",
+      "task_type": "execute",
+      "prompt": "Implement src/xmuse_core/agents/rework_loop.py — retry failed lanes with error context.\n\nRequirements:\n1. Class ReworkLoop with async method `run(lane: TaskDescriptor, initial_gate_result: GateResult, dispatch_fn, gate: QualityGate, max_retries=3) -> LaneResult`\n2. LaneResult dataclass: status ('done'|'failed'), attempts: int, final_errors: list[str]\n3. On each retry:\n   - Build a rework prompt that includes: original prompt + gate errors + attempt number\n   - Call dispatch_fn(rework_prompt, worktree)\n   - Run gate.check(worktree)\n   - If passed → return done\n4. After max_retries exhausted → return failed with accumulated errors\n5. Add tests in tests/test_xmuse_rework_loop.py\n\nExisting context:\n- src/xmuse_core/agents/quality_gate.py (QualityGate, GateResult) — implemented by prior lane\n- src/xmuse_core/agents/manager.py has dispatch_one_shot\n- src/xmuse_core/agents/consumer.py has TaskDescriptor\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/rework-loop",
+      "capabilities": ["code", "test"],
+      "depends_on": ["quality-gate"]
+    },
+    {
+      "feature_id": "lane-status-writer",
+      "task_type": "execute",
+      "prompt": "Implement lane status writeback in xmuse/xmuse_main.py.\n\nRequirements:\n1. After dispatch_one_shot completes, update the lane's status in feature_lanes.json:\n   - exit 0 + gate passed → status: 'done'\n   - exit 0 + gate failed after rework → status: 'failed'\n   - timeout → status: 'failed'\n2. Add function `update_lane_status(lanes_path: Path, feature_id: str, status: str)`\n3. This function reads the JSON, finds the lane by feature_id, sets status, writes back\n4. Call it from the consumer after each dispatch completes\n5. Add tests in tests/test_xmuse_lane_status.py\n\nExisting context:\n- xmuse/feature_lanes.json has lanes array with feature_id and optional status field\n- xmuse/xmuse_main.py loads lanes filtering out status='done' and status='failed'\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/lane-status-writer",
+      "capabilities": ["code", "test"]
+    },
+    {
+      "feature_id": "master-loop",
+      "task_type": "execute",
+      "prompt": "Implement xmuse/master_loop.py — the multi-round autonomous orchestrator.\n\nRequirements:\n1. Class MasterLoop with async method `run()`\n2. Each round:\n   a. Run auto_discovery.py --all → parse JSON output → generate new TaskDescriptors\n   b. Merge with pending lanes from feature_lanes.json (skip done/failed)\n   c. Dispatch all pending lanes via WorklistConsumer (parallel for independent lanes)\n   d. After each lane completes: run QualityGate → ReworkLoop if failed\n   e. Update lane status in feature_lanes.json\n3. Termination conditions:\n   - No pending lanes and auto_discovery returns empty → exit\n   - Global timeout (configurable, default 10h) → graceful shutdown\n   - 3 consecutive rounds with zero successful lanes → exit\n4. CLI: `python xmuse/master_loop.py [--max-hours 10] [--max-concurrent 2]`\n5. Signal handling: SIGTERM/SIGINT → finish current lanes, then exit\n6. Add tests in tests/test_xmuse_master_loop.py (mock subprocess + dispatch)\n\nExisting context:\n- xmuse/auto_discovery.py outputs JSON array of lanes to stdout\n- src/xmuse_core/agents/quality_gate.py has QualityGate\n- src/xmuse_core/agents/rework_loop.py has ReworkLoop\n- xmuse/xmuse_main.py has load_lanes() and ensure_worktree()\n- src/xmuse_core/agents/consumer.py has WorklistConsumer\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/master-loop",
+      "capabilities": ["code", "test"],
+      "depends_on": ["quality-gate", "rework-loop", "lane-status-writer"]
+    },
+    {
+      "feature_id": "error-knowledge",
+      "task_type": "execute",
+      "prompt": "Implement xmuse/error_knowledge.py — accumulate and retrieve error patterns.\n\nRequirements:\n1. ErrorKnowledge class with JSON file storage (xmuse/error_knowledge.json)\n2. Each entry has 7 slots (inspired by lessons-learned pattern):\n   - pit: what happened (the error)\n   - root_cause: why it happened\n   - trigger: conditions that cause recurrence\n   - fix: how it was resolved\n   - verification: how to confirm the fix works\n   - lesson: what to remember for next time\n   - scope: which types of tasks this applies to\n3. Methods:\n   - record_failure(lane_id, error_output, fix_output=None) → auto-extract pit + root_cause\n   - find_relevant(prompt: str, top_k=3) → list of relevant entries (keyword match)\n   - inject_context(prompt: str) → prepend relevant lessons to prompt\n   - mark_resolved(entry_id, fix, verification, lesson)\n4. Integration point: called before dispatch_one_shot to enrich prompt\n5. Add tests in tests/test_xmuse_error_knowledge.py\n\nExisting context:\n- xmuse/xmuse_error_knowledge.py exists (old version) — read it for reference but implement fresh\n- The 7-slot pattern comes from cat-cafe-tutorials lesson 14\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/error-knowledge",
+      "capabilities": ["code", "test"]
+    },
+    {
+      "feature_id": "memoryos-dispatch-integration",
+      "task_type": "execute",
+      "prompt": "Wire MemoryOSClient into the dispatch flow in src/xmuse_core/agents/manager.py.\n\nRequirements:\n1. Add optional `memoryos_client: MemoryOSClient | None` parameter to SessionManager.__init__\n2. In dispatch_one_shot, before sending prompt to codex:\n   - If memoryos_client is set: create_session(f'xmuse:{feature_id}')\n   - build_context(session_id, prompt) → prepend to formatted prompt\n3. After dispatch completes:\n   - ingest(session_id, 'user', prompt)\n   - ingest(session_id, 'assistant', stdout[:4000])\n4. All memoryos calls are best-effort (catch errors, log warning, continue)\n5. Update tests in tests/test_xmuse_core_agents_manager.py\n6. Update xmuse/xmuse_main.py to pass memoryos_client to SessionManager\n\nExisting context:\n- src/xmuse_core/agents/memoryos_client.py has MemoryOSClient with create_session, build_context, ingest\n- All methods already have degraded mode (return None/empty on failure)\n- memoryOS API runs on http://127.0.0.1:8000\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/memoryos-dispatch-integration",
+      "capabilities": ["code", "test"],
+      "depends_on": ["master-loop"]
+    },
+    {
+      "feature_id": "error-knowledge-integration",
+      "task_type": "execute",
+      "prompt": "Integrate ErrorKnowledge into the dispatch and rework flow.\n\nRequirements:\n1. In master_loop.py, before dispatching each lane:\n   - Call error_knowledge.inject_context(prompt) to enrich with relevant lessons\n2. In rework_loop.py, after each failed attempt:\n   - Call error_knowledge.record_failure(lane_id, gate_errors)\n3. After successful rework:\n   - Call error_knowledge.mark_resolved(entry_id, fix_summary, verification, lesson)\n4. Update xmuse/master_loop.py and src/xmuse_core/agents/rework_loop.py\n5. Add integration test that verifies error knowledge accumulates across retries\n\nExisting context:\n- xmuse/error_knowledge.py has ErrorKnowledge class with record_failure, find_relevant, inject_context, mark_resolved\n- src/xmuse_core/agents/rework_loop.py has ReworkLoop\n- xmuse/master_loop.py has MasterLoop\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/error-knowledge-integration",
+      "capabilities": ["code", "test"],
+      "depends_on": ["error-knowledge", "master-loop"]
+    },
+    {
+      "feature_id": "self-improvement-detection",
+      "task_type": "execute",
+      "prompt": "Implement self-improvement detection and safe restart in xmuse/master_loop.py.\n\nRequirements:\n1. After each lane completes, check if it modified files in src/xmuse_core/agents/ or xmuse/master_loop.py or xmuse/xmuse_main.py\n2. If yes: set a flag `_restart_required = True`\n3. At end of current round (all lanes in this batch done):\n   - If _restart_required: checkpoint pending lanes to xmuse/pending_checkpoint.json\n   - Run smoke test (import all xmuse_core.agents modules)\n   - If smoke passes: os.execv() to restart self with same args\n   - If smoke fails: git checkout the modified files, log warning, continue\n4. Add tests that verify the detection logic (mock git diff output)\n\nExisting context:\n- xmuse/overnight_runner.sh has a shell-level smoke_test function — this is the Python equivalent\n- SessionManager.graceful_shutdown already supports pending_tasks parameter\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/self-improvement-detection",
+      "capabilities": ["code", "test"],
+      "depends_on": ["master-loop"]
+    },
+    {
+      "feature_id": "mcp-xmuse-server",
+      "task_type": "execute",
+      "prompt": "Implement xmuse/mcp_server.py — an MCP server exposing xmuse operations as tools.\n\nRequirements:\n1. Use FastAPI + SSE transport (MCP over HTTP)\n2. Expose these MCP tools:\n   - list_lanes() → returns current feature_lanes.json content\n   - enqueue_lane(feature_id, prompt, capabilities) → adds a new lane\n   - get_status(feature_id) → returns lane status + active session info\n   - abort_lane(feature_id) → aborts running dispatch\n   - get_error_knowledge(query) → searches error knowledge for relevant entries\n   - get_logs(feature_id) → returns execution log for a lane\n3. Server runs on port 8100 (separate from memoryOS on 8000)\n4. Add tests in tests/test_xmuse_mcp_server.py using TestClient\n5. This allows other CLI agents (Claude Code, Codex) to interact with xmuse\n\nExisting context:\n- xmuse/feature_lanes.json is the task queue\n- xmuse/active_sessions.json tracks running sessions\n- xmuse/error_knowledge.json stores error patterns\n- xmuse/logs/ contains per-round execution logs\n- FastAPI is already a dependency (used by memoryOS)\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/mcp-xmuse-server",
+      "capabilities": ["code", "test"],
+      "depends_on": ["error-knowledge", "lane-status-writer"]
+    },
+    {
+      "feature_id": "memoryos-middleware-enhancement",
+      "task_type": "execute",
+      "prompt": "Enhance memoryOS middleware for xmuse agent integration.\n\nRequirements:\n1. Add RateLimitMiddleware to src/memoryos_lite/middleware.py:\n   - Per-client rate limiting (by X-API-Key or IP)\n   - Default: 100 req/min\n   - Return 429 with Retry-After header when exceeded\n2. Add CORSMiddleware configuration (allow xmuse GUI frontend)\n3. Add /sessions/{id}/context endpoint that combines:\n   - Recent messages (last 10)\n   - Relevant memory pages (top 3 by similarity)\n   - Error knowledge entries (if xmuse session)\n   Returns a single formatted context string ready for prompt injection\n4. Update src/memoryos_lite/api/app.py to register new middleware\n5. Add tests\n\nExisting context:\n- src/memoryos_lite/middleware.py has RequestIdMiddleware, ApiKeyAuthMiddleware, StructuredLoggingMiddleware\n- src/memoryos_lite/api/app.py is the FastAPI app\n- src/memoryos_lite/config.py has Settings with memoryos_api_key, memoryos_cors_origins\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/memoryos-middleware-enhancement",
+      "capabilities": ["code", "test"]
+    },
+    {
+      "feature_id": "skill-plan-execute-review",
+      "task_type": "execute",
+      "prompt": "Extract the plan-execute-review-rework pattern into a reusable skill template.\n\nRequirements:\n1. Create xmuse/skills/plan_execute_review.py\n2. Class PlanExecuteReviewSkill:\n   - plan(feature_id, goal) → generates a plan prompt, dispatches planner agent, returns plan.md\n   - execute(feature_id, plan) → dispatches implementer agent with plan as context\n   - review(feature_id, worktree) → dispatches reviewer agent, returns verdict\n   - rework(feature_id, verdict) → dispatches rework agent with review feedback\n   - run(feature_id, goal) → orchestrates the full cycle: plan → execute → review → rework if needed\n3. Each step uses dispatch_one_shot with appropriate prompts\n4. The skill is configurable: max_rework_attempts, skip_plan (for simple tasks)\n5. Add tests in tests/test_xmuse_skill_plan_execute_review.py\n\nExisting context:\n- src/xmuse_core/agents/manager.py has SessionManager.dispatch_one_shot\n- src/xmuse_core/agents/quality_gate.py has QualityGate\n- src/xmuse_core/agents/rework_loop.py has ReworkLoop\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/skill-plan-execute-review",
+      "capabilities": ["code", "test"],
+      "depends_on": ["quality-gate", "rework-loop"]
+    },
+    {
+      "feature_id": "xmuse-dashboard-api",
+      "task_type": "execute",
+      "prompt": "Implement xmuse/dashboard_api.py — REST API for the xmuse GUI frontend.\n\nRequirements:\n1. FastAPI app on port 8200\n2. Endpoints:\n   - GET /api/lanes → list all lanes with status\n   - GET /api/lanes/{id} → lane detail + execution log\n   - POST /api/lanes → create new lane (human submits feature request)\n   - POST /api/lanes/{id}/approve → approve a completed lane for merge\n   - POST /api/lanes/{id}/reject → reject and optionally trigger rework\n   - GET /api/sessions → list active codex sessions\n   - GET /api/errors → list error knowledge entries\n   - GET /api/metrics → execution stats (lanes done/failed/pending, avg time)\n3. CORS enabled for localhost:3000 (frontend dev server)\n4. Reads from: feature_lanes.json, active_sessions.json, error_knowledge.json, logs/\n5. Add tests in tests/test_xmuse_dashboard_api.py\n\nExisting context:\n- xmuse/feature_lanes.json, xmuse/active_sessions.json, xmuse/error_knowledge.json\n- xmuse/logs/ contains round logs\n- FastAPI is already a dependency\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/xmuse-dashboard-api",
+      "capabilities": ["code", "test"],
+      "depends_on": ["lane-status-writer", "error-knowledge"]
+    },
+    {
+      "feature_id": "xmuse-dashboard-frontend",
+      "task_type": "execute",
+      "prompt": "Implement a minimal xmuse dashboard frontend.\n\nRequirements:\n1. Create xmuse/frontend/ directory with a simple HTML + vanilla JS dashboard (no build step needed)\n2. Pages:\n   - Lane overview: table of all lanes with status badges (pending/running/done/failed)\n   - Lane detail: shows prompt, execution log, gate results\n   - Error knowledge: searchable list of error patterns\n   - Submit lane: form to create a new lane (feature_id + prompt + capabilities)\n3. Fetches data from xmuse dashboard API (http://localhost:8200/api/)\n4. Auto-refreshes every 10 seconds\n5. Serve via `python -m http.server 3000` from xmuse/frontend/\n6. Clean, minimal CSS (no framework needed)\n\nExisting context:\n- xmuse/dashboard_api.py serves the REST API on port 8200\n- Endpoints: GET /api/lanes, GET /api/lanes/{id}, POST /api/lanes, GET /api/errors, GET /api/metrics\n\nWrite clean code. Commit when done.",
+      "branch": "feat/xmuse-dashboard-frontend",
+      "capabilities": ["code"],
+      "depends_on": ["xmuse-dashboard-api"]
+    },
+    {
+      "feature_id": "auto-discovery-enhanced",
+      "task_type": "execute",
+      "prompt": "Enhance xmuse/auto_discovery.py with additional discovery sources.\n\nRequirements:\n1. Add --mypy flag: run `uv run mypy src/ --ignore-missing-imports` → parse errors → generate fix lanes\n2. Add --coverage flag: run `uv run pytest --cov=src --cov-report=json` → find files with <50% coverage → generate test lanes\n3. Add --git-issues flag: parse TODO/FIXME/HACK comments in code → generate cleanup lanes\n4. Update --all to include all sources\n5. Add deduplication: if a lane with same feature_id already exists in feature_lanes.json, skip it\n6. Add priority scoring: test failures > type errors > lint > coverage > TODOs\n7. Update tests\n\nExisting context:\n- xmuse/auto_discovery.py already handles --pytest and --ruff\n- Output format: JSON array of lane objects with feature_id, task_type, prompt, capabilities, source\n\nWrite clean, tested code. Commit when done.",
+      "branch": "feat/auto-discovery-enhanced",
+      "capabilities": ["code", "test"],
+      "depends_on": ["master-loop"]
+    }
+  ]
 }
