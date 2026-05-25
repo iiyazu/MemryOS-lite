@@ -1172,13 +1172,15 @@ def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[Eviden
     )
     scored: list[tuple[int, EvidenceItem]] = []
     for item in evidence:
+        if is_generic_ack(item.text):
+            continue
         score = len(query_terms & set(tokenize(item.text)))
         if item.origin == "retrieved_message":
             score += 12 if multi_evidence else 4
         if item.superseded and not multi_evidence:
             score -= 16
-        if _is_temporal_question(question) and _has_update_signal(item.text):
-            score += 20
+        if _has_update_signal(item.text):
+            score += 20 if _is_temporal_question(question) else 12
         if item.origin == "page" and not temporal_recent_update and not multi_evidence:
             score += 8
         if any(
@@ -1188,6 +1190,13 @@ def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[Eviden
         scored.append((score, item))
     scored.sort(key=lambda item: item[0], reverse=True)
     limit = _evidence_limit(question)
+    positive_items = [item for score, item in scored if score > 0]
+    if (
+        _is_habit_or_preference_question(question)
+        and len(positive_items) >= 2
+        and all(item.origin == "retrieved_message" for item in positive_items[:2])
+    ):
+        limit = max(limit, 2)
     return [item for score, item in scored if score > 0][:limit]
 
 
@@ -1227,6 +1236,17 @@ def _is_temporal_question(question: str) -> bool:
     return any(marker in question for marker in temporal_markers)
 
 
+def _is_slot_value_question(question: str) -> bool:
+    return any(
+        marker in question
+        for marker in ("什么", "哪个", "哪天", "多少", "谁", "哪种", "哪一个")
+    )
+
+
+def _is_habit_or_preference_question(question: str) -> bool:
+    return any(marker in question for marker in ("习惯", "偏好", "平时"))
+
+
 def _has_update_signal(text: str) -> bool:
     return any(
         marker in text
@@ -1243,7 +1263,12 @@ def _has_update_signal(text: str) -> bool:
             "调整到",
             "切换到",
             "切换成",
+            "切到",
+            "调到",
+            "降到",
+            "延到",
             "更新",
+            "采用",
             "不做",
             "换",
         )
@@ -1266,7 +1291,7 @@ def _project_evidence_text(question: str, text: str) -> str:
     if not clauses:
         return ""
 
-    if any(marker in question for marker in ("最终", "当前")):
+    if _is_temporal_question(question) or _is_slot_value_question(question):
         priority_markers = (
             "最终确定",
             "最终调整为",
@@ -1277,10 +1302,14 @@ def _project_evidence_text(question: str, text: str) -> str:
             "调整到",
             "切换到",
             "切换成",
+            "切到",
+            "调到",
+            "降到",
+            "延到",
             "换成",
             "换用",
-            "选",
             "采用",
+            "选",
         )
         for marker in priority_markers:
             for clause in reversed(clauses):

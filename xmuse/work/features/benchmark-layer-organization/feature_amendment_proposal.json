@@ -1,29 +1,35 @@
 {
   "feature_id": "benchmark-layer-organization",
   "proposal_type": "master_decision_needed",
-  "created_at": "2026-05-25T06:43:25Z",
+  "created_at": "2026-05-25T07:52:36Z",
   "status": "feature_local_evidence_only",
-  "reason": "The bounded diagnostic repair is complete, but full blueprint readiness is blocked by missing public LLM credentials, absent raw public data files in the feature worktree, project-wide mypy failures, and a hard-eval baseline mismatch that is not caused by this slice.",
+  "reason": "The bounded diagnostic and hard-gate repairs are complete, but full blueprint readiness is blocked by unavailable public LLM credentials and project-wide mypy failures outside this bounded feature slice. The default hard-eval mismatch and local relative public data path blockers have been repaired.",
   "options": [
     {
-      "id": "provide_external_gates",
-      "description": "Provide LLM credentials and public benchmark data in the feature worktree, then rerun full public LongMemEval and LoCoMo comparison gates."
+      "id": "provide_external_public_llm_gate",
+      "description": "Provide OPENAI_API_KEY or DEEPSEEK_API_KEY, then rerun the full public LongMemEval 50 and LoCoMo 50 answer/judge comparison gates."
     },
     {
-      "id": "split_gate_cleanup",
-      "description": "Split project-wide mypy cleanup and hard-eval baseline reconciliation into separate lanes before requiring those gates for this diagnostic feature."
+      "id": "split_project_wide_mypy_cleanup",
+      "description": "Split the 90-error full-project mypy cleanup into a separate lane before requiring full mypy as a merge gate for this diagnostic feature."
     },
     {
-      "id": "accept_partial_diagnostic_slice",
-      "description": "Treat this branch as a partial diagnostic artifact improvement with no aggregate benchmark movement claim."
+      "id": "accept_partial_diagnostic_and_hard_gate_slice",
+      "description": "Treat this branch as a partial diagnostic and hard-eval gate repair with no aggregate public benchmark movement claim."
     }
   ],
   "preserves": {
     "v1_fallback": true,
+    "v3_default": true,
     "kernel_opt_in": true,
+    "recall_pipeline_v2_opt_in": true,
     "no_benchmark_score_targets": true,
     "no_gate_lowering": true
   },
+  "resolved_in_this_pass": [
+    "Default hard eval now reports accuracy=1.00/source=1.00.",
+    "Blueprint-relative public data and comparison-report paths resolve through ignored local symlinks."
+  ],
   "forbidden_writes_avoided": [
     "xmuse/master_state.json",
     "xmuse/master_status.json",
