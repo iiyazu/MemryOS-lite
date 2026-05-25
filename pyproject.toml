@@ -56,6 +56,9 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: marks tests that run full eval pipelines (>30s each, deselect with '-m not slow')",
+]
 
 [tool.mypy]
 python_version = "3.11"

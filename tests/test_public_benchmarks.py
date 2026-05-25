@@ -4070,6 +4070,7 @@ def test_public_repair_smoke_executes_phase16_kernel_tools_before_v3_context(tmp
     ]
 
 
+@pytest.mark.slow
 def test_public_repair_smoke_requires_explicit_kernel_opt_in_and_baseline_report(tmp_path):
     data_path = _write_single_locomo_case(
         tmp_path,
@@ -4190,6 +4191,7 @@ def test_public_repair_smoke_requires_explicit_kernel_opt_in_and_baseline_report
     assert enabled_report["executed_tool_names"] == ["archive_write"]
 
 
+@pytest.mark.slow
 def test_public_repair_smoke_isolated_store_does_not_mutate_default_public_run(tmp_path):
     data_path = _write_single_locomo_case(
         tmp_path,
@@ -4310,6 +4312,7 @@ def test_public_repair_smoke_isolated_store_does_not_mutate_default_public_run(t
     ).read_text(encoding="utf-8", errors="ignore")
 
 
+@pytest.mark.slow
 def test_repair_smoke_archive_artifacts_are_visible_only_when_session_attached(tmp_path):
     data_path = _write_single_locomo_case(
         tmp_path,

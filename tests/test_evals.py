@@ -23,6 +23,29 @@ from memoryos_lite.llm_judge import JudgeVerdict
 from memoryos_lite.schemas import EvalCase, MessageCreate, Role
 from memoryos_lite.store import create_store
 
+slow = pytest.mark.slow
+
+
+@pytest.fixture(scope="module")
+def _eval_v1_memoryos(tmp_path_factory):
+    """Shared run_eval(v1, memoryos_lite) — reused by report/cli/source tests."""
+    base = tmp_path_factory.mktemp("eval_v1_memoryos")
+    settings = Settings(data_dir=base / ".memoryos", memoryos_memory_arch="v1")
+    results = run_eval(settings, run_id="shared-v1", baselines=["memoryos_lite"], isolated=True)
+    report = json.loads((settings.data_dir / "evals" / "shared-v1.json").read_text())
+    return {"settings": settings, "results": results, "report": report}
+
+
+@pytest.fixture(scope="module")
+def _eval_default_memoryos(tmp_path_factory):
+    """Shared run_eval(default/v3, memoryos_lite) — reused by trace/snippet tests."""
+    base = tmp_path_factory.mktemp("eval_default_memoryos")
+    settings = Settings(data_dir=base / ".memoryos", openai_api_key="dummy")
+    results = run_eval(settings, run_id="shared-default", baselines=["memoryos_lite"])
+    report = json.loads((settings.data_dir / "evals" / "shared-default.json").read_text())
+    trace_dir = settings.data_dir / "eval_runs" / "shared-default" / "traces"
+    return {"settings": settings, "results": results, "report": report, "trace_dir": trace_dir}
+
 
 def test_eval_run_does_not_reset_main_store(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
@@ -39,25 +62,19 @@ def test_eval_run_does_not_reset_main_store(tmp_path):
     assert (settings.data_dir / "evals" / "test-run.json").exists()
 
 
-def test_eval_forces_heuristic_paging_for_reproducibility(tmp_path):
-    settings = Settings(
-        data_dir=tmp_path / ".memoryos",
-        openai_api_key="dummy",
-    )
+@slow
+def test_eval_forces_heuristic_paging_for_reproducibility(_eval_default_memoryos):
+    data = _eval_default_memoryos
+    trace_paths = list(data["trace_dir"].glob("*.jsonl"))
 
-    results = run_eval(settings, run_id="forced-heuristic", baselines=["memoryos_lite"])
-    trace_dir = settings.data_dir / "eval_runs" / "forced-heuristic" / "traces"
-    trace_paths = list(trace_dir.glob("*.jsonl"))
-
-    assert results
+    assert data["results"]
     assert trace_paths
     trace_text = "\n".join(path.read_text(encoding="utf-8") for path in trace_paths)
-    # run_eval forces memoryos_paging_mode=heuristic and clears API keys,
-    # so paging always walks the heuristic path regardless of env keys.
     assert '"paging_mode":"heuristic"' in trace_text
     assert "agentic" not in trace_text
 
 
+@slow
 def test_all_eval_baselines_obey_budget(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
 
@@ -522,11 +539,9 @@ def test_forbidden_answer_receives_no_credited_source_support():
     assert result.supporting_source_count == 0
 
 
-def test_eval_report_includes_source_ids(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
-
-    run_eval(settings, run_id="source-report", baselines=["memoryos_lite"], isolated=True)
-    report = json.loads((settings.data_dir / "evals" / "source-report.json").read_text())
+@slow
+def test_eval_report_includes_source_ids(_eval_v1_memoryos):
+    report = _eval_v1_memoryos["report"]
 
     assert report
     assert all("source_ids" in row for row in report)
@@ -552,10 +567,9 @@ def test_eval_report_includes_source_ids(tmp_path):
     assert dropped_audit_row["dropped_page_details"][0]["reason"].startswith("rrf ")
 
 
-def test_eval_cli_rows_include_dropped_cases(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
-
-    results = run_eval(settings, run_id="cli-dropped-cases", baselines=["memoryos_lite"])
+@slow
+def test_eval_cli_rows_include_dropped_cases(_eval_v1_memoryos):
+    results = _eval_v1_memoryos["results"]
     rows = _eval_table_rows(results)
     memoryos_row = next(row for row in rows if row["baseline"] == "memoryos_lite")
 
@@ -614,19 +628,15 @@ def test_eval_report_serializes_dropped_page_details():
     ]
 
 
-def test_supporting_source_snippets_show_only_credit_sources(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-
-    run_eval(settings, run_id="supporting-snippets", baselines=["memoryos_lite"])
-    report = json.loads((settings.data_dir / "evals" / "supporting-snippets.json").read_text())
+@slow
+def test_supporting_source_snippets_show_only_credit_sources(_eval_default_memoryos):
+    report = _eval_default_memoryos["report"]
     row = next(
         item
         for item in report
         if item["baseline"] == "memoryos_lite" and item["case_id"] == "hard_long_recall_001"
     )
 
-    # source_snippets audits every surfaced source; supporting_source_snippets
-    # below is the strict credited-source assertion.
     assert set(row["source_snippets"]) >= {"hard_long_recall_001_msg_004"}
     assert row["supporting_source_snippets"] == {
         "MemoryOS Lite": {
@@ -661,20 +671,15 @@ def test_memoryos_source_attribution_uses_original_message_text(tmp_path):
     assert result.source_accuracy == 0.0
 
 
-def test_memoryos_baseline_preserves_required_sources(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
-
-    results = run_eval(
-        settings,
-        run_id="source-memoryos",
-        baselines=["memoryos_lite"],
-        isolated=True,
-    )
+@slow
+def test_memoryos_baseline_preserves_required_sources(_eval_v1_memoryos):
+    results = _eval_v1_memoryos["results"]
 
     assert results
     assert all(result.source_accuracy == 1.0 for result in results)
 
 
+@slow
 def test_memoryos_v3_default_preserves_hard_eval_source_accuracy(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
 
@@ -690,6 +695,7 @@ def test_memoryos_v3_default_preserves_hard_eval_source_accuracy(tmp_path):
     assert all(result.source_accuracy == 1.0 for result in results)
 
 
+@slow
 def test_hard_cases_preserve_baseline_differentiation(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
 

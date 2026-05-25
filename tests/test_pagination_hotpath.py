@@ -67,6 +67,7 @@ class TestIngestScaleConstantTime:
     After #4, it calls session_token_count() which is a single SQL SUM.
     """
 
+    @pytest.mark.slow
     def test_late_ingest_not_much_slower_than_early(self, perf_service):
         session = perf_service.create_session("scale")
 
