@@ -167,6 +167,12 @@ def write_dispatch_plan(loop: Path, plan: dict[str, Any]) -> dict[str, str]:
 
     plan_path = dispatch_dir / "multi_lane_dispatch.json"
     plan_path.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    existing_runtime: dict[str, dict[str, Any]] = {}
+    for existing_job in jobs_dir.glob("*.json"):
+        payload = _read_json(existing_job)
+        runtime = payload.get("runtime")
+        if isinstance(runtime, dict):
+            existing_runtime[existing_job.stem] = runtime
     for stale_job in jobs_dir.glob("*.json"):
         stale_job.unlink()
     for job in plan["jobs"]:
@@ -175,6 +181,9 @@ def write_dispatch_plan(loop: Path, plan: dict[str, Any]) -> dict[str, str]:
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(job["prompt_text"], encoding="utf-8")
         job_payload = {key: value for key, value in job.items() if key != "prompt_text"}
+        runtime = existing_runtime.get(str(job["feature_id"]))
+        if runtime is not None:
+            job_payload["runtime"] = runtime
         job_path.write_text(
             json.dumps(job_payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",

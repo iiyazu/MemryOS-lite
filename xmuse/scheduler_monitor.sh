@@ -73,6 +73,20 @@ refresh_dispatch() {
         2>/tmp/xmuse_dispatch_monitor.err 8>&- || true
 }
 
+dispatch_has_queued_jobs() {
+    python3 "$LOOP_ROOT/slave_job_runner.py" has-queued --loop "$LOOP_ROOT" 8>&-
+}
+
+start_queued_slave_jobs() {
+    python3 "$LOOP_ROOT/slave_job_runner.py" start-queued --loop "$LOOP_ROOT" \
+        >/tmp/xmuse_slave_job_runner.json \
+        2>/tmp/xmuse_slave_job_runner.err 8>&- || true
+}
+
+slave_jobs_need_master_reconcile() {
+    python3 "$LOOP_ROOT/slave_job_runner.py" needs-master --loop "$LOOP_ROOT" 8>&-
+}
+
 log "monitor started interval=${INTERVAL_SECONDS}s"
 while true; do
     log "scheduler tick"
@@ -81,6 +95,18 @@ while true; do
 
     state="$(active_job_state || echo unknown)"
     if [ "$state" = "completed" ]; then
+        if dispatch_has_queued_jobs; then
+            log "master completed but dispatch has queued jobs; continuing slave execution"
+            start_queued_slave_jobs
+            if slave_jobs_need_master_reconcile; then
+                log "slave jobs finished; restarting master for reconcile"
+                start_master
+                sleep 5
+                refresh_report
+            fi
+            sleep "$INTERVAL_SECONDS" 8>&-
+            continue
+        fi
         log "master completed; monitor stopping"
         refresh_report
         exit 0

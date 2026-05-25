@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -1469,6 +1470,37 @@ def test_dispatcher_removes_stale_job_files_on_write(tmp_path):
     assert (loop / "jobs" / "active-feature.json").exists()
 
 
+def test_dispatcher_preserves_running_job_runtime_on_write(tmp_path):
+    module_path = PROJECT / "xmuse" / "multi_lane_dispatcher.py"
+    spec = importlib.util.spec_from_file_location("multi_lane_dispatcher", module_path)
+    dispatcher = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(dispatcher)
+    loop = tmp_path / "xmuse"
+    state = base_master_state()
+    active = _master_feature_from_test("active-feature")
+    active["state"] = "repairing"
+    active["merge"]["status"] = "not_requested"
+    active_worktree = tmp_path / "memoryOS-active-feature"
+    active_worktree.mkdir()
+    active["worktree"] = str(active_worktree)
+    state["features"] = [active]
+    write_json(loop / "master_state.json", state)
+    write_json(
+        loop / "jobs" / "active-feature.json",
+        {
+            "feature_id": "active-feature",
+            "runtime": {"status": "running", "pid": "12345"},
+        },
+    )
+
+    plan = dispatcher.build_dispatch_plan(loop)
+    dispatcher.write_dispatch_plan(loop, plan)
+
+    job = json.loads((loop / "jobs" / "active-feature.json").read_text())
+    assert job["runtime"] == {"status": "running", "pid": "12345"}
+
+
 def test_dispatcher_blocks_feature_when_worktree_is_missing(tmp_path):
     module_path = PROJECT / "xmuse" / "multi_lane_dispatcher.py"
     spec = importlib.util.spec_from_file_location("multi_lane_dispatcher", module_path)
@@ -1493,12 +1525,13 @@ def test_dispatcher_blocks_feature_when_worktree_is_missing(tmp_path):
     assert plan["counts"]["blocked_jobs"] == 1
 
 
-def test_scheduler_monitor_stops_when_master_completed():
+def test_scheduler_monitor_continues_when_master_completed_with_queued_jobs():
     monitor = (PROJECT / "xmuse" / "scheduler_monitor.sh").read_text()
 
     assert 'if [ "$state" = "completed" ]; then' in monitor
-    assert "master completed; monitor stopping" in monitor
-    assert "exit 0" in monitor
+    assert "dispatch_has_queued_jobs" in monitor
+    assert "start_queued_slave_jobs" in monitor
+    assert "master completed but dispatch has queued jobs; continuing slave execution" in monitor
 
 
 def test_scheduler_monitor_restarts_failed_or_stale_master():
@@ -1507,6 +1540,114 @@ def test_scheduler_monitor_restarts_failed_or_stale_master():
     assert 'module.complete_active_job(loop, exit_code=143, status="failed")' in monitor
     assert 'if ! launcher_alive || [ "$state" != "running" ]; then' in monitor
     assert "start_master" in monitor
+
+
+def test_slave_job_runner_starts_only_queued_non_running_jobs(tmp_path):
+    module_path = PROJECT / "xmuse" / "slave_job_runner.py"
+    spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)
+    runner = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(runner)
+    loop = tmp_path / "xmuse"
+    write_json(
+        loop / "dispatch" / "multi_lane_dispatch.json",
+        {
+            "jobs": [
+                {
+                    "feature_id": "queued-feature",
+                    "status": "queued",
+                    "job_ref": "xmuse/jobs/queued-feature.json",
+                },
+                {
+                    "feature_id": "blocked-feature",
+                    "status": "blocked",
+                    "job_ref": "xmuse/jobs/blocked-feature.json",
+                },
+            ]
+        },
+    )
+    write_json(loop / "jobs" / "queued-feature.json", {"feature_id": "queued-feature"})
+    write_json(loop / "jobs" / "blocked-feature.json", {"feature_id": "blocked-feature"})
+
+    result = runner.start_queued_jobs(loop, dry_run=True)
+
+    assert result["started"] == ["queued-feature"]
+    assert result["skipped"] == [
+        {"feature_id": "blocked-feature", "reason": "job status is blocked"}
+    ]
+
+
+def test_slave_job_runner_does_not_restart_alive_running_job(tmp_path):
+    module_path = PROJECT / "xmuse" / "slave_job_runner.py"
+    spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)
+    runner = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(runner)
+    loop = tmp_path / "xmuse"
+    write_json(
+        loop / "dispatch" / "multi_lane_dispatch.json",
+        {
+            "jobs": [
+                {
+                    "feature_id": "running-feature",
+                    "status": "queued",
+                    "job_ref": "xmuse/jobs/running-feature.json",
+                }
+            ]
+        },
+    )
+    write_json(
+        loop / "jobs" / "running-feature.json",
+        {
+            "feature_id": "running-feature",
+            "runtime": {"status": "running", "pid": str(os.getpid())},
+        },
+    )
+
+    result = runner.start_queued_jobs(loop, dry_run=True)
+
+    assert result["started"] == []
+    assert result["skipped"] == [
+        {"feature_id": "running-feature", "reason": "job already running"}
+    ]
+
+
+def test_slave_job_runner_does_not_restart_completed_job(tmp_path):
+    module_path = PROJECT / "xmuse" / "slave_job_runner.py"
+    spec = importlib.util.spec_from_file_location("slave_job_runner", module_path)
+    runner = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(runner)
+    loop = tmp_path / "xmuse"
+    write_json(
+        loop / "dispatch" / "multi_lane_dispatch.json",
+        {
+            "jobs": [
+                {
+                    "feature_id": "completed-feature",
+                    "status": "queued",
+                    "job_ref": "xmuse/jobs/completed-feature.json",
+                }
+            ]
+        },
+    )
+    write_json(
+        loop / "jobs" / "completed-feature.json",
+        {
+            "feature_id": "completed-feature",
+            "runtime": {"status": "completed", "pid": "12345"},
+        },
+    )
+
+    result = runner.start_queued_jobs(loop, dry_run=True)
+    summary = runner.summarize_jobs(loop)
+
+    assert result["started"] == []
+    assert result["skipped"] == [
+        {"feature_id": "completed-feature", "reason": "job already completed"}
+    ]
+    assert summary["completed"] == 1
+    assert summary["needs_master_reconcile"] is True
 
 
 def test_prepare_then_activate_preserves_feature_statuses(tmp_path):
