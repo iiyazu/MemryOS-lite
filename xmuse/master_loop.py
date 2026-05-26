@@ -40,6 +40,7 @@ FULL_QUALITY_GATE_TASK_TYPE = "full_quality_gate"
 FULL_QUALITY_GATE_PRIORITY = 100
 FULL_QUALITY_GATE_REPAIR_PRIORITY = 110
 TERMINAL_LANE_STATUSES = {"done", "failed", "merge_failed"}
+MAX_LANE_RETRIES = 2
 DEFAULT_GATE_PROFILES_PATH = ROOT / "xmuse" / "gate_profiles.json"
 
 
@@ -107,6 +108,22 @@ def _is_terminal_lane(lane: dict[str, Any]) -> bool:
     return lane.get("status", "pending") in TERMINAL_LANE_STATUSES
 
 
+def _should_retry_lane(lane: dict[str, Any]) -> bool:
+    """Check if a failed lane is eligible for automatic retry."""
+    if lane.get("status") != "failed":
+        return False
+    if lane.get("auto_retry") is not True:
+        return False
+    if _is_full_gate_family_lane(lane):
+        return False
+    retry_count = lane.get("retry_count", 0)
+    if retry_count >= MAX_LANE_RETRIES:
+        return False
+    if lane.get("no_retry"):
+        return False
+    return True
+
+
 def _is_active_full_gate_family_lane(lane: dict[str, Any]) -> bool:
     return _is_full_gate_family_lane(lane) and not _is_terminal_lane(lane)
 
@@ -151,7 +168,13 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
 
     for index, lane in enumerate(all_lanes):
         if _is_terminal_lane(lane):
-            continue
+            # Check if failed lane is eligible for retry
+            if lane.get("status") == "failed" and _should_retry_lane(lane):
+                lane["status"] = "pending"
+                lane["retry_count"] = lane.get("retry_count", 0) + 1
+                mutated = True
+            else:
+                continue
 
         deps = lane.get("depends_on", [])
         if deps and not all(dep in done_ids for dep in deps):
@@ -382,17 +405,15 @@ class MasterLoop:
     def _build_review_gate() -> Any:
         import os
 
-        api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get(
-            "MEMORYOS_CHAT_API_KEY"
-        )
-        if not api_key:
+        enabled = os.environ.get("XMUSE_REVIEW_GATE", "1").strip().lower()
+        if enabled in {"0", "false", "no", "off"}:
             return None
-        from xmuse_core.gates.review_gate import LLMReviewGate
+        from xmuse_core.gates.review_gate import CodexReviewGate
 
-        return LLMReviewGate(
-            api_key=api_key,
-            base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
-            model=os.environ.get("MEMORYOS_CHAT_MODEL", "deepseek-chat"),
+        return CodexReviewGate(
+            codex_cmd=os.environ.get("XMUSE_REVIEW_CODEX_CMD", "codex"),
+            model=os.environ.get("XMUSE_REVIEW_MODEL", "gpt-5.5"),
+            timeout_s=float(os.environ.get("XMUSE_REVIEW_TIMEOUT_S", "300")),
         )
 
     async def run(self) -> MasterLoopSummary:

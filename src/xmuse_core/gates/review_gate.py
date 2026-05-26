@@ -1,15 +1,15 @@
-"""LLM-based diff review gate - semantic code review before auto-merge."""
+"""Codex-based diff review gate - semantic code review before auto-merge."""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import re
+import shlex
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,38 +33,19 @@ class DiffResult:
     error: str = ""
 
 
-class LLMReviewGate:
-    """Single-shot LLM review of a lane's diff before merge."""
+class CodexReviewGate:
+    """Single-shot Codex process review of a lane's diff before merge."""
 
     def __init__(
         self,
         *,
-        api_key: str | None = None,
-        base_url: str | None = None,
+        codex_cmd: str = "codex",
         model: str | None = None,
         timeout_s: float = 60.0,
     ) -> None:
-        self._api_key = api_key
-        self._base_url = base_url
+        self._codex_cmd = codex_cmd
         self._model = model
         self._timeout_s = timeout_s
-        self._llm: Any = None
-
-    def _get_llm(self) -> Any:
-        if self._llm is not None:
-            return self._llm
-        if not self._api_key:
-            return None
-        from langchain_openai import ChatOpenAI
-
-        self._llm = ChatOpenAI(
-            model=self._model or "deepseek-chat",
-            api_key=self._api_key,
-            base_url=self._base_url,
-            temperature=0,
-            timeout=self._timeout_s,
-        )
-        return self._llm
 
     async def review(
         self,
@@ -75,10 +56,6 @@ class LLMReviewGate:
         gate_context: str | None = None,
     ) -> ReviewVerdict:
         """Review a lane's diff. Returns verdict with concerns."""
-        llm = self._get_llm()
-        if llm is None:
-            return ReviewVerdict(approved=True, summary="no LLM configured, auto-approve")
-
         diff_result = self._get_diff(worktree, base_ref)
         if diff_result.error:
             return ReviewVerdict(
@@ -98,14 +75,41 @@ class LLMReviewGate:
             self_mod,
             gate_context=gate_context,
         )
-        response = await asyncio.to_thread(
-            llm.invoke,
-            [{"role": "user", "content": prompt}],
+        result = await asyncio.to_thread(
+            subprocess.run,
+            self._build_command(worktree),
+            input=prompt,
+            capture_output=True,
+            text=True,
+            cwd=worktree,
+            timeout=self._timeout_s,
         )
-        raw = response.content if hasattr(response, "content") else str(response)
-        verdict = self._parse_verdict(raw)
+        if result.returncode != 0:
+            stderr = (result.stderr or result.stdout or "").strip()[:500]
+            return ReviewVerdict(
+                approved=False,
+                concerns=[f"codex_review_failed: {stderr}"],
+                summary="codex review process failed",
+                confidence=0.0,
+                self_modification=self_mod,
+            )
+
+        verdict = self._parse_verdict(result.stdout)
         verdict.self_modification = self_mod
         return verdict
+
+    def _build_command(self, worktree: Path) -> list[str]:
+        command = [*shlex.split(self._codex_cmd), "exec"]
+        if self._model:
+            command.extend(["-m", self._model])
+        command.extend(
+            [
+                "--dangerously-bypass-approvals-and-sandbox",
+                "-C",
+                str(worktree),
+            ]
+        )
+        return command
 
     def _get_diff(self, worktree: Path, base_ref: str | None) -> DiffResult:
         ref = base_ref or "HEAD~1"
@@ -216,6 +220,9 @@ class LLMReviewGate:
         return ReviewVerdict(
             approved=False,
             concerns=[concern],
-            summary="LLM response unparseable",
+            summary="Codex response unparseable",
             confidence=0.0,
         )
+
+
+LLMReviewGate = CodexReviewGate
