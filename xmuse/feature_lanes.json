@@ -202,7 +202,8 @@
       "branch": "feat/frontend-scaffold",
       "capabilities": [
         "code"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "frontend-app-shell",
@@ -289,6 +290,106 @@
       ],
       "depends_on": [
         "frontend-lanes-page"
+      ]
+    },
+    {
+      "feature_id": "master-loop-replace-main",
+      "task_type": "execute",
+      "prompt": "Replace xmuse/xmuse_main.py with xmuse/master_loop.py as the primary entry point.\n\nRequirements:\n1. Modify xmuse/master_loop.py to incorporate all functionality from xmuse_main.py:\n   - ensure_worktree() function\n   - update_lane_status() function\n   - on_complete callback wiring\n   - CLI args (--lanes, --config, --memoryos-url, --concurrency)\n2. In master_loop.py's MasterLoop.run(), integrate:\n   - auto_discovery.py --all at the start of each round\n   - QualityGate.check(worktree) after each dispatch\n   - ReworkLoop.run() when gate fails\n   - ErrorKnowledge.inject_context() before dispatch\n   - update_lane_status() after each lane completes\n3. Add termination conditions:\n   - No pending lanes + auto_discovery empty → exit\n   - 3 consecutive rounds with zero success → exit\n   - Global timeout (--max-hours, default 10)\n4. Update overnight_runner.sh to call master_loop.py instead of xmuse_main.py\n5. Keep xmuse_main.py as a thin wrapper that delegates to master_loop.py (backwards compat)\n6. Add tests in tests/test_xmuse_master_loop_integration.py\n7. Commit when done.\n\nExisting context:\n- xmuse/master_loop.py already has MasterLoop class (355 lines)\n- src/xmuse_core/agents/quality_gate.py has QualityGate\n- src/xmuse_core/agents/rework_loop.py has ReworkLoop\n- xmuse/error_knowledge.py has ErrorKnowledge\n- xmuse/auto_discovery.py has discover() function\n- xmuse/xmuse_main.py has ensure_worktree(), update_lane_status(), load_lanes()",
+      "branch": "feat/master-loop-replace-main",
+      "capabilities": [
+        "code",
+        "test"
+      ]
+    },
+    {
+      "feature_id": "parallel-dispatch",
+      "task_type": "execute",
+      "prompt": "Fix WorklistConsumer to actually dispatch lanes in parallel using asyncio.create_task.\n\nRequirements:\n1. In src/xmuse_core/agents/consumer.py, modify run():\n   - Instead of awaiting dispatch_one_shot directly, wrap it in asyncio.create_task\n   - Use the semaphore to limit concurrency (it's already there but unused)\n   - Track in-flight tasks in a set, await them on shutdown\n2. Ensure on_complete callback is called after each task finishes (not just sequentially)\n3. Handle exceptions in individual tasks without crashing the consumer\n4. Add a drain() method that waits for all in-flight tasks to complete\n5. Update tests in tests/test_xmuse_core_agents_consumer.py:\n   - Test that 2 lanes dispatch concurrently when max_concurrent=2\n   - Test that semaphore limits concurrency\n   - Test that one failed task doesn't kill others\n6. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/consumer.py has WorklistConsumer with _semaphore and _in_flight\n- Current implementation is sequential (await inside the loop)\n- on_complete callback takes (feature_id, status)",
+      "branch": "feat/parallel-dispatch",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "master-loop-replace-main"
+      ]
+    },
+    {
+      "feature_id": "gate-rework-integration",
+      "task_type": "execute",
+      "prompt": "Wire QualityGate and ReworkLoop into the dispatch flow in master_loop.py.\n\nRequirements:\n1. After each dispatch_one_shot returns:\n   - If exit code 0: run QualityGate.check(worktree)\n   - If gate passes: mark lane done\n   - If gate fails: run ReworkLoop.run(lane, gate_result, dispatch_fn, gate, max_retries=3)\n   - If rework succeeds: mark lane done\n   - If rework exhausted: mark lane failed, record in ErrorKnowledge\n2. The rework prompt should include:\n   - Original prompt\n   - Gate errors (pytest output, ruff output)\n   - Attempt number\n   - Relevant error knowledge entries\n3. QualityGate must run IN the worktree (cd to worktree before pytest/ruff)\n4. Add integration test that mocks a failing gate → rework → pass scenario\n5. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/quality_gate.py: QualityGate.check(worktree) → GateResult\n- src/xmuse_core/agents/rework_loop.py: ReworkLoop.run(lane, gate_result, dispatch_fn, gate)\n- xmuse/error_knowledge.py: ErrorKnowledge.record_failure(), inject_context()\n- xmuse/master_loop.py: MasterLoop class",
+      "branch": "feat/gate-rework-integration",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "master-loop-replace-main"
+      ]
+    },
+    {
+      "feature_id": "error-knowledge-prompt-injection",
+      "task_type": "execute",
+      "prompt": "Wire ErrorKnowledge into the dispatch prompt enrichment flow.\n\nRequirements:\n1. In master_loop.py, before dispatching each lane:\n   - Load ErrorKnowledge from xmuse/error_knowledge.json\n   - Call inject_context(prompt) to find relevant past errors\n   - Use the enriched prompt for dispatch\n2. After a lane fails (even after rework):\n   - Call record_failure(lane_id, gate_errors)\n3. After a rework succeeds:\n   - Call mark_resolved(entry_id, fix_summary, verification_cmd, lesson)\n   - Extract fix_summary from the diff between failed and fixed state\n4. Add a --no-knowledge flag to disable injection (for testing)\n5. Add test verifying prompt enrichment when relevant errors exist\n6. Commit when done.\n\nExisting context:\n- xmuse/error_knowledge.py has ErrorKnowledge class with:\n  - record_failure(lane_id, error_output) → entry dict\n  - find_relevant(prompt, top_k=3) → list\n  - inject_context(prompt) → enriched prompt string\n  - mark_resolved(entry_id, fix, verification, lesson)\n- xmuse/error_knowledge.json is the storage file",
+      "branch": "feat/error-knowledge-prompt-injection",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "gate-rework-integration"
+      ]
+    },
+    {
+      "feature_id": "auto-discovery-loop-integration",
+      "task_type": "execute",
+      "prompt": "Integrate auto_discovery.py into master_loop.py's round start.\n\nRequirements:\n1. At the beginning of each round in MasterLoop.run():\n   - Run: uv run python xmuse/auto_discovery.py --all\n   - Parse JSON output → list of lane dicts\n   - Deduplicate: skip if feature_id already exists in feature_lanes.json\n   - Append new lanes to feature_lanes.json with status='pending'\n   - Log: 'Discovered N new lanes'\n2. New lanes should have depends_on=[] (independent, can run immediately)\n3. Priority: discovered lanes run AFTER manually-added lanes in the same round\n4. Add --no-discovery flag to skip (for testing or manual-only runs)\n5. Add test that mocks auto_discovery output and verifies lanes are appended\n6. Commit when done.\n\nExisting context:\n- xmuse/auto_discovery.py outputs JSON array to stdout\n- Each entry: {feature_id, task_type, prompt, capabilities, source}\n- xmuse/master_loop.py has MasterLoop class\n- feature_lanes.json is the persistent task queue",
+      "branch": "feat/auto-discovery-loop-integration",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "master-loop-replace-main"
+      ]
+    },
+    {
+      "feature_id": "claude-code-launcher",
+      "task_type": "execute",
+      "prompt": "Implement ClaudeCodeLauncher for dispatching tasks to Claude Code CLI.\n\nRequirements:\n1. Create src/xmuse_core/agents/launchers/claude_code.py:\n   - Class ClaudeCodeLauncher implementing LauncherAdapter protocol\n   - build_command(): ['claude', '-p', '--output-format', 'json', '--max-turns', '50']\n   - format_prompt(task, context): same as CodexLauncher\n   - build_env(): inherit env + XMUSE_FEATURE_ID\n   - parse_output(): parse JSON output for result/error\n2. Claude Code uses -p flag for non-interactive mode (prompt via stdin)\n3. Add to AgentRuntime enum: CLAUDE_CODE = 'claude_code'\n4. Update agents.json to register a claude-code worker:\n   {\n     \"name\": \"claude-code-worker\",\n     \"runtime\": \"claude_code\",\n     \"capabilities\": [\"code\", \"test\", \"review\"]\n   }\n5. Update xmuse_main.py / master_loop.py to register ClaudeCodeLauncher\n6. Add tests in tests/test_xmuse_core_agents_launchers.py\n7. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/launchers/base.py defines LauncherAdapter Protocol\n- src/xmuse_core/agents/launchers/codex.py is the reference implementation\n- src/xmuse_core/agents/registry.py has AgentRuntime StrEnum\n- Claude Code CLI: claude -p reads prompt from stdin, --output-format json outputs structured result",
+      "branch": "feat/claude-code-launcher",
+      "capabilities": [
+        "code",
+        "test"
+      ]
+    },
+    {
+      "feature_id": "cross-runtime-review",
+      "task_type": "execute",
+      "prompt": "Implement cross-runtime review: after Codex implements, Claude Code reviews.\n\nRequirements:\n1. In master_loop.py, after a lane passes QualityGate:\n   - If lane.task_type == 'execute' and lane was implemented by Codex:\n   - Create a review TaskDescriptor with task_type='review'\n   - Set developed_by_runtime=AgentRuntime.CODEX (so registry picks Claude Code)\n   - Review prompt includes: original goal, git diff of changes, file list\n2. Review dispatch returns AgentOutput with verdict in stdout:\n   - Parse for 'APPROVED' or 'REJECTED: <reason>'\n   - If approved: mark lane done\n   - If rejected: create rework lane with review feedback as context\n3. Add review prompt template in xmuse/prompts/review_template.md:\n   - Instruct reviewer to check: correctness, test coverage, security, style\n   - Output format: APPROVED or REJECTED: <specific issues>\n4. AgentRegistry.select() with exclude_runtime ensures reviewer != implementer\n5. Add --no-review flag to skip cross-runtime review\n6. Add tests mocking review approve and reject scenarios\n7. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/registry.py: AgentRegistry.select(capabilities, exclude_runtime)\n- src/xmuse_core/agents/consumer.py: TaskDescriptor has developed_by_runtime field\n- agents.json has codex-worker-1 (CODEX) and claude-code-worker (CLAUDE_CODE)\n- QualityGate runs pytest+ruff, review is higher-level code quality check",
+      "branch": "feat/cross-runtime-review",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "claude-code-launcher",
+        "gate-rework-integration"
+      ]
+    },
+    {
+      "feature_id": "independent-judgment",
+      "task_type": "execute",
+      "prompt": "Implement independent judgment mode: multiple agents research the same question without seeing each other's context.\n\nRequirements:\n1. Add a new task_type: 'research' to TaskDescriptor\n2. In master_loop.py, when a lane has task_type='research':\n   - Dispatch the SAME prompt to both Codex and Claude Code in parallel\n   - Each gets its own worktree (worktree-<feature_id>-codex, worktree-<feature_id>-claude)\n   - Neither sees the other's output (independent judgment, avoids anchoring)\n3. After both complete:\n   - Compare outputs (simple: check if they agree on approach)\n   - If they agree: proceed with the agreed approach\n   - If they disagree: create a 'reconcile' lane that includes both perspectives\n4. Add research_mode field to lane JSON: { \"research_mode\": true }\n5. Add tests for parallel dispatch and comparison logic\n6. Commit when done.\n\nExisting context:\n- cat-cafe lesson 12: 'No Boss Agent' — independent research avoids anchoring bias\n- cat-cafe lesson 14: multiple agents research independently, then reconcile\n- WorklistConsumer supports parallel dispatch (after parallel-dispatch lane)\n- agents.json has both codex and claude-code workers",
+      "branch": "feat/independent-judgment",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "cross-runtime-review",
+        "parallel-dispatch"
       ]
     }
   ]
