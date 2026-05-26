@@ -73,6 +73,29 @@ refresh_dispatch() {
         2>/tmp/xmuse_dispatch_monitor.err 8>&- || true
 }
 
+run_master_review_queue() {
+    python3 "$LOOP_ROOT/master_review_runner.py" --loop "$LOOP_ROOT" \
+        >/tmp/xmuse_master_review_runner.json \
+        2>/tmp/xmuse_master_review_runner.err 8>&- || true
+}
+
+run_integrated_tests() {
+    if pgrep -f "[i]ntegrated_test_runner.py --loop $LOOP_ROOT" >/dev/null 2>&1; then
+        log "integrated test pass already running; skipping duplicate"
+        return
+    fi
+    nohup python3 "$LOOP_ROOT/integrated_test_runner.py" --loop "$LOOP_ROOT" \
+        >/tmp/xmuse_integrated_test_runner.json \
+        2>/tmp/xmuse_integrated_test_runner.err 8>&- &
+    printf '%s\n' "$!" > /tmp/xmuse_integrated_test_runner.pid
+}
+
+run_master_merge_queue() {
+    python3 "$LOOP_ROOT/master_merge_runner.py" --loop "$LOOP_ROOT" --execute \
+        >/tmp/xmuse_master_merge_runner.json \
+        2>/tmp/xmuse_master_merge_runner.err 8>&- || true
+}
+
 dispatch_has_queued_jobs() {
     python3 "$LOOP_ROOT/slave_job_runner.py" has-queued --loop "$LOOP_ROOT" 8>&-
 }
@@ -109,12 +132,30 @@ while true; do
     log "scheduler tick"
     refresh_report
     refresh_dispatch
+    log "scheduler tick slave dispatch pass"
+    start_queued_slave_jobs
+    log "scheduler tick integrated test pass"
+    run_integrated_tests
+    log "scheduler tick master merge pass"
+    run_master_merge_queue
+    refresh_report
+    refresh_dispatch
+    if master_has_review_or_merge_queue; then
+        log "master review or merge queue has work; running deterministic master review pass"
+        run_master_review_queue
+        run_integrated_tests
+        run_master_merge_queue
+        refresh_report
+        refresh_dispatch
+    fi
 
     state="$(active_job_state || echo unknown)"
     if [ "$state" = "completed" ]; then
         if dispatch_has_queued_jobs; then
             log "master completed but dispatch has queued jobs; continuing slave execution"
             start_queued_slave_jobs
+            run_integrated_tests
+            run_master_merge_queue
             refresh_report
             if master_has_review_or_merge_queue; then
                 log "master review or merge queue has work; restarting master for decision"
@@ -136,9 +177,14 @@ while true; do
         exit 0
     fi
     if ! launcher_alive || [ "$state" != "running" ]; then
-        start_master
-        sleep 5
-        refresh_report
+        if master_has_review_or_merge_queue || slave_jobs_need_master_reconcile; then
+            log "master needs decision work; restarting"
+            start_master
+            sleep 5
+            refresh_report
+        else
+            log "master not running and no master decision work; leaving stopped"
+        fi
     else
         log "master alive active_job_state=${state}"
     fi

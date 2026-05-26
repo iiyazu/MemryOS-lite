@@ -143,6 +143,11 @@ def build_cache_key(
     memory_watermark: str | None = None,
     parameters: Mapping[str, Any] | None = None,
 ) -> str:
+    """Build a legacy recall-cache key kept for compatibility.
+
+    New derived cache users should use CacheKeyBuilder so key fingerprints stay
+    backend-neutral and consistent across cache scopes.
+    """
     normalized_query = " ".join(query.split())
     payload = {
         "key_version": CACHE_KEY_VERSION,

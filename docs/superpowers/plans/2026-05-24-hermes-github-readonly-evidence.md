@@ -4,9 +4,9 @@
 
 **Goal:** Add disabled-by-default GitHub read-only PR/review/check evidence to Hermes Master merge gates without replacing local integrated tests or external merge approval artifacts.
 
-**Architecture:** Keep Master as the only active controller. Add pure GitHub evidence schema and validation helpers to `.hermes-loop/hermes_hardening.py`, then wire those helpers into approval validation and Master merge queue derivation. Add a small read-only fetch adapter that can call `gh` or the GitHub REST API, but keep tests fixture-based and network-free.
+**Architecture:** Keep Master as the only active controller. Add pure GitHub evidence schema and validation helpers to `xmuse/hermes_hardening.py`, then wire those helpers into approval validation and Master merge queue derivation. Add a small read-only fetch adapter that can call `gh` or the GitHub REST API, but keep tests fixture-based and network-free.
 
-**Tech Stack:** Python 3.11+, stdlib `json`, `hashlib`, `subprocess`, `urllib.request`, pytest, existing Hermes `.hermes-loop/hermes_hardening.py` control-plane helpers.
+**Tech Stack:** Python 3.11+, stdlib `json`, `hashlib`, `subprocess`, `urllib.request`, pytest, existing Hermes `xmuse/hermes_hardening.py` control-plane helpers.
 
 ---
 
@@ -27,7 +27,7 @@ Preserve project constraints:
 
 ## File Structure
 
-- Modify `.hermes-loop/hermes_hardening.py`
+- Modify `xmuse/hermes_hardening.py`
   - Add GitHub config defaults.
   - Add pure validation helpers for normalized GitHub evidence.
   - Add optional read-only evidence fetch helpers.
@@ -42,7 +42,7 @@ Preserve project constraints:
 - Modify `tests/test_hermes_hardening.py`
   - Add legacy summary tests proving legacy local-only summaries still work when GitHub is disabled or optional.
 
-- Modify `.hermes-loop/master_config.json`
+- Modify `xmuse/master_config.json`
   - Add disabled-by-default `github` config object.
   - Include current rollout target branch in both local and GitHub allowlists.
 
@@ -53,8 +53,8 @@ No product memory modules under `src/memoryos_lite/` should change in this featu
 ### Task 1: Master Config Defaults
 
 **Files:**
-- Modify: `.hermes-loop/hermes_hardening.py`
-- Modify: `.hermes-loop/master_config.json`
+- Modify: `xmuse/hermes_hardening.py`
+- Modify: `xmuse/master_config.json`
 - Test: `tests/test_hermes_master_state.py`
 
 - [ ] **Step 1: Write failing config tests**
@@ -64,7 +64,7 @@ Append these tests to `tests/test_hermes_master_state.py`:
 ```python
 def test_default_master_config_has_disabled_github_rollout_policy(tmp_path):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     loop.mkdir()
 
     hardening.write_default_master_config(loop)
@@ -91,7 +91,7 @@ def test_default_master_config_has_disabled_github_rollout_policy(tmp_path):
 
 def test_prepare_master_migration_writes_github_config(tmp_path):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     write_legacy_inputs(loop)
 
     hardening.prepare_master_migration(loop)
@@ -114,7 +114,7 @@ Expected: fail because `write_default_master_config()` does not exist and `prepa
 
 - [ ] **Step 3: Implement config helper**
 
-In `.hermes-loop/hermes_hardening.py`, add this near the constants:
+In `xmuse/hermes_hardening.py`, add this near the constants:
 
 ```python
 CURRENT_HERMES_TARGET_BRANCH = "feat/phase-2.5-3-retrieval-agent"
@@ -151,7 +151,7 @@ In `prepare_master_migration()`, replace the inline `_write_json(loop / "master_
     write_default_master_config(loop)
 ```
 
-Update `.hermes-loop/master_config.json` to:
+Update `xmuse/master_config.json` to:
 
 ```json
 {
@@ -192,7 +192,7 @@ Expected: `2 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .hermes-loop/hermes_hardening.py .hermes-loop/master_config.json tests/test_hermes_master_state.py
+git add xmuse/hermes_hardening.py xmuse/master_config.json tests/test_hermes_master_state.py
 git commit -m "feat: add hermes github evidence config"
 ```
 
@@ -201,7 +201,7 @@ git commit -m "feat: add hermes github evidence config"
 ### Task 2: Pure GitHub Evidence Validation
 
 **Files:**
-- Modify: `.hermes-loop/hermes_hardening.py`
+- Modify: `xmuse/hermes_hardening.py`
 - Test: `tests/test_hermes_master_state.py`
 
 - [ ] **Step 1: Write failing evidence validation tests**
@@ -353,7 +353,7 @@ Expected: fail because `validate_github_pr_evidence()` does not exist.
 
 - [ ] **Step 3: Implement pure validator**
 
-In `.hermes-loop/hermes_hardening.py`, add these helpers after `_same_commit_ref()`:
+In `xmuse/hermes_hardening.py`, add these helpers after `_same_commit_ref()`:
 
 ```python
 def _github_config(master_config: dict[str, Any] | None) -> dict[str, Any]:
@@ -485,7 +485,7 @@ Expected: `3 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .hermes-loop/hermes_hardening.py tests/test_hermes_master_state.py
+git add xmuse/hermes_hardening.py tests/test_hermes_master_state.py
 git commit -m "feat: validate github readonly evidence"
 ```
 
@@ -494,7 +494,7 @@ git commit -m "feat: validate github readonly evidence"
 ### Task 3: Review Event Stream And Check-Run Edge Cases
 
 **Files:**
-- Modify: `.hermes-loop/hermes_hardening.py`
+- Modify: `xmuse/hermes_hardening.py`
 - Test: `tests/test_hermes_master_state.py`
 
 - [ ] **Step 1: Write failing review/check tests**
@@ -649,7 +649,7 @@ Expected: `4 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .hermes-loop/hermes_hardening.py tests/test_hermes_master_state.py
+git add xmuse/hermes_hardening.py tests/test_hermes_master_state.py
 git commit -m "test: cover github review and check evidence gates"
 ```
 
@@ -658,7 +658,7 @@ git commit -m "test: cover github review and check evidence gates"
 ### Task 4: Approval Digest Binding For GitHub Evidence
 
 **Files:**
-- Modify: `.hermes-loop/hermes_hardening.py`
+- Modify: `xmuse/hermes_hardening.py`
 - Test: `tests/test_hermes_master_state.py`
 
 - [ ] **Step 1: Write failing approval binding tests**
@@ -679,7 +679,7 @@ def valid_github_approval_bundle(loop: Path) -> dict:
     approval["verification"] = {
         "method": "github_review",
         "status": "verified",
-        "ref": f".hermes-loop/master/features/{feature_id}/github_evidence.json",
+        "ref": f"xmuse/master/features/{feature_id}/github_evidence.json",
         "digest": evidence_digest,
     }
     write_json(approval_path, approval)
@@ -688,13 +688,13 @@ def valid_github_approval_bundle(loop: Path) -> dict:
 
 def test_github_approval_schema_accepts_bound_evidence_digest(tmp_path):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     bundle = valid_github_approval_bundle(loop)
 
     result = hardening.validate_merge_approval(
         loop,
-        ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
-        ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        "xmuse/approvals/v1-quarantine/merge_approval_request.json",
+        "xmuse/approvals/v1-quarantine/merge_approval.json",
         policy_snapshot_digest=bundle["request"]["policy_snapshot_digest"],
     )
 
@@ -705,7 +705,7 @@ def test_github_approval_schema_accepts_bound_evidence_digest(tmp_path):
 
 def test_github_approval_rejects_changed_evidence_after_approval(tmp_path):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     bundle = valid_github_approval_bundle(loop)
     evidence_path = loop / "master" / "features" / "v1-quarantine" / "github_evidence.json"
     evidence = json.loads(evidence_path.read_text())
@@ -714,8 +714,8 @@ def test_github_approval_rejects_changed_evidence_after_approval(tmp_path):
 
     result = hardening.validate_merge_approval(
         loop,
-        ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
-        ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        "xmuse/approvals/v1-quarantine/merge_approval_request.json",
+        "xmuse/approvals/v1-quarantine/merge_approval.json",
         policy_snapshot_digest=bundle["request"]["policy_snapshot_digest"],
     )
 
@@ -725,13 +725,13 @@ def test_github_approval_rejects_changed_evidence_after_approval(tmp_path):
 
 def test_signed_approval_does_not_require_local_signature_file(tmp_path):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     bundle = valid_approval_bundle(loop)
 
     result = hardening.validate_merge_approval(
         loop,
-        ".hermes-loop/approvals/v1-quarantine/merge_approval_request.json",
-        ".hermes-loop/approvals/v1-quarantine/merge_approval.json",
+        "xmuse/approvals/v1-quarantine/merge_approval_request.json",
+        "xmuse/approvals/v1-quarantine/merge_approval.json",
         policy_snapshot_digest=bundle["request"]["policy_snapshot_digest"],
     )
 
@@ -752,7 +752,7 @@ Expected: second test fails because `validate_merge_approval()` currently checks
 
 - [ ] **Step 3: Implement digest check**
 
-In `.hermes-loop/hermes_hardening.py`, add this helper near `file_json_digest()`:
+In `xmuse/hermes_hardening.py`, add this helper near `file_json_digest()`:
 
 ```python
 def file_digest_for_ref(loop: Path, ref: str) -> str:
@@ -769,7 +769,7 @@ In `validate_merge_approval()`, after the existing `verification.ref` and `verif
         and verification.get("ref")
         and verification.get("digest")
     ):
-        if not str(verification["ref"]).startswith(".hermes-loop/master/features/"):
+        if not str(verification["ref"]).startswith("xmuse/master/features/"):
             errors.append("github approval verification ref must be Master-owned")
         try:
             verification_digest = file_digest_for_ref(loop, verification["ref"])
@@ -813,7 +813,7 @@ Expected: `3 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .hermes-loop/hermes_hardening.py tests/test_hermes_master_state.py
+git add xmuse/hermes_hardening.py tests/test_hermes_master_state.py
 git commit -m "fix: bind github approval evidence digest"
 ```
 
@@ -822,7 +822,7 @@ git commit -m "fix: bind github approval evidence digest"
 ### Task 5: Merge Queue Gate Requires GitHub Evidence When Policy Requires It
 
 **Files:**
-- Modify: `.hermes-loop/hermes_hardening.py`
+- Modify: `xmuse/hermes_hardening.py`
 - Test: `tests/test_hermes_master_state.py`
 
 - [ ] **Step 1: Write failing merge queue tests**
@@ -832,7 +832,7 @@ Append these tests to `tests/test_hermes_master_state.py`:
 ```python
 def test_merge_queue_gate_blocks_missing_required_github_evidence(tmp_path, monkeypatch):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     state = feature_for_gate()
     feature = state["features"][0]
     feature["policy_flags"]["requires_github_evidence"] = True
@@ -850,12 +850,12 @@ def test_merge_queue_gate_blocks_missing_required_github_evidence(tmp_path, monk
 
 def test_merge_queue_gate_accepts_required_github_evidence(tmp_path, monkeypatch):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     state = feature_for_gate()
     feature = state["features"][0]
     feature.update(github_feature())
     feature["policy_flags"]["requires_github_evidence"] = True
-    feature["artifacts"]["github_evidence"] = ".hermes-loop/master/features/v1-quarantine/github_evidence.json"
+    feature["artifacts"]["github_evidence"] = "xmuse/master/features/v1-quarantine/github_evidence.json"
     write_gate_artifacts(loop)
     write_json(loop / "master" / "features" / "v1-quarantine" / "github_evidence.json", github_evidence())
     monkeypatch.setattr(hardening, "_current_target_head", lambda _loop, _branch: "123456abcdef")
@@ -868,13 +868,13 @@ def test_merge_queue_gate_accepts_required_github_evidence(tmp_path, monkeypatch
 
 def test_merge_queue_gate_reports_missing_github_pr_without_crashing(tmp_path, monkeypatch):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     state = feature_for_gate()
     feature = state["features"][0]
     feature.update(github_feature())
     feature["policy_flags"]["requires_github_evidence"] = True
     feature["merge"]["github_pr"] = None
-    feature["artifacts"]["github_evidence"] = ".hermes-loop/master/features/v1-quarantine/github_evidence.json"
+    feature["artifacts"]["github_evidence"] = "xmuse/master/features/v1-quarantine/github_evidence.json"
     write_gate_artifacts(loop)
     write_json(loop / "master" / "features" / "v1-quarantine" / "github_evidence.json", github_evidence())
     monkeypatch.setattr(hardening, "_current_target_head", lambda _loop, _branch: "123456abcdef")
@@ -897,7 +897,7 @@ Expected: first test fails because no GitHub evidence gate exists.
 
 - [ ] **Step 3: Implement merge queue wiring**
 
-In `.hermes-loop/hermes_hardening.py`, add this helper near `validate_merge_queue_gate()`:
+In `xmuse/hermes_hardening.py`, add this helper near `validate_merge_queue_gate()`:
 
 ```python
 def _load_master_config(loop: Path) -> dict[str, Any]:
@@ -963,7 +963,7 @@ Expected: `3 passed`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add .hermes-loop/hermes_hardening.py tests/test_hermes_master_state.py
+git add xmuse/hermes_hardening.py tests/test_hermes_master_state.py
 git commit -m "feat: gate merges on required github evidence"
 ```
 
@@ -972,7 +972,7 @@ git commit -m "feat: gate merges on required github evidence"
 ### Task 6: Read-Only Fetch Adapter
 
 **Files:**
-- Modify: `.hermes-loop/hermes_hardening.py`
+- Modify: `xmuse/hermes_hardening.py`
 - Test: `tests/test_hermes_master_state.py`
 
 - [ ] **Step 1: Write failing fetch normalization tests**
@@ -1032,14 +1032,14 @@ def test_normalize_github_api_payloads_to_evidence():
 
 def test_write_github_evidence_writes_master_owned_artifact(tmp_path):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     evidence = github_evidence()
 
     result = hardening.write_github_evidence(loop, "v1-quarantine", evidence)
 
     path = loop / "master" / "features" / "v1-quarantine" / "github_evidence.json"
     assert path.exists()
-    assert result["ref"] == ".hermes-loop/master/features/v1-quarantine/github_evidence.json"
+    assert result["ref"] == "xmuse/master/features/v1-quarantine/github_evidence.json"
     assert result["digest"] == hardening.file_json_digest(path)
 ```
 
@@ -1055,7 +1055,7 @@ Expected: fail because normalization and write helpers do not exist.
 
 - [ ] **Step 3: Implement normalization and writer**
 
-In `.hermes-loop/hermes_hardening.py`, add:
+In `xmuse/hermes_hardening.py`, add:
 
 ```python
 def normalize_github_api_payloads(
@@ -1116,7 +1116,7 @@ def write_github_evidence(
     evidence: dict[str, Any],
 ) -> dict[str, str]:
     loop = Path(loop_root)
-    ref = f".hermes-loop/master/features/{feature_id}/github_evidence.json"
+    ref = f"xmuse/master/features/{feature_id}/github_evidence.json"
     path = _controller_path(loop, ref)
     _write_json(path, evidence)
     return {"ref": ref, "digest": file_json_digest(path)}
@@ -1134,7 +1134,7 @@ Expected: `2 passed`.
 
 - [ ] **Step 5: Add read-only fetch shell/API helpers**
 
-In `.hermes-loop/hermes_hardening.py`, add:
+In `xmuse/hermes_hardening.py`, add:
 
 ```python
 def _run_gh_json(args: list[str], *, timeout: int) -> Any:
@@ -1202,7 +1202,7 @@ This helper uses only `gh api` read calls. It does not push, approve, create PRs
 - [ ] **Step 6: Commit**
 
 ```bash
-git add .hermes-loop/hermes_hardening.py tests/test_hermes_master_state.py
+git add xmuse/hermes_hardening.py tests/test_hermes_master_state.py
 git commit -m "feat: add readonly github evidence fetch helpers"
 ```
 
@@ -1211,7 +1211,7 @@ git commit -m "feat: add readonly github evidence fetch helpers"
 ### Task 7: Local-Only Compatibility
 
 **Files:**
-- Modify: `.hermes-loop/hermes_hardening.py`
+- Modify: `xmuse/hermes_hardening.py`
 - Test: `tests/test_hermes_master_state.py`
 - Test: `tests/test_hermes_hardening.py`
 
@@ -1222,7 +1222,7 @@ Append these tests to `tests/test_hermes_hardening.py`:
 ```python
 def test_master_slave_summary_ignores_optional_github_evidence_when_disabled(tmp_path: Path) -> None:
     hardening = load_hardening_module()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     feature_dir = loop / "work" / "features" / "archive-rag"
     worktree = tmp_path / "memoryOS-archive-rag"
     feature_dir.mkdir(parents=True)
@@ -1273,7 +1273,7 @@ Append this Master control-plane test to `tests/test_hermes_master_state.py`:
 ```python
 def test_master_merge_gate_keeps_local_only_flow_when_github_disabled(tmp_path, monkeypatch):
     hardening = load_hardening()
-    loop = tmp_path / ".hermes-loop"
+    loop = tmp_path / "xmuse"
     feature = feature_for_gate()["features"][0]
     feature["policy_flags"]["allows_github_evidence"] = True
     feature["policy_flags"]["requires_github_evidence"] = False
@@ -1303,7 +1303,7 @@ Expected: both tests pass after Tasks 1-6. If only the legacy summary test fails
 If Step 2 required a code change:
 
 ```bash
-git add .hermes-loop/hermes_hardening.py tests/test_hermes_hardening.py tests/test_hermes_master_state.py
+git add xmuse/hermes_hardening.py tests/test_hermes_hardening.py tests/test_hermes_master_state.py
 git commit -m "fix: keep optional github evidence non-blocking"
 ```
 
@@ -1320,8 +1320,8 @@ git commit -m "test: cover optional github evidence compatibility"
 
 **Files:**
 - Modify only if a verification failure points to this feature:
-  - `.hermes-loop/hermes_hardening.py`
-  - `.hermes-loop/hermes_reporter.py`
+  - `xmuse/hermes_hardening.py`
+  - `xmuse/hermes_reporter.py`
   - `tests/test_hermes_master_state.py`
   - `tests/test_hermes_hardening.py`
 
@@ -1340,7 +1340,7 @@ Expected: all tests pass.
 Run:
 
 ```bash
-uv run ruff check .hermes-loop/hermes_hardening.py .hermes-loop/hermes_reporter.py tests/test_hermes_*.py
+uv run ruff check xmuse/hermes_hardening.py xmuse/hermes_reporter.py tests/test_hermes_*.py
 ```
 
 Expected: no ruff errors.
@@ -1350,7 +1350,7 @@ Expected: no ruff errors.
 Run:
 
 ```bash
-python3 -m py_compile .hermes-loop/hermes_hardening.py .hermes-loop/hermes_reporter.py && bash -n .hermes-loop/god_launcher.sh
+python3 -m py_compile xmuse/hermes_hardening.py xmuse/hermes_reporter.py && bash -n xmuse/god_launcher.sh
 ```
 
 Expected: command exits 0.
@@ -1360,7 +1360,7 @@ Expected: command exits 0.
 Run:
 
 ```bash
-python3 .hermes-loop/hermes_reporter.py
+python3 xmuse/hermes_reporter.py
 git status --porcelain
 ```
 
@@ -1368,14 +1368,14 @@ Expected:
 
 - Reporter exits 0.
 - `git status --porcelain` may show active runtime files from parallel agents.
-- Do not commit `.hermes-loop/master_state.json`, `.hermes-loop/master_status.json`, feature work artifacts, or consensus files unless they are intentionally part of this feature.
+- Do not commit `xmuse/master_state.json`, `xmuse/master_status.json`, feature work artifacts, or consensus files unless they are intentionally part of this feature.
 
 - [ ] **Step 5: Commit verification-only fixes**
 
 If Step 1-3 required fixes:
 
 ```bash
-git add .hermes-loop/hermes_hardening.py .hermes-loop/hermes_reporter.py tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py
+git add xmuse/hermes_hardening.py xmuse/hermes_reporter.py tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py
 git commit -m "fix: stabilize github evidence gates"
 ```
 

@@ -191,6 +191,7 @@ def test_v3_composer_preserves_cache_diagnostics_metadata(tmp_path):
                         "status": "hit",
                         "scope": "recall_candidates",
                     },
+                    "recall_memory_watermark": "messages:1",
                 }
             )
             return package
@@ -228,6 +229,37 @@ def test_v3_composer_preserves_cache_diagnostics_metadata(tmp_path):
         "status": "hit",
         "scope": "recall_candidates",
     }
+    assert v3_metadata["recall_memory_watermark"] == "messages:1"
+
+
+def test_v3_composer_omits_missing_recall_memory_watermark(tmp_path):
+    class FakeRecallPipeline:
+        def build_context(
+            self,
+            session_id: str,
+            task: str,
+            budget: int,
+            retrieval_query: str | None = None,
+        ) -> ContextPackage:
+            return ContextPackage(session_id=session_id, task=task, task_tokens=4)
+
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+    store = create_store(settings)
+    store.reset()
+    package = V3ContextComposer(
+        store=store,
+        settings=settings,
+        tokenizer=WordTokenizer(),
+        recall_pipeline=FakeRecallPipeline(),
+    ).build(
+        ContextComposerRequest(
+            session_id="ses_1",
+            task="Where did Bob move?",
+            budget=80,
+        )
+    )
+
+    assert "recall_memory_watermark" not in package.metadata
 
 
 def test_v3_composer_filters_archival_passages_by_attached_scope(tmp_path):

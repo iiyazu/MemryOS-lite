@@ -1,81 +1,99 @@
 {
   "feature_id": "memoryos-redis-cache-probe",
-  "recorded_by": "master-god",
-  "status": "failed_stale_target_head",
-  "recorded_at": "2026-05-24T20:07:28Z",
+  "recorded_by": "manual-codex-audit",
+  "status": "passed",
+  "recorded_at": "2026-05-25T11:37:34.522619Z",
   "branch": "feat/memoryos-redis-cache-probe",
   "target_branch": "feat/phase-2.5-3-retrieval-agent",
-  "base_commit": "5f890c73a3130f927cac553dd8b9cd44e5c4a88a",
-  "target_base_commit": "5f890c73a3130f927cac553dd8b9cd44e5c4a88a",
-  "current_target_head": "4823891686c5944c9baefa7d721a002adf1f4710",
-  "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
-  "integration_branch": "tmp/memoryos-redis-cache-probe-integration-r2",
-  "integration_worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration-r2",
-  "integration_commit": "b2038c66e2e63e2db01f8318efc64593b95e1bbb",
-  "target_head_at_recording": "5f890c73a3130f927cac553dd8b9cd44e5c4a88a",
+  "base_commit": "cebd3d39cb15845a20321e582666126ab7d1c920",
+  "target_base_commit": "cebd3d39cb15845a20321e582666126ab7d1c920",
+  "current_target_head": "cebd3d39cb15845a20321e582666126ab7d1c920",
+  "head_commit": "46d90ec96a4b94b075afa5ed4ee7aefca483b547",
+  "integration_worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration-manual-20260525T191043",
+  "integration_commit": "646d68e34c8c576d4680e28d578526015a2b1286",
+  "target_head_at_recording": "cebd3d39cb15845a20321e582666126ab7d1c920",
   "worktree_clean": true,
+  "ignored_fixture_restored": ".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json",
   "commands": [
     {
-      "phase": "integration_setup",
-      "command": "git worktree add -b tmp/memoryos-redis-cache-probe-integration-r2 /home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration-r2 feat/phase-2.5-3-retrieval-agent",
+      "phase": "feature_target_merge",
+      "command": "git merge --no-ff --no-edit feat/phase-2.5-3-retrieval-agent",
       "status": "passed",
-      "summary": "Created integration worktree from target head 5f890c73a3130f927cac553dd8b9cd44e5c4a88a."
+      "exit_code": 0,
+      "summary": "Merged current target into feature branch and resolved recall_pipeline.py conflict.",
+      "artifact_ref": "xmuse/master/features/memoryos-redis-cache-probe/integrated_command_1.log",
+      "artifact_digest": "sha256:a0e24f96707a1ede6bb0929c1942146fce2f98a49d4c048bf2917c3dc123d92a"
     },
     {
-      "phase": "integration_merge",
-      "command": "git merge --no-ff --no-edit feat/memoryos-redis-cache-probe",
+      "phase": "integration_setup_and_merge",
+      "command": "git worktree add --detach /home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe-integration-manual-20260525T191043 feat/phase-2.5-3-retrieval-agent",
       "status": "passed",
-      "summary": "Created integration merge commit b2038c66e2e63e2db01f8318efc64593b95e1bbb without conflicts."
+      "exit_code": 0,
+      "summary": "Created fresh detached integration worktree from target cebd3d3 and merged feature head 46d90ec without conflicts.",
+      "artifact_ref": "xmuse/master/features/memoryos-redis-cache-probe/integrated_command_2.log",
+      "artifact_digest": "sha256:ebc777e2d1904a6cb337351a22614d6534c7a41d2276cc205f0617b1d950550e"
+    },
+    {
+      "phase": "fixture_restore_and_compile",
+      "command": "mkdir -p .memoryos/evals",
+      "status": "passed",
+      "exit_code": 0,
+      "summary": "Restored ignored public failure replay fixture and compiled touched modules successfully.",
+      "artifact_ref": "xmuse/master/features/memoryos-redis-cache-probe/integrated_command_3.log",
+      "artifact_digest": "sha256:cfd55c3b92411a5c5a7b4b35174082bf7fe29bf8211abc1d1255007ccb73273b"
     },
     {
       "phase": "static_check",
-      "command": "python3 -m py_compile src/memoryos_lite/cache/__init__.py src/memoryos_lite/config.py",
+      "command": "uv run ruff check src/memoryos_lite/cache/__init__.py src/memoryos_lite/config.py src/memoryos_lite/retrieval/recall_pipeline.py src/memoryos_lite/store.py src/memoryos_lite/engine.py tests/test_config.py tests/test_memory_cache.py tests/test_recall_cache.py tests/test_engine.py",
       "status": "passed",
-      "summary": "No compile errors."
+      "exit_code": 0,
+      "summary": "All checks passed.",
+      "artifact_ref": "xmuse/master/features/memoryos-redis-cache-probe/integrated_command_4.log",
+      "artifact_digest": "sha256:3894fee0636094300a3eec7c0322420b5d5826e854d7cd88ef7754479613e5c1"
     },
     {
-      "phase": "static_check",
-      "command": "uv run ruff check src/memoryos_lite/config.py src/memoryos_lite/cache tests/test_config.py tests/test_memory_cache.py",
+      "phase": "type_check",
+      "command": "uv run mypy src/memoryos_lite/cache src/memoryos_lite/config.py src/memoryos_lite/retrieval/recall_pipeline.py src/memoryos_lite/engine.py",
       "status": "passed",
-      "summary": "All checks passed."
-    },
-    {
-      "phase": "static_check",
-      "command": "uv run mypy src/memoryos_lite/cache src/memoryos_lite/config.py",
-      "status": "passed",
-      "summary": "Success: no issues found in 2 source files."
+      "exit_code": 0,
+      "summary": "Success: no issues found in 4 source files.",
+      "artifact_ref": "xmuse/master/features/memoryos-redis-cache-probe/integrated_command_5.log",
+      "artifact_digest": "sha256:18732a71c63d7d451ecb05031867d425259f53d3eded7e408b6b2fdcf491a94e"
     },
     {
       "phase": "focused_feature_and_invariant_check",
-      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
+      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py tests/test_recall_cache.py tests/test_recall_pipeline.py tests/test_public_failure_replay.py tests/test_engine.py::test_fastembed_provider_falls_back_to_no_embedding_when_unavailable tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
       "status": "passed",
-      "summary": "17 passed in 11.47s."
+      "exit_code": 0,
+      "summary": "34 passed in 33.43s.",
+      "artifact_ref": "xmuse/master/features/memoryos-redis-cache-probe/integrated_command_6.log",
+      "artifact_digest": "sha256:951b73484ff348009e91f0bf85e9fe81a27638fa7137eaa6a7e082ba7f8e49af"
     },
     {
       "phase": "full_integrated_suite",
       "command": "uv run pytest -q",
-      "status": "failed_interrupted_after_failures",
-      "summary": "9 failed, 524 passed, 1 warning in 2322.83s before KeyboardInterrupt; failures were FastEmbed/HuggingFace httpx.ConnectTimeout during public benchmark tests.",
-      "failing_tests": [
-        "tests/test_longmemeval_integration.py::test_full_pipeline",
-        "tests/test_public_benchmarks.py::test_run_public_benchmark_without_llm_judge_writes_report",
-        "tests/test_public_benchmarks.py::test_public_benchmark_projected_answer_cites_selected_evidence",
-        "tests/test_public_benchmarks.py::test_longmemeval_temporal_comparison_keeps_two_raw_sources",
-        "tests/test_public_benchmarks.py::test_longmemeval_temporal_anchor_exposes_page_candidate",
-        "tests/test_public_benchmarks.py::test_public_benchmark_compare_baselines_reports_all_rows",
-        "tests/test_public_benchmarks.py::test_public_benchmark_reports_dropped_relevant_memoryos_page",
-        "tests/test_public_benchmarks.py::test_public_benchmark_reports_windowed_page_diagnostics",
-        "tests/test_public_benchmarks.py::test_public_benchmark_reports_v2_recall_diagnostics"
-      ]
+      "status": "passed",
+      "exit_code": 0,
+      "summary": "684 passed, 1 warning in 1274.95s.",
+      "artifact_ref": "xmuse/master/features/memoryos-redis-cache-probe/integrated_command_7.log",
+      "artifact_digest": "sha256:8d62d11e0c3dd043c8e12613a74748441fde29953217ff1dc5e8cf3e29530826"
+    },
+    {
+      "phase": "whitespace_check",
+      "command": "git diff --check feat/phase-2.5-3-retrieval-agent...feat/memoryos-redis-cache-probe",
+      "status": "passed",
+      "exit_code": 0,
+      "summary": "No whitespace errors.",
+      "artifact_ref": "xmuse/master/features/memoryos-redis-cache-probe/integrated_command_8.log",
+      "artifact_digest": "sha256:9d5175fd1bf167d36d0a94e5190b9883c58eeb536b1ef51d6ca49f0af66da498"
     }
   ],
   "root_cause_assessment": {
-    "classification": "integration_environment_or_target_dependency_blocker_not_redis_cache_code_path",
+    "classification": "feature_rebased_on_current_target_and_fresh_integration_gate_passed",
     "evidence": [
-      "Failing stack traces originate in MemoryOSService._default_embedding_client -> FastEmbedClient -> fastembed TextEmbedding -> huggingface_hub model_info.",
-      "The Redis feature diff touches pyproject.toml, uv.lock, src/memoryos_lite/cache/__init__.py, src/memoryos_lite/config.py, tests/test_config.py, and tests/test_memory_cache.py only.",
-      "The Redis feature does not modify public_benchmarks.py, engine.py, fastembed_client.py, or the failing benchmark tests.",
-      "The integration target branch advanced to current_target_head after this attempt, so this evidence is stale for merge readiness even aside from the failed full suite."
+      "Target advanced from a9eafcf to cebd3d3 after benchmark-layer-organization was merged, making prior Redis gate evidence stale.",
+      "Merging target cebd3d3 into feature branch produced one conflict in recall_pipeline.py; resolution preserves benchmark-layer typed diagnostics/packet neighbor offsets and Redis recall/query cache metadata/watermarking.",
+      "Fresh target integration from cebd3d3 merged feature head 46d90ec without conflicts and full pytest passed."
     ]
   },
   "policy_checks": {
@@ -85,14 +103,14 @@
     "kernel_default_unchanged": true,
     "sqlite_authority_preserved": true,
     "redis_default_off_preserved": true,
+    "redis_derived_cache_only": true,
     "benchmark_improvement_claim": false,
     "no_gate_lowering": true
   },
-  "stale_against_current_target_head": true,
-  "merge_readiness_blockers": [
-    "full integrated suite did not pass on the integration ref",
-    "integration evidence target_base_commit is stale against current target HEAD",
-    "external merge approval is absent"
-  ],
-  "next_action": "hold feature; rerun fresh target-head integrated gate after resolving FastEmbed model cache/network dependency or target test isolation, then request external approval only if the fresh gate passes"
+  "stale_against_current_target_head": false,
+  "merge_readiness_blockers": [],
+  "next_action": "merged; keep Redis optional/default-off and monitor downstream regressions only if later target changes touch recall cache paths",
+  "version": "1.0",
+  "actual_merge_commit": "d070a78de01b1feff94cbd1929ae9de2b1aee756",
+  "post_merge_verification_ref": "xmuse/master/features/memoryos-redis-cache-probe/post_merge_verification.json"
 }

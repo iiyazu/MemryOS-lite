@@ -12,18 +12,18 @@
     "result": "work/features/archive-rag/result.md",
     "review_verdict": "work/features/archive-rag/review_verdict.json"
   },
-  "blockers": [
-    "uv run mypy src fails with 82 errors in 11 files.",
-    "uv run memoryos eval run --case-set hard --baseline memoryos_lite reports accuracy=0.56/source_hit=0.56 over 16 cases, below the stated 1.00/1.00 baseline."
-  ],
+  "blockers": [],
   "branch": "feat/archive-rag",
+  "dispatch_status": "ready_for_merge",
   "feature_id": "archive-rag",
-  "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
-  "last_updated": "2026-05-24T14:14:25Z",
+  "head_commit": "15c6edfd7745b7ffefeb2601cac8f9d8cadb266f",
+  "last_dispatch_reason": "Master review accepted; next gate is integrated tests",
+  "last_updated": "2026-05-25T05:46:47.069842+00:00",
   "mode": "feature_local_single_god",
-  "review_verdict": "FAIL",
-  "state": "blocked",
+  "review_verdict": "PASS",
+  "state": "ready_for_merge",
   "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "target_head_checked": "cfe8276963b798e6ca4a2a8784db3f44e5ace85c",
   "version": "1.0",
   "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag"
 }

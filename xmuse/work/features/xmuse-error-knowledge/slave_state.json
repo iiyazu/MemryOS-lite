@@ -2,17 +2,23 @@
   "ack_level": "usable",
   "artifacts": {
     "ack": "xmuse/work/features/xmuse-error-knowledge/ack.json",
+    "integrated_tests": "xmuse/master/features/xmuse-error-knowledge/integrated_tests.json",
     "knowledge_run": "xmuse/knowledge/runs/xmuse-error-knowledge-20260525T000000Z.json",
+    "merge_decision": "xmuse/approvals/xmuse-error-knowledge/merge_decision.json",
+    "post_merge_verification": "xmuse/approvals/xmuse-error-knowledge/post_merge_verification.json",
     "result": "xmuse/work/features/xmuse-error-knowledge/result.md",
     "review_verdict": "xmuse/work/features/xmuse-error-knowledge/review_verdict.json"
   },
   "branch": "feat/xmuse-error-knowledge",
+  "dispatch_status": "merged",
   "feature_id": "xmuse-error-knowledge",
   "knowledge_run_id": "xmuse-error-knowledge-20260525T000000Z",
-  "last_updated": "2026-05-25T08:34:58Z",
+  "last_updated": "2026-05-25T09:20:00Z",
+  "merge_commit": "a9eafcf",
   "mode": "feature_local_single_god",
   "review_verdict": "PASS",
-  "state": "ready_for_master_review",
+  "state": "merged",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
   "version": "1.0",
   "worktree": "/home/iiyatu/projects/python/memoryOS-xmuse-error-knowledge"
 }

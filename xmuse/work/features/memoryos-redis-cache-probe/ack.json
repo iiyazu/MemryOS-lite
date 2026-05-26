@@ -1,37 +1,67 @@
 {
   "feature_id": "memoryos-redis-cache-probe",
   "ack_level": "usable",
-  "scope": "bounded_phase_0_1_config_protocol_key_fallback_optional_adapter",
+  "scope": "phase_0_1_2_optional_redis_adapter_and_v2_recall_cache_probe_integrated_pytest_rework",
   "full_blueprint_complete": false,
   "branch": "feat/memoryos-redis-cache-probe",
   "target_branch": "feat/phase-2.5-3-retrieval-agent",
   "worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe",
-  "dispatch_base": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
-  "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
-  "head_ref": "feat/memoryos-redis-cache-probe@fcccff6052e5073a6ebb98da4bc724ce8244edb2",
+  "dispatch_base": "0b30e04194efbb5b70d215df7d5b1234886654a8",
+  "head_commit": "46d90ec96a4b94b075afa5ed4ee7aefca483b547",
+  "head_ref": "feat/memoryos-redis-cache-probe@a8f2a8e609d2b1315a1710706bda77be3feb7e20",
   "verification_commands": [
     {
-      "command": "uv run pytest tests/test_memory_cache.py -q",
-      "exit_code": 2,
-      "result": "RED: expected ImportError before implementation because build_cache_key was missing"
+      "command": "uv run pytest tests/test_engine.py::test_fastembed_provider_falls_back_to_no_embedding_when_unavailable -q",
+      "exit_code": 1,
+      "result": "RED before repair: failed with RuntimeError: model unavailable"
     },
     {
-      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py -q",
+      "command": "uv run pytest tests/test_engine.py::test_fastembed_provider_falls_back_to_no_embedding_when_unavailable -q",
       "exit_code": 0,
-      "result": "14 passed in 0.03s"
+      "result": "1 passed in 2.76s"
     },
     {
-      "command": "uv run ruff check src/memoryos_lite/config.py src/memoryos_lite/cache tests/test_config.py tests/test_memory_cache.py",
+      "command": "uv run pytest tests/test_public_benchmarks.py::test_run_public_benchmark_without_llm_judge_writes_report -q",
+      "exit_code": 0,
+      "result": "1 passed in 1.10s"
+    },
+    {
+      "command": "HF_HUB_OFFLINE=1 uv run pytest tests/test_public_benchmarks.py tests/test_longmemeval_integration.py -q",
+      "exit_code": 0,
+      "result": "78 passed in 120.06s"
+    },
+    {
+      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py tests/test_recall_cache.py tests/test_recall_pipeline.py tests/test_engine.py::test_fastembed_provider_falls_back_to_no_embedding_when_unavailable tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
+      "exit_code": 0,
+      "result": "28 passed in 32.34s"
+    },
+    {
+      "command": "HF_HUB_OFFLINE=1 uv run pytest tests/test_engine.py tests/test_public_benchmarks.py tests/test_longmemeval_integration.py tests/test_config.py tests/test_memory_cache.py tests/test_recall_cache.py tests/test_recall_pipeline.py -q",
+      "exit_code": 0,
+      "result": "142 passed in 232.67s"
+    },
+    {
+      "command": "uv run pytest -q",
+      "exit_code": 0,
+      "result": "616 passed, 1 warning in 999.13s"
+    },
+    {
+      "command": "uv run ruff check .",
       "exit_code": 0,
       "result": "All checks passed!"
     },
     {
-      "command": "uv run pytest tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
+      "command": "uv run mypy src/memoryos_lite/engine.py src/memoryos_lite/config.py src/memoryos_lite/cache src/memoryos_lite/retrieval/recall_pipeline.py",
       "exit_code": 0,
-      "result": "3 passed in 1.47s"
+      "result": "Success: no issues found in 4 source files"
     },
     {
-      "command": "git diff --check 4c4712df763c652952a8066060bdb8bb4b37ba0b..HEAD",
+      "command": "uv run mypy src",
+      "exit_code": 1,
+      "result": "81 errors in 10 files outside this repair path"
+    },
+    {
+      "command": "git diff --check",
       "exit_code": 0,
       "result": "no whitespace errors"
     }
@@ -43,14 +73,23 @@
   "sqlite_authority_preserved": true,
   "redis_default_off_preserved": true,
   "redis_derived_cache_only": true,
+  "cache_gated_by_recall_cache_enabled": true,
   "source_refs_preserved_by_cache_round_trip": true,
+  "stale_reuse_after_session_mutation_prevented": true,
+  "item_content_mutation_changes_watermark": true,
+  "fastembed_unavailable_falls_back_to_no_embedding": true,
+  "pytest_huggingface_network_isolated": true,
   "benchmark_improvement_claim_flag": false,
   "review_verdict": "PASS",
-  "review_eval_decision": "pass_for_bounded_phase_0_1_only_master_review_and_integrated_tests_still_required",
-  "merge_decision": "not_requested_slave_must_not_merge",
+  "review_eval_decision": "pass_for_bounded_phase_0_1_2_recall_cache_probe_and_integrated_pytest_rework_master_review_and_external_approval_still_required",
+  "merge_decision": "merged",
   "notes": [
-    "Adopted and repaired pre-dispatch feature-scoped dirty changes rather than discarding them.",
-    "Generated __pycache__ files were removed after final verification.",
-    "No full-suite, hard-eval, public benchmark, or benchmark score movement claim is made."
-  ]
+    "Feature branch worktree is clean at head_commit.",
+    "Direct `uv run pytest -q` now passes without requiring Hugging Face network access.",
+    "No Redis server is required for tests; fake Redis covers adapter and recall behavior.",
+    "No benchmark score movement claim is made.",
+    "Full project mypy remains red due pre-existing errors outside this repair path."
+  ],
+  "last_updated": "2026-05-25T11:44:00.893747Z",
+  "merge_commit": "d070a78de01b1feff94cbd1929ae9de2b1aee756"
 }

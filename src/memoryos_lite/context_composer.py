@@ -188,6 +188,10 @@ class V3ContextComposer:
                 {},
             ),
         }
+        if "recall_memory_watermark" in recall.metadata:
+            metadata["recall_memory_watermark"] = recall.metadata[
+                "recall_memory_watermark"
+            ]
         return [
             ContextLayerItem(
                 layer="recall",

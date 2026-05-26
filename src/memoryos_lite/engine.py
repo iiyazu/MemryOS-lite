@@ -2534,6 +2534,15 @@ class MemoryOSService:
                 "recall_budget_dropped": package.candidate_budget_dropped,
             }
         )
+        for metadata_key in (
+            "cache",
+            "recall_cache",
+            "query_analysis_cache",
+            "recall_candidate_cache",
+            "recall_memory_watermark",
+        ):
+            if metadata_key in v3_package.metadata:
+                package.metadata[metadata_key] = v3_package.metadata[metadata_key]
         return package
 
     @staticmethod

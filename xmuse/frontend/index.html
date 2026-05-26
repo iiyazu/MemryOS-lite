@@ -3,119 +3,50 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>xmuse Dashboard</title>
+    <title>xmuse</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <h1>xmuse</h1>
-        <p id="last-updated">Waiting for API...</p>
-      </div>
-      <nav aria-label="Dashboard pages">
-        <a href="#lanes" data-route="lanes">Lanes</a>
-        <a href="#errors" data-route="errors">Errors</a>
-        <a href="#submit" data-route="submit">Submit</a>
-      </nav>
-    </header>
-
-    <main>
-      <section id="lane-overview" class="page" aria-labelledby="lane-overview-title">
-        <div class="section-header">
-          <div>
-            <h2 id="lane-overview-title">Lane overview</h2>
-            <p id="metrics-summary" class="muted"></p>
-          </div>
-          <button id="refresh-lanes" type="button">Refresh</button>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h1>xmuse</h1>
+          <button id="new-lane-btn" class="icon-btn" title="New lane">+</button>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Feature</th>
-                <th>Status</th>
-                <th>Branch</th>
-                <th>Capabilities</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="lanes-body">
-              <tr>
-                <td colspan="5" class="empty">Loading lanes...</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="sidebar-stats" id="stats"></div>
+        <div class="sidebar-search">
+          <input id="search" type="search" placeholder="Search lanes..." autocomplete="off">
         </div>
-      </section>
-
-      <section id="lane-detail" class="page" aria-labelledby="lane-detail-title">
-        <div class="section-header">
-          <div>
-            <a class="back-link" href="#lanes">Back to lanes</a>
-            <h2 id="lane-detail-title">Lane detail</h2>
-            <p id="lane-detail-meta" class="muted"></p>
-          </div>
-          <button id="refresh-detail" type="button">Refresh</button>
+        <ul id="lane-list" class="lane-list"></ul>
+      </aside>
+      <main class="chat-area" id="chat-area">
+        <div class="chat-header" id="chat-header">
+          <div class="chat-title">Select a lane</div>
+          <div class="chat-meta"></div>
         </div>
-
-        <div class="detail-grid">
-          <article>
-            <h3>Prompt</h3>
-            <pre id="lane-prompt" class="pre-block">No lane selected.</pre>
-          </article>
-          <article>
-            <h3>Execution log</h3>
-            <pre id="lane-log" class="pre-block">No log available.</pre>
-          </article>
-          <article class="wide">
-            <h3>Gate results</h3>
-            <div id="gate-results" class="gate-results">No gate results available.</div>
-          </article>
+        <div class="messages" id="messages">
+          <div class="empty-state">Select a lane from the sidebar to view execution details</div>
         </div>
-      </section>
-
-      <section id="error-knowledge" class="page" aria-labelledby="error-knowledge-title">
-        <div class="section-header">
-          <div>
-            <h2 id="error-knowledge-title">Error knowledge</h2>
-            <p id="errors-count" class="muted"></p>
-          </div>
-          <input id="error-search" type="search" placeholder="Search patterns" autocomplete="off">
+        <div class="input-bar" id="input-bar" style="display:none">
+          <textarea id="msg-input" placeholder="Send a command or rework instruction..." rows="1"></textarea>
+          <button id="send-btn" class="send-btn">Send</button>
         </div>
-        <div id="errors-list" class="list">
-          <p class="empty">Loading errors...</p>
+      </main>
+    </div>
+    <div class="modal" id="new-lane-modal" style="display:none">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>New Lane</h2>
+          <button class="icon-btn modal-close" id="modal-close">&times;</button>
         </div>
-      </section>
-
-      <section id="submit-lane" class="page" aria-labelledby="submit-lane-title">
-        <div class="section-header">
-          <div>
-            <h2 id="submit-lane-title">Submit lane</h2>
-            <p id="submit-status" class="muted"></p>
-          </div>
-        </div>
-
         <form id="lane-form">
-          <label>
-            Feature ID
-            <input id="feature-id" name="feature_id" required autocomplete="off">
-          </label>
-          <label>
-            Prompt
-            <textarea id="prompt" name="prompt" required rows="10"></textarea>
-          </label>
-          <label>
-            Capabilities
-            <input id="capabilities" name="capabilities" placeholder="code, test">
-          </label>
-          <div class="form-actions">
-            <button type="submit">Submit lane</button>
-            <button type="reset" class="secondary">Reset</button>
-          </div>
+          <input name="feature_id" placeholder="Feature ID" required>
+          <textarea name="prompt" placeholder="Describe what to implement..." rows="6" required></textarea>
+          <input name="capabilities" placeholder="Capabilities (code, test)" value="code, test">
+          <button type="submit">Create Lane</button>
         </form>
-      </section>
-    </main>
-
+      </div>
+    </div>
     <script src="app.js"></script>
   </body>
 </html>

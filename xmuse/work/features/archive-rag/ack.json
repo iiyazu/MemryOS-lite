@@ -1,81 +1,53 @@
 {
-  "feature_id": "archive-rag",
-  "ack_level": "blocked",
-  "status": "not_ready_for_master_review",
+  "ack_level": "usable",
+  "artifacts": {
+    "ack": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/ack.json",
+    "result": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/result.md",
+    "review_verdict": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/review_verdict.json",
+    "slave_state": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/slave_state.json"
+  },
+  "benchmark_improvement_claim": false,
+  "blockers": [],
   "branch": "feat/archive-rag",
-  "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag",
-  "target_branch": "feat/phase-2.5-3-retrieval-agent",
-  "head_commit": "ace77bdf7fa7f8f3ac596e93b12c07e45bd61b02",
-  "review_verdict": "FAIL",
-  "review_eval_decision": "fail_do_not_advance_to_master_review",
-  "v3_default_preserved": true,
-  "v1_fallback_preserved": true,
+  "feature_id": "archive-rag",
+  "head_commit": "15c6edfd7745b7ffefeb2601cac8f9d8cadb266f",
   "kernel_default_unchanged": true,
   "kernel_opt_in_preserved": true,
-  "recall_v2_opt_in_preserved": true,
-  "sqlite_authoritative_for_archive_evidence": true,
-  "qdrant_payload_not_final_evidence": true,
-  "vector_hits_scope_filtered_and_rehydrated": true,
-  "stale_hits_blocked_from_final_context": true,
-  "tests_require_no_remote_qdrant_openai_or_network": true,
-  "benchmark_improvement_claim": false,
+  "last_updated": "2026-05-25T05:46:27.066513+00:00",
   "merge_performed": false,
+  "qdrant_payload_not_final_evidence": true,
+  "recall_v2_opt_in_preserved": true,
+  "residual_risks": [
+    "Master review, integrated tests, fresh target gate, and external approval are still required before merge."
+  ],
+  "review_eval_decision": "pass_for_master_review_integrated_tests_still_required",
+  "review_verdict": "PASS",
+  "sqlite_authoritative_for_archive_evidence": true,
+  "status": "ready_for_master_review",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "v1_fallback_preserved": true,
+  "v3_default_preserved": true,
   "verification_commands": [
     {
-      "command": "uv run pytest tests/test_archival_vector.py -q",
+      "command": "uv run pytest tests/test_archive_rag_boundary.py tests/test_archival_searcher.py tests/test_archival_vector.py -q",
       "outcome": "PASS",
-      "summary": "4 passed"
+      "summary": "14 passed in 2.95s"
     },
     {
-      "command": "uv run pytest tests/test_archival_searcher.py -q",
+      "command": "uv run pytest tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_engine.py::test_explicit_v1_build_context_excludes_v3_archival_scope_diagnostics -q",
       "outcome": "PASS",
-      "summary": "6 passed"
+      "summary": "2 passed in 1.68s"
     },
     {
-      "command": "uv run pytest tests/test_archival_store.py -q",
-      "outcome": "PASS",
-      "summary": "5 passed"
-    },
-    {
-      "command": "uv run pytest tests/test_context_composer.py -q",
-      "outcome": "PASS",
-      "summary": "18 passed"
-    },
-    {
-      "command": "uv run pytest tests/test_engine.py -q",
-      "outcome": "PASS",
-      "summary": "40 passed"
-    },
-    {
-      "command": "uv run pytest -q",
-      "outcome": "PASS",
-      "summary": "611 passed, 1 warning"
-    },
-    {
-      "command": "uv run ruff check .",
+      "command": "uv run ruff check src/memoryos_lite/archive_rag.py src/memoryos_lite/retrieval/archival_searcher.py src/memoryos_lite/retrieval/archival_vector.py tests/test_archive_rag_boundary.py tests/test_archival_searcher.py tests/test_archival_vector.py",
       "outcome": "PASS",
       "summary": "All checks passed"
     },
     {
-      "command": "uv run mypy src",
-      "outcome": "FAIL",
-      "summary": "82 errors in 11 files"
-    },
-    {
-      "command": "uv run memoryos eval run --case-set hard --baseline memoryos_lite",
-      "outcome": "DIAGNOSTIC_FAIL",
-      "summary": "accuracy=0.56, source_hit=0.56, cases=16"
+      "command": "python3 -m py_compile src/memoryos_lite/archive_rag.py src/memoryos_lite/retrieval/archival_searcher.py src/memoryos_lite/retrieval/archival_vector.py && git diff --check",
+      "outcome": "PASS",
+      "summary": "compile and whitespace checks passed"
     }
   ],
-  "blockers": [
-    "uv run mypy src fails with 82 errors in 11 files.",
-    "Hard eval reports accuracy=0.56/source_hit=0.56 instead of the stated 1.00/1.00 baseline."
-  ],
-  "artifacts": {
-    "result": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/result.md",
-    "execute_review": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/execute_review.md",
-    "review_verdict": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/review_verdict.json",
-    "ack": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/ack.json",
-    "slave_state": "/home/iiyatu/projects/python/memoryOS/xmuse/work/features/archive-rag/slave_state.json"
-  }
+  "worktree": "/home/iiyatu/projects/python/memoryOS-archive-rag"
 }

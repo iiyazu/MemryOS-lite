@@ -1,69 +1,25 @@
 {
-  "feature_id": "memoryos-redis-cache-probe",
-  "recorded_by": "master-god",
-  "status": "accepted",
-  "reviewed_at": "2026-05-24T16:43:30Z",
-  "branch": "feat/memoryos-redis-cache-probe",
-  "target_branch": "feat/phase-2.5-3-retrieval-agent",
-  "base_commit": "4c4712df763c652952a8066060bdb8bb4b37ba0b",
-  "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
-  "integration_commit": null,
-  "scope": "bounded_phase_0_1_config_protocol_key_fallback_optional_adapter",
-  "full_blueprint_complete": false,
   "artifact_digests": {
-    "ack": "sha256:ab1ad00be06c635be62aae5c9430d6ecd491f615e42ddee163ed5c418f66a6fb",
-    "review_verdict": "sha256:ead413e30444f3dd8911187f5e0ae95c135721b901d6f40765cf3d78cfc9abe8",
-    "result": "sha256:ebdd49a280535c755b25724121bb0c29752f2cd7621766528c61a32ba4ff7dd2",
-    "execute_review": "sha256:07bd5452ce0337a80e970858907f7e38ae4519fa71902fc8d6393cd2dd760634"
+    "ack": "sha256:6be1926242c69b8a69f8e697cc412b49ff59cedd4763e3370b8d3bc75c357deb",
+    "result": "sha256:b46ef86c7e4fa363f7ad29adde949f59e5896e3ab984d9502e5904d1f8ced785",
+    "review_verdict": "sha256:1cb7d3e18a0f9b0c2e54114df1d4efaf0d9f776f88df95ef85efa08264a6ea61"
   },
-  "review_summary": "Accepted bounded Phase 0/1 Redis cache probe slice. The feature adds optional/default-off Redis cache configuration, a derived JSON cache protocol, no-op fallback, Redis adapter, schema-versioned envelopes, cache-key construction, and focused tests. Redis remains optional and is not wired into authoritative storage or recall behavior in this slice.",
-  "master_verification": [
-    {
-      "command": "uv run pytest tests/test_config.py tests/test_memory_cache.py -q",
-      "status": "passed",
-      "summary": "14 passed in 0.04s"
-    },
-    {
-      "command": "uv run ruff check src/memoryos_lite/config.py src/memoryos_lite/cache tests/test_config.py tests/test_memory_cache.py",
-      "status": "passed",
-      "summary": "All checks passed!"
-    },
-    {
-      "command": "uv run mypy src/memoryos_lite/cache src/memoryos_lite/config.py",
-      "status": "passed",
-      "summary": "Success: no issues found in 2 source files"
-    },
-    {
-      "command": "uv run pytest tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_context_composer.py::test_settings_resolve_v3_composer_and_kernel_flags tests/test_engine.py::test_recall_pipeline_defaults_to_v1 -q",
-      "status": "passed",
-      "summary": "3 passed in 1.13s"
-    },
-    {
-      "command": "git diff --check 4c4712df763c652952a8066060bdb8bb4b37ba0b..HEAD",
-      "status": "passed",
-      "summary": "no whitespace errors"
-    }
-  ],
+  "base_commit": "cebd3d39cb15845a20321e582666126ab7d1c920",
   "blocking_findings": [],
-  "residual_risks": [
-    "Recall v2 cache probe wiring is not implemented in this bounded slice.",
-    "SQLite-derived memory watermark provider is not implemented in this bounded slice.",
-    "Full integrated test gate was not yet recorded at the time of this Master review.",
-    "External merge approval is absent.",
-    "master_config.allowed_target_branches currently does not include feat/phase-2.5-3-retrieval-agent."
-  ],
-  "policy_checks": {
-    "v3_default_preserved": true,
-    "v1_fallback_preserved": true,
-    "recall_v2_opt_in_preserved": true,
-    "kernel_default_unchanged": true,
-    "sqlite_authority_preserved": true,
-    "redis_default_off_preserved": true,
-    "redis_derived_cache_only": true,
-    "source_refs_round_trip_preserved": true,
-    "benchmark_improvement_claim": false,
-    "requires_explicit_merge_approval": true
-  },
-  "merge_decision": "not_merged",
-  "next_gate": "integrated_tests"
+  "branch": "feat/memoryos-redis-cache-probe",
+  "feature_id": "memoryos-redis-cache-probe",
+  "head_commit": "46d90ec96a4b94b075afa5ed4ee7aefca483b547",
+  "merge_decision": "merged",
+  "next_gate": "post_merge_complete",
+  "recorded_at": "2026-05-25T11:44:00.893747Z",
+  "recorded_by": "manual-codex-audit",
+  "review_summary": "Manual audit accepted Redis cache feature after rebasing onto current target cebd3d3 and resolving recall_pipeline.py conflict with benchmark-layer changes.",
+  "slave_ack_ref": "work/features/memoryos-redis-cache-probe/ack.json",
+  "slave_result_ref": "work/features/memoryos-redis-cache-probe/result.md",
+  "slave_review_ref": "work/features/memoryos-redis-cache-probe/review_verdict.json",
+  "status": "accepted",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "version": "1.0",
+  "merge_commit": "d070a78de01b1feff94cbd1929ae9de2b1aee756",
+  "post_merge_verification_ref": "xmuse/master/features/memoryos-redis-cache-probe/post_merge_verification.json"
 }

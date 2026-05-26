@@ -39,8 +39,10 @@ not self-approval.
 - Same-slice repair smoke is not promotion evidence.
 - LoCoMo is the controlling bottleneck; LongMemEval-only evidence must not be
   claimed as chain-level improvement.
-- Master must not merge without explicit external merge approval and a fresh
-  target-head gate.
+- Master may merge autonomously only when the feature policy allows
+  `master_autonomous`, Master review is accepted, integrated tests pass on a
+  fresh target head, and worktrees are clean. High-risk/control-plane lanes
+  still require external approval.
 
 ## Autonomous Yolo Runner Policy
 
@@ -138,8 +140,8 @@ xmuse/master/amendments/<amendment-id>.json
 Each amendment must include `recorded_by: master-god`, affected feature ids,
 the target feature id, the previous state reference, the reason, preserved
 policy flags, and `gate_effect: no_gate_lowering`. Dynamic feature control must
-not weaken review, integrated test, external approval, fresh target, v1
-fallback, v3 default, kernel opt-in, or benchmark-claim gates.
+not weaken review, integrated test, merge authority, fresh target, v1 fallback,
+v3 default, kernel opt-in, or benchmark-claim gates.
 
 ## Master Review Gate
 
@@ -193,9 +195,17 @@ Master may create:
 xmuse/approvals/<feature-id>/merge_approval_request.json
 ```
 
-Master and Slave must not self-sign approval. Actual merge requires an external
-approval artifact and fresh gate evidence. Master must not merge if approval is
-missing, unverifiable, stale, branch-mismatched, or target-head-stale.
+Master and Slave must not self-sign external approval. Actual merge requires
+either:
+
+- `approval_mode: master_autonomous` recorded by Master for a low/medium-risk
+  non-control-plane lane, plus accepted Master review, passed integrated tests,
+  fresh target-head evidence, and clean worktrees; or
+- a verified external approval artifact for high-risk, control-plane, or
+  explicitly external-approval lanes.
+
+Master must not merge if the selected authority is missing, unverifiable,
+stale, branch-mismatched, target-head-stale, or blocked by dirty worktrees.
 
 After merge, Master records:
 
@@ -220,7 +230,7 @@ Node prompt files:
 
 Hold rather than merge when:
 
-- external approval is absent;
+- required merge authority is absent;
 - integrated tests are stale;
 - target HEAD cannot be resolved;
 - feature worktree is dirty;

@@ -14,6 +14,16 @@ from pathlib import Path
 from typing import Any
 
 PROJECT = Path(__file__).resolve().parents[1]
+DISPATCHABLE_FEATURE_STATES = {
+    "active",
+    "executing",
+    "repairing",
+    "reworking",
+    "feature_blocked",
+    "active_repair",
+    "planned",
+    "planning",
+}
 
 
 def _now() -> str:
@@ -58,6 +68,34 @@ def _pid_alive(pid: object) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _discover_running_job_pid(job_ref: str) -> int | None:
+    result = subprocess.run(
+        ["ps", "-eo", "pid=,args="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    needle = f"--job-ref {job_ref}"
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        pid_text, _, command = stripped.partition(" ")
+        if "slave_job_runner.py" not in command or "run-one" not in command:
+            continue
+        if needle not in command:
+            continue
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if _pid_alive(pid):
+            return pid
+    return None
 
 
 def _job_is_running(job_path: Path) -> bool:
@@ -165,6 +203,23 @@ def _load_dispatch_jobs(loop: Path) -> list[dict[str, Any]]:
     if not isinstance(jobs, list):
         raise ValueError("dispatch jobs must be a list")
     return [job for job in jobs if isinstance(job, dict)]
+
+
+def _feature_dispatchable_now(loop: Path, feature_id: str) -> bool:
+    try:
+        master_state = _read_json(loop / "master_state.json")
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        return True
+    features = master_state.get("features", [])
+    if not isinstance(features, list):
+        return True
+    for feature in features:
+        if not isinstance(feature, dict) or feature.get("id") != feature_id:
+            continue
+        state = str(feature.get("state") or "")
+        dispatch_status = str(feature.get("slave_god", {}).get("dispatch_status") or "")
+        return state in DISPATCHABLE_FEATURE_STATES or dispatch_status == "rework_required"
+    return True
 
 
 def _mark_runtime(job_path: Path, runtime: dict[str, Any]) -> None:
@@ -332,6 +387,14 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
         if not job_ref:
             skipped.append({"feature_id": feature_id, "reason": "job_ref is missing"})
             continue
+        if not _feature_dispatchable_now(loop, feature_id):
+            skipped.append(
+                {
+                    "feature_id": feature_id,
+                    "reason": "feature is not dispatchable in current master_state",
+                }
+            )
+            continue
 
         job_path = _loop_path(loop, job_ref)
         if _job_is_running(job_path):
@@ -359,6 +422,20 @@ def start_queued_jobs(loop: Path, *, dry_run: bool = False) -> dict[str, Any]:
         runtime_status = _runtime_status(job_path)
         if job_path.exists():
             _sync_feature_artifacts_from_worktree(loop, feature_id, _read_json(job_path))
+        discovered_pid = _discover_running_job_pid(job_ref)
+        if discovered_pid is not None:
+            _mark_runtime(
+                job_path,
+                {
+                    "status": "running",
+                    "pid": discovered_pid,
+                    "started_at": _now(),
+                    "runner": "xmuse/slave_job_runner.py",
+                    "reason": "discovered existing running job process",
+                },
+            )
+            skipped.append({"feature_id": feature_id, "reason": "job already running"})
+            continue
         if runtime_status == "completed" and _job_artifacts_blocked(loop, feature_id, job):
             runtime_status = "artifact_blocked"
         if runtime_status == "failed" and _job_has_api_transient_error(loop, feature_id):

@@ -1,439 +1,180 @@
 const API_BASE = "http://localhost:8200/api";
-const REFRESH_MS = 10000;
+const REFRESH_MS = 5000;
 
-const state = {
-  lanes: [],
-  errors: [],
-  currentLaneId: null,
-};
+const state = { lanes: [], selected: null, errors: [] };
 
-const pages = {
-  lanes: document.getElementById("lane-overview"),
-  detail: document.getElementById("lane-detail"),
-  errors: document.getElementById("error-knowledge"),
-  submit: document.getElementById("submit-lane"),
-};
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
 
-const lanesBody = document.getElementById("lanes-body");
-const metricsSummary = document.getElementById("metrics-summary");
-const lastUpdated = document.getElementById("last-updated");
-const laneDetailTitle = document.getElementById("lane-detail-title");
-const laneDetailMeta = document.getElementById("lane-detail-meta");
-const lanePrompt = document.getElementById("lane-prompt");
-const laneLog = document.getElementById("lane-log");
-const gateResults = document.getElementById("gate-results");
-const errorsCount = document.getElementById("errors-count");
-const errorsList = document.getElementById("errors-list");
-const errorSearch = document.getElementById("error-search");
-const laneForm = document.getElementById("lane-form");
-const submitStatus = document.getElementById("submit-status");
+const laneList = $("#lane-list");
+const messages = $("#messages");
+const chatHeader = $("#chat-header");
+const inputBar = $("#input-bar");
+const stats = $("#stats");
+const search = $("#search");
+const modal = $("#new-lane-modal");
 
-function getRoute() {
-  const hash = window.location.hash.replace(/^#/, "");
-  if (hash.startsWith("lane/")) {
-    return { page: "detail", laneId: decodeURIComponent(hash.slice(5)) };
-  }
-  if (hash === "errors") {
-    return { page: "errors" };
-  }
-  if (hash === "submit") {
-    return { page: "submit" };
-  }
-  return { page: "lanes" };
+function statusIcon(s) {
+  return { done: "✓", failed: "✗", running: "◉", pending: "○" }[s] || "○";
 }
 
-function setActivePage(page) {
-  for (const [name, element] of Object.entries(pages)) {
-    element.classList.toggle("active", name === page);
-  }
-
-  document.querySelectorAll("nav a").forEach((link) => {
-    link.classList.toggle("active", link.dataset.route === page);
-  });
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
 }
 
-async function fetchJson(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Accept: "application/json",
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `${response.status} ${response.statusText}`);
-  }
-
-  if (response.status === 204) {
-    return null;
-  }
-
-  return response.json();
+function normStatus(s) {
+  const v = String(s || "pending").toLowerCase();
+  return ["pending", "running", "done", "failed"].includes(v) ? v : "pending";
 }
 
-function asArray(payload, keys) {
-  if (Array.isArray(payload)) {
-    return payload;
-  }
-  if (!payload || typeof payload !== "object") {
-    return [];
-  }
-  for (const key of keys) {
-    if (Array.isArray(payload[key])) {
-      return payload[key];
-    }
-  }
-  return [];
-}
-
-function getLaneId(lane) {
-  return lane.feature_id || lane.id || lane.lane_id || "";
-}
-
-function normalizeStatus(status) {
-  const value = String(status || "pending").toLowerCase();
-  if (["pending", "running", "done", "failed"].includes(value)) {
-    return value;
-  }
-  return "pending";
-}
-
-function formatCapabilities(capabilities) {
-  if (Array.isArray(capabilities)) {
-    return capabilities.join(", ");
-  }
-  return capabilities || "";
-}
-
-function textOrFallback(value, fallback) {
-  if (value === null || value === undefined || value === "") {
-    return fallback;
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  return JSON.stringify(value, null, 2);
-}
-
-function setLastUpdated(label = "Updated") {
-  lastUpdated.textContent = `${label} ${new Date().toLocaleTimeString()}`;
-}
-
-function setTableMessage(message) {
-  lanesBody.innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(message)}</td></tr>`;
-}
-
-function renderLanes(lanes) {
-  if (!lanes.length) {
-    setTableMessage("No lanes found.");
-    return;
-  }
-
-  lanesBody.innerHTML = lanes
-    .map((lane) => {
-      const laneId = getLaneId(lane);
-      const status = normalizeStatus(lane.status);
-      return `
-        <tr>
-          <td><strong>${escapeHtml(laneId || "unknown")}</strong></td>
-          <td><span class="status-badge ${status}">${status}</span></td>
-          <td>${escapeHtml(lane.branch || lane.worktree || "")}</td>
-          <td>${escapeHtml(formatCapabilities(lane.capabilities))}</td>
-          <td><a class="detail-link" href="#lane/${encodeURIComponent(laneId)}">Open</a></td>
-        </tr>
-      `;
+function renderLaneList() {
+  const q = search.value.toLowerCase();
+  const filtered = state.lanes.filter(
+    (l) => !q || (l.feature_id || "").toLowerCase().includes(q)
+  );
+  laneList.innerHTML = filtered
+    .map((l) => {
+      const s = normStatus(l.status);
+      const active = state.selected === l.feature_id ? "active" : "";
+      const preview = (l.prompt || "").slice(0, 60);
+      return `<li class="lane-item ${active}" data-id="${esc(l.feature_id)}">
+        <div class="lane-avatar ${s}">${statusIcon(s)}</div>
+        <div class="lane-info">
+          <div class="lane-name">${esc(l.feature_id)}</div>
+          <div class="lane-preview">${esc(preview)}</div>
+        </div>
+        <span class="lane-badge ${s}">${s}</span>
+      </li>`;
     })
     .join("");
 }
 
-function renderMetrics(metrics) {
-  if (!metrics || typeof metrics !== "object") {
-    metricsSummary.textContent = "";
-    return;
+function renderStats() {
+  const counts = { done: 0, failed: 0, running: 0, pending: 0 };
+  state.lanes.forEach((l) => { counts[normStatus(l.status)]++; });
+  stats.innerHTML = `<span style="color:#4caf50">${counts.done} done</span> · `
+    + `<span style="color:#ef5350">${counts.failed} failed</span> · `
+    + `<span style="color:#4fc3f7">${counts.running} running</span> · `
+    + `<span style="color:#fbbf24">${counts.pending} pending</span>`;
+}
+
+async function selectLane(id) {
+  state.selected = id;
+  renderLaneList();
+  inputBar.style.display = "flex";
+  const title = chatHeader.querySelector(".chat-title");
+  const meta = chatHeader.querySelector(".chat-meta");
+  title.textContent = id;
+  messages.innerHTML = '<div class="empty-state">Loading...</div>';
+
+  try {
+    const detail = await fetch(`${API_BASE}/lanes/${encodeURIComponent(id)}`).then(r => r.json());
+    const lane = detail.lane || detail;
+    const s = normStatus(lane.status);
+    meta.innerHTML = `<span class="lane-badge ${s}">${s}</span> · ${esc(lane.branch || "")}`;
+    renderMessages(lane, detail);
+  } catch (e) {
+    messages.innerHTML = `<div class="msg error"><div class="msg-label">Error</div>${esc(e.message)}</div>`;
+  }
+}
+
+function renderMessages(lane, detail) {
+  let html = "";
+
+  // Prompt as user message
+  if (lane.prompt) {
+    html += `<div class="msg user"><div class="msg-label">Prompt</div>${esc(lane.prompt)}</div>`;
   }
 
-  const parts = [];
-  const counts = metrics.counts || metrics.status_counts || metrics;
-  for (const status of ["pending", "running", "done", "failed"]) {
-    if (typeof counts[status] === "number") {
-      parts.push(`${status}: ${counts[status]}`);
-    }
+  // Dependencies
+  const deps = lane.depends_on || [];
+  if (deps.length) {
+    html += `<div class="msg system"><div class="msg-label">Dependencies</div>${deps.map(d => esc(d)).join(", ")}</div>`;
   }
-  if (typeof metrics.avg_time === "number") {
-    parts.push(`avg: ${metrics.avg_time.toFixed(1)}s`);
+
+  // Execution log
+  const log = detail.execution_log || detail.log || lane.execution_log || lane.log || "";
+  if (log) {
+    html += `<div class="msg system"><div class="msg-label">Execution Log</div><pre>${esc(log)}</pre></div>`;
   }
-  metricsSummary.textContent = parts.join(" | ");
+
+  // Gate results
+  const gates = detail.gate_results || detail.gates || lane.gate_results || null;
+  if (gates) {
+    const gateClass = gates.passed ? "success" : "error";
+    html += `<div class="msg ${gateClass}"><div class="msg-label">Quality Gate</div><pre>${esc(JSON.stringify(gates, null, 2))}</pre></div>`;
+  }
+
+  // Status message
+  const s = normStatus(lane.status);
+  if (s === "done") {
+    html += `<div class="msg success"><div class="msg-label">Complete</div>Lane finished successfully.</div>`;
+  } else if (s === "failed") {
+    html += `<div class="msg error"><div class="msg-label">Failed</div>Lane execution failed.</div>`;
+  } else if (s === "running") {
+    html += `<div class="msg system"><div class="msg-label">Status</div>Currently executing...</div>`;
+  }
+
+  messages.innerHTML = html || '<div class="empty-state">No execution data yet</div>';
+  messages.scrollTop = messages.scrollHeight;
 }
 
 async function loadLanes() {
   try {
-    const [lanePayload, metricsPayload] = await Promise.all([
-      fetchJson(`${API_BASE}/lanes`),
-      fetchJson(`${API_BASE}/metrics`).catch(() => null),
-    ]);
-    state.lanes = asArray(lanePayload, ["lanes", "items", "results"]);
-    renderLanes(state.lanes);
-    renderMetrics(metricsPayload);
-    setLastUpdated();
-  } catch (error) {
-    setTableMessage(`API error: ${error.message}`);
-    metricsSummary.textContent = "";
-    setLastUpdated("Failed");
+    const payload = await fetch(`${API_BASE}/lanes`).then(r => r.json());
+    state.lanes = Array.isArray(payload) ? payload : (payload.lanes || payload.items || []);
+    renderLaneList();
+    renderStats();
+    if (state.selected) selectLane(state.selected);
+  } catch (e) {
+    stats.textContent = "API offline";
   }
 }
 
-function normalizeDetail(payload) {
-  const lane = payload?.lane || payload || {};
-  return {
-    lane,
-    log:
-      payload?.execution_log ||
-      payload?.log ||
-      payload?.logs ||
-      lane.execution_log ||
-      lane.log ||
-      "",
-    gates:
-      payload?.gate_results ||
-      payload?.gates ||
-      payload?.gate ||
-      lane.gate_results ||
-      lane.gates ||
-      null,
-  };
-}
-
-function renderGateResults(results) {
-  if (!results) {
-    gateResults.textContent = "No gate results available.";
-    return;
-  }
-
-  if (Array.isArray(results)) {
-    gateResults.innerHTML = results.map(renderGateItem).join("");
-    return;
-  }
-
-  if (typeof results === "object") {
-    if (typeof results.passed === "boolean" || results.errors || results.checks) {
-      gateResults.innerHTML = renderGateItem(results);
-      return;
-    }
-    gateResults.innerHTML = Object.entries(results)
-      .map(([name, value]) => renderGateItem({ name, value }))
-      .join("");
-    return;
-  }
-
-  gateResults.innerHTML = `<pre class="pre-block">${escapeHtml(String(results))}</pre>`;
-}
-
-function renderGateItem(item) {
-  const passed =
-    item.passed === true ||
-    item.status === "pass" ||
-    item.status === "passed" ||
-    item.value === true;
-  const failed =
-    item.passed === false ||
-    item.status === "fail" ||
-    item.status === "failed" ||
-    item.value === false;
-  const className = passed ? "pass" : failed ? "fail" : "";
-  const title = item.name || item.check || item.id || "Gate";
-  const body = {
-    status: item.status,
-    passed: item.passed,
-    checks: item.checks,
-    errors: item.errors,
-    value: item.value,
-  };
-  return `
-    <div class="gate-item ${className}">
-      <strong>${escapeHtml(title)}</strong>
-      <pre>${escapeHtml(JSON.stringify(body, null, 2))}</pre>
-    </div>
-  `;
-}
-
-async function loadLaneDetail(laneId) {
-  if (!laneId) {
-    laneDetailTitle.textContent = "Lane detail";
-    laneDetailMeta.textContent = "";
-    lanePrompt.textContent = "No lane selected.";
-    laneLog.textContent = "No log available.";
-    gateResults.textContent = "No gate results available.";
-    return;
-  }
-
-  try {
-    const payload = await fetchJson(`${API_BASE}/lanes/${encodeURIComponent(laneId)}`);
-    const detail = normalizeDetail(payload);
-    const lane = detail.lane;
-    const status = normalizeStatus(lane.status);
-
-    laneDetailTitle.textContent = getLaneId(lane) || laneId;
-    laneDetailMeta.innerHTML = `<span class="status-badge ${status}">${status}</span>`;
-    lanePrompt.textContent = textOrFallback(lane.prompt, "No prompt available.");
-    laneLog.textContent = textOrFallback(detail.log, "No log available.");
-    renderGateResults(detail.gates);
-    setLastUpdated();
-  } catch (error) {
-    laneDetailTitle.textContent = laneId;
-    laneDetailMeta.textContent = `API error: ${error.message}`;
-    lanePrompt.textContent = "No prompt available.";
-    laneLog.textContent = "No log available.";
-    gateResults.textContent = "No gate results available.";
-    setLastUpdated("Failed");
-  }
-}
-
-function normalizeError(error) {
-  return {
-    id: error.record_id || error.id || error.error_id || "error",
-    title: error.summary || error.pattern || error.fingerprint || error.pit || "Error pattern",
-    feature: error.feature_id || error.lane_id || "",
-    rootCause: error.root_cause || error.root_cause_status || "",
-    trigger: error.trigger || "",
-    fix: error.fix || "",
-    verification: error.verification || error.verification_evidence || "",
-    lesson: error.lesson || "",
-    scope: error.scope || "",
-    raw: error,
-  };
-}
-
-function renderErrors() {
-  const query = errorSearch.value.trim().toLowerCase();
-  const normalized = state.errors.map(normalizeError);
-  const filtered = query
-    ? normalized.filter((error) => JSON.stringify(error.raw).toLowerCase().includes(query))
-    : normalized;
-
-  errorsCount.textContent = `${filtered.length} of ${normalized.length} patterns`;
-
-  if (!filtered.length) {
-    errorsList.innerHTML = '<p class="empty">No matching errors.</p>';
-    return;
-  }
-
-  errorsList.innerHTML = filtered
-    .map(
-      (error) => `
-        <article class="error-card">
-          <h3>${escapeHtml(error.title)}</h3>
-          <p class="muted">${escapeHtml(error.id)}${error.feature ? ` | ${escapeHtml(error.feature)}` : ""}</p>
-          <dl>
-            ${renderDefinition("Root cause", error.rootCause)}
-            ${renderDefinition("Trigger", error.trigger)}
-            ${renderDefinition("Fix", error.fix)}
-            ${renderDefinition("Verification", error.verification)}
-            ${renderDefinition("Lesson", error.lesson)}
-            ${renderDefinition("Scope", error.scope)}
-          </dl>
-        </article>
-      `,
-    )
-    .join("");
-}
-
-function renderDefinition(label, value) {
-  if (value === null || value === undefined || value === "") {
-    return "";
-  }
-  return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(textOrFallback(value, ""))}</dd>`;
-}
-
-async function loadErrors() {
-  try {
-    const payload = await fetchJson(`${API_BASE}/errors`);
-    state.errors = asArray(payload, ["errors", "entries", "items", "results"]);
-    renderErrors();
-    setLastUpdated();
-  } catch (error) {
-    errorsList.innerHTML = `<p class="empty">API error: ${escapeHtml(error.message)}</p>`;
-    errorsCount.textContent = "";
-    setLastUpdated("Failed");
-  }
-}
-
-async function submitLane(event) {
-  event.preventDefault();
-  submitStatus.textContent = "Submitting...";
-
-  const formData = new FormData(laneForm);
-  const capabilities = String(formData.get("capabilities") || "")
-    .split(",")
-    .map((capability) => capability.trim())
-    .filter(Boolean);
-
-  const payload = {
-    feature_id: String(formData.get("feature_id") || "").trim(),
-    prompt: String(formData.get("prompt") || "").trim(),
-    capabilities,
-  };
-
-  try {
-    await fetchJson(`${API_BASE}/lanes`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    laneForm.reset();
-    submitStatus.textContent = `Submitted ${payload.feature_id}.`;
-    window.location.hash = "#lanes";
-    await loadLanes();
-  } catch (error) {
-    submitStatus.textContent = `Submit failed: ${error.message}`;
-  }
-}
-
-async function refreshCurrentView() {
-  const route = getRoute();
-  setActivePage(route.page);
-  state.currentLaneId = route.laneId || null;
-
-  if (route.page === "detail") {
-    await loadLaneDetail(route.laneId);
-    return;
-  }
-  if (route.page === "errors") {
-    await loadErrors();
-    return;
-  }
-  if (route.page === "submit") {
-    setLastUpdated();
-    return;
-  }
-  await loadLanes();
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => {
-    const entities = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    };
-    return entities[char];
-  });
-}
-
-document.getElementById("refresh-lanes").addEventListener("click", loadLanes);
-document.getElementById("refresh-detail").addEventListener("click", () => {
-  loadLaneDetail(state.currentLaneId);
+// Event handlers
+laneList.addEventListener("click", (e) => {
+  const item = e.target.closest(".lane-item");
+  if (item) selectLane(item.dataset.id);
 });
-errorSearch.addEventListener("input", renderErrors);
-laneForm.addEventListener("submit", submitLane);
-window.addEventListener("hashchange", refreshCurrentView);
 
-if (!window.location.hash) {
-  window.location.hash = "#lanes";
-}
+search.addEventListener("input", renderLaneList);
 
-refreshCurrentView();
-setInterval(refreshCurrentView, REFRESH_MS);
+$("#new-lane-btn").addEventListener("click", () => { modal.style.display = "flex"; });
+$("#modal-close").addEventListener("click", () => { modal.style.display = "none"; });
+
+$("#lane-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = {
+    feature_id: fd.get("feature_id").trim(),
+    prompt: fd.get("prompt").trim(),
+    capabilities: fd.get("capabilities").split(",").map(s => s.trim()).filter(Boolean),
+  };
+  try {
+    await fetch(`${API_BASE}/lanes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    modal.style.display = "none";
+    e.target.reset();
+    await loadLanes();
+  } catch (err) {
+    alert("Failed: " + err.message);
+  }
+});
+
+$("#send-btn").addEventListener("click", () => {
+  const input = $("#msg-input");
+  const text = input.value.trim();
+  if (!text || !state.selected) return;
+  messages.innerHTML += `<div class="msg user"><div class="msg-label">You</div>${esc(text)}</div>`;
+  messages.scrollTop = messages.scrollHeight;
+  input.value = "";
+});
+
+// Init
+loadLanes();
+setInterval(loadLanes, REFRESH_MS);

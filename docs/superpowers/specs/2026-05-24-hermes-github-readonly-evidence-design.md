@@ -38,11 +38,11 @@ without making GitHub a required runtime dependency for local development.
 
 The active Hermes control plane is Master-based:
 
-- active source: `.hermes-loop/master_state.json`;
-- Master prompt: `.hermes-loop/prompts/master_god_prompt.md`;
-- Slave prompt: `.hermes-loop/prompts/slave_god_prompt.md`;
-- Master contract: `.hermes-loop/contracts/master_dispatch_template.json`;
-- Slave contract: `.hermes-loop/contracts/slave_dispatch_template.json`;
+- active source: `xmuse/master_state.json`;
+- Master prompt: `xmuse/prompts/master_god_prompt.md`;
+- Slave prompt: `xmuse/prompts/slave_god_prompt.md`;
+- Master contract: `xmuse/contracts/master_dispatch_template.json`;
+- Slave contract: `xmuse/contracts/slave_dispatch_template.json`;
 - current feature lanes: `v1-quarantine` and `archive-rag`.
 
 Current Master state already has `github.enabled = false` and feature merge
@@ -72,7 +72,7 @@ an executor.
 
 ## Configuration
 
-Extend `.hermes-loop/master_config.json` with a `github` object:
+Extend `xmuse/master_config.json` with a `github` object:
 
 ```json
 {
@@ -159,7 +159,7 @@ forcing every feature to use GitHub immediately.
 Master writes normalized GitHub evidence under:
 
 ```text
-.hermes-loop/master/features/<feature-id>/github_evidence.json
+xmuse/master/features/<feature-id>/github_evidence.json
 ```
 
 Minimum schema:
@@ -261,8 +261,8 @@ GitHub evidence does not replace:
 - local Slave ACK;
 - local Slave PASS review;
 - Master review;
-- `.hermes-loop/approvals/<feature-id>/merge_approval_request.json`;
-- `.hermes-loop/approvals/<feature-id>/merge_approval.json`;
+- `xmuse/approvals/<feature-id>/merge_approval_request.json`;
+- `xmuse/approvals/<feature-id>/merge_approval.json`;
 - merge approval request digest validation;
 - `master_review_digest`, `integrated_tests_digest`, and policy snapshot digest
   checks in the approval contract;
@@ -303,7 +303,7 @@ also extends `PROVENANCE_METHODS` and the validator tests. For the MVP,
   "verification": {
     "method": "github_review",
     "status": "verified",
-    "ref": ".hermes-loop/master/features/archive-rag/github_evidence.json",
+    "ref": "xmuse/master/features/archive-rag/github_evidence.json",
     "digest": "sha256:evidence-digest"
   }
 }
@@ -387,8 +387,8 @@ Existing Hermes control-plane verification should continue to pass:
 
 ```bash
 uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py tests/test_hermes_master_state.py -q
-uv run ruff check .hermes-loop/hermes_hardening.py .hermes-loop/hermes_reporter.py tests/test_hermes_*.py
-python3 -m py_compile .hermes-loop/hermes_hardening.py .hermes-loop/hermes_reporter.py && bash -n .hermes-loop/god_launcher.sh
+uv run ruff check xmuse/hermes_hardening.py xmuse/hermes_reporter.py tests/test_hermes_*.py
+python3 -m py_compile xmuse/hermes_hardening.py xmuse/hermes_reporter.py && bash -n xmuse/god_launcher.sh
 ```
 
 ## Rollout Plan

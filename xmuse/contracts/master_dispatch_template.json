@@ -14,7 +14,7 @@
     ],
     "skip_human_confirmation": true,
     "human_gate_exceptions": [
-      "external merge approval",
+      "external merge approval for high-risk/control-plane lanes",
       "destructive out-of-scope cleanup",
       "deletion of unrelated user work",
       "gate lowering"
@@ -45,7 +45,7 @@
   "forbidden_actions": [
     "Do not use legacy root-loop state as active execution state.",
     "Do not edit slave-owned ack/result/review_verdict artifacts.",
-    "Do not merge without external merge approval.",
+    "Do not merge without either Master-autonomous authority or verified external approval.",
     "Do not accept stale target-base integrated test evidence.",
     "Do not self-sign external approval.",
     "Do not enable the kernel by default.",
@@ -74,7 +74,7 @@
       "names concrete engineering blockers",
       "sets next feature-local state to repairing, reworking, feature_blocked, or active_repair",
       "does not use benchmark score targets or pass-rate targets",
-      "does not lower Master review, integrated test, external approval, fresh target, v1 fallback, v3 default, or kernel opt-in gates"
+      "does not lower Master review, integrated test, merge authority, fresh target, v1 fallback, v3 default, or kernel opt-in gates"
     ],
     "dynamic_feature_amendment": [
       "recorded_by master-god",
@@ -91,8 +91,8 @@
       "worktree clean"
     ],
     "merge": [
-      "external merge approval present",
-      "approval binds current request and evidence digests",
+      "Master-autonomous authority or external merge approval present",
+      "selected authority binds current evidence digests",
       "target HEAD still matches integrated evidence",
       "merge strategy is no_ff_merge_commit",
       "post-merge verification is planned"

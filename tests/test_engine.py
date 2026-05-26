@@ -1,5 +1,11 @@
 from unittest.mock import Mock, patch
 
+from memoryos_lite.cache import (
+    CacheDiagnostics,
+    CacheReadResult,
+    CacheStatus,
+    CacheWriteResult,
+)
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import ItemExtractor, MemoryOSService, OpenAIPageDraftClient, PagingAgent
 from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
@@ -18,6 +24,7 @@ from memoryos_lite.store import create_store
 from memoryos_lite.v3_contracts import (
     ArchivalPassage,
     ArchiveAttachment,
+    ContextPackageV3,
     CoreMemoryBlock,
     SourceRef,
 )
@@ -219,6 +226,101 @@ def test_v3_build_context_includes_core_memory_diagnostics(tmp_path):
     ]
     assert core_diagnostics
     assert core_diagnostics[0]["metadata"]["tags"] == ["profile"]
+
+
+def test_v3_build_context_promotes_cache_diagnostics_to_legacy_metadata(
+    tmp_path,
+    monkeypatch,
+):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_recall_cache_enabled=True,
+    )
+    service = MemoryOSService(settings=settings)
+    session = service.create_session("v3-cache-metadata")
+    v3_metadata = {
+        "cache": {"status": "miss", "scope": "recall_context_package"},
+        "recall_cache": {"status": "miss", "scope": "recall_context_package"},
+        "query_analysis_cache": {"status": "hit", "scope": "query_analysis"},
+        "recall_candidate_cache": {"status": "hit", "scope": "recall_candidates"},
+        "recall_memory_watermark": "messages:1",
+    }
+
+    def fake_build(request):
+        return ContextPackageV3(
+            session_id=request.session_id,
+            task=request.task,
+            metadata=v3_metadata,
+        )
+
+    monkeypatch.setattr(service.v3_context_composer, "build", fake_build)
+
+    context = service.build_context(session.id, "Where did Bob move?", budget=120)
+
+    assert context.metadata["cache"] == v3_metadata["cache"]
+    assert context.metadata["recall_cache"] == v3_metadata["recall_cache"]
+    assert context.metadata["query_analysis_cache"] == v3_metadata[
+        "query_analysis_cache"
+    ]
+    assert context.metadata["recall_candidate_cache"] == v3_metadata[
+        "recall_candidate_cache"
+    ]
+    assert context.metadata["recall_memory_watermark"] == "messages:1"
+    assert context.metadata["v3_context"]["metadata"]["cache"] == v3_metadata["cache"]
+
+
+def test_v3_internal_recall_cache_remains_disabled_by_cache_flag(tmp_path):
+    class CountingDerivedCache:
+        backend_name = "counting"
+
+        def __init__(self) -> None:
+            self.get_calls = 0
+            self.set_calls = 0
+            self.delete_calls = 0
+
+        def get(self, key: str) -> CacheReadResult:
+            self.get_calls += 1
+            return CacheReadResult(status=CacheStatus.MISS, key=key)
+
+        def set(self, key, entry, *, ttl_s=None) -> CacheWriteResult:
+            self.set_calls += 1
+            return CacheWriteResult(status=CacheStatus.STORED, key=key)
+
+        def delete(self, key: str) -> CacheWriteResult:
+            self.delete_calls += 1
+            return CacheWriteResult(status=CacheStatus.STORED, key=key)
+
+        def status(self) -> CacheDiagnostics:
+            return CacheDiagnostics(
+                status=CacheStatus.DISABLED,
+                metadata={"backend": self.backend_name, "enabled": False},
+            )
+
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_recall_pipeline="v1",
+        memoryos_recall_cache_enabled=False,
+    )
+    service = MemoryOSService(settings=settings)
+    cache = CountingDerivedCache()
+    service.recall_pipeline.cache = cache
+    session = service.create_session("v3-cache-disabled")
+    service.ingest(
+        session.id,
+        MessageCreate(role=Role.USER, content="Bob moved to Shanghai."),
+    )
+
+    context = service.build_context(session.id, "Where did Bob move?", budget=160)
+
+    assert context.metadata["memory_arch"] == "v3"
+    assert context.metadata["recall_cache"]["enabled"] is False
+    assert context.metadata["recall_cache"]["status"] == "disabled"
+    assert context.metadata["recall_memory_watermark"]
+    assert cache.get_calls == 0
+    assert cache.set_calls == 0
+    assert cache.delete_calls == 0
 
 
 def test_explicit_v1_build_context_excludes_v3_core_memory_blocks(tmp_path):

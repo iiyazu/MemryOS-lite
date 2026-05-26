@@ -1,30 +1,32 @@
 {
   "activation_state": "master_active",
   "counts": {
-    "blocked": 0,
-    "held": 0,
+    "blocked": 1,
+    "held": 1,
     "mergeable": 0,
-    "merged": 0,
+    "merged": 1,
     "reviewable": 0,
     "total": 6
   },
   "errors": [],
   "queues": {
     "active_lanes": [
-      "archive-rag",
-      "xmuse-console",
-      "benchmark-layer-organization",
-      "memoryos-redis-cache-probe"
+      "xmuse-console"
     ],
-    "blocked": [],
-    "held": [],
+    "blocked": [
+      "xmuse-core-state-extraction"
+    ],
+    "held": [
+      "archive-rag"
+    ],
     "master_review_queue": [],
     "merge_queue": [],
-    "merged": [],
-    "planning_queue": [
-      "xmuse-core-state-extraction",
-      "xmuse-error-knowledge"
-    ]
+    "merged": [
+      "xmuse-error-knowledge",
+      "memoryos-redis-cache-probe",
+      "benchmark-layer-organization"
+    ],
+    "planning_queue": []
   },
   "source": "xmuse/master_state.json",
   "version": "1.0"

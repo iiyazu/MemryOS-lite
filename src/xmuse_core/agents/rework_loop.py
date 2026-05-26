@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any, Literal, Protocol
 
 from xmuse_core.agents.consumer import TaskDescriptor
-from xmuse_core.agents.quality_gate import GateResult, QualityGate
+from xmuse_core.agents.quality_gate import GateResult
 
 
 @dataclass
@@ -16,13 +17,24 @@ class LaneResult:
     final_errors: list[str] = field(default_factory=list)
 
 
+class ErrorKnowledgeLike(Protocol):
+    def inject_context(self, prompt: str) -> str: ...
+
+
+class QualityGateLike(Protocol):
+    def check(self, worktree: Path) -> GateResult | Awaitable[GateResult]: ...
+
+
 class ReworkLoop:
+    def __init__(self, error_knowledge: ErrorKnowledgeLike | None = None) -> None:
+        self._error_knowledge = error_knowledge
+
     async def run(
         self,
         lane: TaskDescriptor,
         initial_gate_result: GateResult,
         dispatch_fn: Callable[[str, str], Any],
-        gate: QualityGate,
+        gate: QualityGateLike,
         max_retries: int = 3,
     ) -> LaneResult:
         accumulated_errors = list(initial_gate_result.errors)
@@ -35,9 +47,11 @@ class ReworkLoop:
             if inspect.isawaitable(dispatch_result):
                 await dispatch_result
 
-            gate_result = gate.check(lane.worktree)
-            if inspect.isawaitable(gate_result):
-                gate_result = await gate_result
+            gate_result_or_awaitable = gate.check(Path(lane.worktree))
+            if inspect.isawaitable(gate_result_or_awaitable):
+                gate_result = await gate_result_or_awaitable
+            else:
+                gate_result = gate_result_or_awaitable
 
             if gate_result.passed:
                 return LaneResult(status="done", attempts=attempt, final_errors=[])
@@ -58,9 +72,12 @@ class ReworkLoop:
         attempt: int,
     ) -> str:
         formatted_errors = "\n".join(f"- {error}" for error in gate_errors) or "- <none>"
-        return (
+        prompt = (
             f"Original prompt:\n{original_prompt}\n\n"
             f"Attempt {attempt}\n\n"
             f"Gate errors:\n{formatted_errors}\n\n"
             "Rework the lane so the quality gate passes."
         )
+        if self._error_knowledge is None:
+            return prompt
+        return self._error_knowledge.inject_context(prompt)

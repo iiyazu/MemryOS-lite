@@ -215,7 +215,8 @@
       ],
       "depends_on": [
         "frontend-scaffold"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "frontend-api-layer",
@@ -227,7 +228,8 @@
       ],
       "depends_on": [
         "frontend-scaffold"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "frontend-lanes-page",
@@ -240,7 +242,8 @@
       "depends_on": [
         "frontend-app-shell",
         "frontend-api-layer"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "frontend-metrics-page",
@@ -253,7 +256,8 @@
       "depends_on": [
         "frontend-app-shell",
         "frontend-api-layer"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "frontend-errors-page",
@@ -266,7 +270,8 @@
       "depends_on": [
         "frontend-app-shell",
         "frontend-api-layer"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "frontend-settings-page",
@@ -278,7 +283,8 @@
       ],
       "depends_on": [
         "frontend-app-shell"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "frontend-new-lane-modal",
@@ -290,7 +296,8 @@
       ],
       "depends_on": [
         "frontend-lanes-page"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "master-loop-replace-main",
@@ -300,7 +307,8 @@
       "capabilities": [
         "code",
         "test"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "parallel-dispatch",
@@ -313,7 +321,8 @@
       ],
       "depends_on": [
         "master-loop-replace-main"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "gate-rework-integration",
@@ -326,7 +335,8 @@
       ],
       "depends_on": [
         "master-loop-replace-main"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "error-knowledge-prompt-injection",
@@ -339,7 +349,8 @@
       ],
       "depends_on": [
         "gate-rework-integration"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "auto-discovery-loop-integration",
@@ -352,7 +363,8 @@
       ],
       "depends_on": [
         "master-loop-replace-main"
-      ]
+      ],
+      "status": "done"
     },
     {
       "feature_id": "claude-code-launcher",
@@ -365,7 +377,8 @@
       ],
       "depends_on": [
         "gate-rework-integration"
-      ]
+      ],
+      "status": "running"
     },
     {
       "feature_id": "cross-runtime-review",
@@ -395,6 +408,253 @@
         "cross-runtime-review",
         "error-knowledge-prompt-injection"
       ]
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-agent-kernel-py-310-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/agent_kernel.py:310.\n\nExact error message:\nsrc/memoryos_lite/agent_kernel.py:310: error: Argument \"id\" to \"ApprovalState\" has incompatible type \"str | None\"; expected \"str\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "running",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-api-app-py-199-func-returns-value",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/api/app.py:199.\n\nExact error message:\nsrc/memoryos_lite/api/app.py:199: error: \"_require_session\" of \"MemoryOSService\" does not return a value (it only ever returns None)  [func-returns-value]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-api-app-py-207-attr-defined",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/api/app.py:207.\n\nExact error message:\nsrc/memoryos_lite/api/app.py:207: error: \"Message\" has no attribute \"get\"  [attr-defined]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-core-memory-py-309-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/core_memory.py:309.\n\nExact error message:\nsrc/memoryos_lite/core_memory.py:309: error: Argument \"source_type\" to \"SourceRef\" has incompatible type \"str\"; expected \"SourceType\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-llm-judge-py-82-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/llm_judge.py:82.\n\nExact error message:\nsrc/memoryos_lite/llm_judge.py:82: error: Argument 2 to \"_invoke_judge\" of \"LLMJudge\" has incompatible type \"list[BaseMessage]\"; expected \"list[SystemMessage | HumanMessage]\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-llm-judge-py-84-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/llm_judge.py:84.\n\nExact error message:\nsrc/memoryos_lite/llm_judge.py:84: error: Argument 2 to \"_invoke_judge\" of \"LLMJudge\" has incompatible type \"list[BaseMessage]\"; expected \"list[SystemMessage | HumanMessage]\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-providers-qdrant-py-50-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/providers/qdrant.py:50.\n\nExact error message:\nsrc/memoryos_lite/retrieval/providers/qdrant.py:50: error: Argument \"timeout\" to \"QdrantClient\" has incompatible type \"float | None\"; expected \"int | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-51-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:51.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:51: error: Argument \"api_key\" to \"ChatOpenAI\" has incompatible type \"str\"; expected \"SecretStr | Callable[[], str] | Callable[[], Awaitable[str]] | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-54-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:54.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:54: error: Argument 5 to \"ChatOpenAI\" has incompatible type \"**dict[str, str]\"; expected \"BaseCache | bool | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-reranker-py-58-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/reranker.py:58.\n\nExact error message:\nsrc/memoryos_lite/retrieval/reranker.py:58: error: Argument \"api_key\" to \"ChatOpenAI\" has incompatible type \"str\"; expected \"SecretStr | Callable[[], str] | Callable[[], Awaitable[str]] | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-reranker-py-61-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/reranker.py:61.\n\nExact error message:\nsrc/memoryos_lite/retrieval/reranker.py:61: error: Argument 5 to \"ChatOpenAI\" has incompatible type \"**dict[str, str]\"; expected \"BaseCache | bool | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-v3-contracts-py-505-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/v3_contracts.py:505.\n\nExact error message:\nsrc/memoryos_lite/v3_contracts.py:505: error: Argument \"memory_type\" to \"ArchivalMemory\" has incompatible type \"str\"; expected \"Literal['fact', 'preference', 'event', 'procedure', 'knowledge']\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-api-app-py-35-1-e402",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/api/app.py.\n\nExact error message:\nE402 Module level import not at top of file\n--> src/memoryos_lite/api/app.py:35:1\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-api-app-py-36-1-e402",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/api/app.py.\n\nExact error message:\nE402 Module level import not at top of file\n--> src/memoryos_lite/api/app.py:36:1\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-xmuse-error-knowledge-py-110-29-up012",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in xmuse/error_knowledge.py.\n\nExact error message:\nUP012 [*] Unnecessary UTF-8 `encoding` argument to `encode`\n--> xmuse/error_knowledge.py:110:29\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-xmuse-hermes-loop-py-2-1-i001",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in xmuse/hermes_loop.py.\n\nExact error message:\nI001 Import block is un-sorted or un-formatted\n--> xmuse/hermes_loop.py:2:1\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-xmuse-hermes-loop-py-2-11-e702",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in xmuse/hermes_loop.py.\n\nExact error message:\nE702 Multiple statements on one line (semicolon)\n--> xmuse/hermes_loop.py:2:11\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-xmuse-skills-plan-execute-review-py-1-1-i001",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in xmuse/skills/plan_execute_review.py.\n\nExact error message:\nI001 [*] Import block is un-sorted or un-formatted\n--> xmuse/skills/plan_execute_review.py:1:1\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-xmuse-skills-plan-execute-review-py-87-101-e501",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in xmuse/skills/plan_execute_review.py.\n\nExact error message:\nE501 Line too long (103 > 100)\n--> xmuse/skills/plan_execute_review.py:87:101\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
     }
   ]
 }

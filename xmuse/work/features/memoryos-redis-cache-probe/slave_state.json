@@ -1,4 +1,5 @@
 {
+  "ack_level": "usable",
   "artifacts": {
     "ack": "work/features/memoryos-redis-cache-probe/ack.json",
     "integrated_tests": "xmuse/master/features/memoryos-redis-cache-probe/integrated_tests.json",
@@ -11,9 +12,14 @@
     "result": "work/features/memoryos-redis-cache-probe/result.md",
     "review_verdict": "work/features/memoryos-redis-cache-probe/review_verdict.json"
   },
+  "branch": "feat/memoryos-redis-cache-probe",
+  "dispatch_status": "merged",
   "feature_id": "memoryos-redis-cache-probe",
-  "last_updated": "2026-05-24T16:37:09Z",
+  "head_commit": "46d90ec96a4b94b075afa5ed4ee7aefca483b547",
+  "last_dispatch_reason": "merged into target by manual audit with post-merge verification passed",
+  "last_updated": "2026-05-25T11:44:00.893747Z",
   "mode": "feature_local_single_god",
+  "review_verdict": "PASS",
   "runner": {
     "agent_id": "slave-god-memoryos-redis-cache-probe",
     "endpoint": null,
@@ -21,12 +27,9 @@
     "task_id": null,
     "type": "local_codex"
   },
-  "state": "usable_ack_pass_review",
-  "head_commit": "fcccff6052e5073a6ebb98da4bc724ce8244edb2",
-  "branch": "feat/memoryos-redis-cache-probe",
+  "scope": "phase_0_1_2_optional_redis_adapter_and_v2_recall_cache_probe_integrated_pytest_rework",
+  "state": "merged",
+  "version": "1.0",
   "worktree": "/home/iiyatu/projects/python/memoryOS-memoryos-redis-cache-probe",
-  "review_verdict": "PASS",
-  "ack_level": "usable",
-  "scope": "bounded_phase_0_1_config_protocol_key_fallback_optional_adapter",
-  "version": "1.0"
+  "merge_commit": "d070a78de01b1feff94cbd1929ae9de2b1aee756"
 }

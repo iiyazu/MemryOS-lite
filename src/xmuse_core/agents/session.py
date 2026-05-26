@@ -76,7 +76,7 @@ class LocalSession:
             return
         try:
             await asyncio.wait_for(self._process.wait(), timeout=grace_period)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 self._process.kill()
             except ProcessLookupError:

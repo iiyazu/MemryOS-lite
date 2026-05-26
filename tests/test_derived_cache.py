@@ -370,6 +370,42 @@ def test_create_derived_cache_defaults_to_noop_without_redis_url() -> None:
     assert isinstance(cache, NoopDerivedCache)
 
 
+def test_create_derived_cache_falls_back_to_noop_without_redis_package(
+    monkeypatch,
+) -> None:
+    def missing_redis(name: str):
+        assert name == "redis"
+        raise ImportError("redis package is not installed")
+
+    monkeypatch.setattr("memoryos_lite.cache.derived.import_module", missing_redis)
+
+    cache = create_derived_cache(Settings(memoryos_redis_url="redis://localhost:6379/0"))
+
+    assert isinstance(cache, NoopDerivedCache)
+
+
+def test_create_derived_cache_falls_back_to_noop_when_client_creation_fails(
+    monkeypatch,
+) -> None:
+    class FailingRedisFactory:
+        @staticmethod
+        def from_url(*args, **kwargs):
+            raise TimeoutError("redis unavailable")
+
+    class FakeRedisModule:
+        Redis = FailingRedisFactory
+
+    def fake_import(name: str):
+        assert name == "redis"
+        return FakeRedisModule
+
+    monkeypatch.setattr("memoryos_lite.cache.derived.import_module", fake_import)
+
+    cache = create_derived_cache(Settings(memoryos_redis_url="redis://localhost:6379/0"))
+
+    assert isinstance(cache, NoopDerivedCache)
+
+
 def test_create_derived_cache_uses_injected_redis_client() -> None:
     cache = create_derived_cache(
         Settings(memoryos_redis_url="redis://localhost:6379/0"),

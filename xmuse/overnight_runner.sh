@@ -21,7 +21,7 @@ from xmuse_core.agents.registry import AgentRegistry, AgentRuntime
 print('smoke: OK')
 " 2>&1; then
         log "SMOKE TEST FAILED — rolling back"
-        git checkout -- src/xmuse_core/agents/ xmuse/xmuse_main.py
+        git checkout -- src/xmuse_core/agents/ xmuse/master_loop.py xmuse/xmuse_main.py
         return 1
     fi
     return 0
@@ -45,14 +45,14 @@ while true; do
     check_timeout
     log "=== Round $ROUND ==="
 
-    # Run xmuse_main.py (it exits when queue is empty)
-    uv run python xmuse/xmuse_main.py \
+    # Run master_loop.py (it exits when queue is empty)
+    uv run python xmuse/master_loop.py \
         --lanes xmuse/feature_lanes.json \
         --config xmuse/agents.json \
         --concurrency 2 2>&1 | tee "xmuse/logs/round_${ROUND}.log" || true
 
     # Check if self-modification happened
-    if git diff --name-only 2>/dev/null | grep -qE "xmuse_main|agents/"; then
+    if git diff --name-only 2>/dev/null | grep -qE "master_loop|xmuse_main|agents/"; then
         log "Self-modification detected. Restarting after smoke test."
         git add -u
         git commit -m "chore(xmuse): auto-commit round $ROUND self-improvement" || true
