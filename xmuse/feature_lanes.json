@@ -367,49 +367,6 @@
       "status": "done"
     },
     {
-      "feature_id": "claude-code-launcher",
-      "task_type": "execute",
-      "prompt": "Implement ClaudeCodeLauncher for dispatching tasks to Claude Code CLI.\n\nRequirements:\n1. Create src/xmuse_core/agents/launchers/claude_code.py:\n   - Class ClaudeCodeLauncher implementing LauncherAdapter protocol\n   - build_command(): ['claude', '-p', '--output-format', 'json', '--max-turns', '50']\n   - format_prompt(task, context): same as CodexLauncher\n   - build_env(): inherit env + XMUSE_FEATURE_ID\n   - parse_output(): parse JSON output for result/error\n2. Claude Code uses -p flag for non-interactive mode (prompt via stdin)\n3. Add to AgentRuntime enum: CLAUDE_CODE = 'claude_code'\n4. Update agents.json to register a claude-code worker:\n   {\n     \"name\": \"claude-code-worker\",\n     \"runtime\": \"claude_code\",\n     \"capabilities\": [\"code\", \"test\", \"review\"]\n   }\n5. Update xmuse_main.py / master_loop.py to register ClaudeCodeLauncher\n6. Add tests in tests/test_xmuse_core_agents_launchers.py\n7. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/launchers/base.py defines LauncherAdapter Protocol\n- src/xmuse_core/agents/launchers/codex.py is the reference implementation\n- src/xmuse_core/agents/registry.py has AgentRuntime StrEnum\n- Claude Code CLI: claude -p reads prompt from stdin, --output-format json outputs structured result",
-      "branch": "feat/claude-code-launcher",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [
-        "gate-rework-integration"
-      ],
-      "status": "merge_failed"
-    },
-    {
-      "feature_id": "cross-runtime-review",
-      "task_type": "execute",
-      "prompt": "Implement cross-runtime review: after Codex implements, Claude Code reviews.\n\nRequirements:\n1. In master_loop.py, after a lane passes QualityGate:\n   - If lane.task_type == 'execute' and lane was implemented by Codex:\n   - Create a review TaskDescriptor with task_type='review'\n   - Set developed_by_runtime=AgentRuntime.CODEX (so registry picks Claude Code)\n   - Review prompt includes: original goal, git diff of changes, file list\n2. Review dispatch returns AgentOutput with verdict in stdout:\n   - Parse for 'APPROVED' or 'REJECTED: <reason>'\n   - If approved: mark lane done\n   - If rejected: create rework lane with review feedback as context\n3. Add review prompt template in xmuse/prompts/review_template.md:\n   - Instruct reviewer to check: correctness, test coverage, security, style\n   - Output format: APPROVED or REJECTED: <specific issues>\n4. AgentRegistry.select() with exclude_runtime ensures reviewer != implementer\n5. Add --no-review flag to skip cross-runtime review\n6. Add tests mocking review approve and reject scenarios\n7. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/registry.py: AgentRegistry.select(capabilities, exclude_runtime)\n- src/xmuse_core/agents/consumer.py: TaskDescriptor has developed_by_runtime field\n- agents.json has codex-worker-1 (CODEX) and claude-code-worker (CLAUDE_CODE)\n- QualityGate runs pytest+ruff, review is higher-level code quality check",
-      "branch": "feat/cross-runtime-review",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [
-        "claude-code-launcher",
-        "gate-rework-integration",
-        "parallel-dispatch"
-      ]
-    },
-    {
-      "feature_id": "independent-judgment",
-      "task_type": "execute",
-      "prompt": "Implement independent judgment mode: multiple agents research the same question without seeing each other's context.\n\nRequirements:\n1. Add a new task_type: 'research' to TaskDescriptor\n2. In master_loop.py, when a lane has task_type='research':\n   - Dispatch the SAME prompt to both Codex and Claude Code in parallel\n   - Each gets its own worktree (worktree-<feature_id>-codex, worktree-<feature_id>-claude)\n   - Neither sees the other's output (independent judgment, avoids anchoring)\n3. After both complete:\n   - Compare outputs (simple: check if they agree on approach)\n   - If they agree: proceed with the agreed approach\n   - If they disagree: create a 'reconcile' lane that includes both perspectives\n4. Add research_mode field to lane JSON: { \"research_mode\": true }\n5. Add tests for parallel dispatch and comparison logic\n6. Commit when done.\n\nExisting context:\n- cat-cafe lesson 12: 'No Boss Agent' — independent research avoids anchoring bias\n- cat-cafe lesson 14: multiple agents research independently, then reconcile\n- WorklistConsumer supports parallel dispatch (after parallel-dispatch lane)\n- agents.json has both codex and claude-code workers",
-      "branch": "feat/independent-judgment",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [
-        "cross-runtime-review",
-        "error-knowledge-prompt-injection"
-      ]
-    },
-    {
       "feature_id": "auto-mypy-src-memoryos-lite-agent-kernel-py-310-arg-type",
       "task_type": "execute",
       "prompt": "Fix mypy type error in src/memoryos_lite/agent_kernel.py:310.\n\nExact error message:\nsrc/memoryos_lite/agent_kernel.py:310: error: Argument \"id\" to \"ApprovalState\" has incompatible type \"str | None\"; expected \"str\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
@@ -511,19 +468,6 @@
       "source": "auto",
       "priority": 80,
       "status": "done",
-      "depends_on": []
-    },
-    {
-      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-54-arg-type",
-      "task_type": "execute",
-      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:54.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:54: error: Argument 5 to \"ChatOpenAI\" has incompatible type \"**dict[str, str]\"; expected \"BaseCache | bool | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "source": "auto",
-      "priority": 80,
-      "status": "failed",
       "depends_on": []
     },
     {
@@ -655,96 +599,6 @@
       "priority": 60,
       "status": "done",
       "depends_on": []
-    },
-    {
-      "feature_id": "god-gateway-core",
-      "task_type": "execute",
-      "prompt": "Implement the God Gateway core service in xmuse/god_gateway/.\n\nRequirements:\n1. Create xmuse/god_gateway/__init__.py, server.py, models.py, store.py\n2. server.py: FastAPI app with WebSocket endpoint /ws for frontend connections\n   - Accept WebSocket connections, track connected clients\n   - Broadcast messages to all connected clients\n   - Receive messages from clients (human chat messages)\n3. models.py: Pydantic models\n   - ChatMessage: id, sender_id, sender_type ('human'|'god'), text, timestamp, actions\n   - GodState: god_id, runtime ('codex'|'claude_code'), role, status ('idle'|'thinking'|'waiting_approval'), capabilities\n   - GodRegistry: list of GodState, methods to get/update\n4. store.py: SQLite message persistence\n   - Create messages table (id, sender_id, sender_type, text, timestamp, thread_id)\n   - insert_message(), get_recent_messages(n=50), search_messages(query)\n5. Add REST endpoints:\n   - GET /api/gods — list all registered Gods with status\n   - POST /api/gods/{id}/wake — manually wake a God\n   - GET /api/messages — recent messages\n   - GET /api/messages/search?q= — search messages\n6. God registry loaded from xmuse/god_registry.json:\n   [{\"god_id\": \"architect\", \"runtime\": \"claude_code\", \"role\": \"Architect\", \"capabilities\": [\"design\", \"review\", \"delegate\"]}]\n7. Create xmuse/god_registry.json with 4 default Gods:\n   - architect (claude_code): design, review, delegate\n   - builder (codex): code, test, implement\n   - reviewer (claude_code): review, quality\n   - ops (codex): monitor, infra, deploy\n8. Add tests in tests/test_god_gateway.py\n9. Startup: uvicorn xmuse.god_gateway.server:app --port 8300\n10. Commit when done.",
-      "branch": "feat/god-gateway-core",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "status": "merge_failed"
-    },
-    {
-      "feature_id": "god-process-spawner",
-      "task_type": "execute",
-      "prompt": "Implement God process spawning and output parsing in xmuse/god_gateway/spawner.py.\n\nRequirements:\n1. Class GodSpawner with async method wake(god: GodState, trigger_message: str, context: str) -> GodOutput\n2. Build prompt for God process:\n   - System section: role definition from god_registry.json + available actions list\n   - Context section: passed in (will be MemoryOS context later)\n   - Chat history: last 20 messages from store\n   - God task state: from god_state/{god_id}.json (if exists)\n   - Trigger: the message that caused this wake\n   - Output instruction: respond with JSON {messages: [...], actions: [...], task_state: {...}}\n3. Spawn process based on runtime:\n   - codex: codex exec -m gpt-5.5 --dangerously-bypass-approvals-and-sandbox < prompt\n   - claude_code: claude -p --output-format json < prompt\n4. Parse output:\n   - Try JSON parse first\n   - If valid: extract messages, actions, task_state\n   - If invalid JSON: treat entire stdout as single chat message\n5. GodOutput dataclass: messages: list[str], actions: list[dict], task_state: dict | None, raw: str\n6. Save task_state to xmuse/god_state/{god_id}.json after each wake\n7. Timeout: 5 minutes per God wake (configurable)\n8. Update GodState.status during lifecycle: idle → thinking → idle\n9. Add tests in tests/test_god_spawner.py (mock subprocess)\n10. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/models.py has GodState, ChatMessage\n- xmuse/god_gateway/store.py has get_recent_messages()\n- God processes are short-lived (exit after one response)",
-      "branch": "feat/god-process-spawner",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [
-        "god-gateway-core"
-      ]
-    },
-    {
-      "feature_id": "god-router-executor",
-      "task_type": "execute",
-      "prompt": "Implement message routing and action execution in xmuse/god_gateway/router.py and executor.py.\n\nRequirements:\n\nrouter.py:\n1. Class MessageRouter with method route(message: ChatMessage) -> str (returns target god_id)\n2. Routing rules:\n   - If message contains @god_id → return that god_id\n   - If no @mention → return 'architect' (default)\n   - If message is a God output containing @another_god → return that god_id\n3. Depth tracking: count consecutive God-to-God hops, max 5\n   - If depth >= 5: don't wake next God, post system message 'Depth limit reached, human input required'\n4. Rate limiting: per-God max 10 wakes/hour\n   - Track wake timestamps per god_id\n   - If limit exceeded: post system message 'Rate limit for {god_id}, cooling down'\n\nexecutor.py:\n1. Class ActionExecutor with async method execute(actions: list[dict], source_god: str)\n2. Actions executed sequentially (prevents conflicts):\n   - dispatch_lane: create lane in feature_lanes.json, log to chat\n   - request_approval: store in approvals queue, broadcast approval card message\n   - mention: route message to target God via router → spawner.wake()\n   - write_decision: call MemoryOS write_page (placeholder for now, just log)\n   - call_tool: wake target God with tool call context\n3. Each action result posted as system message in chat\n4. Add tests for both router and executor\n5. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/spawner.py has GodSpawner.wake()\n- xmuse/god_gateway/store.py has insert_message()\n- xmuse/god_gateway/models.py has ChatMessage, GodState",
-      "branch": "feat/god-router-executor",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [
-        "god-process-spawner"
-      ]
-    },
-    {
-      "feature_id": "god-memoryos-integration",
-      "task_type": "execute",
-      "prompt": "Integrate MemoryOS into the God Gateway for memory relay.\n\nRequirements:\n1. In xmuse/god_gateway/memory.py:\n   - Class GodMemory wrapping MemoryOSClient\n   - Each God has a persistent session: 'god:{god_id}'\n   - on_wake(god_id, trigger): call build_context(session_id, trigger) → return context string\n   - on_exit(god_id, output): call ingest(session_id, 'assistant', output)\n   - write_decision(god_id, title, summary, facts): call write_page\n   - get_task_state(god_id): read from MemoryOS Page 'God-{id}/active_task'\n   - save_task_state(god_id, state): patch MemoryOS Page\n2. Update GodSpawner.wake() to:\n   - Call GodMemory.on_wake() to get context\n   - Include context in prompt\n   - After process exits: call GodMemory.on_exit()\n   - If task_state in output: call GodMemory.save_task_state()\n3. Update ActionExecutor:\n   - write_decision action now calls GodMemory.write_decision()\n4. Verify continuity: God should remember previous conversations across wakes\n5. Add tests mocking MemoryOSClient\n6. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/memoryos_client.py has MemoryOSClient with create_session, build_context, ingest\n- MemoryOS API on http://127.0.0.1:8000\n- MemoryOS supports: write_page, patch_page, Core Memory Blocks, Archive RAG",
-      "branch": "feat/god-memoryos-integration",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [
-        "god-router-executor"
-      ]
-    },
-    {
-      "feature_id": "god-frontend-chat",
-      "task_type": "execute",
-      "prompt": "Implement the God Group Chat frontend page in xmuse/frontend/ (Next.js).\n\nRequirements:\n1. Create src/app/gods/page.tsx — the group chat page\n2. Add 'Gods' icon to ActivityRail (Users icon from lucide-react)\n3. WebSocket connection to ws://localhost:8300/ws\n4. Components:\n   - src/components/gods/ChatStream.tsx: scrollable message list\n     - God messages: left-aligned, with role avatar (colored circle + initial)\n     - Human messages: right-aligned, purple bubble\n     - System messages: centered, muted text\n     - Approval cards: inline card with description + approve/reject buttons\n   - src/components/gods/GodStatusPanel.tsx: sidebar showing God list with status\n     - Each God: avatar, name, role, status indicator (green=idle, blue=thinking, amber=waiting)\n   - src/components/gods/ChatInput.tsx: bottom input bar\n     - Textarea with @mention autocomplete (shows God list on @)\n     - Send button\n     - On send: POST to WebSocket\n   - src/components/gods/ApprovalCard.tsx: inline approval widget\n     - Description text, approve (green) and reject (red) buttons\n     - On click: send approval decision via WebSocket\n5. Sidebar content for Gods page: GodStatusPanel\n6. Auto-scroll to bottom on new messages\n7. Commit when done.\n\nExisting context:\n- xmuse/frontend/ is a Next.js 14 project with Tailwind + Zustand\n- src/components/AppShell.tsx has ActivityRail + Sidebar + Main layout\n- Dark theme (slate-900/950 backgrounds, cyan-400 accent)\n- God Gateway WebSocket at ws://localhost:8300/ws",
-      "branch": "feat/god-frontend-chat",
-      "capabilities": [
-        "code"
-      ],
-      "depends_on": [
-        "god-gateway-core",
-        "frontend-scaffold"
-      ]
-    },
-    {
-      "feature_id": "god-mcp-tools",
-      "task_type": "execute",
-      "prompt": "Implement MCP tool layer for God-to-God capability invocation.\n\nRequirements:\n1. Create xmuse/god_gateway/mcp_bridge.py:\n   - Each God exposes tools based on its role:\n     - architect: [plan_feature, decompose_task, make_decision]\n     - builder: [implement_feature, write_tests, fix_bug]\n     - reviewer: [review_code, review_architecture, assess_quality]\n     - ops: [check_status, run_diagnostics, deploy]\n   - Tool definitions stored in xmuse/god_tools/{god_id}.json\n2. When ActionExecutor receives call_tool action:\n   - Look up tool definition for target God\n   - Build a tool-call prompt: 'You are being called as a tool. Tool: {name}, Args: {args}. Respond with the tool result.'\n   - Wake target God with this prompt\n   - Return God's response as tool result to calling God\n3. Create xmuse/god_tools/ directory with tool definitions for each role\n4. Tool definition format: {name, description, parameters: {type, properties, required}}\n5. Add tests for MCP bridge\n6. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/spawner.py has GodSpawner.wake()\n- xmuse/god_gateway/executor.py handles call_tool action\n- xmuse/mcp_server.py exists (port 8100) for external MCP — this is internal God-to-God",
-      "branch": "feat/god-mcp-tools",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [
-        "god-router-executor"
-      ]
-    },
-    {
-      "feature_id": "god-error-lifecycle",
-      "task_type": "execute",
-      "prompt": "Implement the error knowledge lifecycle with Architect-God ownership.\n\nRequirements:\n1. Create xmuse/god_gateway/error_lifecycle.py:\n   - Class ErrorLifecycleManager\n   - monitor(): read error_knowledge.json, find patterns with count >= 3\n   - For each pattern:\n     - Classify: 'workflow' | 'automatable' | 'knowledge'\n     - workflow → dispatch 'extract-skill-{id}' lane with prompt to create xmuse/skills/<name>.py\n     - automatable → dispatch 'extract-tool-{id}' lane with prompt to add MCP tool\n     - knowledge → write MemoryOS Page + create md in xmuse/memory/decisions/\n   - mark_superseded(entry_id): when root cause fixed\n2. Integration: after each lane fails and error is recorded:\n   - Check if this error's fingerprint matches existing entries\n   - If count >= 3 and not yet extracted: wake Architect-God with extraction request\n3. Architect-God prompt template for extraction decisions:\n   - Include the 3+ error entries\n   - Ask: 'Is this a workflow pattern, automatable operation, or knowledge? Respond with extraction plan.'\n4. Create xmuse/memory/decisions/ directory for externalized md archives\n5. Add tests\n6. Commit when done.\n\nExisting context:\n- xmuse/error_knowledge.py has ErrorKnowledge class with 7-slot entries\n- xmuse/god_gateway/spawner.py can wake Gods\n- xmuse/god_gateway/memory.py can write MemoryOS Pages\n- Architect-God is god_id='architect' in god_registry.json",
-      "branch": "feat/god-error-lifecycle",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [
-        "god-memoryos-integration",
-        "god-mcp-tools"
-      ]
     },
     {
       "feature_id": "auto-ruff-src-xmuse-core-agents-consumer-py-1-1-i001",
@@ -942,90 +796,6 @@
       "depends_on": []
     },
     {
-      "feature_id": "full-quality-gate-a1189cb0-54cc17e233",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "auto-discovery",
-        "quality-gate",
-        "rework-loop",
-        "lane-status-writer",
-        "master-loop",
-        "error-knowledge",
-        "memoryos-dispatch-integration",
-        "error-knowledge-integration",
-        "self-improvement-detection",
-        "mcp-xmuse-server",
-        "memoryos-middleware-enhancement",
-        "skill-plan-execute-review"
-      ],
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
-    },
-    {
-      "feature_id": "full-quality-gate-a1189cb0-d76318115e",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "xmuse-dashboard-api",
-        "xmuse-dashboard-frontend",
-        "auto-discovery-enhanced",
-        "frontend-scaffold",
-        "frontend-app-shell",
-        "frontend-api-layer",
-        "frontend-lanes-page",
-        "frontend-metrics-page",
-        "frontend-errors-page",
-        "frontend-settings-page",
-        "frontend-new-lane-modal",
-        "master-loop-replace-main"
-      ],
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
-    },
-    {
-      "feature_id": "full-quality-gate-a1189cb0-16deb37ce9",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "parallel-dispatch",
-        "gate-rework-integration",
-        "error-knowledge-prompt-injection",
-        "auto-discovery-loop-integration",
-        "auto-mypy-src-memoryos-lite-agent-kernel-py-310-arg-type",
-        "auto-mypy-src-memoryos-lite-api-app-py-199-func-returns-value",
-        "auto-mypy-src-memoryos-lite-api-app-py-207-attr-defined",
-        "auto-mypy-src-memoryos-lite-core-memory-py-309-arg-type",
-        "auto-mypy-src-memoryos-lite-llm-judge-py-82-arg-type",
-        "auto-mypy-src-memoryos-lite-llm-judge-py-84-arg-type",
-        "auto-mypy-src-memoryos-lite-retrieval-providers-qdrant-py-50-arg-type",
-        "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-51-arg-type"
-      ],
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
-    },
-    {
       "feature_id": "full-quality-gate-repair-full-quality-gate-a1189cb0-54cc17e233",
       "task_type": "execute",
       "status": "done",
@@ -1119,6 +889,293 @@
       ]
     },
     {
+      "feature_id": "full-quality-gate-repair-full-quality-gate-a1189cb0-46c7199c8f",
+      "task_type": "execute",
+      "status": "done",
+      "branch": "feat/full-quality-gate-repair-full-quality-gate-a1189cb0-46c7199c8f",
+      "prompt": "Fix the failing full xmuse quality gate.\n\nCommand: `uv run pytest -q`\nExit code: 1\nArtifact: xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-46c7199c8f.log\nHead SHA: a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8\nBatch lane ids: ['auto-ruff-src-xmuse-core-skills-brainstorm-py-11-36-f401', 'auto-ruff-src-xmuse-core-skills-pipeline-py-105-45-e741', 'auto-ruff-src-xmuse-core-skills-pipeline-py-8-20-f401', 'auto-ruff-src-xmuse-core-skills-registry-py-14-101-e501', 'auto-ruff-src-xmuse-core-skills-review-gate-py-11-36-f401', 'auto-ruff-src-xmuse-core-skills-review-gate-py-77-101-e501', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-117-33-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-129-42-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-154-42-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-176-43-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-177-53-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741']\n\nFailure output:\n................................................................ [ 32%]\n........................................................................ [ 40%]\n........................................................................ [ 48%]\n........................................................................ [ 56%]\n........................................................................ [ 64%]\n........................................................................ [ 72%]\n........................................................................ [ 80%]\n........................................................................ [ 88%]\n........................................................................ [ 96%]\n...F........................                                             [100%]\n=================================== FAILURES ===================================\n___________ test_overnight_runner_ignores_preround_dirty_agent_files ___________\n\ntmp_path = PosixPath('/tmp/pytest-of-iiyatu/pytest-980/test_overnight_runner_ignores_0')\n\n    def test_overnight_runner_ignores_preround_dirty_agent_files(tmp_path: Path) -> None:\n        repo = tmp_path / \"repo\"\n        repo.mkdir()\n        (repo / \"xmuse\").mkdir(exist_ok=True)\n        shutil.copy(Path(\"xmuse/overnight_runner.sh\"), repo / \"xmuse\" / \"overnight_runner.sh\")\n        (repo / \"src\" / \"xmuse_core\" / \"agents\").mkdir(parents=True)\n        dirty_file = repo / \"src\" / \"xmuse_core\" / \"agents\" / \"existing.py\"\n        dirty_file.write_text(\"before\\n\")\n    \n        subprocess.run([\"git\", \"init\"], cwd=repo, check=True, capture_output=True, text=True)\n        subprocess.run([\"git\", \"config\", \"user.email\", \"test@example.com\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"config\", \"user.name\", \"Test User\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"add\", \".\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"commit\", \"-m\", \"initial\"], cwd=repo, check=True, capture_output=True, text=True)\n        dirty_file.write_text(\"before\\nuser dirty change\\n\")\n    \n        fake_bin = repo / \"fake-bin\"\n        fake_bin.mkdir()\n        (fake_bin / \"uv\").write_text(\"#!/bin/sh\\nexit 0\\n\")\n        (fake_bin / \"python3\").write_text(\"#!/bin/sh\\nprintf '0\\\\n'\\n\")\n        os.chmod(fake_bin / \"uv\", 0o755)\n        os.chmod(fake_bin / \"python3\", 0o755)\n    \n        env = os.environ.copy()\n        env[\"PATH\"] = f\"{fake_bin}:{env['PATH']}\"\n        env[\"XMUSE_MAX_HOURS\"] = \"1\"\n    \n        result = subprocess.run(\n            [\"bash\", \"xmuse/overnight_runner.sh\"],\n            cwd=repo,\n            env=env,\n            check=True,\n            capture_output=True,\n            text=True,\n        )\n    \n>       assert \"Self-modification detected\" not in result.stdout\nE       AssertionError: assert 'Self-modification detected' not in '[2026-05-26... executed.\\n'\nE         \nE         'Self-modification detected' is contained here:\nE           40+08:00] Self-modification detected. Restarting after smoke test.\nE         ?           ++++++++++++++++++++++++++\nE           [master e25d3ad] chore(xmuse): auto-commit round 1 self-improvement\nE            1 file changed, 1 insertion(+)\nE           [2026-05-26T23:27:40+08:00] Running smoke test...\nE           [2026-05-26T23:27:40+08:00] No pending lanes. Exiting.\nE           [2026-05-26T23:27:40+08:00] Overnight run complete. 1 rounds executed.\n\ntests/test_xmuse_overnight_runner.py:45: AssertionError\n=============================== warnings summary ===============================\n.venv/lib/python3.11/site-packages/langgraph/checkpoint/serde/encrypted.py:5\n  /home/iiyatu/projects/python/memoryOS/.venv/lib/python3.11/site-packages/langgraph/checkpoint/serde/encrypted.py:5: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.\n    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer\n\ntests/test_xmuse_dashboard_api.py::test_list_lanes_returns_status_for_every_lane\n  /home/iiyatu/projects/python/memoryOS/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x722f381f5b20>\n  \n  Traceback (most recent call last):\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_subprocess.py\", line 126, in __del__\n      self.close()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_subprocess.py\", line 104, in close\n      proto.pipe.close()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/unix_events.py\", line 765, in close\n      self.write_eof()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/unix_events.py\", line 751, in write_eof\n      self._loop.call_soon(self._call_connection_lost, None)\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py\", line 762, in call_soon\n      self._check_closed()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py\", line 520, in _check_closed\n      raise RuntimeError('Event loop is closed')\n  RuntimeError: Event loop is closed\n  \n  Enable tracemalloc to get traceback where the object was allocated.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_xmuse_overnight_runner.py::test_overnight_runner_ignores_preround_dirty_agent_files\n1 failed, 890 passed, 1 skipped, 2 warnings in 772.23s (0:12:52)\n\nMake the minimal fix, then verify with `uv run pytest -q`.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 110,
+      "full_gate_feature_id": "full-quality-gate-a1189cb0-46c7199c8f",
+      "full_gate_artifact": "xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-46c7199c8f.log",
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8",
+      "batch_lane_ids": [
+        "auto-ruff-src-xmuse-core-skills-brainstorm-py-11-36-f401",
+        "auto-ruff-src-xmuse-core-skills-pipeline-py-105-45-e741",
+        "auto-ruff-src-xmuse-core-skills-pipeline-py-8-20-f401",
+        "auto-ruff-src-xmuse-core-skills-registry-py-14-101-e501",
+        "auto-ruff-src-xmuse-core-skills-review-gate-py-11-36-f401",
+        "auto-ruff-src-xmuse-core-skills-review-gate-py-77-101-e501",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-117-33-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-129-42-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-154-42-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-176-43-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-177-53-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741"
+      ]
+    },
+    {
+      "feature_id": "lane-review-gate",
+      "task_type": "execute",
+      "status": "pending",
+      "branch": "feat/lane-review-gate",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "gate_profile": "xmuse-core",
+      "priority": 100,
+      "prompt": "Implement LLM-based diff review gate — semantic code review before auto-merge.\n\n## Problem\n\nCurrently xmuse auto-merges any lane that passes pytest + ruff. No semantic review:\n- Doesn't check if the change actually solves the stated problem\n- Doesn't check for security issues, logic errors, or regressions not covered by tests\n- Doesn't check if xmuse self-modifications are safe\n\n## Implementation\n\n### New file: src/xmuse_core/gates/review_gate.py\n\n```python\n@dataclass\nclass ReviewVerdict:\n    approved: bool\n    concerns: list[str]\n    summary: str\n    confidence: float  # 0-1\n\nclass LLMReviewGate:\n    def __init__(self, settings: Settings):\n        self.llm = ChatOpenAI(model=settings.chat_model, api_key=settings.chat_api_key, base_url=settings.chat_base_url, temperature=0)\n\n    async def review(self, feature_id: str, worktree: Path, original_prompt: str, base_ref: str | None = None) -> ReviewVerdict:\n        diff = self._get_diff(worktree, base_ref)\n        if not diff.strip():\n            return ReviewVerdict(approved=True, concerns=[], summary=\"No changes\", confidence=1.0)\n\n        prompt = self._build_review_prompt(feature_id, original_prompt, diff)\n        response = self.llm.invoke([{\"role\": \"user\", \"content\": prompt}])\n        return self._parse_verdict(response.content)\n\n    def _get_diff(self, worktree: Path, base_ref: str | None) -> str:\n        cmd = [\"git\", \"diff\", base_ref or \"HEAD~1\", \"--stat\"] + [\"&&\"] + [\"git\", \"diff\", base_ref or \"HEAD~1\"]\n        # Get both stat summary and full diff, truncate to 6000 chars\n        ...\n\n    def _build_review_prompt(self, feature_id: str, original_prompt: str, diff: str) -> str:\n        return f\"\"\"你是代码审查 agent。审查以下 diff 是否正确实现了需求。\n\n## 原始需求\n{original_prompt[:2000]}\n\n## Diff\n{diff[:6000]}\n\n## 审查标准\n1. 改动是否真正解决了需求描述的问题？\n2. 是否引入了安全风险（注入、硬编码密钥、不安全的 eval）？\n3. 是否有明显的逻辑错误或边界条件遗漏？\n4. 对于 xmuse 自身代码的修改：是否可能破坏 master loop 稳定性？\n5. 是否有不必要的大范围改动（scope creep）？\n\n返回 JSON:\n{{\"approved\": true/false, \"concerns\": [\"...\"], \"summary\": \"一句话总结\", \"confidence\": 0.0-1.0}}\n如果 confidence < 0.7 且 approved=true，仍标记为需要人工复核。\"\"\"\n```\n\n### Modify: xmuse/master_loop.py\n\nIn `_run_lane()`, after gate passes and before `_auto_merge_worktree()`:\n\n```python\nif self.review_gate:\n    verdict = await self.review_gate.review(\n        feature_id=task.feature_id,\n        worktree=Path(task.worktree),\n        original_prompt=task.prompt,\n        base_ref=task.base_head_sha,\n    )\n    if not verdict.approved:\n        # Trigger rework with review concerns as context\n        rework_prompt = f\"Code review rejected. Concerns:\\n\" + \"\\n\".join(f\"- {c}\" for c in verdict.concerns)\n        ...\n    self._record_review_verdict(task.feature_id, verdict)\n```\n\nMasterLoop.__init__ gains `review_gate: LLMReviewGate | None = None`.\nMasterLoop.from_defaults() creates it if LLM credentials available.\n\n### Modify: feature_lanes.json lane status flow\n\n```\ndispatch → gate(pytest+ruff) → review_gate(LLM diff review) → \n  approved? → auto_merge\n  rejected? → rework with concerns → re-gate → re-review (max 2 cycles)\n```\n\n### Tests: tests/test_review_gate.py\n\n- test_empty_diff_auto_approves\n- test_review_parses_approved_verdict\n- test_review_parses_rejected_verdict\n- test_low_confidence_flags_for_human_review\n- test_diff_truncated_to_budget\n- test_xmuse_self_modification_extra_scrutiny (diff touches xmuse/** → stricter prompt)\n\n## Verification\n\n- uv run pytest tests/test_review_gate.py -v\n- uv run pytest tests/test_xmuse_master_loop.py -q (no regression)\n"
+    },
+    {
+      "feature_id": "rework-context-enrichment",
+      "task_type": "execute",
+      "status": "pending",
+      "branch": "feat/rework-context-enrichment",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "gate_profile": "xmuse-core",
+      "priority": 90,
+      "prompt": "Enrich rework prompts with diff, original prompt, and expected behavior.\n\n## Problem\n\nCurrent rework only passes gate error output to the retry agent. Missing:\n- What code was actually written (diff)\n- What the original requirement was\n- What specific behavior was expected vs observed\n- Review gate concerns (if review rejected)\n\n## Implementation\n\n### Modify: xmuse/master_loop.py\n\nChange `dispatch_rework` closure in `_run_lane()`:\n\n```python\nasync def dispatch_rework(rework_prompt: str, worktree: str | Path) -> str:\n    # Enrich with context\n    diff = self._get_worktree_diff(worktree, task.base_head_sha)\n    enriched_prompt = f\"\"\"## Rework Required\n\n### Original Task\n{task.prompt[:2000]}\n\n### What Was Implemented (diff summary)\n{diff[:3000]}\n\n### Why It Failed\n{rework_prompt}\n\n### Instructions\nFix the issues above. Do NOT start from scratch — modify the existing code.\nFocus specifically on the failure reasons. Run tests after fixing.\"\"\"\n\n    enriched_prompt = self._inject_error_knowledge_text(enriched_prompt)\n    rework_task = TaskDescriptor(\n        feature_id=task.feature_id,\n        task_type=\"rework\",\n        prompt=enriched_prompt,\n        worktree=str(worktree),\n        required_capabilities=task.required_capabilities,\n        developed_by_runtime=task.developed_by_runtime,\n        priority=task.priority,\n    )\n    return await self.consumer.dispatch_task(rework_task)\n```\n\n### New helper: _get_worktree_diff\n\n```python\ndef _get_worktree_diff(self, worktree: str | Path, base_ref: str | None) -> str:\n    wt = Path(worktree)\n    ref = base_ref or \"HEAD~1\"\n    result = subprocess.run(\n        [\"git\", \"diff\", \"--stat\", ref],\n        capture_output=True, text=True, cwd=wt,\n    )\n    stat = result.stdout[:500] if result.returncode == 0 else \"\"\n    result2 = subprocess.run(\n        [\"git\", \"diff\", ref],\n        capture_output=True, text=True, cwd=wt,\n    )\n    full = result2.stdout[:3000] if result2.returncode == 0 else \"\"\n    return f\"{stat}\\n\\n{full}\"\n```\n\n### When review gate rejects, include concerns:\n\n```python\nif not verdict.approved:\n    concerns_text = \"\\n\".join(f\"- {c}\" for c in verdict.concerns)\n    rework_prompt = f\"Code review rejected:\\n{concerns_text}\\n\\nFix these concerns.\"\n    # This flows into dispatch_rework which adds diff + original prompt\n```\n\n### Tests: tests/test_rework_context.py\n\n- test_rework_prompt_includes_original_task\n- test_rework_prompt_includes_diff\n- test_rework_prompt_includes_failure_reason\n- test_rework_prompt_truncates_long_diff\n- test_review_rejection_includes_concerns_in_rework\n\n## Verification\n\n- uv run pytest tests/test_rework_context.py -v\n- uv run pytest tests/test_xmuse_master_loop.py -q (no regression)\n"
+    },
+    {
+      "feature_id": "claude-code-launcher",
+      "task_type": "execute",
+      "prompt": "Implement ClaudeCodeLauncher for dispatching tasks to Claude Code CLI.\n\nRequirements:\n1. Create src/xmuse_core/agents/launchers/claude_code.py:\n   - Class ClaudeCodeLauncher implementing LauncherAdapter protocol\n   - build_command(): ['claude', '-p', '--output-format', 'json', '--max-turns', '50']\n   - format_prompt(task, context): same as CodexLauncher\n   - build_env(): inherit env + XMUSE_FEATURE_ID\n   - parse_output(): parse JSON output for result/error\n2. Claude Code uses -p flag for non-interactive mode (prompt via stdin)\n3. Add to AgentRuntime enum: CLAUDE_CODE = 'claude_code'\n4. Update agents.json to register a claude-code worker:\n   {\n     \"name\": \"claude-code-worker\",\n     \"runtime\": \"claude_code\",\n     \"capabilities\": [\"code\", \"test\", \"review\"]\n   }\n5. Update xmuse_main.py / master_loop.py to register ClaudeCodeLauncher\n6. Add tests in tests/test_xmuse_core_agents_launchers.py\n7. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/launchers/base.py defines LauncherAdapter Protocol\n- src/xmuse_core/agents/launchers/codex.py is the reference implementation\n- src/xmuse_core/agents/registry.py has AgentRuntime StrEnum\n- Claude Code CLI: claude -p reads prompt from stdin, --output-format json outputs structured result",
+      "branch": "feat/claude-code-launcher",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "gate-rework-integration"
+      ],
+      "status": "merge_failed"
+    },
+    {
+      "feature_id": "cross-runtime-review",
+      "task_type": "execute",
+      "prompt": "Implement cross-runtime review: after Codex implements, Claude Code reviews.\n\nRequirements:\n1. In master_loop.py, after a lane passes QualityGate:\n   - If lane.task_type == 'execute' and lane was implemented by Codex:\n   - Create a review TaskDescriptor with task_type='review'\n   - Set developed_by_runtime=AgentRuntime.CODEX (so registry picks Claude Code)\n   - Review prompt includes: original goal, git diff of changes, file list\n2. Review dispatch returns AgentOutput with verdict in stdout:\n   - Parse for 'APPROVED' or 'REJECTED: <reason>'\n   - If approved: mark lane done\n   - If rejected: create rework lane with review feedback as context\n3. Add review prompt template in xmuse/prompts/review_template.md:\n   - Instruct reviewer to check: correctness, test coverage, security, style\n   - Output format: APPROVED or REJECTED: <specific issues>\n4. AgentRegistry.select() with exclude_runtime ensures reviewer != implementer\n5. Add --no-review flag to skip cross-runtime review\n6. Add tests mocking review approve and reject scenarios\n7. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/registry.py: AgentRegistry.select(capabilities, exclude_runtime)\n- src/xmuse_core/agents/consumer.py: TaskDescriptor has developed_by_runtime field\n- agents.json has codex-worker-1 (CODEX) and claude-code-worker (CLAUDE_CODE)\n- QualityGate runs pytest+ruff, review is higher-level code quality check",
+      "branch": "feat/cross-runtime-review",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "claude-code-launcher",
+        "gate-rework-integration",
+        "parallel-dispatch"
+      ]
+    },
+    {
+      "feature_id": "independent-judgment",
+      "task_type": "execute",
+      "prompt": "Implement independent judgment mode: multiple agents research the same question without seeing each other's context.\n\nRequirements:\n1. Add a new task_type: 'research' to TaskDescriptor\n2. In master_loop.py, when a lane has task_type='research':\n   - Dispatch the SAME prompt to both Codex and Claude Code in parallel\n   - Each gets its own worktree (worktree-<feature_id>-codex, worktree-<feature_id>-claude)\n   - Neither sees the other's output (independent judgment, avoids anchoring)\n3. After both complete:\n   - Compare outputs (simple: check if they agree on approach)\n   - If they agree: proceed with the agreed approach\n   - If they disagree: create a 'reconcile' lane that includes both perspectives\n4. Add research_mode field to lane JSON: { \"research_mode\": true }\n5. Add tests for parallel dispatch and comparison logic\n6. Commit when done.\n\nExisting context:\n- cat-cafe lesson 12: 'No Boss Agent' — independent research avoids anchoring bias\n- cat-cafe lesson 14: multiple agents research independently, then reconcile\n- WorklistConsumer supports parallel dispatch (after parallel-dispatch lane)\n- agents.json has both codex and claude-code workers",
+      "branch": "feat/independent-judgment",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "cross-runtime-review",
+        "error-knowledge-prompt-injection"
+      ]
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-54-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:54.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:54: error: Argument 5 to \"ChatOpenAI\" has incompatible type \"**dict[str, str]\"; expected \"BaseCache | bool | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "failed",
+      "depends_on": []
+    },
+    {
+      "feature_id": "god-gateway-core",
+      "task_type": "execute",
+      "prompt": "Implement the God Gateway core service in xmuse/god_gateway/.\n\nRequirements:\n1. Create xmuse/god_gateway/__init__.py, server.py, models.py, store.py\n2. server.py: FastAPI app with WebSocket endpoint /ws for frontend connections\n   - Accept WebSocket connections, track connected clients\n   - Broadcast messages to all connected clients\n   - Receive messages from clients (human chat messages)\n3. models.py: Pydantic models\n   - ChatMessage: id, sender_id, sender_type ('human'|'god'), text, timestamp, actions\n   - GodState: god_id, runtime ('codex'|'claude_code'), role, status ('idle'|'thinking'|'waiting_approval'), capabilities\n   - GodRegistry: list of GodState, methods to get/update\n4. store.py: SQLite message persistence\n   - Create messages table (id, sender_id, sender_type, text, timestamp, thread_id)\n   - insert_message(), get_recent_messages(n=50), search_messages(query)\n5. Add REST endpoints:\n   - GET /api/gods — list all registered Gods with status\n   - POST /api/gods/{id}/wake — manually wake a God\n   - GET /api/messages — recent messages\n   - GET /api/messages/search?q= — search messages\n6. God registry loaded from xmuse/god_registry.json:\n   [{\"god_id\": \"architect\", \"runtime\": \"claude_code\", \"role\": \"Architect\", \"capabilities\": [\"design\", \"review\", \"delegate\"]}]\n7. Create xmuse/god_registry.json with 4 default Gods:\n   - architect (claude_code): design, review, delegate\n   - builder (codex): code, test, implement\n   - reviewer (claude_code): review, quality\n   - ops (codex): monitor, infra, deploy\n8. Add tests in tests/test_god_gateway.py\n9. Startup: uvicorn xmuse.god_gateway.server:app --port 8300\n10. Commit when done.",
+      "branch": "feat/god-gateway-core",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "status": "merge_failed"
+    },
+    {
+      "feature_id": "god-process-spawner",
+      "task_type": "execute",
+      "prompt": "Implement God process spawning and output parsing in xmuse/god_gateway/spawner.py.\n\nRequirements:\n1. Class GodSpawner with async method wake(god: GodState, trigger_message: str, context: str) -> GodOutput\n2. Build prompt for God process:\n   - System section: role definition from god_registry.json + available actions list\n   - Context section: passed in (will be MemoryOS context later)\n   - Chat history: last 20 messages from store\n   - God task state: from god_state/{god_id}.json (if exists)\n   - Trigger: the message that caused this wake\n   - Output instruction: respond with JSON {messages: [...], actions: [...], task_state: {...}}\n3. Spawn process based on runtime:\n   - codex: codex exec -m gpt-5.5 --dangerously-bypass-approvals-and-sandbox < prompt\n   - claude_code: claude -p --output-format json < prompt\n4. Parse output:\n   - Try JSON parse first\n   - If valid: extract messages, actions, task_state\n   - If invalid JSON: treat entire stdout as single chat message\n5. GodOutput dataclass: messages: list[str], actions: list[dict], task_state: dict | None, raw: str\n6. Save task_state to xmuse/god_state/{god_id}.json after each wake\n7. Timeout: 5 minutes per God wake (configurable)\n8. Update GodState.status during lifecycle: idle → thinking → idle\n9. Add tests in tests/test_god_spawner.py (mock subprocess)\n10. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/models.py has GodState, ChatMessage\n- xmuse/god_gateway/store.py has get_recent_messages()\n- God processes are short-lived (exit after one response)",
+      "branch": "feat/god-process-spawner",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-gateway-core"
+      ]
+    },
+    {
+      "feature_id": "god-router-executor",
+      "task_type": "execute",
+      "prompt": "Implement message routing and action execution in xmuse/god_gateway/router.py and executor.py.\n\nRequirements:\n\nrouter.py:\n1. Class MessageRouter with method route(message: ChatMessage) -> str (returns target god_id)\n2. Routing rules:\n   - If message contains @god_id → return that god_id\n   - If no @mention → return 'architect' (default)\n   - If message is a God output containing @another_god → return that god_id\n3. Depth tracking: count consecutive God-to-God hops, max 5\n   - If depth >= 5: don't wake next God, post system message 'Depth limit reached, human input required'\n4. Rate limiting: per-God max 10 wakes/hour\n   - Track wake timestamps per god_id\n   - If limit exceeded: post system message 'Rate limit for {god_id}, cooling down'\n\nexecutor.py:\n1. Class ActionExecutor with async method execute(actions: list[dict], source_god: str)\n2. Actions executed sequentially (prevents conflicts):\n   - dispatch_lane: create lane in feature_lanes.json, log to chat\n   - request_approval: store in approvals queue, broadcast approval card message\n   - mention: route message to target God via router → spawner.wake()\n   - write_decision: call MemoryOS write_page (placeholder for now, just log)\n   - call_tool: wake target God with tool call context\n3. Each action result posted as system message in chat\n4. Add tests for both router and executor\n5. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/spawner.py has GodSpawner.wake()\n- xmuse/god_gateway/store.py has insert_message()\n- xmuse/god_gateway/models.py has ChatMessage, GodState",
+      "branch": "feat/god-router-executor",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-process-spawner"
+      ]
+    },
+    {
+      "feature_id": "god-memoryos-integration",
+      "task_type": "execute",
+      "prompt": "Integrate MemoryOS into the God Gateway for memory relay.\n\nRequirements:\n1. In xmuse/god_gateway/memory.py:\n   - Class GodMemory wrapping MemoryOSClient\n   - Each God has a persistent session: 'god:{god_id}'\n   - on_wake(god_id, trigger): call build_context(session_id, trigger) → return context string\n   - on_exit(god_id, output): call ingest(session_id, 'assistant', output)\n   - write_decision(god_id, title, summary, facts): call write_page\n   - get_task_state(god_id): read from MemoryOS Page 'God-{id}/active_task'\n   - save_task_state(god_id, state): patch MemoryOS Page\n2. Update GodSpawner.wake() to:\n   - Call GodMemory.on_wake() to get context\n   - Include context in prompt\n   - After process exits: call GodMemory.on_exit()\n   - If task_state in output: call GodMemory.save_task_state()\n3. Update ActionExecutor:\n   - write_decision action now calls GodMemory.write_decision()\n4. Verify continuity: God should remember previous conversations across wakes\n5. Add tests mocking MemoryOSClient\n6. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/memoryos_client.py has MemoryOSClient with create_session, build_context, ingest\n- MemoryOS API on http://127.0.0.1:8000\n- MemoryOS supports: write_page, patch_page, Core Memory Blocks, Archive RAG",
+      "branch": "feat/god-memoryos-integration",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-router-executor"
+      ]
+    },
+    {
+      "feature_id": "god-frontend-chat",
+      "task_type": "execute",
+      "prompt": "Implement the God Group Chat frontend page in xmuse/frontend/ (Next.js).\n\nRequirements:\n1. Create src/app/gods/page.tsx — the group chat page\n2. Add 'Gods' icon to ActivityRail (Users icon from lucide-react)\n3. WebSocket connection to ws://localhost:8300/ws\n4. Components:\n   - src/components/gods/ChatStream.tsx: scrollable message list\n     - God messages: left-aligned, with role avatar (colored circle + initial)\n     - Human messages: right-aligned, purple bubble\n     - System messages: centered, muted text\n     - Approval cards: inline card with description + approve/reject buttons\n   - src/components/gods/GodStatusPanel.tsx: sidebar showing God list with status\n     - Each God: avatar, name, role, status indicator (green=idle, blue=thinking, amber=waiting)\n   - src/components/gods/ChatInput.tsx: bottom input bar\n     - Textarea with @mention autocomplete (shows God list on @)\n     - Send button\n     - On send: POST to WebSocket\n   - src/components/gods/ApprovalCard.tsx: inline approval widget\n     - Description text, approve (green) and reject (red) buttons\n     - On click: send approval decision via WebSocket\n5. Sidebar content for Gods page: GodStatusPanel\n6. Auto-scroll to bottom on new messages\n7. Commit when done.\n\nExisting context:\n- xmuse/frontend/ is a Next.js 14 project with Tailwind + Zustand\n- src/components/AppShell.tsx has ActivityRail + Sidebar + Main layout\n- Dark theme (slate-900/950 backgrounds, cyan-400 accent)\n- God Gateway WebSocket at ws://localhost:8300/ws",
+      "branch": "feat/god-frontend-chat",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "god-gateway-core",
+        "frontend-scaffold"
+      ]
+    },
+    {
+      "feature_id": "god-mcp-tools",
+      "task_type": "execute",
+      "prompt": "Implement MCP tool layer for God-to-God capability invocation.\n\nRequirements:\n1. Create xmuse/god_gateway/mcp_bridge.py:\n   - Each God exposes tools based on its role:\n     - architect: [plan_feature, decompose_task, make_decision]\n     - builder: [implement_feature, write_tests, fix_bug]\n     - reviewer: [review_code, review_architecture, assess_quality]\n     - ops: [check_status, run_diagnostics, deploy]\n   - Tool definitions stored in xmuse/god_tools/{god_id}.json\n2. When ActionExecutor receives call_tool action:\n   - Look up tool definition for target God\n   - Build a tool-call prompt: 'You are being called as a tool. Tool: {name}, Args: {args}. Respond with the tool result.'\n   - Wake target God with this prompt\n   - Return God's response as tool result to calling God\n3. Create xmuse/god_tools/ directory with tool definitions for each role\n4. Tool definition format: {name, description, parameters: {type, properties, required}}\n5. Add tests for MCP bridge\n6. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/spawner.py has GodSpawner.wake()\n- xmuse/god_gateway/executor.py handles call_tool action\n- xmuse/mcp_server.py exists (port 8100) for external MCP — this is internal God-to-God",
+      "branch": "feat/god-mcp-tools",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-router-executor"
+      ]
+    },
+    {
+      "feature_id": "god-error-lifecycle",
+      "task_type": "execute",
+      "prompt": "Implement the error knowledge lifecycle with Architect-God ownership.\n\nRequirements:\n1. Create xmuse/god_gateway/error_lifecycle.py:\n   - Class ErrorLifecycleManager\n   - monitor(): read error_knowledge.json, find patterns with count >= 3\n   - For each pattern:\n     - Classify: 'workflow' | 'automatable' | 'knowledge'\n     - workflow → dispatch 'extract-skill-{id}' lane with prompt to create xmuse/skills/<name>.py\n     - automatable → dispatch 'extract-tool-{id}' lane with prompt to add MCP tool\n     - knowledge → write MemoryOS Page + create md in xmuse/memory/decisions/\n   - mark_superseded(entry_id): when root cause fixed\n2. Integration: after each lane fails and error is recorded:\n   - Check if this error's fingerprint matches existing entries\n   - If count >= 3 and not yet extracted: wake Architect-God with extraction request\n3. Architect-God prompt template for extraction decisions:\n   - Include the 3+ error entries\n   - Ask: 'Is this a workflow pattern, automatable operation, or knowledge? Respond with extraction plan.'\n4. Create xmuse/memory/decisions/ directory for externalized md archives\n5. Add tests\n6. Commit when done.\n\nExisting context:\n- xmuse/error_knowledge.py has ErrorKnowledge class with 7-slot entries\n- xmuse/god_gateway/spawner.py can wake Gods\n- xmuse/god_gateway/memory.py can write MemoryOS Pages\n- Architect-God is god_id='architect' in god_registry.json",
+      "branch": "feat/god-error-lifecycle",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-memoryos-integration",
+        "god-mcp-tools"
+      ]
+    },
+    {
+      "feature_id": "full-quality-gate-a1189cb0-54cc17e233",
+      "task_type": "full_quality_gate",
+      "status": "failed",
+      "worktree": ".",
+      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
+      "capabilities": [
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 100,
+      "batch_lane_ids": [
+        "auto-discovery",
+        "quality-gate",
+        "rework-loop",
+        "lane-status-writer",
+        "master-loop",
+        "error-knowledge",
+        "memoryos-dispatch-integration",
+        "error-knowledge-integration",
+        "self-improvement-detection",
+        "mcp-xmuse-server",
+        "memoryos-middleware-enhancement",
+        "skill-plan-execute-review"
+      ],
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
+    },
+    {
+      "feature_id": "full-quality-gate-a1189cb0-d76318115e",
+      "task_type": "full_quality_gate",
+      "status": "failed",
+      "worktree": ".",
+      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
+      "capabilities": [
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 100,
+      "batch_lane_ids": [
+        "xmuse-dashboard-api",
+        "xmuse-dashboard-frontend",
+        "auto-discovery-enhanced",
+        "frontend-scaffold",
+        "frontend-app-shell",
+        "frontend-api-layer",
+        "frontend-lanes-page",
+        "frontend-metrics-page",
+        "frontend-errors-page",
+        "frontend-settings-page",
+        "frontend-new-lane-modal",
+        "master-loop-replace-main"
+      ],
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
+    },
+    {
+      "feature_id": "full-quality-gate-a1189cb0-16deb37ce9",
+      "task_type": "full_quality_gate",
+      "status": "failed",
+      "worktree": ".",
+      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
+      "capabilities": [
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 100,
+      "batch_lane_ids": [
+        "parallel-dispatch",
+        "gate-rework-integration",
+        "error-knowledge-prompt-injection",
+        "auto-discovery-loop-integration",
+        "auto-mypy-src-memoryos-lite-agent-kernel-py-310-arg-type",
+        "auto-mypy-src-memoryos-lite-api-app-py-199-func-returns-value",
+        "auto-mypy-src-memoryos-lite-api-app-py-207-attr-defined",
+        "auto-mypy-src-memoryos-lite-core-memory-py-309-arg-type",
+        "auto-mypy-src-memoryos-lite-llm-judge-py-82-arg-type",
+        "auto-mypy-src-memoryos-lite-llm-judge-py-84-arg-type",
+        "auto-mypy-src-memoryos-lite-retrieval-providers-qdrant-py-50-arg-type",
+        "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-51-arg-type"
+      ],
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
+    },
+    {
       "feature_id": "full-quality-gate-a1189cb0-32b2d32615",
       "task_type": "full_quality_gate",
       "status": "failed",
@@ -1175,37 +1232,6 @@
         "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741"
       ],
       "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
-    },
-    {
-      "feature_id": "full-quality-gate-repair-full-quality-gate-a1189cb0-46c7199c8f",
-      "task_type": "execute",
-      "status": "done",
-      "branch": "feat/full-quality-gate-repair-full-quality-gate-a1189cb0-46c7199c8f",
-      "prompt": "Fix the failing full xmuse quality gate.\n\nCommand: `uv run pytest -q`\nExit code: 1\nArtifact: xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-46c7199c8f.log\nHead SHA: a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8\nBatch lane ids: ['auto-ruff-src-xmuse-core-skills-brainstorm-py-11-36-f401', 'auto-ruff-src-xmuse-core-skills-pipeline-py-105-45-e741', 'auto-ruff-src-xmuse-core-skills-pipeline-py-8-20-f401', 'auto-ruff-src-xmuse-core-skills-registry-py-14-101-e501', 'auto-ruff-src-xmuse-core-skills-review-gate-py-11-36-f401', 'auto-ruff-src-xmuse-core-skills-review-gate-py-77-101-e501', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-117-33-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-129-42-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-154-42-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-176-43-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-177-53-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741']\n\nFailure output:\n................................................................ [ 32%]\n........................................................................ [ 40%]\n........................................................................ [ 48%]\n........................................................................ [ 56%]\n........................................................................ [ 64%]\n........................................................................ [ 72%]\n........................................................................ [ 80%]\n........................................................................ [ 88%]\n........................................................................ [ 96%]\n...F........................                                             [100%]\n=================================== FAILURES ===================================\n___________ test_overnight_runner_ignores_preround_dirty_agent_files ___________\n\ntmp_path = PosixPath('/tmp/pytest-of-iiyatu/pytest-980/test_overnight_runner_ignores_0')\n\n    def test_overnight_runner_ignores_preround_dirty_agent_files(tmp_path: Path) -> None:\n        repo = tmp_path / \"repo\"\n        repo.mkdir()\n        (repo / \"xmuse\").mkdir(exist_ok=True)\n        shutil.copy(Path(\"xmuse/overnight_runner.sh\"), repo / \"xmuse\" / \"overnight_runner.sh\")\n        (repo / \"src\" / \"xmuse_core\" / \"agents\").mkdir(parents=True)\n        dirty_file = repo / \"src\" / \"xmuse_core\" / \"agents\" / \"existing.py\"\n        dirty_file.write_text(\"before\\n\")\n    \n        subprocess.run([\"git\", \"init\"], cwd=repo, check=True, capture_output=True, text=True)\n        subprocess.run([\"git\", \"config\", \"user.email\", \"test@example.com\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"config\", \"user.name\", \"Test User\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"add\", \".\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"commit\", \"-m\", \"initial\"], cwd=repo, check=True, capture_output=True, text=True)\n        dirty_file.write_text(\"before\\nuser dirty change\\n\")\n    \n        fake_bin = repo / \"fake-bin\"\n        fake_bin.mkdir()\n        (fake_bin / \"uv\").write_text(\"#!/bin/sh\\nexit 0\\n\")\n        (fake_bin / \"python3\").write_text(\"#!/bin/sh\\nprintf '0\\\\n'\\n\")\n        os.chmod(fake_bin / \"uv\", 0o755)\n        os.chmod(fake_bin / \"python3\", 0o755)\n    \n        env = os.environ.copy()\n        env[\"PATH\"] = f\"{fake_bin}:{env['PATH']}\"\n        env[\"XMUSE_MAX_HOURS\"] = \"1\"\n    \n        result = subprocess.run(\n            [\"bash\", \"xmuse/overnight_runner.sh\"],\n            cwd=repo,\n            env=env,\n            check=True,\n            capture_output=True,\n            text=True,\n        )\n    \n>       assert \"Self-modification detected\" not in result.stdout\nE       AssertionError: assert 'Self-modification detected' not in '[2026-05-26... executed.\\n'\nE         \nE         'Self-modification detected' is contained here:\nE           40+08:00] Self-modification detected. Restarting after smoke test.\nE         ?           ++++++++++++++++++++++++++\nE           [master e25d3ad] chore(xmuse): auto-commit round 1 self-improvement\nE            1 file changed, 1 insertion(+)\nE           [2026-05-26T23:27:40+08:00] Running smoke test...\nE           [2026-05-26T23:27:40+08:00] No pending lanes. Exiting.\nE           [2026-05-26T23:27:40+08:00] Overnight run complete. 1 rounds executed.\n\ntests/test_xmuse_overnight_runner.py:45: AssertionError\n=============================== warnings summary ===============================\n.venv/lib/python3.11/site-packages/langgraph/checkpoint/serde/encrypted.py:5\n  /home/iiyatu/projects/python/memoryOS/.venv/lib/python3.11/site-packages/langgraph/checkpoint/serde/encrypted.py:5: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.\n    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer\n\ntests/test_xmuse_dashboard_api.py::test_list_lanes_returns_status_for_every_lane\n  /home/iiyatu/projects/python/memoryOS/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x722f381f5b20>\n  \n  Traceback (most recent call last):\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_subprocess.py\", line 126, in __del__\n      self.close()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_subprocess.py\", line 104, in close\n      proto.pipe.close()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/unix_events.py\", line 765, in close\n      self.write_eof()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/unix_events.py\", line 751, in write_eof\n      self._loop.call_soon(self._call_connection_lost, None)\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py\", line 762, in call_soon\n      self._check_closed()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py\", line 520, in _check_closed\n      raise RuntimeError('Event loop is closed')\n  RuntimeError: Event loop is closed\n  \n  Enable tracemalloc to get traceback where the object was allocated.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_xmuse_overnight_runner.py::test_overnight_runner_ignores_preround_dirty_agent_files\n1 failed, 890 passed, 1 skipped, 2 warnings in 772.23s (0:12:52)\n\nMake the minimal fix, then verify with `uv run pytest -q`.",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 110,
-      "full_gate_feature_id": "full-quality-gate-a1189cb0-46c7199c8f",
-      "full_gate_artifact": "xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-46c7199c8f.log",
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8",
-      "batch_lane_ids": [
-        "auto-ruff-src-xmuse-core-skills-brainstorm-py-11-36-f401",
-        "auto-ruff-src-xmuse-core-skills-pipeline-py-105-45-e741",
-        "auto-ruff-src-xmuse-core-skills-pipeline-py-8-20-f401",
-        "auto-ruff-src-xmuse-core-skills-registry-py-14-101-e501",
-        "auto-ruff-src-xmuse-core-skills-review-gate-py-11-36-f401",
-        "auto-ruff-src-xmuse-core-skills-review-gate-py-77-101-e501",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-117-33-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-129-42-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-154-42-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-176-43-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-177-53-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741"
-      ]
     },
     {
       "feature_id": "kernel-batch-loop",
