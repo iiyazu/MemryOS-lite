@@ -1179,7 +1179,7 @@
     {
       "feature_id": "full-quality-gate-repair-full-quality-gate-a1189cb0-46c7199c8f",
       "task_type": "execute",
-      "status": "running",
+      "status": "done",
       "branch": "feat/full-quality-gate-repair-full-quality-gate-a1189cb0-46c7199c8f",
       "prompt": "Fix the failing full xmuse quality gate.\n\nCommand: `uv run pytest -q`\nExit code: 1\nArtifact: xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-46c7199c8f.log\nHead SHA: a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8\nBatch lane ids: ['auto-ruff-src-xmuse-core-skills-brainstorm-py-11-36-f401', 'auto-ruff-src-xmuse-core-skills-pipeline-py-105-45-e741', 'auto-ruff-src-xmuse-core-skills-pipeline-py-8-20-f401', 'auto-ruff-src-xmuse-core-skills-registry-py-14-101-e501', 'auto-ruff-src-xmuse-core-skills-review-gate-py-11-36-f401', 'auto-ruff-src-xmuse-core-skills-review-gate-py-77-101-e501', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-117-33-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-129-42-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-154-42-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-176-43-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-177-53-e741', 'auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741']\n\nFailure output:\n................................................................ [ 32%]\n........................................................................ [ 40%]\n........................................................................ [ 48%]\n........................................................................ [ 56%]\n........................................................................ [ 64%]\n........................................................................ [ 72%]\n........................................................................ [ 80%]\n........................................................................ [ 88%]\n........................................................................ [ 96%]\n...F........................                                             [100%]\n=================================== FAILURES ===================================\n___________ test_overnight_runner_ignores_preround_dirty_agent_files ___________\n\ntmp_path = PosixPath('/tmp/pytest-of-iiyatu/pytest-980/test_overnight_runner_ignores_0')\n\n    def test_overnight_runner_ignores_preround_dirty_agent_files(tmp_path: Path) -> None:\n        repo = tmp_path / \"repo\"\n        repo.mkdir()\n        (repo / \"xmuse\").mkdir(exist_ok=True)\n        shutil.copy(Path(\"xmuse/overnight_runner.sh\"), repo / \"xmuse\" / \"overnight_runner.sh\")\n        (repo / \"src\" / \"xmuse_core\" / \"agents\").mkdir(parents=True)\n        dirty_file = repo / \"src\" / \"xmuse_core\" / \"agents\" / \"existing.py\"\n        dirty_file.write_text(\"before\\n\")\n    \n        subprocess.run([\"git\", \"init\"], cwd=repo, check=True, capture_output=True, text=True)\n        subprocess.run([\"git\", \"config\", \"user.email\", \"test@example.com\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"config\", \"user.name\", \"Test User\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"add\", \".\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"commit\", \"-m\", \"initial\"], cwd=repo, check=True, capture_output=True, text=True)\n        dirty_file.write_text(\"before\\nuser dirty change\\n\")\n    \n        fake_bin = repo / \"fake-bin\"\n        fake_bin.mkdir()\n        (fake_bin / \"uv\").write_text(\"#!/bin/sh\\nexit 0\\n\")\n        (fake_bin / \"python3\").write_text(\"#!/bin/sh\\nprintf '0\\\\n'\\n\")\n        os.chmod(fake_bin / \"uv\", 0o755)\n        os.chmod(fake_bin / \"python3\", 0o755)\n    \n        env = os.environ.copy()\n        env[\"PATH\"] = f\"{fake_bin}:{env['PATH']}\"\n        env[\"XMUSE_MAX_HOURS\"] = \"1\"\n    \n        result = subprocess.run(\n            [\"bash\", \"xmuse/overnight_runner.sh\"],\n            cwd=repo,\n            env=env,\n            check=True,\n            capture_output=True,\n            text=True,\n        )\n    \n>       assert \"Self-modification detected\" not in result.stdout\nE       AssertionError: assert 'Self-modification detected' not in '[2026-05-26... executed.\\n'\nE         \nE         'Self-modification detected' is contained here:\nE           40+08:00] Self-modification detected. Restarting after smoke test.\nE         ?           ++++++++++++++++++++++++++\nE           [master e25d3ad] chore(xmuse): auto-commit round 1 self-improvement\nE            1 file changed, 1 insertion(+)\nE           [2026-05-26T23:27:40+08:00] Running smoke test...\nE           [2026-05-26T23:27:40+08:00] No pending lanes. Exiting.\nE           [2026-05-26T23:27:40+08:00] Overnight run complete. 1 rounds executed.\n\ntests/test_xmuse_overnight_runner.py:45: AssertionError\n=============================== warnings summary ===============================\n.venv/lib/python3.11/site-packages/langgraph/checkpoint/serde/encrypted.py:5\n  /home/iiyatu/projects/python/memoryOS/.venv/lib/python3.11/site-packages/langgraph/checkpoint/serde/encrypted.py:5: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.\n    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer\n\ntests/test_xmuse_dashboard_api.py::test_list_lanes_returns_status_for_every_lane\n  /home/iiyatu/projects/python/memoryOS/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x722f381f5b20>\n  \n  Traceback (most recent call last):\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_subprocess.py\", line 126, in __del__\n      self.close()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_subprocess.py\", line 104, in close\n      proto.pipe.close()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/unix_events.py\", line 765, in close\n      self.write_eof()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/unix_events.py\", line 751, in write_eof\n      self._loop.call_soon(self._call_connection_lost, None)\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py\", line 762, in call_soon\n      self._check_closed()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py\", line 520, in _check_closed\n      raise RuntimeError('Event loop is closed')\n  RuntimeError: Event loop is closed\n  \n  Enable tracemalloc to get traceback where the object was allocated.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_xmuse_overnight_runner.py::test_overnight_runner_ignores_preround_dirty_agent_files\n1 failed, 890 passed, 1 skipped, 2 warnings in 772.23s (0:12:52)\n\nMake the minimal fix, then verify with `uv run pytest -q`.",
       "capabilities": [
@@ -1229,7 +1229,7 @@
         "test"
       ],
       "gate_profile": "xmuse-core",
-      "prompt": "Design and implement the God-to-God MCP communication protocol for xmuse.\n\n## Context\n\nxmuse currently has a single God instance (master_loop.py) that orchestrates all lanes.\nThe goal is to enable multiple God instances to collaborate as peers, each with optional\nrole specialization, communicating through MCP (Model Context Protocol).\n\n## Requirements\n\n### 1. New file: xmuse/god_mcp_server.py\n\nImplement an MCP server that exposes God-level capabilities as tools:\n\nTools to expose:\n- `propose_lane(feature_id, prompt, gate_profile, priority)` — propose a new lane for execution\n- `query_status(feature_id?)` — query lane/system status\n- `claim_lane(feature_id)` — claim a pending lane for execution\n- `report_result(feature_id, status, artifacts)` — report lane completion\n- `request_review(feature_id, artifact_path)` — request peer review of a result\n- `broadcast_event(event_type, payload)` — notify all peers of an event\n\nUse the `mcp` Python SDK (already available). Server runs on a configurable port.\n\n### 2. New file: xmuse/god_mcp_client.py\n\nMCP client that connects to peer God instances:\n- Auto-discover peers via `xmuse/god_registry.json`\n- Call peer tools with retry and timeout\n- Handle peer unavailability gracefully\n\n### 3. New file: xmuse/god_registry.json\n\nRegistry of God instances:\n```json\n{\n  \"instances\": [\n    {\"id\": \"god-orchestrator\", \"url\": \"http://localhost:9100\", \"role\": \"orchestrator\"},\n    {\"id\": \"god-implementer\", \"url\": \"http://localhost:9101\", \"role\": \"implementer\"},\n    {\"id\": \"god-reviewer\", \"url\": \"http://localhost:9102\", \"role\": \"reviewer\"}\n  ]\n}\n```\n\n### 4. Modify: xmuse/master_loop.py\n\nAdd optional MCP mode:\n- If `XMUSE_GOD_MCP=true`, start MCP server alongside master loop\n- Register self in god_registry.json on startup\n- Before dispatching a lane, check if a peer has claimed it\n- After lane completion, broadcast result to peers\n\n### 5. Tests: tests/test_god_mcp.py\n\n- test_mcp_server_exposes_tools\n- test_propose_lane_adds_to_queue\n- test_claim_lane_prevents_double_dispatch\n- test_peer_unavailable_graceful_fallback\n- test_broadcast_event_reaches_all_peers\n\n## Design Constraints\n\n- MCP server must be optional (default off, enable with XMUSE_GOD_MCP=true)\n- Single God instance must work exactly as before when MCP is off\n- No hard dependency on peers being available — graceful degradation\n- Use existing feature_lanes.json as shared state (file-based, no external DB)\n- Each God instance can have a role but roles are advisory, not enforced\n\n## Verification\n\n- uv run pytest tests/test_god_mcp.py -v\n- Manual: start two God instances, verify lane proposal flows between them\n"
+      "prompt": "Design and implement the God-to-God MCP communication protocol for xmuse.\n\n## Architecture\n\nThree God roles, all communicating exclusively via MCP:\n- **Plan God** — analyzes requirements, decomposes tasks, generates lanes\n- **Review God** — reviews code/specs, validates quality, approves merges\n- **Execute God** — dispatches lanes, manages worktrees, runs gates\n\n### Communication Model\n\nAll God interactions (structured operations AND free-form discussion) go through MCP.\nEach God runs an MCP server exposing tools. Any God can call any other God's tools at any time.\n\n### Key Design Principle: Conversation as Tool Calls\n\nFree-form brainstorming is NOT a separate mechanism. It IS MCP tool calls:\n- Plan God calls Review God's `receive_message(content=\"kernel 触发机制你怎么看？\")`\n- Review God decides to respond, calls Plan God's `receive_message(content=\"批量触发好\")`\n- Review God also @s Execute God: calls Execute God's `receive_message(content=\"确认 store 能查 count？\")`\n\nEach God's MCP server receives the message, adds it to its LLM context, and the God\nautonomously decides whether/when/whom to respond to. No ordering, no turn-taking.\n\n### Cost Control\n\nThe real cost is LLM calls, not MCP protocol overhead. Mitigations:\n- **Batch messages**: `receive_message` accepts a list of messages (reduce inference triggers)\n- **Silent mode**: structured ops (claim_lane, report_result) execute logic directly without LLM reasoning\n- **Conversation budget**: brainstorming topics have max_rounds (default 8), auto-conclude after\n\n## Implementation\n\n### 1. New file: xmuse/god_mcp_server.py\n\nEach God instance runs this MCP server. Tools exposed:\n\n**Conversation tools (trigger LLM reasoning):**\n- `receive_message(from_god, content, conversation_id?, mentions?)` — receive a message from another God\n- `start_conversation(topic, participants, max_rounds=8)` — initiate a brainstorming session\n\n**Structured operation tools (execute directly, no LLM):**\n- `propose_lane(feature_id, prompt, gate_profile, priority)` — add lane to queue\n- `claim_lane(feature_id, claimer_id)` — atomically claim a pending lane\n- `report_result(feature_id, status, artifacts)` — report lane completion\n- `request_merge(feature_id, branch)` — request merge approval\n- `approve_merge(feature_id, verdict, reason)` — approve/reject merge\n- `query_status(feature_id?)` — query system state\n\nUse `mcp` Python SDK with SSE transport (HTTP streaming, supports multiple concurrent connections).\n\n### 2. New file: xmuse/god_instance.py\n\nClass `GodInstance`:\n- Wraps a God role (plan/review/execute) with its MCP server + client\n- Maintains conversation context (messages received from peers)\n- Runs a reasoning loop: check inbox → decide action → call peer tools or dispatch work\n- Config: role, port, peer_urls, llm_settings\n\n```python\nclass GodInstance:\n    def __init__(self, role: str, port: int, peer_urls: dict[str, str], settings: Settings):\n        self.role = role\n        self.mcp_server = GodMCPServer(port, tools=self._build_tools())\n        self.mcp_clients = {name: MCPClient(url) for name, url in peer_urls.items()}\n        self.inbox: list[Message] = []\n        self.conversations: dict[str, Conversation] = {}\n\n    async def run(self):\n        # Start MCP server\n        # Main loop: process inbox, make decisions, call peers\n        ...\n\n    async def send_to(self, peer: str, content: str, conversation_id: str | None = None):\n        await self.mcp_clients[peer].call_tool(\"receive_message\", {\n            \"from_god\": self.role,\n            \"content\": content,\n            \"conversation_id\": conversation_id,\n        })\n```\n\n### 3. New file: xmuse/god_config.json\n\n```json\n{\n  \"instances\": {\n    \"plan\": {\"port\": 9100, \"role\": \"plan\"},\n    \"review\": {\"port\": 9101, \"role\": \"review\"},\n    \"execute\": {\"port\": 9102, \"role\": \"execute\"}\n  },\n  \"defaults\": {\n    \"max_conversation_rounds\": 8,\n    \"llm_timeout_s\": 60,\n    \"silent_ops\": [\"claim_lane\", \"report_result\", \"query_status\"]\n  }\n}\n```\n\n### 4. New file: xmuse/god_launcher.py\n\nCLI to start God instances:\n```bash\npython xmuse/god_launcher.py --role plan --port 9100\npython xmuse/god_launcher.py --role execute --port 9102\npython xmuse/god_launcher.py --all  # start all three\n```\n\n### 5. Modify: xmuse/master_loop.py\n\nExecute God wraps the existing master_loop logic:\n- master_loop becomes the \"execute\" reasoning engine\n- Before dispatching, checks if Plan God has proposed new lanes\n- After completion, notifies Review God for merge decision\n- If XMUSE_GOD_MCP=false (default), runs as single God (current behavior)\n\n### 6. Tests: tests/test_god_mcp.py\n\n- test_receive_message_adds_to_inbox\n- test_start_conversation_notifies_participants\n- test_claim_lane_atomic_prevents_double_claim\n- test_silent_ops_skip_llm_reasoning\n- test_conversation_auto_concludes_at_max_rounds\n- test_single_god_mode_works_without_peers\n- test_peer_unavailable_graceful_degradation\n\n## Verification\n\n- uv run pytest tests/test_god_mcp.py -v\n- Manual: start plan + execute gods, verify lane proposal flows\n- Manual: start all three, trigger a brainstorming conversation, verify multi-turn exchange\n"
     },
     {
       "feature_id": "lane-workflow-engine",
@@ -1257,6 +1257,227 @@
       ],
       "gate_profile": "memoryos-recall",
       "prompt": "Enable and tune query rewriting + reranking for MemoryOS recall pipeline.\n\n## Context\n\nquery_rewriter.py and reranker.py are implemented and DeepSeek-compatible (use_structured=False\nfallback). Currently disabled by default (MEMORYOS_REWRITE_ENABLED=false, MEMORYOS_RERANK_ENABLED=false).\nLoCoMo scores 70% with BM25-only recall. Goal: enable rewrite+rerank and measure improvement.\n\n## Requirements\n\n### 1. Modify: src/memoryos_lite/config.py\n\nChange defaults:\n- memoryos_rewrite_enabled: bool = True\n- memoryos_rerank_enabled: bool = True\n\n### 2. Modify: .env\n\nEnable rewrite and rerank (already set to true, confirm).\n\n### 3. Run eval comparison\n\nRun LoCoMo 20 cases with rewrite+rerank enabled:\n```bash\nMEMORYOS_REWRITE_ENABLED=true MEMORYOS_RERANK_ENABLED=true   uv run memoryos eval public --benchmark locomo --limit 20 --llm-answer --llm-judge\n```\n\nCompare against baseline (70% without rewrite/rerank).\n\n### 4. If improvement < 5%, tune the rewriter prompt\n\nModify query_rewriter.py system prompt to be more aggressive about:\n- Expanding Chinese abbreviations\n- Adding temporal context\n- Including synonyms for key entities\n\n### 5. Run LME 20 cases to verify no regression\n\n### 6. Document results in docs/superpowers/plans/2026-05-26-recall-quality-results.md\n\n## Verification\n\n- LoCoMo score with rewrite+rerank (target: >75%)\n- LME score must remain 100%\n- No test regressions: uv run pytest tests/test_v3_path.py tests/test_engine.py -q\n"
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-132-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:132.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:132: error: Argument 1 to \"loads\" has incompatible type \"str | list[str | dict[Any, Any]]\"; expected \"str | bytes | bytearray\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "running",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-53-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:53.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:53: error: Argument \"api_key\" to \"ChatOpenAI\" has incompatible type \"str\"; expected \"SecretStr | Callable[[], str] | Callable[[], Awaitable[str]] | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "running",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-56-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:56.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:56: error: Argument 5 to \"ChatOpenAI\" has incompatible type \"**dict[str, str]\"; expected \"BaseCache | bool | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "running",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-93-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:93.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:93: error: Argument 1 to \"loads\" has incompatible type \"str | list[str | dict[Any, Any]]\"; expected \"str | bytes | bytearray\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "running",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-reranker-py-113-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/reranker.py:113.\n\nExact error message:\nsrc/memoryos_lite/retrieval/reranker.py:113: error: Argument 1 to \"loads\" has incompatible type \"str | list[str | dict[Any, Any]]\"; expected \"str | bytes | bytearray\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-reranker-py-60-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/reranker.py:60.\n\nExact error message:\nsrc/memoryos_lite/retrieval/reranker.py:60: error: Argument \"api_key\" to \"ChatOpenAI\" has incompatible type \"str\"; expected \"SecretStr | Callable[[], str] | Callable[[], Awaitable[str]] | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-reranker-py-63-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/reranker.py:63.\n\nExact error message:\nsrc/memoryos_lite/retrieval/reranker.py:63: error: Argument 5 to \"ChatOpenAI\" has incompatible type \"**dict[str, str]\"; expected \"BaseCache | bool | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-engine-py-124-1-i001",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/engine.py.\n\nExact error message:\nI001 [*] Import block is un-sorted or un-formatted\n--> src/memoryos_lite/engine.py:124:1\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-engine-py-4-25-f401",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/engine.py.\n\nExact error message:\nF401 [*] `dataclasses.dataclass` imported but unused\n--> src/memoryos_lite/engine.py:4:25\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-engine-py-5-25-f401",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/engine.py.\n\nExact error message:\nF401 [*] `typing.Protocol` imported but unused\n--> src/memoryos_lite/engine.py:5:25\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-engine-py-7-37-f401",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/engine.py.\n\nExact error message:\nF401 [*] `langchain_core.messages.HumanMessage` imported but unused\n--> src/memoryos_lite/engine.py:7:37\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-engine-py-7-51-f401",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/engine.py.\n\nExact error message:\nF401 [*] `langchain_core.messages.SystemMessage` imported but unused\n--> src/memoryos_lite/engine.py:7:51\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-legacy-paging-py-11-25-f401",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/legacy_paging.py.\n\nExact error message:\nF401 [*] `collections.defaultdict` imported but unused\n--> src/memoryos_lite/legacy_paging.py:11:25\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-legacy-paging-py-21-101-e501",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/legacy_paging.py.\n\nExact error message:\nE501 Line too long (114 > 100)\n--> src/memoryos_lite/legacy_paging.py:21:101\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-legacy-paging-py-8-1-i001",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/legacy_paging.py.\n\nExact error message:\nI001 [*] Import block is un-sorted or un-formatted\n--> src/memoryos_lite/legacy_paging.py:8:1\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-retrieval-query-rewriter-py-125-101-e501",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/retrieval/query_rewriter.py.\n\nExact error message:\nE501 Line too long (109 > 100)\n--> src/memoryos_lite/retrieval/query_rewriter.py:125:101\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-memoryos-lite-retrieval-query-rewriter-py-85-101-e501",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/memoryos_lite/retrieval/query_rewriter.py.\n\nExact error message:\nE501 Line too long (101 > 100)\n--> src/memoryos_lite/retrieval/query_rewriter.py:85:101\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "pending",
+      "depends_on": []
     }
   ]
 }
