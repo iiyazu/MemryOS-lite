@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.launchers.base import LauncherAdapter
+from xmuse_core.agents.memoryos_client import MemoryOSClient
 from xmuse_core.agents.protocol import (
     PROTOCOL_VERSION,
     AgentOutput,
@@ -52,12 +53,14 @@ class SessionManager:
         state_file: Path | None = None,
         instance_id: str | None = None,
         max_missed_pings: int = 10,
+        memoryos_client: MemoryOSClient | None = None,
     ) -> None:
         self._launchers = launchers
         self._active: dict[str, ActiveSession] = {}
         self._state_file = state_file or Path("xmuse/active_sessions.json")
         self._instance_id = instance_id or f"master-{os.getpid()}"
         self._max_missed_pings = max_missed_pings
+        self._memoryos_client = memoryos_client
         self._shutdown = False
 
     @property
@@ -221,6 +224,11 @@ class SessionManager:
         cmd = launcher.build_command(feature_id, worktree)
         env = launcher.build_env(feature_id)
         formatted = launcher.format_prompt(prompt, context)
+        memoryos_session_id = await self._memoryos_create_session(feature_id)
+        if memoryos_session_id:
+            memory_context = await self._memoryos_build_context(memoryos_session_id, prompt)
+            if memory_context:
+                formatted = f"{memory_context}\n\n{formatted}"
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -255,6 +263,8 @@ class SessionManager:
 
         stdout_str = stdout_bytes.decode(errors="replace")
         stderr_str = stderr_bytes.decode(errors="replace")
+        if memoryos_session_id:
+            await self._memoryos_ingest_dispatch(memoryos_session_id, prompt, stdout_str)
 
         if process.returncode == 0:
             return AgentOutput(
@@ -267,3 +277,35 @@ class SessionManager:
             error_message=stderr_str[:500] or stdout_str[:500],
             artifacts={"stdout": stdout_str, "stderr": stderr_str},
         )
+
+    async def _memoryos_create_session(self, feature_id: str) -> str | None:
+        if not self._memoryos_client:
+            return None
+        try:
+            return await self._memoryos_client.create_session(f"xmuse:{feature_id}")
+        except Exception as exc:
+            logger.warning("memoryos create_session failed: %s", exc)
+            return None
+
+    async def _memoryos_build_context(self, session_id: str, prompt: str) -> str:
+        if not self._memoryos_client:
+            return ""
+        try:
+            return await self._memoryos_client.build_context(session_id, prompt)
+        except Exception as exc:
+            logger.warning("memoryos build_context failed: %s", exc)
+            return ""
+
+    async def _memoryos_ingest_dispatch(
+        self, session_id: str, prompt: str, stdout: str
+    ) -> None:
+        await self._memoryos_ingest(session_id, "user", prompt)
+        await self._memoryos_ingest(session_id, "assistant", stdout[:4000])
+
+    async def _memoryos_ingest(self, session_id: str, role: str, content: str) -> None:
+        if not self._memoryos_client:
+            return
+        try:
+            await self._memoryos_client.ingest(session_id, role, content)
+        except Exception as exc:
+            logger.warning("memoryos ingest failed: %s", exc)
