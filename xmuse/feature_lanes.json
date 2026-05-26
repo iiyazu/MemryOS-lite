@@ -920,9 +920,87 @@
       ]
     },
     {
-      "feature_id": "lane-review-gate",
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-132-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:132.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:132: error: Argument 1 to \"loads\" has incompatible type \"str | list[str | dict[Any, Any]]\"; expected \"str | bytes | bytearray\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-53-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:53.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:53: error: Argument \"api_key\" to \"ChatOpenAI\" has incompatible type \"str\"; expected \"SecretStr | Callable[[], str] | Callable[[], Awaitable[str]] | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "mcp-auth-guard",
       "task_type": "execute",
       "status": "pending",
+      "branch": "feat/mcp-auth-guard",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "gate_profile": "xmuse-core",
+      "priority": 80,
+      "prompt": "Add authentication to xmuse MCP server and Dashboard API.\n\n## Problem\n\nMCP server (port 8100) and Dashboard API (port 8200) have no authentication.\nAny local process can inject lanes, kill processes, or approve merges.\n\n## Implementation\n\n### 1. Shared secret auth for MCP server\n\nModify the MCP server to require a Bearer token in the Authorization header.\nToken is read from XMUSE_MCP_SECRET env var (or generated and written to\nxmuse/.mcp_secret on first start).\n\n```python\n# In request handler:\nexpected = os.environ.get(\"XMUSE_MCP_SECRET\") or Path(\"xmuse/.mcp_secret\").read_text().strip()\nauth = request.headers.get(\"Authorization\", \"\")\nif auth != f\"Bearer {expected}\":\n    return JSONResponse(status_code=401, content={\"error\": \"unauthorized\"})\n```\n\n### 2. Same auth for Dashboard API\n\nDashboard API reads the same secret. Frontend passes it via localStorage.\nAdd a simple login page that accepts the secret.\n\n### 3. Add .mcp_secret to .gitignore\n\n### 4. Tests\n\n- test_mcp_rejects_unauthenticated_request\n- test_mcp_accepts_valid_bearer_token\n- test_dashboard_rejects_unauthenticated_write\n- test_dashboard_allows_authenticated_write\n\n## Verification\n\n- uv run pytest tests/test_xmuse_mcp_server.py tests/test_xmuse_dashboard_api.py -v\n"
+    },
+    {
+      "feature_id": "error-knowledge-bounds",
+      "task_type": "execute",
+      "status": "pending",
+      "branch": "feat/error-knowledge-bounds",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "gate_profile": "xmuse-core",
+      "priority": 70,
+      "prompt": "Add size bounds and eviction to error knowledge.\n\n## Problem\n\nerror_knowledge.json grows unbounded. Injected into every prompt, it can\nexceed context windows and degrade agent performance.\n\n## Implementation\n\n### Modify: xmuse/error_knowledge.py (or wherever ErrorKnowledge is defined)\n\n1. Max 20 entries (configurable via XMUSE_ERROR_KNOWLEDGE_MAX_ENTRIES=20)\n2. When adding entry and at capacity, evict oldest entry\n3. Max 500 chars per entry (truncate on insert)\n4. Total injection budget: max 3000 chars when injecting into prompts\n\n### Modify: xmuse/master_loop.py _inject_error_knowledge_text\n\nTruncate total injected text to 3000 chars.\n\n### Tests\n\n- test_error_knowledge_evicts_oldest_at_capacity\n- test_error_knowledge_truncates_long_entries\n- test_injection_respects_budget\n\n## Verification\n\n- uv run pytest tests/ -k \"error_knowledge\" -v\n"
+    },
+    {
+      "feature_id": "lane-prompt-validation",
+      "task_type": "execute",
+      "status": "pending",
+      "branch": "feat/lane-prompt-validation",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "gate_profile": "xmuse-core",
+      "priority": 60,
+      "prompt": "Add validation and sanitization for lane prompts before dispatch.\n\n## Problem\n\nLane prompts from feature_lanes.json are passed directly to agents without\nany validation. Could contain prompt injection or exceed context limits.\n\n## Implementation\n\n### New file: src/xmuse_core/prompt_guard.py\n\n```python\nMAX_PROMPT_LENGTH = 8000  # chars\nBLOCKED_PATTERNS = [\n    \"ignore previous instructions\",\n    \"ignore all instructions\",\n    \"you are now\",\n    \"disregard\",\n]\n\ndef validate_prompt(prompt: str, feature_id: str) -> tuple[str, list[str]]:\n    \"\"\"Validate and sanitize a lane prompt. Returns (sanitized, warnings).\"\"\"\n    warnings = []\n    if len(prompt) > MAX_PROMPT_LENGTH:\n        prompt = prompt[:MAX_PROMPT_LENGTH]\n        warnings.append(f\"prompt truncated to {MAX_PROMPT_LENGTH} chars\")\n    for pattern in BLOCKED_PATTERNS:\n        if pattern.lower() in prompt.lower():\n            warnings.append(f\"suspicious pattern detected: {pattern}\")\n    return prompt, warnings\n```\n\n### Modify: xmuse/master_loop.py\n\nCall validate_prompt before dispatch. Log warnings. If suspicious pattern\ndetected, mark lane as \"held_for_review\" instead of dispatching.\n\n### Tests\n\n- test_prompt_truncated_at_limit\n- test_suspicious_pattern_flags_warning\n- test_clean_prompt_passes_unchanged\n\n## Verification\n\n- uv run pytest tests/test_prompt_guard.py -v\n"
+    },
+    {
+      "feature_id": "scope-guard-auto-commit",
+      "task_type": "execute",
+      "status": "pending",
+      "branch": "feat/scope-guard-auto-commit",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "gate_profile": "xmuse-core",
+      "priority": 50,
+      "prompt": "Add scope guard to prevent mega-commits and restrict self-modification paths.\n\n## Problem\n\nRound 1 changed 45 files / 3827 lines in a single commit. The system can\nmodify any file including its own control plane without restriction.\n\n## Implementation\n\n### Modify: xmuse/master_loop.py _auto_merge_worktree\n\nAdd checks before merge:\n1. Max 10 files changed per lane (configurable XMUSE_MAX_FILES_PER_LANE=10)\n2. Max 1000 insertions (already added in safety fix)\n3. If lane touches xmuse/** or src/xmuse_core/**, log a warning:\n   \"self-modification detected: {files}\" (for future review-gate integration)\n\n```python\n# After diff --shortstat check:\nproc = await asyncio.create_subprocess_exec(\n    \"git\", \"diff\", \"--name-only\", f\"HEAD...{branch}\",\n    stdout=asyncio.subprocess.PIPE, cwd=ROOT,\n)\nstdout, _ = await proc.communicate()\nchanged_files = [f for f in stdout.decode().splitlines() if f.strip()]\nif len(changed_files) > max_files:\n    logger.warning(\"Refusing merge: %d files exceeds limit %d\", len(changed_files), max_files)\n    return False\nself_mod = [f for f in changed_files if f.startswith(\"xmuse/\") or f.startswith(\"src/xmuse_core/\")]\nif self_mod:\n    logger.warning(\"Self-modification detected in lane %s: %s\", task.feature_id, self_mod[:5])\n```\n\n### Tests\n\n- test_merge_refused_when_too_many_files\n- test_self_modification_logged_as_warning\n- test_normal_lane_merges_fine\n\n## Verification\n\n- uv run pytest tests/test_xmuse_master_loop.py -v\n"
+    },
+    {
+      "feature_id": "lane-review-gate",
+      "task_type": "execute",
+      "status": "running",
       "branch": "feat/lane-review-gate",
       "capabilities": [
         "code",
@@ -1258,32 +1336,6 @@
       "prompt": "Enable and tune query rewriting + reranking for MemoryOS recall pipeline.\n\n## Context\n\nquery_rewriter.py and reranker.py are implemented and DeepSeek-compatible (use_structured=False\nfallback). Currently disabled by default (MEMORYOS_REWRITE_ENABLED=false, MEMORYOS_RERANK_ENABLED=false).\nLoCoMo scores 70% with BM25-only recall. Goal: enable rewrite+rerank and measure improvement.\n\n## Requirements\n\n### 1. Modify: src/memoryos_lite/config.py\n\nChange defaults:\n- memoryos_rewrite_enabled: bool = True\n- memoryos_rerank_enabled: bool = True\n\n### 2. Modify: .env\n\nEnable rewrite and rerank (already set to true, confirm).\n\n### 3. Run eval comparison\n\nRun LoCoMo 20 cases with rewrite+rerank enabled:\n```bash\nMEMORYOS_REWRITE_ENABLED=true MEMORYOS_RERANK_ENABLED=true   uv run memoryos eval public --benchmark locomo --limit 20 --llm-answer --llm-judge\n```\n\nCompare against baseline (70% without rewrite/rerank).\n\n### 4. If improvement < 5%, tune the rewriter prompt\n\nModify query_rewriter.py system prompt to be more aggressive about:\n- Expanding Chinese abbreviations\n- Adding temporal context\n- Including synonyms for key entities\n\n### 5. Run LME 20 cases to verify no regression\n\n### 6. Document results in docs/superpowers/plans/2026-05-26-recall-quality-results.md\n\n## Verification\n\n- LoCoMo score with rewrite+rerank (target: >75%)\n- LME score must remain 100%\n- No test regressions: uv run pytest tests/test_v3_path.py tests/test_engine.py -q\n"
     },
     {
-      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-132-arg-type",
-      "task_type": "execute",
-      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:132.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:132: error: Argument 1 to \"loads\" has incompatible type \"str | list[str | dict[Any, Any]]\"; expected \"str | bytes | bytearray\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "source": "auto",
-      "priority": 80,
-      "status": "running",
-      "depends_on": []
-    },
-    {
-      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-53-arg-type",
-      "task_type": "execute",
-      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:53.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:53: error: Argument \"api_key\" to \"ChatOpenAI\" has incompatible type \"str\"; expected \"SecretStr | Callable[[], str] | Callable[[], Awaitable[str]] | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "source": "auto",
-      "priority": 80,
-      "status": "running",
-      "depends_on": []
-    },
-    {
       "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-56-arg-type",
       "task_type": "execute",
       "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:56.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:56: error: Argument 5 to \"ChatOpenAI\" has incompatible type \"**dict[str, str]\"; expected \"BaseCache | bool | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
@@ -1319,7 +1371,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "running",
       "depends_on": []
     },
     {
