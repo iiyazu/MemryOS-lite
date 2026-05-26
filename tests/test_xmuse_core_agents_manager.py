@@ -75,6 +75,37 @@ class BadVersionLauncher:
         return None
 
 
+class OneShotLauncher:
+    def build_command(self, feature_id, worktree):
+        return ["fake-agent"]
+
+    def format_prompt(self, task, context):
+        return task
+
+    def build_env(self, feature_id):
+        return None
+
+
+class FakeOneShotProcess:
+    pid = 12345
+
+    def __init__(self, returncode: int = 0):
+        self.returncode = returncode
+        self.killed = False
+        self.communicate_input = None
+
+    async def communicate(self, input=None):
+        self.communicate_input = input
+        return b"ok", b""
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self):
+        return self.returncode
+
+
 def _make_agent(runtime=AgentRuntime.CODEX):
     return AgentDescriptor(
         runtime=runtime,
@@ -96,6 +127,62 @@ async def test_dispatch_success(tmp_path):
     assert result is not None
     assert result.status == "success"
     assert result.artifacts == {"done": True}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_one_shot_has_no_default_lane_timeout(tmp_path):
+    mgr = SessionManager(
+        launchers={AgentRuntime.CODEX: OneShotLauncher()},
+        state_file=tmp_path / "active.json",
+    )
+    process = FakeOneShotProcess()
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=process)),
+        patch(
+            "asyncio.wait_for",
+            AsyncMock(side_effect=AssertionError("default dispatch should not time out")),
+        ),
+    ):
+        result = await mgr.dispatch_one_shot(
+            _make_agent(),
+            "test-feature",
+            "do something",
+            tmp_path,
+        )
+
+    assert result.status == "success"
+    assert process.communicate_input == b"do something"
+    assert not process.killed
+
+
+@pytest.mark.asyncio
+async def test_dispatch_one_shot_explicit_timeout_still_aborts_process(tmp_path):
+    mgr = SessionManager(
+        launchers={AgentRuntime.CODEX: OneShotLauncher()},
+        state_file=tmp_path / "active.json",
+    )
+    process = FakeOneShotProcess()
+
+    async def raise_timeout(awaitable, timeout):
+        awaitable.close()
+        raise TimeoutError
+
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=process)),
+        patch("asyncio.wait_for", raise_timeout),
+    ):
+        result = await mgr.dispatch_one_shot(
+            _make_agent(),
+            "test-feature",
+            "do something",
+            tmp_path,
+            timeout=0.1,
+        )
+
+    assert result.status == "timeout"
+    assert result.error_message == "process timed out"
+    assert process.killed
 
 
 @pytest.mark.asyncio

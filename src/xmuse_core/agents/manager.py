@@ -218,7 +218,7 @@ class SessionManager:
         prompt: str,
         worktree: Path,
         context: str = "",
-        timeout: float = 1800.0,
+        timeout: float | None = None,
     ) -> AgentOutput:
         launcher = self._launchers[agent.runtime]
         cmd = launcher.build_command(feature_id, worktree)
@@ -247,10 +247,14 @@ class SessionManager:
         self._persist_active()
 
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(input=formatted.encode()),
-                timeout=timeout,
-            )
+            communicate = process.communicate(input=formatted.encode())
+            if timeout is None:
+                stdout_bytes, stderr_bytes = await communicate
+            else:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    communicate,
+                    timeout=timeout,
+                )
         except TimeoutError:
             process.kill()
             await process.wait()
