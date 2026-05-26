@@ -423,11 +423,11 @@ class MasterLoop:
     def _update_lane_status(self, feature_id: str, status: str) -> None:
         update_lane_status(self.lanes_path, feature_id, status)
 
-    def _auto_merge_worktree(self, task: TaskDescriptor) -> None:
+    async def _auto_merge_worktree(self, task: TaskDescriptor) -> bool:
         """Merge worktree branch back to current branch after successful gate."""
         wt_path = Path(task.worktree)
         if not wt_path.exists() or str(wt_path) == ".":
-            return
+            return True
         branch = task.feature_id
         result = subprocess.run(
             ["git", "-C", str(wt_path), "rev-parse", "--abbrev-ref", "HEAD"],
@@ -435,26 +435,27 @@ class MasterLoop:
         )
         if result.returncode == 0:
             branch = result.stdout.strip()
-        # Check if there are commits to merge
         diff_check = subprocess.run(
             ["git", "log", f"HEAD..{branch}", "--oneline"],
             capture_output=True, text=True, cwd=ROOT,
         )
         if not diff_check.stdout.strip():
             logger.info("No new commits on %s to merge", branch)
-            return
-        merge_result = subprocess.run(
-            ["git", "merge", "--no-ff", branch, "-m",
-             f"auto-merge: {task.feature_id} (lane done)"],
-            capture_output=True, text=True, cwd=ROOT,
-        )
+            return True
+        async with self._merge_lock:
+            merge_result = subprocess.run(
+                ["git", "merge", "--no-ff", branch, "-m",
+                 f"auto-merge: {task.feature_id} (lane done)"],
+                capture_output=True, text=True, cwd=ROOT,
+            )
         if merge_result.returncode == 0:
             logger.info("Auto-merged %s into main branch", branch)
-        else:
-            logger.warning(
-                "Auto-merge failed for %s: %s",
-                branch, merge_result.stderr[:500],
-            )
+            return True
+        logger.warning(
+            "Auto-merge failed for %s: %s",
+            branch, merge_result.stderr[:500],
+        )
+        return False
 
     def _record_failed_rework(
         self,
