@@ -3,18 +3,31 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 PROJECT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT / "xmuse" / "xmuse_error_knowledge.py"
+ERROR_KNOWLEDGE_MODULE_PATH = PROJECT / "xmuse" / "error_knowledge.py"
 NOW = "2026-05-25T00:00:00Z"
 FEATURE_ID = "xmuse-error-knowledge"
 
 
 def load_knowledge_module():
     spec = importlib.util.spec_from_file_location("xmuse_error_knowledge", MODULE_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_error_knowledge_module():
+    spec = importlib.util.spec_from_file_location(
+        "xmuse_error_knowledge_runtime", ERROR_KNOWLEDGE_MODULE_PATH
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -772,3 +785,129 @@ def test_run_does_not_modify_master_prompts_skills_or_memoryos_files(tmp_path: P
         "memoryos": memoryos.read_text(encoding="utf-8"),
     }
     assert after == before
+
+
+def test_error_knowledge_records_failure_as_seven_slot_entry(tmp_path: Path) -> None:
+    knowledge = load_error_knowledge_module()
+    store = tmp_path / "xmuse/error_knowledge.json"
+    registry = knowledge.ErrorKnowledge(store)
+
+    entry = registry.record_failure(
+        "retrieval-lane",
+        "\n".join(
+            [
+                "Traceback (most recent call last):",
+                "  File \"tests/test_retrieval.py\", line 10, in test_bm25",
+                "ModuleNotFoundError: No module named 'rank_bm25'",
+            ]
+        ),
+    )
+
+    assert store.exists()
+    assert {
+        "pit",
+        "root_cause",
+        "trigger",
+        "fix",
+        "verification",
+        "lesson",
+        "scope",
+    }.issubset(entry)
+    assert entry["pit"] == "ModuleNotFoundError: No module named 'rank_bm25'"
+    assert entry["root_cause"] == "Missing Python module: rank_bm25"
+    assert entry["trigger"] == "retrieval-lane"
+    assert entry["fix"] == ""
+    assert entry["verification"] == ""
+    assert entry["lesson"] == ""
+    assert entry["scope"] == "retrieval-lane"
+
+    data = read_json(store)
+    assert isinstance(data, dict)
+    assert data["entries"][0]["id"] == entry["id"]
+
+
+def test_error_knowledge_resolves_retrieves_and_injects_lessons(tmp_path: Path) -> None:
+    knowledge = load_error_knowledge_module()
+    registry = knowledge.ErrorKnowledge(tmp_path / "xmuse/error_knowledge.json")
+    entry = registry.record_failure(
+        "archive-rag",
+        "AssertionError: archive search returned no source-grounded passages",
+    )
+    registry.mark_resolved(
+        entry["id"],
+        fix="Route archive queries through evidence_searcher before summarization.",
+        verification="uv run pytest tests/test_archive_rag_boundary.py -q",
+        lesson="For archive RAG work, verify source-grounded passages before summaries.",
+    )
+
+    reopened = knowledge.ErrorKnowledge(tmp_path / "xmuse/error_knowledge.json")
+    matches = reopened.find_relevant("archive rag source-grounded evidence search", top_k=1)
+    assert [match["id"] for match in matches] == [entry["id"]]
+
+    enriched = reopened.inject_context("Implement archive RAG source citation handling.")
+    assert enriched.startswith("# Relevant Error Knowledge\n")
+    assert "For archive RAG work, verify source-grounded passages before summaries." in enriched
+    assert enriched.endswith("Implement archive RAG source citation handling.")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_one_shot_enriches_prompt_with_error_knowledge(tmp_path: Path) -> None:
+    from xmuse_core.agents.manager import SessionManager
+    from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime, SessionConfig
+
+    knowledge = load_error_knowledge_module()
+    store = tmp_path / "xmuse/error_knowledge.json"
+    registry = knowledge.ErrorKnowledge(store)
+    entry = registry.record_failure(
+        "xmuse-console",
+        "AssertionError: callback worklist dispatch lost mention routing context",
+    )
+    registry.mark_resolved(
+        entry["id"],
+        fix="Preserve parsed mentions when building the callback dispatch work item.",
+        verification="uv run pytest tests/test_xmuse_core_routing.py -q",
+        lesson="For callback routing tasks, keep parsed mentions attached to dispatch context.",
+    )
+
+    class CaptureLauncher:
+        def build_command(self, feature_id: str, worktree: Path) -> list[str]:
+            return [sys.executable, "-c", "import sys; print(sys.stdin.read())"]
+
+        def format_prompt(self, task: str, context: str) -> str:
+            if context:
+                return f"{context}\n---\n{task}"
+            return task
+
+        def build_env(self, feature_id: str) -> dict[str, str]:
+            return {}
+
+        def parse_output(self, msg: object) -> None:
+            return None
+
+    manager = SessionManager(
+        launchers={AgentRuntime.CODEX: CaptureLauncher()},
+        state_file=tmp_path / "active.json",
+        error_knowledge_path=store,
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.CODEX,
+        name="codex",
+        capabilities=["code"],
+        session_config=SessionConfig(),
+    )
+
+    result = await manager.dispatch_one_shot(
+        agent,
+        "xmuse-console",
+        "Fix callback routing dispatch context.",
+        tmp_path,
+    )
+
+    stdout = result.artifacts["stdout"]
+    assert (
+        "For callback routing tasks, keep parsed mentions attached to dispatch context."
+        in stdout
+    )
+    assert stdout.index("# Relevant Error Knowledge") < stdout.index(
+        "Fix callback routing dispatch context."
+    )
