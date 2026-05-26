@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -17,6 +17,8 @@ from xmuse_core.agents.consumer import TaskDescriptor
 class FakeGateResult:
     passed: bool
     errors: list[str]
+    gate_report: dict[str, object] | None = None
+    gate_warnings: list[str] | None = None
 
 
 @dataclass
@@ -24,6 +26,36 @@ class FakeLaneResult:
     status: str
     attempts: int = 0
     final_errors: list[str] | None = None
+    final_gate_result: FakeGateResult | None = None
+
+
+@dataclass
+class FakeReviewVerdict:
+    approved: bool
+    concerns: list[str] = field(default_factory=list)
+    summary: str = ""
+    confidence: float = 1.0
+    self_modification: bool = False
+
+
+class FakeReviewGate:
+    def __init__(self, verdicts: list[FakeReviewVerdict]) -> None:
+        self.verdicts = verdicts
+        self.calls: list[dict[str, object]] = []
+
+    async def review(self, **kwargs: object) -> FakeReviewVerdict:
+        self.calls.append(kwargs)
+        if len(self.verdicts) >= len(self.calls):
+            return self.verdicts[len(self.calls) - 1]
+        return self.verdicts[-1]
+
+
+class FailingReviewGate:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    async def review(self, **kwargs: object) -> FakeReviewVerdict:
+        raise self.exc
 
 
 class FakeProcess:
@@ -64,9 +96,11 @@ class FakeGate:
     def __init__(self, results: list[FakeGateResult] | None = None) -> None:
         self.results = results or [FakeGateResult(True, [])]
         self.checked: list[Path] = []
+        self.kwargs: list[dict[str, object]] = []
 
-    async def check(self, worktree: Path) -> FakeGateResult:
+    async def check(self, worktree: Path, **kwargs: object) -> FakeGateResult:
         self.checked.append(worktree)
+        self.kwargs.append(kwargs)
         if len(self.results) >= len(self.checked):
             return self.results[len(self.checked) - 1]
         return self.results[-1]
@@ -202,25 +236,104 @@ def test_load_lanes_only_returns_one_active_full_gate_family_lane(tmp_path):
     ] == []
 
 
-def test_full_quality_gate_command_excludes_isolated_legacy_surfaces():
-    from master_loop import FULL_QUALITY_GATE_COMMAND, FULL_QUALITY_GATE_IGNORES
+def test_load_lanes_preserves_gate_metadata(tmp_path):
+    from master_loop import load_lanes
 
-    command = " ".join(FULL_QUALITY_GATE_COMMAND)
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "profiled",
+                "task_type": "execute",
+                "prompt": "do work",
+                "worktree": str(tmp_path),
+                "gate_profile": "memoryos-core",
+                "gate_profiles": ["memoryos-core", "memoryos-recall"],
+                "base_head_sha": "abc123",
+                "custom_gate_note": "preserve me",
+            }
+        ],
+    )
 
-    assert "tests/test_agent.py" in FULL_QUALITY_GATE_IGNORES
-    assert "tests/test_agent_demo.py" in FULL_QUALITY_GATE_IGNORES
-    assert "tests/test_cli_agent_demo.py" in FULL_QUALITY_GATE_IGNORES
-    assert "tests/test_pagination_hotpath.py" in FULL_QUALITY_GATE_IGNORES
-    assert "tests/test_item_retrieval.py" in FULL_QUALITY_GATE_IGNORES
-    assert "tests/test_item_tools.py" in FULL_QUALITY_GATE_IGNORES
-    assert "tests/test_retrieval.py" in FULL_QUALITY_GATE_IGNORES
-    assert "tests/test_rag_pipeline.py" in FULL_QUALITY_GATE_IGNORES
-    assert "test_memoryos_baseline_preserves_required_sources" in command
-    assert "test_hard_cases_preserve_baseline_differentiation" in command
-    assert "explicit_v1" in command
-    assert "dropped_relevant_memoryos_page" in command
-    assert "windowed_page_diagnostics" in command
-    assert "temporal_anchor_exposes_page_candidate" in command
+    task = load_lanes(lanes_path)[0]
+
+    assert task.gate_profile == "memoryos-core"
+    assert task.gate_profiles == ["memoryos-core", "memoryos-recall"]
+    assert task.base_head_sha == "abc123"
+    assert task.lane_metadata["custom_gate_note"] == "preserve me"
+
+
+def test_load_lanes_records_base_head_sha_for_new_worktree(tmp_path, monkeypatch):
+    import master_loop
+    from master_loop import load_lanes
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "new-lane",
+                "task_type": "execute",
+                "prompt": "do work",
+                "created_by_xmuse": True,
+            }
+        ],
+    )
+    monkeypatch.setattr(master_loop, "ensure_worktree", lambda feature_id, branch=None: tmp_path)
+    monkeypatch.setattr(master_loop, "_root_head_sha", lambda: "base-sha")
+
+    task = load_lanes(lanes_path)[0]
+    lanes = _read_lanes(lanes_path)
+
+    assert task.base_head_sha == "base-sha"
+    assert lanes[0]["base_head_sha"] == "base-sha"
+    assert lanes[0]["worktree"] == str(tmp_path)
+
+
+def test_load_lanes_keeps_legacy_lane_without_base_head_sha(tmp_path, monkeypatch):
+    import master_loop
+    from master_loop import load_lanes
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "legacy-lane",
+                "task_type": "execute",
+                "prompt": "do work",
+                "worktree": str(tmp_path),
+            }
+        ],
+    )
+    monkeypatch.setattr(master_loop, "_root_head_sha", lambda: "wrong-new-base")
+
+    task = load_lanes(lanes_path)[0]
+    lanes = _read_lanes(lanes_path)
+
+    assert task.base_head_sha is None
+    assert "base_head_sha" not in lanes[0]
+
+
+def test_full_quality_gate_profile_excludes_isolated_legacy_surfaces():
+    from xmuse_core.gates.loader import load_gate_config
+
+    config = load_gate_config(Path("xmuse/gate_profiles.json"), repo_root=Path("."))
+    strict = config.profiles["strict-product"]
+    historical = config.profiles["historical"]
+
+    assert config.defaults.full_gate_interval == 20
+    assert "tests/test_agent.py" in historical.test_files
+    assert "tests/test_agent_demo.py" in historical.test_files
+    assert "tests/test_cli_agent_demo.py" in historical.test_files
+    assert "tests/test_pagination_hotpath.py" in historical.test_files
+    assert "tests/test_item_retrieval.py" in historical.test_files
+    assert "tests/test_item_tools.py" in historical.test_files
+    assert "tests/test_retrieval.py" in historical.test_files
+    assert "tests/test_rag_pipeline.py" in historical.test_files
+    assert "tests/test_agent.py" not in strict.test_files
+    assert historical.blocking is False
 
 
 @pytest.mark.asyncio
@@ -312,6 +425,50 @@ async def test_failed_quality_gate_runs_rework_and_marks_done(tmp_path, monkeypa
     assert rework.calls[0][0].feature_id == "needs-gate"
     assert rework.calls[0][1] is gate_result
     assert _read_lanes(lanes_path)[0]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_rework_loop_success_runs_review_before_merge(tmp_path, monkeypatch):
+    from master_loop import MasterLoop
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "gate-rework-reviewed",
+                "task_type": "execute",
+                "prompt": "implement",
+                "worktree": str(tmp_path),
+            }
+        ],
+    )
+
+    async def fake_exec(*args, **kwargs):
+        return FakeProcess("[]")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    final_gate = FakeGateResult(True, [], gate_report={"round": "final"})
+    review_gate = FakeReviewGate([FakeReviewVerdict(True, summary="ok")])
+    loop = MasterLoop(
+        lanes_path=lanes_path,
+        consumer=FakeConsumer(["done"]),
+        quality_gate=FakeGate([FakeGateResult(False, ["pytest failed"])]),
+        rework_loop=FakeReworkLoop(FakeLaneResult("done", final_gate_result=final_gate)),
+        review_gate=review_gate,
+        max_hours=1,
+        max_concurrent=1,
+        discovery_enabled=False,
+    )
+
+    summary = await loop.run()
+
+    lanes = _read_lanes(lanes_path)
+    assert summary.successful_lanes == 1
+    assert lanes[0]["status"] == "done"
+    assert lanes[0]["gate_report"] == {"round": "final"}
+    assert lanes[0]["review_verdict"]["approved"] is True
+    assert '"round": "final"' in review_gate.calls[0]["gate_context"]
 
 
 @pytest.mark.asyncio
@@ -413,7 +570,10 @@ async def test_shutdown_finishes_current_lane_without_starting_more(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_twelve_successful_lanes_enqueue_full_quality_gate(tmp_path, monkeypatch):
+async def test_twenty_successful_lanes_enqueue_profiled_full_quality_gate(
+    tmp_path,
+    monkeypatch,
+):
     from master_loop import FULL_QUALITY_GATE_TASK_TYPE, MasterLoop
 
     lanes_path = tmp_path / "feature_lanes.json"
@@ -427,7 +587,7 @@ async def test_twelve_successful_lanes_enqueue_full_quality_gate(tmp_path, monke
                 "worktree": str(tmp_path),
                 "capabilities": ["code"],
             }
-            for idx in range(12)
+            for idx in range(20)
         ],
     )
 
@@ -435,7 +595,7 @@ async def test_twelve_successful_lanes_enqueue_full_quality_gate(tmp_path, monke
         return FakeProcess("pytest ok")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    consumer = FakeConsumer(["done"] * 12)
+    consumer = FakeConsumer(["done"] * 20)
     gate = FakeGate([FakeGateResult(True, [])])
     rework = FakeReworkLoop(FakeLaneResult("done"))
     loop = MasterLoop(
@@ -454,15 +614,335 @@ async def test_twelve_successful_lanes_enqueue_full_quality_gate(tmp_path, monke
     full_gate_lanes = [
         lane for lane in lanes if lane.get("task_type") == FULL_QUALITY_GATE_TASK_TYPE
     ]
-    assert summary.successful_lanes == 13
+    assert summary.successful_lanes == 21
     assert len(full_gate_lanes) == 1
     assert full_gate_lanes[0]["status"] == "done"
     assert full_gate_lanes[0]["priority"] == 100
     assert full_gate_lanes[0]["worktree"] == "."
-    assert full_gate_lanes[0]["batch_lane_ids"] == [f"lane-{idx}" for idx in range(12)]
+    assert full_gate_lanes[0]["gate_profiles"] == ["strict-product"]
+    assert full_gate_lanes[0]["batch_lane_ids"] == [f"lane-{idx}" for idx in range(20)]
     assert [task.feature_id for task in consumer.dispatched] == [
-        f"lane-{idx}" for idx in range(12)
+        f"lane-{idx}" for idx in range(20)
     ]
+
+
+@pytest.mark.asyncio
+async def test_nineteen_successful_lanes_do_not_enqueue_full_quality_gate(tmp_path):
+    from master_loop import FULL_QUALITY_GATE_TASK_TYPE, MasterLoop
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": f"lane-{idx}",
+                "task_type": "execute",
+                "prompt": "fix",
+                "worktree": str(tmp_path),
+                "capabilities": ["code"],
+            }
+            for idx in range(19)
+        ],
+    )
+    loop = MasterLoop(
+        lanes_path=lanes_path,
+        consumer=FakeConsumer(["done"] * 19),
+        quality_gate=FakeGate([FakeGateResult(True, [])]),
+        rework_loop=FakeReworkLoop(FakeLaneResult("done")),
+        max_hours=1,
+        max_concurrent=4,
+        discovery_enabled=False,
+    )
+
+    await loop.run()
+
+    assert [
+        lane
+        for lane in _read_lanes(lanes_path)
+        if lane.get("task_type") == FULL_QUALITY_GATE_TASK_TYPE
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_historical_nonblocking_gate_warning_does_not_fail_or_repair(tmp_path):
+    from master_loop import MasterLoop
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "historical-lane",
+                "task_type": "execute",
+                "prompt": "touch historical diagnostics",
+                "worktree": str(tmp_path),
+                "gate_profiles": ["historical"],
+            }
+        ],
+    )
+    gate_result = FakeGateResult(
+        True,
+        [],
+        gate_report={
+            "profile_ids": ["historical"],
+            "passed": True,
+            "blocking_passed": True,
+            "nonblocking_failures": ["historical"],
+        },
+        gate_warnings=["nonblocking profile failed: historical"],
+    )
+    gate = FakeGate([gate_result])
+    loop = MasterLoop(
+        lanes_path=lanes_path,
+        consumer=FakeConsumer(["done"]),
+        quality_gate=gate,
+        rework_loop=FakeReworkLoop(FakeLaneResult("done")),
+        max_hours=1,
+        max_concurrent=1,
+        discovery_enabled=False,
+    )
+
+    summary = await loop.run()
+
+    lanes = _read_lanes(lanes_path)
+    assert summary.failed_lanes == 0
+    assert lanes[0]["status"] == "done"
+    assert lanes[0]["gate_report"]["profile_ids"] == ["historical"]
+    assert lanes[0]["gate_warnings"] == ["nonblocking profile failed: historical"]
+    assert not any(
+        lane["feature_id"].startswith("full-quality-gate-repair-") for lane in lanes
+    )
+    assert loop.rework_loop.calls == []
+
+
+@pytest.mark.asyncio
+async def test_review_gate_runs_before_merge_and_records_verdict(tmp_path):
+    from master_loop import MasterLoop
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "reviewed-lane",
+                "task_type": "execute",
+                "prompt": "implement",
+                "worktree": str(tmp_path),
+            }
+        ],
+    )
+    gate_result = FakeGateResult(
+        True,
+        [],
+        gate_report={"profile_ids": ["xmuse"], "passed": True},
+    )
+    review_gate = FakeReviewGate(
+        [FakeReviewVerdict(True, summary="ok", self_modification=True)]
+    )
+    loop = MasterLoop(
+        lanes_path=lanes_path,
+        consumer=FakeConsumer(["done"]),
+        quality_gate=FakeGate([gate_result]),
+        rework_loop=FakeReworkLoop(FakeLaneResult("done")),
+        review_gate=review_gate,
+        max_hours=1,
+        discovery_enabled=False,
+    )
+
+    summary = await loop.run()
+
+    lanes = _read_lanes(lanes_path)
+    assert summary.successful_lanes == 1
+    assert lanes[0]["status"] == "done"
+    assert lanes[0]["review_verdict"]["approved"] is True
+    assert lanes[0]["review_verdict"]["summary"] == "ok"
+    assert lanes[0]["review_verdict"]["self_modification"] is True
+    assert '"profile_ids": ["xmuse"]' in review_gate.calls[0]["gate_context"]
+
+
+@pytest.mark.asyncio
+async def test_review_gate_rejection_dispatches_rework_then_merges(tmp_path):
+    from master_loop import MasterLoop
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "needs-review-rework",
+                "task_type": "execute",
+                "prompt": "original task",
+                "worktree": str(tmp_path),
+            }
+        ],
+    )
+    review_gate = FakeReviewGate(
+        [
+            FakeReviewVerdict(False, ["missing edge case"], "reject", 0.8),
+            FakeReviewVerdict(True, summary="fixed"),
+        ]
+    )
+    loop = MasterLoop(
+        lanes_path=lanes_path,
+        consumer=FakeConsumer(["done", "done"]),
+        quality_gate=FakeGate(
+            [
+                FakeGateResult(True, [], gate_report={"round": 1}),
+                FakeGateResult(True, [], gate_report={"round": 2}),
+            ]
+        ),
+        rework_loop=FakeReworkLoop(FakeLaneResult("done")),
+        review_gate=review_gate,
+        max_hours=1,
+        discovery_enabled=False,
+    )
+
+    summary = await loop.run()
+
+    lanes = _read_lanes(lanes_path)
+    assert summary.successful_lanes == 1
+    assert lanes[0]["status"] == "done"
+    assert lanes[0]["review_verdict"]["approved"] is True
+    assert lanes[0]["review_verdict"]["summary"] == "fixed"
+    assert lanes[0]["gate_report"] == {"round": 2}
+    assert [task.task_type for task in loop.consumer.dispatched] == ["execute", "rework"]
+    rework_prompt = loop.consumer.dispatched[1].prompt
+    assert "## Original Task\noriginal task" in rework_prompt
+    assert "## Current Diff" in rework_prompt
+    assert "- missing edge case" in rework_prompt
+    assert len(review_gate.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_review_gate_rework_dispatch_failure_marks_failed(tmp_path):
+    from master_loop import MasterLoop
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "review-rework-fails",
+                "task_type": "execute",
+                "prompt": "original task",
+                "worktree": str(tmp_path),
+            }
+        ],
+    )
+    loop = MasterLoop(
+        lanes_path=lanes_path,
+        consumer=FakeConsumer(["done", "failed"]),
+        quality_gate=FakeGate([FakeGateResult(True, [])]),
+        rework_loop=FakeReworkLoop(FakeLaneResult("done")),
+        review_gate=FakeReviewGate(
+            [FakeReviewVerdict(False, ["still broken"], "reject")]
+        ),
+        max_hours=1,
+        discovery_enabled=False,
+    )
+
+    summary = await loop.run()
+
+    assert summary.failed_lanes == 1
+    assert _read_lanes(lanes_path)[0]["status"] == "failed"
+    assert [task.task_type for task in loop.consumer.dispatched] == ["execute", "rework"]
+
+
+@pytest.mark.asyncio
+async def test_review_gate_exception_degrades_to_recorded_auto_approval(tmp_path):
+    from master_loop import MasterLoop
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "review-provider-down",
+                "task_type": "execute",
+                "prompt": "original task",
+                "worktree": str(tmp_path),
+            }
+        ],
+    )
+    loop = MasterLoop(
+        lanes_path=lanes_path,
+        consumer=FakeConsumer(["done"]),
+        quality_gate=FakeGate([FakeGateResult(True, [])]),
+        rework_loop=FakeReworkLoop(FakeLaneResult("done")),
+        review_gate=FailingReviewGate(TimeoutError("provider down")),
+        max_hours=1,
+        discovery_enabled=False,
+    )
+
+    summary = await loop.run()
+
+    verdict = _read_lanes(lanes_path)[0]["review_verdict"]
+    assert summary.successful_lanes == 1
+    assert verdict["approved"] is True
+    assert verdict["confidence"] == 0.0
+    assert verdict["summary"] == "review gate unavailable, auto-approved"
+
+
+@pytest.mark.asyncio
+async def test_review_gate_rejects_twice_marks_failed(tmp_path):
+    from master_loop import MasterLoop
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "review-rejects-twice",
+                "task_type": "execute",
+                "prompt": "original task",
+                "worktree": str(tmp_path),
+            }
+        ],
+    )
+    review_gate = FakeReviewGate(
+        [
+            FakeReviewVerdict(False, ["first issue"], "first reject"),
+            FakeReviewVerdict(False, ["second issue"], "second reject"),
+        ]
+    )
+    loop = MasterLoop(
+        lanes_path=lanes_path,
+        consumer=FakeConsumer(["done", "done"]),
+        quality_gate=FakeGate(
+            [FakeGateResult(True, []), FakeGateResult(True, [])]
+        ),
+        rework_loop=FakeReworkLoop(FakeLaneResult("done")),
+        review_gate=review_gate,
+        max_hours=1,
+        discovery_enabled=False,
+    )
+
+    summary = await loop.run()
+
+    lanes = _read_lanes(lanes_path)
+    assert summary.failed_lanes == 1
+    assert lanes[0]["status"] == "failed"
+    assert lanes[0]["review_verdict"]["summary"] == "second reject"
+    assert len(review_gate.calls) == 2
+
+
+def test_master_loop_from_defaults_enables_profile_gate(monkeypatch, tmp_path):
+    import master_loop
+    from master_loop import DEFAULT_GATE_PROFILES_PATH, MasterLoop
+
+    import xmuse_core.agents.rework_loop as rework_loop_module
+
+    monkeypatch.setattr(master_loop.AgentRegistry, "from_file", lambda path: object())
+    monkeypatch.setattr(master_loop, "MemoryOSClient", lambda base_url: object())
+    monkeypatch.setattr(master_loop, "SessionManager", lambda **kwargs: object())
+    monkeypatch.setattr(master_loop, "WorklistConsumer", lambda **kwargs: object())
+    monkeypatch.setattr(master_loop, "ErrorKnowledge", lambda: object())
+    monkeypatch.setattr(rework_loop_module, "ReworkLoop", lambda error_knowledge: object())
+
+    loop = MasterLoop.from_defaults(lanes_path=tmp_path / "feature_lanes.json")
+
+    assert loop.quality_gate.profile_config_path == DEFAULT_GATE_PROFILES_PATH
+    assert loop.quality_gate.repo_root == master_loop.ROOT
 
 
 @pytest.mark.asyncio
@@ -565,7 +1045,7 @@ async def test_does_not_enqueue_full_gate_when_repair_is_already_active(tmp_path
 async def test_failed_full_quality_gate_generates_priority_repair_lane(
     tmp_path, monkeypatch
 ):
-    from master_loop import FULL_QUALITY_GATE_COMMAND, MasterLoop, load_lanes
+    from master_loop import MasterLoop, load_lanes
 
     lanes_path = tmp_path / "feature_lanes.json"
     _write_lanes(
@@ -583,17 +1063,11 @@ async def test_failed_full_quality_gate_generates_priority_repair_lane(
             }
         ],
     )
-    calls: list[tuple[tuple[str, ...], Path]] = []
-
-    async def fake_exec(*args, **kwargs):
-        calls.append((args, kwargs["cwd"]))
-        return FakeProcess("failed test output", returncode=1)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", lambda *args, **kwargs: None)
     loop = MasterLoop(
         lanes_path=lanes_path,
         consumer=None,
-        quality_gate=FakeGate(),
+        quality_gate=FakeGate([FakeGateResult(False, ["failed test output"])]),
         rework_loop=FakeReworkLoop(FakeLaneResult("done")),
         max_hours=1,
         discovery_enabled=False,
@@ -604,13 +1078,13 @@ async def test_failed_full_quality_gate_generates_priority_repair_lane(
     lanes = _read_lanes(lanes_path)
     repair = lanes[1]
     assert status == "failed"
-    assert calls == [(FULL_QUALITY_GATE_COMMAND, Path(__file__).resolve().parent.parent)]
     assert lanes[0]["status"] == "failed"
     assert repair["feature_id"] == "full-quality-gate-repair-full-quality-gate-abc"
     assert repair["priority"] == 110
     assert repair["source"] == "full_quality_gate"
+    assert repair["gate_profiles"] == ["strict-product"]
     assert "failed test output" in repair["prompt"]
-    assert "test_memoryos_baseline_preserves_required_sources" in repair["prompt"]
+    assert "Profile: strict-product" in repair["prompt"]
     assert repair["batch_lane_ids"] == ["lane-a", "lane-b"]
 
 
@@ -647,14 +1121,11 @@ async def test_failed_full_quality_gate_discards_queued_full_gate_before_repair(
         ],
     )
 
-    async def fake_exec(*args, **kwargs):
-        return FakeProcess("failed test output", returncode=1)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", lambda *args, **kwargs: None)
     loop = MasterLoop(
         lanes_path=lanes_path,
         consumer=None,
-        quality_gate=FakeGate(),
+        quality_gate=FakeGate([FakeGateResult(False, ["failed test output"])]),
         rework_loop=FakeReworkLoop(FakeLaneResult("done")),
         max_hours=1,
         discovery_enabled=False,

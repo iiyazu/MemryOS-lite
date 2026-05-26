@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -145,3 +146,173 @@ async def test_quality_gate_reports_diff_command_failure(monkeypatch, tmp_path: 
         "targeted_pytest": True,
     }
     assert result.errors == ["diff_sanity failed (exit 128)\nfatal: bad revision 'HEAD~1'"]
+
+
+def _quality_gate_config_dict() -> dict:
+    return {
+        "schema_version": 1,
+        "defaults": {
+            "full_gate_profile": "strict-product",
+            "full_gate_interval": 20,
+            "unknown_diff_policy": "strict-product",
+            "unclassified_test_policy": "fail",
+        },
+        "command_catalog": {
+            "pytest": {
+                "argv": ["uv", "run", "pytest"],
+                "cwd": ".",
+                "timeout_s": 0,
+                "allow_extra_args": True,
+            }
+        },
+        "profiles": {
+            "strict-product": {
+                "description": "Current product",
+                "blocking": True,
+                "env": {
+                    "MEMORYOS_MEMORY_ARCH": "v3",
+                    "MEMORYOS_RECALL_PIPELINE": "v2",
+                    "MEMORYOS_PAGING_MODE": "off",
+                    "MEMORYOS_AGENT_KERNEL": "off",
+                },
+                "commands": [
+                    {"command": "pytest", "args": ["-q", "tests/test_v3_path.py"]}
+                ],
+                "diff_selectors": ["src/memoryos_lite/**"],
+                "test_files": ["tests/test_v3_path.py"],
+                "test_nodeids": [],
+                "test_markers": [],
+                "mixed_test_files": [],
+            }
+        },
+    }
+
+
+def _write_quality_gate_config(path: Path) -> None:
+    path.write_text(json.dumps(_quality_gate_config_dict(), indent=2), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_uses_profile_runner_when_configured(tmp_path):
+    from xmuse_core.gates.loader import load_gate_config
+    from xmuse_core.gates.models import GateReport
+
+    config_path = tmp_path / "gate_profiles.json"
+    _write_quality_gate_config(config_path)
+    reports: list[GateReport] = []
+
+    class FakeRunner:
+        async def run(self, plan):
+            report = GateReport(
+                feature_id=plan.feature_id,
+                passed=True,
+                blocking_passed=True,
+                nonblocking_failures=[],
+                profile_ids=plan.profiles,
+                resolution_reasons=plan.resolution_reasons,
+                command_results=[],
+                artifact_dir=tmp_path / "logs",
+                warnings=[],
+            )
+            reports.append(report)
+            return report
+
+    gate = QualityGate(profile_config_path=config_path, repo_root=tmp_path)
+    gate._profile_config = load_gate_config(config_path, repo_root=tmp_path)
+    gate._runner = FakeRunner()
+
+    result = await gate.check(
+        tmp_path,
+        feature_id="lane-a",
+        gate_profiles=["strict-product"],
+        changed_paths=["src/memoryos_lite/config.py"],
+        base_head_sha="abc123",
+    )
+
+    assert result.passed is True
+    assert result.checks["gate_profiles"] is True
+    assert reports[0].profile_ids == ["strict-product"]
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_changed_paths_uses_base_head_sha(tmp_path, monkeypatch):
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run(worktree, *cmd):
+        calls.append(cmd)
+        return type(
+            "Result",
+            (),
+            {"returncode": 0, "stdout": "src/memoryos_lite/config.py\n"},
+        )()
+
+    gate = QualityGate()
+    monkeypatch.setattr(gate, "_run", fake_run)
+
+    changed, warnings = await gate._changed_paths(tmp_path, base_head_sha="abc123")
+
+    assert changed == ["src/memoryos_lite/config.py"]
+    assert warnings == []
+    assert calls == [("git", "diff", "--name-only", "abc123...HEAD")]
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_changed_paths_uses_merge_base_for_legacy_lane(
+    tmp_path,
+    monkeypatch,
+):
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run(worktree, *cmd):
+        calls.append(cmd)
+        if cmd[:3] == ("git", "merge-base", "HEAD"):
+            return type("Result", (), {"returncode": 0, "stdout": "merge-base-sha\n"})()
+        return type(
+            "Result",
+            (),
+            {"returncode": 0, "stdout": "xmuse/master_loop.py\n"},
+        )()
+
+    gate = QualityGate()
+    monkeypatch.setattr(gate, "_run", fake_run)
+
+    changed, warnings = await gate._changed_paths(tmp_path, base_head_sha=None)
+
+    assert changed == ["xmuse/master_loop.py"]
+    assert warnings == ["legacy_diff_base_inferred"]
+    assert calls[-1] == ("git", "diff", "--name-only", "merge-base-sha...HEAD")
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_fails_closed_when_profile_diff_collection_fails(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "gate_profiles.json"
+    _write_quality_gate_config(config_path)
+
+    async def fake_run(worktree, *cmd):
+        return type(
+            "Result",
+            (),
+            {
+                "returncode": 128,
+                "stdout": "",
+                "stderr": "fatal: bad revision\n",
+                "output": "fatal: bad revision",
+            },
+        )()
+
+    gate = QualityGate(profile_config_path=config_path, repo_root=tmp_path)
+    monkeypatch.setattr(gate, "_run", fake_run)
+
+    result = await gate.check(
+        tmp_path,
+        feature_id="lane-a",
+        gate_profiles=["historical"],
+        base_head_sha="bad-base",
+    )
+
+    assert result.passed is False
+    assert result.checks == {"gate_profiles": False}
+    assert "diff_collection_failed" in result.errors[0]

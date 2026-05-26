@@ -15,6 +15,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Protocol
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -168,10 +169,6 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
             mutated = True
 
         base_head_sha = lane.get("base_head_sha")
-        if task_type != FULL_QUALITY_GATE_TASK_TYPE and not isinstance(base_head_sha, str):
-            base_head_sha = _root_head_sha()
-            lane["base_head_sha"] = base_head_sha
-            mutated = True
 
         tasks.append(
             (
@@ -218,6 +215,16 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
 
 def update_lane_status(lanes_path: Path, feature_id: str, status: str) -> None:
     """Write lane status back to feature_lanes.json (with file lock)."""
+    _update_lane_fields(lanes_path, feature_id, {"status": status})
+    logger.info("Lane %s -> %s", feature_id, status)
+
+
+def _update_lane_fields(
+    lanes_path: Path,
+    feature_id: str,
+    fields: dict[str, Any],
+) -> None:
+    """Update a lane atomically under the same lock as status writes."""
     import fcntl
 
     lanes_path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,14 +234,13 @@ def update_lane_status(lanes_path: Path, feature_id: str, status: str) -> None:
             data = json.loads(f.read())
             for lane in data.get("lanes", []):
                 if lane["feature_id"] == feature_id:
-                    lane["status"] = status
+                    lane.update(fields)
                     break
             f.seek(0)
             f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
             f.truncate()
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
-    logger.info("Lane %s -> %s", feature_id, status)
 
 
 class GateResultLike(Protocol):
@@ -300,6 +306,7 @@ class MasterLoop:
         consumer: ConsumerLike | None,
         quality_gate: QualityGateLike,
         rework_loop: ReworkLoopLike,
+        review_gate: Any | None = None,
         error_knowledge: ErrorKnowledgeLike | None = None,
         max_hours: float = 10.0,
         max_concurrent: int = 2,
@@ -313,6 +320,7 @@ class MasterLoop:
         self.consumer = consumer
         self.quality_gate = quality_gate
         self.rework_loop = rework_loop
+        self.review_gate = review_gate
         self.error_knowledge = error_knowledge
         self.max_hours = max_hours
         self.max_concurrent = max(1, max_concurrent)
@@ -362,11 +370,29 @@ class MasterLoop:
                 repo_root=ROOT,
             ),
             rework_loop=ReworkLoop(error_knowledge=error_knowledge),
+            review_gate=cls._build_review_gate(),
             error_knowledge=error_knowledge,
             max_hours=max_hours,
             max_concurrent=max_concurrent,
             discovery_enabled=discovery_enabled,
             gate_profiles_path=DEFAULT_GATE_PROFILES_PATH,
+        )
+
+    @staticmethod
+    def _build_review_gate() -> Any:
+        import os
+
+        api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get(
+            "MEMORYOS_CHAT_API_KEY"
+        )
+        if not api_key:
+            return None
+        from xmuse_core.gates.review_gate import LLMReviewGate
+
+        return LLMReviewGate(
+            api_key=api_key,
+            base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+            model=os.environ.get("MEMORYOS_CHAT_MODEL", "deepseek-chat"),
         )
 
     async def run(self) -> MasterLoopSummary:
@@ -554,6 +580,9 @@ class MasterLoop:
         )
         self._record_gate_report(task.feature_id, gate_result)
         if gate_result.passed:
+            if not await self._review_lane_before_merge(task, gate_result):
+                self._update_lane_status(task.feature_id, "failed")
+                return "failed"
             merged = await self._auto_merge_worktree(task)
             self._update_lane_status(task.feature_id, "done" if merged else "merge_failed")
             return "done" if merged else "failed"
@@ -584,6 +613,15 @@ class MasterLoop:
         )
         status = "done" if lane_result.status == "done" else "failed"
         if status == "done":
+            final_gate_result = getattr(lane_result, "final_gate_result", None)
+            if final_gate_result is not None:
+                self._record_gate_report(task.feature_id, final_gate_result)
+            else:
+                final_gate_result = gate_result
+            if not await self._review_lane_before_merge(task, final_gate_result):
+                status = "failed"
+                self._update_lane_status(task.feature_id, status)
+                return "failed"
             merged = await self._auto_merge_worktree(task)
             if not merged:
                 status = "merge_failed"
@@ -600,16 +638,12 @@ class MasterLoop:
         warnings = getattr(result, "gate_warnings", None) or []
         if report is None and not warnings:
             return
-        data = json.loads(self.lanes_path.read_text(encoding="utf-8"))
-        for lane in data.get("lanes", []):
-            if lane.get("feature_id") != feature_id:
-                continue
-            if report is not None:
-                lane["gate_report"] = report
-            if warnings:
-                lane["gate_warnings"] = list(warnings)
-            break
-        _write_json_atomic(self.lanes_path, data)
+        fields: dict[str, Any] = {}
+        if report is not None:
+            fields["gate_report"] = report
+        if warnings:
+            fields["gate_warnings"] = list(warnings)
+        _update_lane_fields(self.lanes_path, feature_id, fields)
 
     async def _run_full_quality_gate_lane(self, task: TaskDescriptor) -> str:
         self._update_lane_status(task.feature_id, "running")
@@ -885,6 +919,7 @@ class MasterLoop:
                         "strict-product gate profile."
                     ),
                     "capabilities": ["code", "test"],
+                    "gate_profiles": ["strict-product"],
                     "depends_on": [],
                     "source": "full_quality_gate",
                     "priority": FULL_QUALITY_GATE_REPAIR_PRIORITY,
@@ -951,10 +986,183 @@ class MasterLoop:
             return self.consumer._session_mgr
         return None
 
+    async def _review_lane_before_merge(
+        self,
+        task: TaskDescriptor,
+        gate_result: GateResultLike,
+    ) -> bool:
+        review_verdict = await self._run_review_gate(task, gate_result)
+        if review_verdict is None:
+            return True
+        self._record_review_verdict(task.feature_id, review_verdict)
+        if review_verdict.approved:
+            return True
+
+        logger.info(
+            "Review gate rejected %s: %s",
+            task.feature_id,
+            review_verdict.summary,
+        )
+        if self.consumer is None:
+            return False
+
+        rework_task = self._build_review_rework_task(task, review_verdict)
+        rework_status = await self.consumer.dispatch_task(rework_task)
+        if rework_status != "done":
+            return False
+
+        second_gate = await self._check_quality_gate(
+            self.quality_gate,
+            Path(task.worktree),
+            feature_id=task.feature_id,
+            gate_profile=task.gate_profile,
+            gate_profiles=task.gate_profiles,
+            base_head_sha=task.base_head_sha,
+        )
+        self._record_gate_report(task.feature_id, second_gate)
+        if not second_gate.passed:
+            return False
+
+        second_verdict = await self._run_review_gate(task, second_gate)
+        if second_verdict is None:
+            return True
+        self._record_review_verdict(task.feature_id, second_verdict)
+        if second_verdict.approved:
+            return True
+
+        logger.warning(
+            "Review gate rejected %s twice, marking failed",
+            task.feature_id,
+        )
+        return False
+
+    def _build_review_rework_task(
+        self,
+        task: TaskDescriptor,
+        review_verdict: Any,
+    ) -> TaskDescriptor:
+        concerns = "\n".join(f"- {c}" for c in review_verdict.concerns)
+        rework_prompt = (
+            "Code review rejected this implementation.\n\n"
+            f"## Concerns\n{concerns}\n\n"
+            f"## Summary\n{review_verdict.summary}\n\n"
+            "Fix these concerns. Do NOT start from scratch."
+        )
+        enriched = self._inject_error_knowledge_text(rework_prompt)
+        diff_ctx = self._get_worktree_diff(task.worktree, task.base_head_sha)
+        full_rework = (
+            f"## Original Task\n{task.prompt[:2000]}\n\n"
+            f"## Current Diff\n{diff_ctx[:3000]}\n\n"
+            f"## Why Rejected\n{enriched}"
+        )
+        return TaskDescriptor(
+            feature_id=task.feature_id,
+            task_type="rework",
+            prompt=full_rework,
+            worktree=str(task.worktree),
+            required_capabilities=task.required_capabilities,
+            developed_by_runtime=task.developed_by_runtime,
+            priority=task.priority,
+            gate_profile=task.gate_profile,
+            gate_profiles=task.gate_profiles,
+            lane_metadata=task.lane_metadata,
+            base_head_sha=task.base_head_sha,
+        )
+
+    async def _run_review_gate(
+        self,
+        task: TaskDescriptor,
+        gate_result: GateResultLike | None = None,
+    ) -> Any:
+        if self.review_gate is None:
+            return None
+        try:
+            kwargs = {
+                "feature_id": task.feature_id,
+                "worktree": Path(task.worktree),
+                "original_prompt": task.prompt,
+                "base_ref": task.base_head_sha,
+            }
+            if self._review_accepts_gate_context():
+                kwargs["gate_context"] = self._format_gate_context(gate_result)
+            review = self.review_gate.review(**kwargs)
+            if inspect.isawaitable(review):
+                return await review
+            return review
+        except Exception as exc:
+            logger.exception("review gate failed for %s", task.feature_id)
+            return SimpleNamespace(
+                approved=True,
+                concerns=[f"review_gate_exception: {exc!s}"[:500]],
+                summary="review gate unavailable, auto-approved",
+                confidence=0.0,
+                self_modification=False,
+            )
+
+    def _review_accepts_gate_context(self) -> bool:
+        try:
+            signature = inspect.signature(self.review_gate.review)
+        except (TypeError, ValueError):
+            return True
+        parameters = signature.parameters
+        return "gate_context" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
+    def _format_gate_context(self, gate_result: GateResultLike | None) -> str:
+        if gate_result is None:
+            return ""
+        context = {
+            "passed": bool(getattr(gate_result, "passed", False)),
+            "errors": list(getattr(gate_result, "errors", []))[:5],
+            "gate_report": getattr(gate_result, "gate_report", None),
+            "gate_warnings": list(getattr(gate_result, "gate_warnings", []) or [])[:5],
+        }
+        return json.dumps(context, ensure_ascii=False, default=str)[:2000]
+
+    def _record_review_verdict(self, feature_id: str, verdict: Any) -> None:
+        _update_lane_fields(
+            self.lanes_path,
+            feature_id,
+            {
+                "review_verdict": {
+                    "approved": bool(getattr(verdict, "approved", False)),
+                    "concerns": list(getattr(verdict, "concerns", [])),
+                    "summary": str(getattr(verdict, "summary", "")),
+                    "confidence": float(getattr(verdict, "confidence", 0.0)),
+                    "self_modification": bool(
+                        getattr(verdict, "self_modification", False)
+                    ),
+                }
+            },
+        )
+
+    def _get_worktree_diff(self, worktree: str | Path, base_ref: str | None) -> str:
+        wt_path = Path(worktree)
+        ref = base_ref or "HEAD~1"
+        stat = subprocess.run(
+            ["git", "diff", "--stat", ref],
+            capture_output=True,
+            text=True,
+            cwd=wt_path,
+        )
+        diff = subprocess.run(
+            ["git", "diff", ref],
+            capture_output=True,
+            text=True,
+            cwd=wt_path,
+        )
+        stat_text = stat.stdout[:500] if stat.returncode == 0 else ""
+        diff_text = diff.stdout[:3000] if diff.returncode == 0 else ""
+        return f"{stat_text}\n\n{diff_text}".strip()
+
     async def _auto_merge_worktree(self, task: TaskDescriptor) -> bool:
         """Merge worktree branch back to current branch after successful gate."""
         wt_path = Path(task.worktree)
         if not wt_path.exists() or str(wt_path) == ".":
+            return True
+        if not (wt_path / ".git").exists():
             return True
         branch = task.feature_id
         proc = await asyncio.create_subprocess_exec(
@@ -972,6 +1180,17 @@ class MasterLoop:
         )
         stdout, _ = await proc.communicate()
         if not stdout.decode().strip():
+            dirty_proc = await asyncio.create_subprocess_exec(
+                "git", "-C", str(wt_path), "status", "--porcelain",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            dirty_stdout, _ = await dirty_proc.communicate()
+            if dirty_stdout.decode().strip():
+                logger.warning(
+                    "Refusing auto-merge for %s: worktree has uncommitted changes",
+                    branch,
+                )
+                return False
             logger.info("No new commits on %s to merge", branch)
             return True
 

@@ -20,6 +20,10 @@ class TaskDescriptor:
     required_capabilities: list[str] = field(default_factory=lambda: ["code"])
     developed_by_runtime: AgentRuntime | None = None
     priority: int = 0
+    gate_profile: str | None = None
+    gate_profiles: list[str] = field(default_factory=list)
+    lane_metadata: dict[str, object] = field(default_factory=dict)
+    base_head_sha: str | None = None
 
 
 class WorklistConsumer:
