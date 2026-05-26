@@ -191,6 +191,7 @@ class MasterLoop:
         self.python_executable = python_executable
         self._monotonic = monotonic
         self._shutdown_requested = asyncio.Event()
+        self._merge_lock = asyncio.Lock()
 
     @classmethod
     def from_defaults(
