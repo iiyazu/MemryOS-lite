@@ -83,6 +83,26 @@ class WorklistConsumer:
                         task.feature_id,
                     )
 
+    async def dispatch_task(self, task: TaskDescriptor) -> str:
+        """Public dispatch: run a single task and return status ('done'|'failed')."""
+        status = "failed"
+        try:
+            async with self._semaphore:
+                agent = self._registry.select(
+                    task.required_capabilities,
+                    exclude_runtime=task.developed_by_runtime,
+                )
+                result = await self._session_mgr.dispatch_one_shot(
+                    agent=agent,
+                    feature_id=task.feature_id,
+                    prompt=task.prompt,
+                    worktree=Path(task.worktree),
+                )
+                status = "done" if result and result.status == "success" else "failed"
+        except Exception:
+            logger.exception("dispatch_task failed for feature_id=%s", task.feature_id)
+        return status
+
     async def drain(self) -> None:
         while self._in_flight:
             await asyncio.gather(*self._in_flight)
