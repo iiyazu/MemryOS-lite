@@ -1067,19 +1067,6 @@
       ]
     },
     {
-      "feature_id": "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-54-arg-type",
-      "task_type": "execute",
-      "prompt": "Fix mypy type error in src/memoryos_lite/retrieval/query_rewriter.py:54.\n\nExact error message:\nsrc/memoryos_lite/retrieval/query_rewriter.py:54: error: Argument 5 to \"ChatOpenAI\" has incompatible type \"**dict[str, str]\"; expected \"BaseCache | bool | None\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "source": "auto",
-      "priority": 80,
-      "status": "failed",
-      "depends_on": []
-    },
-    {
       "feature_id": "god-gateway-core",
       "task_type": "execute",
       "prompt": "Implement the God Gateway core service in xmuse/god_gateway/.\n\nRequirements:\n1. Create xmuse/god_gateway/__init__.py, server.py, models.py, store.py\n2. server.py: FastAPI app with WebSocket endpoint /ws for frontend connections\n   - Accept WebSocket connections, track connected clients\n   - Broadcast messages to all connected clients\n   - Receive messages from clients (human chat messages)\n3. models.py: Pydantic models\n   - ChatMessage: id, sender_id, sender_type ('human'|'god'), text, timestamp, actions\n   - GodState: god_id, runtime ('codex'|'claude_code'), role, status ('idle'|'thinking'|'waiting_approval'), capabilities\n   - GodRegistry: list of GodState, methods to get/update\n4. store.py: SQLite message persistence\n   - Create messages table (id, sender_id, sender_type, text, timestamp, thread_id)\n   - insert_message(), get_recent_messages(n=50), search_messages(query)\n5. Add REST endpoints:\n   - GET /api/gods — list all registered Gods with status\n   - POST /api/gods/{id}/wake — manually wake a God\n   - GET /api/messages — recent messages\n   - GET /api/messages/search?q= — search messages\n6. God registry loaded from xmuse/god_registry.json:\n   [{\"god_id\": \"architect\", \"runtime\": \"claude_code\", \"role\": \"Architect\", \"capabilities\": [\"design\", \"review\", \"delegate\"]}]\n7. Create xmuse/god_registry.json with 4 default Gods:\n   - architect (claude_code): design, review, delegate\n   - builder (codex): code, test, implement\n   - reviewer (claude_code): review, quality\n   - ops (codex): monitor, infra, deploy\n8. Add tests in tests/test_god_gateway.py\n9. Startup: uvicorn xmuse.god_gateway.server:app --port 8300\n10. Commit when done.",
@@ -1170,148 +1157,6 @@
       ]
     },
     {
-      "feature_id": "full-quality-gate-a1189cb0-54cc17e233",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "auto-discovery",
-        "quality-gate",
-        "rework-loop",
-        "lane-status-writer",
-        "master-loop",
-        "error-knowledge",
-        "memoryos-dispatch-integration",
-        "error-knowledge-integration",
-        "self-improvement-detection",
-        "mcp-xmuse-server",
-        "memoryos-middleware-enhancement",
-        "skill-plan-execute-review"
-      ],
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
-    },
-    {
-      "feature_id": "full-quality-gate-a1189cb0-d76318115e",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "xmuse-dashboard-api",
-        "xmuse-dashboard-frontend",
-        "auto-discovery-enhanced",
-        "frontend-scaffold",
-        "frontend-app-shell",
-        "frontend-api-layer",
-        "frontend-lanes-page",
-        "frontend-metrics-page",
-        "frontend-errors-page",
-        "frontend-settings-page",
-        "frontend-new-lane-modal",
-        "master-loop-replace-main"
-      ],
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
-    },
-    {
-      "feature_id": "full-quality-gate-a1189cb0-16deb37ce9",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "parallel-dispatch",
-        "gate-rework-integration",
-        "error-knowledge-prompt-injection",
-        "auto-discovery-loop-integration",
-        "auto-mypy-src-memoryos-lite-agent-kernel-py-310-arg-type",
-        "auto-mypy-src-memoryos-lite-api-app-py-199-func-returns-value",
-        "auto-mypy-src-memoryos-lite-api-app-py-207-attr-defined",
-        "auto-mypy-src-memoryos-lite-core-memory-py-309-arg-type",
-        "auto-mypy-src-memoryos-lite-llm-judge-py-82-arg-type",
-        "auto-mypy-src-memoryos-lite-llm-judge-py-84-arg-type",
-        "auto-mypy-src-memoryos-lite-retrieval-providers-qdrant-py-50-arg-type",
-        "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-51-arg-type"
-      ],
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
-    },
-    {
-      "feature_id": "full-quality-gate-a1189cb0-32b2d32615",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "auto-mypy-src-memoryos-lite-retrieval-reranker-py-58-arg-type",
-        "auto-mypy-src-memoryos-lite-retrieval-reranker-py-61-arg-type",
-        "auto-mypy-src-memoryos-lite-v3-contracts-py-505-arg-type",
-        "auto-ruff-src-memoryos-lite-api-app-py-35-1-e402",
-        "auto-ruff-src-memoryos-lite-api-app-py-36-1-e402",
-        "auto-ruff-xmuse-error-knowledge-py-110-29-up012",
-        "auto-ruff-xmuse-hermes-loop-py-2-1-i001",
-        "auto-ruff-xmuse-hermes-loop-py-2-11-e702",
-        "auto-ruff-xmuse-skills-plan-execute-review-py-1-1-i001",
-        "auto-ruff-xmuse-skills-plan-execute-review-py-87-101-e501",
-        "auto-ruff-src-xmuse-core-agents-consumer-py-1-1-i001",
-        "auto-ruff-src-xmuse-core-skills-brainstorm-py-63-101-e501"
-      ],
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8",
-      "discarded_reason": "superseded_full_quality_gate_family",
-      "discarded_by": "full-quality-gate-repair-full-quality-gate-a1189cb0-d76318115e"
-    },
-    {
-      "feature_id": "full-quality-gate-a1189cb0-46c7199c8f",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "auto-ruff-src-xmuse-core-skills-brainstorm-py-11-36-f401",
-        "auto-ruff-src-xmuse-core-skills-pipeline-py-105-45-e741",
-        "auto-ruff-src-xmuse-core-skills-pipeline-py-8-20-f401",
-        "auto-ruff-src-xmuse-core-skills-registry-py-14-101-e501",
-        "auto-ruff-src-xmuse-core-skills-review-gate-py-11-36-f401",
-        "auto-ruff-src-xmuse-core-skills-review-gate-py-77-101-e501",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-117-33-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-129-42-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-154-42-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-176-43-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-177-53-e741",
-        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741"
-      ],
-      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
-    },
-    {
       "feature_id": "kernel-batch-loop",
       "task_type": "execute",
       "status": "pending",
@@ -1345,7 +1190,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "running",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -1358,7 +1203,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "running",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -1384,7 +1229,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "running",
       "depends_on": []
     },
     {
@@ -1397,7 +1242,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "running",
       "depends_on": []
     },
     {
