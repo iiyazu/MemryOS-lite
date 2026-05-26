@@ -655,6 +655,94 @@
       "priority": 60,
       "status": "pending",
       "depends_on": []
+    },
+    {
+      "feature_id": "god-gateway-core",
+      "task_type": "execute",
+      "prompt": "Implement the God Gateway core service in xmuse/god_gateway/.\n\nRequirements:\n1. Create xmuse/god_gateway/__init__.py, server.py, models.py, store.py\n2. server.py: FastAPI app with WebSocket endpoint /ws for frontend connections\n   - Accept WebSocket connections, track connected clients\n   - Broadcast messages to all connected clients\n   - Receive messages from clients (human chat messages)\n3. models.py: Pydantic models\n   - ChatMessage: id, sender_id, sender_type ('human'|'god'), text, timestamp, actions\n   - GodState: god_id, runtime ('codex'|'claude_code'), role, status ('idle'|'thinking'|'waiting_approval'), capabilities\n   - GodRegistry: list of GodState, methods to get/update\n4. store.py: SQLite message persistence\n   - Create messages table (id, sender_id, sender_type, text, timestamp, thread_id)\n   - insert_message(), get_recent_messages(n=50), search_messages(query)\n5. Add REST endpoints:\n   - GET /api/gods — list all registered Gods with status\n   - POST /api/gods/{id}/wake — manually wake a God\n   - GET /api/messages — recent messages\n   - GET /api/messages/search?q= — search messages\n6. God registry loaded from xmuse/god_registry.json:\n   [{\"god_id\": \"architect\", \"runtime\": \"claude_code\", \"role\": \"Architect\", \"capabilities\": [\"design\", \"review\", \"delegate\"]}]\n7. Create xmuse/god_registry.json with 4 default Gods:\n   - architect (claude_code): design, review, delegate\n   - builder (codex): code, test, implement\n   - reviewer (claude_code): review, quality\n   - ops (codex): monitor, infra, deploy\n8. Add tests in tests/test_god_gateway.py\n9. Startup: uvicorn xmuse.god_gateway.server:app --port 8300\n10. Commit when done.",
+      "branch": "feat/god-gateway-core",
+      "capabilities": [
+        "code",
+        "test"
+      ]
+    },
+    {
+      "feature_id": "god-process-spawner",
+      "task_type": "execute",
+      "prompt": "Implement God process spawning and output parsing in xmuse/god_gateway/spawner.py.\n\nRequirements:\n1. Class GodSpawner with async method wake(god: GodState, trigger_message: str, context: str) -> GodOutput\n2. Build prompt for God process:\n   - System section: role definition from god_registry.json + available actions list\n   - Context section: passed in (will be MemoryOS context later)\n   - Chat history: last 20 messages from store\n   - God task state: from god_state/{god_id}.json (if exists)\n   - Trigger: the message that caused this wake\n   - Output instruction: respond with JSON {messages: [...], actions: [...], task_state: {...}}\n3. Spawn process based on runtime:\n   - codex: codex exec -m gpt-5.5 --dangerously-bypass-approvals-and-sandbox < prompt\n   - claude_code: claude -p --output-format json < prompt\n4. Parse output:\n   - Try JSON parse first\n   - If valid: extract messages, actions, task_state\n   - If invalid JSON: treat entire stdout as single chat message\n5. GodOutput dataclass: messages: list[str], actions: list[dict], task_state: dict | None, raw: str\n6. Save task_state to xmuse/god_state/{god_id}.json after each wake\n7. Timeout: 5 minutes per God wake (configurable)\n8. Update GodState.status during lifecycle: idle → thinking → idle\n9. Add tests in tests/test_god_spawner.py (mock subprocess)\n10. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/models.py has GodState, ChatMessage\n- xmuse/god_gateway/store.py has get_recent_messages()\n- God processes are short-lived (exit after one response)",
+      "branch": "feat/god-process-spawner",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-gateway-core"
+      ]
+    },
+    {
+      "feature_id": "god-router-executor",
+      "task_type": "execute",
+      "prompt": "Implement message routing and action execution in xmuse/god_gateway/router.py and executor.py.\n\nRequirements:\n\nrouter.py:\n1. Class MessageRouter with method route(message: ChatMessage) -> str (returns target god_id)\n2. Routing rules:\n   - If message contains @god_id → return that god_id\n   - If no @mention → return 'architect' (default)\n   - If message is a God output containing @another_god → return that god_id\n3. Depth tracking: count consecutive God-to-God hops, max 5\n   - If depth >= 5: don't wake next God, post system message 'Depth limit reached, human input required'\n4. Rate limiting: per-God max 10 wakes/hour\n   - Track wake timestamps per god_id\n   - If limit exceeded: post system message 'Rate limit for {god_id}, cooling down'\n\nexecutor.py:\n1. Class ActionExecutor with async method execute(actions: list[dict], source_god: str)\n2. Actions executed sequentially (prevents conflicts):\n   - dispatch_lane: create lane in feature_lanes.json, log to chat\n   - request_approval: store in approvals queue, broadcast approval card message\n   - mention: route message to target God via router → spawner.wake()\n   - write_decision: call MemoryOS write_page (placeholder for now, just log)\n   - call_tool: wake target God with tool call context\n3. Each action result posted as system message in chat\n4. Add tests for both router and executor\n5. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/spawner.py has GodSpawner.wake()\n- xmuse/god_gateway/store.py has insert_message()\n- xmuse/god_gateway/models.py has ChatMessage, GodState",
+      "branch": "feat/god-router-executor",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-process-spawner"
+      ]
+    },
+    {
+      "feature_id": "god-memoryos-integration",
+      "task_type": "execute",
+      "prompt": "Integrate MemoryOS into the God Gateway for memory relay.\n\nRequirements:\n1. In xmuse/god_gateway/memory.py:\n   - Class GodMemory wrapping MemoryOSClient\n   - Each God has a persistent session: 'god:{god_id}'\n   - on_wake(god_id, trigger): call build_context(session_id, trigger) → return context string\n   - on_exit(god_id, output): call ingest(session_id, 'assistant', output)\n   - write_decision(god_id, title, summary, facts): call write_page\n   - get_task_state(god_id): read from MemoryOS Page 'God-{id}/active_task'\n   - save_task_state(god_id, state): patch MemoryOS Page\n2. Update GodSpawner.wake() to:\n   - Call GodMemory.on_wake() to get context\n   - Include context in prompt\n   - After process exits: call GodMemory.on_exit()\n   - If task_state in output: call GodMemory.save_task_state()\n3. Update ActionExecutor:\n   - write_decision action now calls GodMemory.write_decision()\n4. Verify continuity: God should remember previous conversations across wakes\n5. Add tests mocking MemoryOSClient\n6. Commit when done.\n\nExisting context:\n- src/xmuse_core/agents/memoryos_client.py has MemoryOSClient with create_session, build_context, ingest\n- MemoryOS API on http://127.0.0.1:8000\n- MemoryOS supports: write_page, patch_page, Core Memory Blocks, Archive RAG",
+      "branch": "feat/god-memoryos-integration",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-router-executor"
+      ]
+    },
+    {
+      "feature_id": "god-frontend-chat",
+      "task_type": "execute",
+      "prompt": "Implement the God Group Chat frontend page in xmuse/frontend/ (Next.js).\n\nRequirements:\n1. Create src/app/gods/page.tsx — the group chat page\n2. Add 'Gods' icon to ActivityRail (Users icon from lucide-react)\n3. WebSocket connection to ws://localhost:8300/ws\n4. Components:\n   - src/components/gods/ChatStream.tsx: scrollable message list\n     - God messages: left-aligned, with role avatar (colored circle + initial)\n     - Human messages: right-aligned, purple bubble\n     - System messages: centered, muted text\n     - Approval cards: inline card with description + approve/reject buttons\n   - src/components/gods/GodStatusPanel.tsx: sidebar showing God list with status\n     - Each God: avatar, name, role, status indicator (green=idle, blue=thinking, amber=waiting)\n   - src/components/gods/ChatInput.tsx: bottom input bar\n     - Textarea with @mention autocomplete (shows God list on @)\n     - Send button\n     - On send: POST to WebSocket\n   - src/components/gods/ApprovalCard.tsx: inline approval widget\n     - Description text, approve (green) and reject (red) buttons\n     - On click: send approval decision via WebSocket\n5. Sidebar content for Gods page: GodStatusPanel\n6. Auto-scroll to bottom on new messages\n7. Commit when done.\n\nExisting context:\n- xmuse/frontend/ is a Next.js 14 project with Tailwind + Zustand\n- src/components/AppShell.tsx has ActivityRail + Sidebar + Main layout\n- Dark theme (slate-900/950 backgrounds, cyan-400 accent)\n- God Gateway WebSocket at ws://localhost:8300/ws",
+      "branch": "feat/god-frontend-chat",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "god-gateway-core"
+      ]
+    },
+    {
+      "feature_id": "god-mcp-tools",
+      "task_type": "execute",
+      "prompt": "Implement MCP tool layer for God-to-God capability invocation.\n\nRequirements:\n1. Create xmuse/god_gateway/mcp_bridge.py:\n   - Each God exposes tools based on its role:\n     - architect: [plan_feature, decompose_task, make_decision]\n     - builder: [implement_feature, write_tests, fix_bug]\n     - reviewer: [review_code, review_architecture, assess_quality]\n     - ops: [check_status, run_diagnostics, deploy]\n   - Tool definitions stored in xmuse/god_tools/{god_id}.json\n2. When ActionExecutor receives call_tool action:\n   - Look up tool definition for target God\n   - Build a tool-call prompt: 'You are being called as a tool. Tool: {name}, Args: {args}. Respond with the tool result.'\n   - Wake target God with this prompt\n   - Return God's response as tool result to calling God\n3. Create xmuse/god_tools/ directory with tool definitions for each role\n4. Tool definition format: {name, description, parameters: {type, properties, required}}\n5. Add tests for MCP bridge\n6. Commit when done.\n\nExisting context:\n- xmuse/god_gateway/spawner.py has GodSpawner.wake()\n- xmuse/god_gateway/executor.py handles call_tool action\n- xmuse/mcp_server.py exists (port 8100) for external MCP — this is internal God-to-God",
+      "branch": "feat/god-mcp-tools",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-router-executor"
+      ]
+    },
+    {
+      "feature_id": "god-error-lifecycle",
+      "task_type": "execute",
+      "prompt": "Implement the error knowledge lifecycle with Architect-God ownership.\n\nRequirements:\n1. Create xmuse/god_gateway/error_lifecycle.py:\n   - Class ErrorLifecycleManager\n   - monitor(): read error_knowledge.json, find patterns with count >= 3\n   - For each pattern:\n     - Classify: 'workflow' | 'automatable' | 'knowledge'\n     - workflow → dispatch 'extract-skill-{id}' lane with prompt to create xmuse/skills/<name>.py\n     - automatable → dispatch 'extract-tool-{id}' lane with prompt to add MCP tool\n     - knowledge → write MemoryOS Page + create md in xmuse/memory/decisions/\n   - mark_superseded(entry_id): when root cause fixed\n2. Integration: after each lane fails and error is recorded:\n   - Check if this error's fingerprint matches existing entries\n   - If count >= 3 and not yet extracted: wake Architect-God with extraction request\n3. Architect-God prompt template for extraction decisions:\n   - Include the 3+ error entries\n   - Ask: 'Is this a workflow pattern, automatable operation, or knowledge? Respond with extraction plan.'\n4. Create xmuse/memory/decisions/ directory for externalized md archives\n5. Add tests\n6. Commit when done.\n\nExisting context:\n- xmuse/error_knowledge.py has ErrorKnowledge class with 7-slot entries\n- xmuse/god_gateway/spawner.py can wake Gods\n- xmuse/god_gateway/memory.py can write MemoryOS Pages\n- Architect-God is god_id='architect' in god_registry.json",
+      "branch": "feat/god-error-lifecycle",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "god-memoryos-integration",
+        "god-mcp-tools"
+      ]
     }
   ]
 }
