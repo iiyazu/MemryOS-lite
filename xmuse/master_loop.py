@@ -387,9 +387,9 @@ class MasterLoop:
 
         gate_result = await self.quality_gate.check(Path(task.worktree))
         if gate_result.passed:
-            self._auto_merge_worktree(task)
-            self._update_lane_status(task.feature_id, "done")
-            return "done"
+            merged = await self._auto_merge_worktree(task)
+            self._update_lane_status(task.feature_id, "done" if merged else "merge_failed")
+            return "done" if merged else "failed"
 
         async def dispatch_rework(rework_prompt: str, worktree: str | Path) -> str:
             enriched_prompt = self._inject_error_knowledge_text(rework_prompt)
