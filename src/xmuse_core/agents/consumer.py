@@ -5,7 +5,6 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 from xmuse_core.agents.registry import AgentRegistry, AgentRuntime
 
@@ -15,11 +14,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TaskDescriptor:
     feature_id: str
-    task_type: Literal["execute", "review", "rework"]
+    task_type: str
     prompt: str
     worktree: str = "."
     required_capabilities: list[str] = field(default_factory=lambda: ["code"])
     developed_by_runtime: AgentRuntime | None = None
+    priority: int = 0
 
 
 class WorklistConsumer:

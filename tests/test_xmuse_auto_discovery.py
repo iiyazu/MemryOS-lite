@@ -210,7 +210,7 @@ def test_deduplicates_against_existing_feature_lanes(
     assert json.loads(capsys.readouterr().out) == []
 
 
-def test_all_runs_all_sources_and_orders_by_priority(
+def test_all_runs_lightweight_sources_and_orders_by_priority(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -228,10 +228,6 @@ def test_all_runs_all_sources_and_orders_by_priority(
         encoding="utf-8",
     )
     command_outputs = {
-        tuple(auto_discovery.PYTEST_COMMAND): (
-            1,
-            "FAILED tests/test_a.py::test_b - AssertionError: boom",
-        ),
         tuple(auto_discovery.RUFF_COMMAND): (
             1,
             "src/b.py:4:1: F401 `json` imported but unused",
@@ -240,7 +236,6 @@ def test_all_runs_all_sources_and_orders_by_priority(
             1,
             "src/c.py:8: error: Name \"x\" is not defined [name-defined]",
         ),
-        tuple(auto_discovery.COVERAGE_COMMAND): (0, ""),
     }
     commands: list[list[str]] = []
 
@@ -255,22 +250,20 @@ def test_all_runs_all_sources_and_orders_by_priority(
 
     lanes = json.loads(capsys.readouterr().out)
     assert commands == [
-        auto_discovery.PYTEST_COMMAND,
         auto_discovery.RUFF_COMMAND,
         auto_discovery.MYPY_COMMAND,
-        auto_discovery.COVERAGE_COMMAND,
     ]
-    assert [lane["priority"] for lane in lanes] == [100, 80, 60, 40, 20]
+    assert [lane["priority"] for lane in lanes] == [80, 60, 20]
     assert [lane["feature_id"].split("-")[1] for lane in lanes] == [
-        "pytest",
         "mypy",
         "ruff",
-        "coverage",
         "todo",
     ]
 
 
-def test_no_flags_defaults_to_all(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+def test_no_flags_defaults_to_lightweight_discovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "coverage.json").write_text(json.dumps({"files": {}}), encoding="utf-8")
     commands: list[list[str]] = []
@@ -284,9 +277,7 @@ def test_no_flags_defaults_to_all(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert auto_discovery.main([]) == 0
 
     assert commands == [
-        auto_discovery.PYTEST_COMMAND,
         auto_discovery.RUFF_COMMAND,
         auto_discovery.MYPY_COMMAND,
-        auto_discovery.COVERAGE_COMMAND,
     ]
     assert json.loads(capsys.readouterr().out) == []

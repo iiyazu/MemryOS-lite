@@ -448,7 +448,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Discover TODO, FIXME, and HACK comments in code",
     )
-    parser.add_argument("--all", action="store_true", help="Run all discovery checks")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Run default lightweight discovery checks",
+    )
     parser.add_argument(
         "--lanes-path",
         type=Path,
@@ -460,16 +464,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    any_source = (
-        args.pytest or args.ruff or args.mypy or args.coverage or args.git_issues
-    )
-    run_all = args.all or not any_source
+    any_source = args.pytest or args.ruff or args.mypy or args.coverage or args.git_issues
+    run_default = args.all or not any_source
     lanes = discover(
-        run_pytest=run_all or args.pytest,
-        run_ruff=run_all or args.ruff,
-        run_mypy=run_all or args.mypy,
-        run_coverage=run_all or args.coverage,
-        run_git_issues=run_all or args.git_issues,
+        run_pytest=args.pytest,
+        run_ruff=run_default or args.ruff,
+        run_mypy=run_default or args.mypy,
+        run_coverage=args.coverage,
+        run_git_issues=run_default or args.git_issues,
         lanes_path=args.lanes_path,
     )
     print(json.dumps(lanes, indent=2))

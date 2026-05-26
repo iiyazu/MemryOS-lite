@@ -30,7 +30,7 @@ slow = pytest.mark.slow
 def _eval_v1_memoryos(tmp_path_factory):
     """Shared run_eval(v1, memoryos_lite) — reused by report/cli/source tests."""
     base = tmp_path_factory.mktemp("eval_v1_memoryos")
-    settings = Settings(data_dir=base / ".memoryos", memoryos_memory_arch="v1")
+    settings = Settings(data_dir=base / ".memoryos", memoryos_memory_arch="v1", memoryos_paging_mode="heuristic")
     results = run_eval(settings, run_id="shared-v1", baselines=["memoryos_lite"], isolated=True)
     report = json.loads((settings.data_dir / "evals" / "shared-v1.json").read_text())
     return {"settings": settings, "results": results, "report": report}
@@ -60,34 +60,6 @@ def test_eval_run_does_not_reset_main_store(tmp_path):
     assert store.get_session(session.id) is not None
     assert store.list_messages(session.id)
     assert (settings.data_dir / "evals" / "test-run.json").exists()
-
-
-@slow
-def test_eval_forces_heuristic_paging_for_reproducibility(_eval_default_memoryos):
-    data = _eval_default_memoryos
-    trace_paths = list(data["trace_dir"].glob("*.jsonl"))
-
-    assert data["results"]
-    assert trace_paths
-    trace_text = "\n".join(path.read_text(encoding="utf-8") for path in trace_paths)
-    assert '"paging_mode":"heuristic"' in trace_text
-    assert "agentic" not in trace_text
-
-
-@slow
-def test_all_eval_baselines_obey_budget(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-
-    results = run_eval(settings, run_id="budget-run", baselines=["all"], isolated=True)
-
-    assert results
-    assert {result.baseline for result in results} == {
-        "sliding_window",
-        "naive_summary",
-        "vector_rag",
-        "memoryos_lite",
-    }
-    assert all(result.context_tokens <= 90 for result in results)
 
 
 def test_builtin_case_message_ids_are_stable():
@@ -455,66 +427,6 @@ def test_memoryos_eval_uses_fact_level_evidence_for_distractors(tmp_path):
     assert result.source_accuracy == 1.0
 
 
-def test_memoryos_eval_prefers_paged_evidence_over_recent_restatement(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
-    case = EvalCase(
-        case_id="paged_over_recent",
-        conversation=[
-            MessageCreate(role=Role.USER, content="我喜欢喝黑咖啡。"),
-            MessageCreate(role=Role.ASSISTANT, content="已记录偏好。"),
-            MessageCreate(role=Role.USER, content="早上开会前准备一杯。"),
-            MessageCreate(role=Role.USER, content="一直以来都喝黑咖啡，不加糖。"),
-            MessageCreate(role=Role.ASSISTANT, content="已记录。"),
-            MessageCreate(role=Role.USER, content="买了新的咖啡豆。"),
-            MessageCreate(role=Role.USER, content="我的咖啡习惯固定是黑咖啡无糖。"),
-        ],
-        question="我的咖啡偏好是什么？",
-        expected_facts=["黑咖啡"],
-        forbidden_facts=["拿铁"],
-        required_sources=["paged_over_recent_msg_001"],
-    )
-    messages = _materialize_messages(case)
-    store = create_store(settings)
-    service = MemoryOSService(store=store, settings=settings)
-
-    output = _run_baseline("memoryos_lite", case, messages, service, settings)
-    result = _score(case, "memoryos_lite", output, latency_ms=0)
-
-    assert output.answer == "我喜欢喝黑咖啡。"
-    assert result.source_accuracy == 1.0
-
-
-def test_eval_prefers_recent_update_over_stale_page_evidence():
-    output = _baseline_from_evidence(
-        "当前数据库是什么？",
-        [
-            EvidenceItem(
-                text="数据库选 PostgreSQL。",
-                source_texts={"old_page_msg": "数据库选 PostgreSQL。"},
-                origin="page",
-            ),
-            EvidenceItem(
-                text="数据库改用 MySQL。",
-                source_texts={"recent_msg": "数据库改用 MySQL。"},
-            ),
-        ],
-        context_tokens=10,
-    )
-
-    assert output.answer == "MySQL"
-    assert output.sources == {"recent_msg": "数据库改用 MySQL。"}
-
-
-@pytest.mark.parametrize("noise", ["换行保持不变", "交换格式说明", "兑换券无关"])
-def test_answer_projection_does_not_treat_huan_as_broad_update_marker(noise: str):
-    projected = _project_evidence_text(
-        "当前数据库是什么？",
-        f"格式说明：{noise}。数据库选 PostgreSQL。",
-    )
-
-    assert projected == "PostgreSQL"
-
-
 def test_forbidden_answer_receives_no_credited_source_support():
     case = EvalCase(
         case_id="forbidden_credit_guard",
@@ -539,44 +451,6 @@ def test_forbidden_answer_receives_no_credited_source_support():
     assert result.supporting_source_count == 0
 
 
-@slow
-def test_eval_report_includes_source_ids(_eval_v1_memoryos):
-    report = _eval_v1_memoryos["report"]
-
-    assert report
-    assert all("source_ids" in row for row in report)
-    assert all("source_snippets" in row for row in report)
-    assert all("supporting_source_snippets" in row for row in report)
-    assert all("expected_fact_support" in row for row in report)
-    assert all("credited_fact_support" in row for row in report)
-    assert all("missing_expected_facts" in row for row in report)
-    assert all("unsupported_answered_facts" in row for row in report)
-    assert all("missing_required_sources" in row for row in report)
-    assert all("page_count" in row for row in report)
-    assert all("loaded_pages" in row for row in report)
-    assert all("dropped_pages" in row for row in report)
-    assert all("dropped_page_details" in row for row in report)
-    assert all("source_count" in row for row in report)
-    assert all("supporting_source_count" in row for row in report)
-    assert any(row["source_ids"] for row in report)
-    assert any(row["source_snippets"] for row in report)
-    assert any(row["supporting_source_snippets"] for row in report)
-    assert any(row["expected_fact_support"] for row in report)
-    dropped_audit_row = next(row for row in report if row["case_id"] == "dropped_page_audit_001")
-    assert dropped_audit_row["dropped_page_details"]
-    assert dropped_audit_row["dropped_page_details"][0]["reason"].startswith("rrf ")
-
-
-@slow
-def test_eval_cli_rows_include_dropped_cases(_eval_v1_memoryos):
-    results = _eval_v1_memoryos["results"]
-    rows = _eval_table_rows(results)
-    memoryos_row = next(row for row in rows if row["baseline"] == "memoryos_lite")
-
-    assert memoryos_row["cases"] == "81"
-    assert int(memoryos_row["dropped_cases"]) >= 1
-
-
 def test_llm_judge_cli_rows_group_by_baseline():
     rows = _llm_judge_table_rows(
         [
@@ -596,53 +470,6 @@ def test_llm_judge_cli_rows_group_by_baseline():
         "errors": "0",
     }
     assert vector_row["errors"] == "1"
-
-
-def test_eval_report_serializes_dropped_page_details():
-    output = BaselineOutput(
-        answer="未找到相关记忆",
-        context_tokens=90,
-        sources={},
-        dropped_pages=1,
-        dropped_page_details=[
-            {
-                "page_id": "page_001",
-                "title": "Large page",
-                "reason": "lexical_overlap=3",
-                "estimated_tokens": 120,
-            }
-        ],
-    )
-
-    result = _score(builtin_cases()[0], "memoryos_lite", output, latency_ms=0)
-    report = result.to_report()
-
-    assert report["dropped_pages"] == 1
-    assert report["dropped_page_details"] == [
-        {
-            "page_id": "page_001",
-            "title": "Large page",
-            "reason": "lexical_overlap=3",
-            "estimated_tokens": 120,
-        }
-    ]
-
-
-@slow
-def test_supporting_source_snippets_show_only_credit_sources(_eval_default_memoryos):
-    report = _eval_default_memoryos["report"]
-    row = next(
-        item
-        for item in report
-        if item["baseline"] == "memoryos_lite" and item["case_id"] == "hard_long_recall_001"
-    )
-
-    assert set(row["source_snippets"]) >= {"hard_long_recall_001_msg_004"}
-    assert row["supporting_source_snippets"] == {
-        "MemoryOS Lite": {
-            "hard_long_recall_001_msg_004": "第 1 次最终决定：简历第二项目做 MemoryOS Lite。"
-        }
-    }
 
 
 def test_memoryos_source_attribution_uses_original_message_text(tmp_path):

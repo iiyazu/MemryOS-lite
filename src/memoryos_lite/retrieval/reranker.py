@@ -45,8 +45,10 @@ class LLMReranker:
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: float | None = 60.0,
+        use_structured: bool = True,
     ) -> None:
         self._llm = None
+        self._use_structured = use_structured
         if api_key:
             from langchain_openai import ChatOpenAI
 
@@ -68,7 +70,6 @@ class LLMReranker:
         if self._llm is None:
             return hits[:top_k]
 
-        # Build candidate descriptions for LLM
         candidates = []
         for hit in hits:
             page = hit.page
@@ -88,21 +89,35 @@ class LLMReranker:
         )
         user_msg = f"Query: {query}\n\nCandidates:\n" + "\n".join(candidates)
 
-        structured = self._llm.with_structured_output(RerankResult)
         try:
-            result = structured.invoke(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_msg},
-                ]
-            )
+            if self._use_structured:
+                structured = self._llm.with_structured_output(RerankResult)
+                result = structured.invoke(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_msg},
+                    ]
+                )
+            else:
+                import json as _json
+                system += (
+                    '\n\nRespond with ONLY a JSON object: '
+                    '{"items": [{"page_id": "...", "relevance_score": 0-10, "reason": "..."}]}'
+                )
+                raw = self._llm.invoke(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_msg},
+                    ]
+                )
+                data = _json.loads(raw.content)
+                result = RerankResult(**data)
         except Exception:
             return hits[:top_k]
 
         if not isinstance(result, RerankResult):
             return hits[:top_k]
 
-        # Map scores back to hits
         score_map = {item.page_id: item.relevance_score for item in result.items}
         scored = [(hit, score_map.get(hit.page.id, 5)) for hit in hits]
         scored.sort(key=lambda x: x[1], reverse=True)

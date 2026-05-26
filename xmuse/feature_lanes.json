@@ -378,7 +378,7 @@
       "depends_on": [
         "gate-rework-integration"
       ],
-      "status": "running"
+      "status": "merge_failed"
     },
     {
       "feature_id": "cross-runtime-review",
@@ -419,7 +419,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "running",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -432,7 +432,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -445,7 +445,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -458,7 +458,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -471,7 +471,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -484,7 +484,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -497,7 +497,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -510,7 +510,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -523,7 +523,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "failed",
       "depends_on": []
     },
     {
@@ -536,7 +536,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -549,7 +549,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -562,7 +562,7 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -575,7 +575,7 @@
       ],
       "source": "auto",
       "priority": 60,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -588,7 +588,7 @@
       ],
       "source": "auto",
       "priority": 60,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -601,7 +601,7 @@
       ],
       "source": "auto",
       "priority": 60,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -614,7 +614,7 @@
       ],
       "source": "auto",
       "priority": 60,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -627,7 +627,7 @@
       ],
       "source": "auto",
       "priority": 60,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -640,7 +640,7 @@
       ],
       "source": "auto",
       "priority": 60,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -653,7 +653,7 @@
       ],
       "source": "auto",
       "priority": 60,
-      "status": "pending",
+      "status": "done",
       "depends_on": []
     },
     {
@@ -664,7 +664,8 @@
       "capabilities": [
         "code",
         "test"
-      ]
+      ],
+      "status": "merge_failed"
     },
     {
       "feature_id": "god-process-spawner",
@@ -744,6 +745,436 @@
         "god-memoryos-integration",
         "god-mcp-tools"
       ]
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-agents-consumer-py-1-1-i001",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/agents/consumer.py.\n\nExact error message:\nI001 [*] Import block is un-sorted or un-formatted\n--> src/xmuse_core/agents/consumer.py:1:1\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-brainstorm-py-11-36-f401",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/brainstorm.py.\n\nExact error message:\nF401 [*] `xmuse_core.skills.base.SkillContext` imported but unused\n--> src/xmuse_core/skills/brainstorm.py:11:36\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-brainstorm-py-63-101-e501",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/brainstorm.py.\n\nExact error message:\nE501 Line too long (101 > 100)\n--> src/xmuse_core/skills/brainstorm.py:63:101\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-pipeline-py-105-45-e741",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/pipeline.py.\n\nExact error message:\nE741 Ambiguous variable name: `l`\n--> src/xmuse_core/skills/pipeline.py:105:45\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-pipeline-py-8-20-f401",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/pipeline.py.\n\nExact error message:\nF401 [*] `typing.Any` imported but unused\n--> src/xmuse_core/skills/pipeline.py:8:20\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-registry-py-14-101-e501",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/registry.py.\n\nExact error message:\nE501 Line too long (124 > 100)\n--> src/xmuse_core/skills/registry.py:14:101\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-review-gate-py-11-36-f401",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/review_gate.py.\n\nExact error message:\nF401 [*] `xmuse_core.skills.base.SkillContext` imported but unused\n--> src/xmuse_core/skills/review_gate.py:11:36\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-review-gate-py-77-101-e501",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/review_gate.py.\n\nExact error message:\nE501 Line too long (125 > 100)\n--> src/xmuse_core/skills/review_gate.py:77:101\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-117-33-e741",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/spec_to_lanes.py.\n\nExact error message:\nE741 Ambiguous variable name: `l`\n--> src/xmuse_core/skills/spec_to_lanes.py:117:33\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-129-42-e741",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/spec_to_lanes.py.\n\nExact error message:\nE741 Ambiguous variable name: `l`\n--> src/xmuse_core/skills/spec_to_lanes.py:129:42\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-154-42-e741",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/spec_to_lanes.py.\n\nExact error message:\nE741 Ambiguous variable name: `l`\n--> src/xmuse_core/skills/spec_to_lanes.py:154:42\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-176-43-e741",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/spec_to_lanes.py.\n\nExact error message:\nE741 Ambiguous variable name: `l`\n--> src/xmuse_core/skills/spec_to_lanes.py:176:43\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-177-53-e741",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/spec_to_lanes.py.\n\nExact error message:\nE741 Ambiguous variable name: `l`\n--> src/xmuse_core/skills/spec_to_lanes.py:177:53\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/spec_to_lanes.py.\n\nExact error message:\nE741 Ambiguous variable name: `l`\n--> src/xmuse_core/skills/spec_to_lanes.py:178:63\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-180-58-e741",
+      "task_type": "execute",
+      "prompt": "Fix ruff lint error in src/xmuse_core/skills/spec_to_lanes.py.\n\nExact error message:\nE741 Ambiguous variable name: `l`\n--> src/xmuse_core/skills/spec_to_lanes.py:180:58\n\nRun `uv run ruff check src/ xmuse/` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 60,
+      "status": "done",
+      "depends_on": []
+    },
+    {
+      "feature_id": "full-quality-gate-a1189cb0-54cc17e233",
+      "task_type": "full_quality_gate",
+      "status": "failed",
+      "worktree": ".",
+      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
+      "capabilities": [
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 100,
+      "batch_lane_ids": [
+        "auto-discovery",
+        "quality-gate",
+        "rework-loop",
+        "lane-status-writer",
+        "master-loop",
+        "error-knowledge",
+        "memoryos-dispatch-integration",
+        "error-knowledge-integration",
+        "self-improvement-detection",
+        "mcp-xmuse-server",
+        "memoryos-middleware-enhancement",
+        "skill-plan-execute-review"
+      ],
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
+    },
+    {
+      "feature_id": "full-quality-gate-a1189cb0-d76318115e",
+      "task_type": "full_quality_gate",
+      "status": "failed",
+      "worktree": ".",
+      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
+      "capabilities": [
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 100,
+      "batch_lane_ids": [
+        "xmuse-dashboard-api",
+        "xmuse-dashboard-frontend",
+        "auto-discovery-enhanced",
+        "frontend-scaffold",
+        "frontend-app-shell",
+        "frontend-api-layer",
+        "frontend-lanes-page",
+        "frontend-metrics-page",
+        "frontend-errors-page",
+        "frontend-settings-page",
+        "frontend-new-lane-modal",
+        "master-loop-replace-main"
+      ],
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
+    },
+    {
+      "feature_id": "full-quality-gate-a1189cb0-16deb37ce9",
+      "task_type": "full_quality_gate",
+      "status": "failed",
+      "worktree": ".",
+      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
+      "capabilities": [
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 100,
+      "batch_lane_ids": [
+        "parallel-dispatch",
+        "gate-rework-integration",
+        "error-knowledge-prompt-injection",
+        "auto-discovery-loop-integration",
+        "auto-mypy-src-memoryos-lite-agent-kernel-py-310-arg-type",
+        "auto-mypy-src-memoryos-lite-api-app-py-199-func-returns-value",
+        "auto-mypy-src-memoryos-lite-api-app-py-207-attr-defined",
+        "auto-mypy-src-memoryos-lite-core-memory-py-309-arg-type",
+        "auto-mypy-src-memoryos-lite-llm-judge-py-82-arg-type",
+        "auto-mypy-src-memoryos-lite-llm-judge-py-84-arg-type",
+        "auto-mypy-src-memoryos-lite-retrieval-providers-qdrant-py-50-arg-type",
+        "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-51-arg-type"
+      ],
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
+    },
+    {
+      "feature_id": "full-quality-gate-repair-full-quality-gate-a1189cb0-54cc17e233",
+      "task_type": "execute",
+      "status": "done",
+      "branch": "feat/full-quality-gate-repair-full-quality-gate-a1189cb0-54cc17e233",
+      "prompt": "Fix the failing full xmuse quality gate.\n\nCommand: `uv run pytest -q`\nExit code: 143\nArtifact: xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-54cc17e233.log\nHead SHA: a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8\nBatch lane ids: ['auto-discovery', 'quality-gate', 'rework-loop', 'lane-status-writer', 'master-loop', 'error-knowledge', 'memoryos-dispatch-integration', 'error-knowledge-integration', 'self-improvement-detection', 'mcp-xmuse-server', 'memoryos-middleware-enhancement', 'skill-plan-execute-review']\n\nFailure output:\n........................................................................ [  7%]\n...F...........................................F........................ [ 15%]\n..........FF.F................................................s......... [ 23%]\n......FFF.F.F.......FFFFFF..FFFF...FF...FF.........................\n\nMake the minimal fix, then verify with `uv run pytest -q`.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 110,
+      "full_gate_feature_id": "full-quality-gate-a1189cb0-54cc17e233",
+      "full_gate_artifact": "xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-54cc17e233.log",
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8",
+      "batch_lane_ids": [
+        "auto-discovery",
+        "quality-gate",
+        "rework-loop",
+        "lane-status-writer",
+        "master-loop",
+        "error-knowledge",
+        "memoryos-dispatch-integration",
+        "error-knowledge-integration",
+        "self-improvement-detection",
+        "mcp-xmuse-server",
+        "memoryos-middleware-enhancement",
+        "skill-plan-execute-review"
+      ]
+    },
+    {
+      "feature_id": "full-quality-gate-repair-full-quality-gate-a1189cb0-16deb37ce9",
+      "task_type": "execute",
+      "status": "done",
+      "branch": "feat/full-quality-gate-repair-full-quality-gate-a1189cb0-16deb37ce9",
+      "prompt": "Fix the failing full xmuse quality gate.\n\nCommand: `uv run pytest -q`\nExit code: 143\nArtifact: xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-16deb37ce9.log\nHead SHA: a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8\nBatch lane ids: ['parallel-dispatch', 'gate-rework-integration', 'error-knowledge-prompt-injection', 'auto-discovery-loop-integration', 'auto-mypy-src-memoryos-lite-agent-kernel-py-310-arg-type', 'auto-mypy-src-memoryos-lite-api-app-py-199-func-returns-value', 'auto-mypy-src-memoryos-lite-api-app-py-207-attr-defined', 'auto-mypy-src-memoryos-lite-core-memory-py-309-arg-type', 'auto-mypy-src-memoryos-lite-llm-judge-py-82-arg-type', 'auto-mypy-src-memoryos-lite-llm-judge-py-84-arg-type', 'auto-mypy-src-memoryos-lite-retrieval-providers-qdrant-py-50-arg-type', 'auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-51-arg-type']\n\nFailure output:\n........................................................................ [  7%]\n...F...........................................F........................ [ 15%]\n..........FF.F................................................s......... [ 23%]\n......FFF.F.\n\nMake the minimal fix, then verify with `uv run pytest -q`.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 110,
+      "full_gate_feature_id": "full-quality-gate-a1189cb0-16deb37ce9",
+      "full_gate_artifact": "xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-16deb37ce9.log",
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8",
+      "batch_lane_ids": [
+        "parallel-dispatch",
+        "gate-rework-integration",
+        "error-knowledge-prompt-injection",
+        "auto-discovery-loop-integration",
+        "auto-mypy-src-memoryos-lite-agent-kernel-py-310-arg-type",
+        "auto-mypy-src-memoryos-lite-api-app-py-199-func-returns-value",
+        "auto-mypy-src-memoryos-lite-api-app-py-207-attr-defined",
+        "auto-mypy-src-memoryos-lite-core-memory-py-309-arg-type",
+        "auto-mypy-src-memoryos-lite-llm-judge-py-82-arg-type",
+        "auto-mypy-src-memoryos-lite-llm-judge-py-84-arg-type",
+        "auto-mypy-src-memoryos-lite-retrieval-providers-qdrant-py-50-arg-type",
+        "auto-mypy-src-memoryos-lite-retrieval-query-rewriter-py-51-arg-type"
+      ]
+    },
+    {
+      "feature_id": "full-quality-gate-repair-full-quality-gate-a1189cb0-d76318115e",
+      "task_type": "execute",
+      "status": "done",
+      "branch": "feat/full-quality-gate-repair-full-quality-gate-a1189cb0-d76318115e",
+      "prompt": "Fix the failing full xmuse quality gate.\n\nCommand: `uv run pytest -q`\nExit code: 143\nArtifact: xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-d76318115e.log\nHead SHA: a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8\nBatch lane ids: ['xmuse-dashboard-api', 'xmuse-dashboard-frontend', 'auto-discovery-enhanced', 'frontend-scaffold', 'frontend-app-shell', 'frontend-api-layer', 'frontend-lanes-page', 'frontend-metrics-page', 'frontend-errors-page', 'frontend-settings-page', 'frontend-new-lane-modal', 'master-loop-replace-main']\n\nFailure output:\n........................................................................ [  7%]\n...F...........................................F........................ [ 15%]\n...........F.F................................................s......... [ 23%]\n......FFF.F.F.......FFFFFF..FFFF...FF...F...\n\nMake the minimal fix, then verify with `uv run pytest -q`.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 110,
+      "full_gate_feature_id": "full-quality-gate-a1189cb0-d76318115e",
+      "full_gate_artifact": "xmuse/logs/full_quality_gate/full-quality-gate-a1189cb0-d76318115e.log",
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8",
+      "batch_lane_ids": [
+        "xmuse-dashboard-api",
+        "xmuse-dashboard-frontend",
+        "auto-discovery-enhanced",
+        "frontend-scaffold",
+        "frontend-app-shell",
+        "frontend-api-layer",
+        "frontend-lanes-page",
+        "frontend-metrics-page",
+        "frontend-errors-page",
+        "frontend-settings-page",
+        "frontend-new-lane-modal",
+        "master-loop-replace-main"
+      ]
+    },
+    {
+      "feature_id": "full-quality-gate-a1189cb0-32b2d32615",
+      "task_type": "full_quality_gate",
+      "status": "failed",
+      "worktree": ".",
+      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
+      "capabilities": [
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 100,
+      "batch_lane_ids": [
+        "auto-mypy-src-memoryos-lite-retrieval-reranker-py-58-arg-type",
+        "auto-mypy-src-memoryos-lite-retrieval-reranker-py-61-arg-type",
+        "auto-mypy-src-memoryos-lite-v3-contracts-py-505-arg-type",
+        "auto-ruff-src-memoryos-lite-api-app-py-35-1-e402",
+        "auto-ruff-src-memoryos-lite-api-app-py-36-1-e402",
+        "auto-ruff-xmuse-error-knowledge-py-110-29-up012",
+        "auto-ruff-xmuse-hermes-loop-py-2-1-i001",
+        "auto-ruff-xmuse-hermes-loop-py-2-11-e702",
+        "auto-ruff-xmuse-skills-plan-execute-review-py-1-1-i001",
+        "auto-ruff-xmuse-skills-plan-execute-review-py-87-101-e501",
+        "auto-ruff-src-xmuse-core-agents-consumer-py-1-1-i001",
+        "auto-ruff-src-xmuse-core-skills-brainstorm-py-63-101-e501"
+      ],
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8",
+      "discarded_reason": "superseded_full_quality_gate_family",
+      "discarded_by": "full-quality-gate-repair-full-quality-gate-a1189cb0-d76318115e"
+    },
+    {
+      "feature_id": "full-quality-gate-a1189cb0-46c7199c8f",
+      "task_type": "full_quality_gate",
+      "status": "running",
+      "worktree": ".",
+      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
+      "capabilities": [
+        "test"
+      ],
+      "depends_on": [],
+      "source": "full_quality_gate",
+      "priority": 100,
+      "batch_lane_ids": [
+        "auto-ruff-src-xmuse-core-skills-brainstorm-py-11-36-f401",
+        "auto-ruff-src-xmuse-core-skills-pipeline-py-105-45-e741",
+        "auto-ruff-src-xmuse-core-skills-pipeline-py-8-20-f401",
+        "auto-ruff-src-xmuse-core-skills-registry-py-14-101-e501",
+        "auto-ruff-src-xmuse-core-skills-review-gate-py-11-36-f401",
+        "auto-ruff-src-xmuse-core-skills-review-gate-py-77-101-e501",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-117-33-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-129-42-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-154-42-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-176-43-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-177-53-e741",
+        "auto-ruff-src-xmuse-core-skills-spec-to-lanes-py-178-63-e741"
+      ],
+      "head_sha": "a1189cb046d97c3ed8c1d8386e4ab8ff33e3d8b8"
     }
   ]
 }

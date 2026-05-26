@@ -1,5 +1,9 @@
 """Agentic Memory Manager — LangGraph multi-agent system.
 
+STATUS: experimental, not wired into engine.py main flow.
+Future: to be replaced by a lightweight kernel agent loop that decides
+core_memory_append / archival_write / noop after each ingest.
+
 Demonstrates:
 - StateGraph with rich TypedDict state
 - Conditional edges (intent routing, conflict detection)

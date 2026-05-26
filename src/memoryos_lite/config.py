@@ -22,14 +22,14 @@ class Settings(BaseSettings):
     # 0 means "no absolute token cap"; the ratio still controls the reserve.
     memoryos_evidence_reserve_tokens: int = 512
     memoryos_evidence_reserve_min_pages: int = 8
-    memoryos_paging_mode: str = "heuristic"
+    memoryos_paging_mode: str = "off"
     memoryos_paging_context_pages: int = 10
     memoryos_item_extraction: bool = True
     memoryos_item_evidence_max: int = 3
     memoryos_evidence_representation: str = "legacy"
     memoryos_memory_arch: str = "v3"
     memoryos_agent_kernel: str = "off"
-    memoryos_recall_pipeline: str = "v1"
+    memoryos_recall_pipeline: str = "v2"
     memoryos_evidence_direct_raw_fallback: bool = True
     memoryos_evidence_candidate_top_k: int = 5
     memoryos_evidence_context_neighbors_before: int = 2

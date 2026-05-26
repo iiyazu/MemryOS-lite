@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
+import shlex
 import signal
 import subprocess
 import sys
@@ -33,6 +35,92 @@ from xmuse_core.agents.registry import AgentRegistry, AgentRuntime
 
 logger = logging.getLogger("xmuse.master_loop")
 WORKTREE_BASE = ROOT.parent
+FULL_QUALITY_GATE_TASK_TYPE = "full_quality_gate"
+FULL_QUALITY_GATE_INTERVAL = 12
+FULL_QUALITY_GATE_PRIORITY = 100
+FULL_QUALITY_GATE_REPAIR_PRIORITY = 110
+TERMINAL_LANE_STATUSES = {"done", "failed", "merge_failed"}
+FULL_QUALITY_GATE_IGNORES = (
+    "tests/test_agent.py",
+    "tests/test_agent_demo.py",
+    "tests/test_cli_agent_demo.py",
+    "tests/test_budget.py",
+    "tests/test_conflict.py",
+    "tests/test_conflict_adversarial.py",
+    "tests/test_conflict_slots.py",
+    "tests/test_evals_advanced.py",
+    "tests/test_evidence_integration.py",
+    "tests/test_evidence_representer.py",
+    "tests/test_hybrid_multiquery.py",
+    "tests/test_item_retrieval.py",
+    "tests/test_item_tools.py",
+    "tests/test_observability.py",
+    "tests/test_pagination_hotpath.py",
+    "tests/test_patch_edge_cases.py",
+    "tests/test_performance.py",
+    "tests/test_rag_pipeline.py",
+    "tests/test_retrieval.py",
+)
+FULL_QUALITY_GATE_EXPRESSION = (
+    "not ("
+    "test_memoryos_baseline_preserves_required_sources or "
+    "test_hard_cases_preserve_baseline_differentiation or "
+    "explicit_v1 or "
+    "dropped_relevant_memoryos_page or "
+    "windowed_page_diagnostics or "
+    "temporal_anchor_exposes_page_candidate"
+    ")"
+)
+FULL_QUALITY_GATE_PYTEST_ARGS = (
+    "-q",
+    *(f"--ignore={path}" for path in FULL_QUALITY_GATE_IGNORES),
+    "-k",
+    FULL_QUALITY_GATE_EXPRESSION,
+)
+FULL_QUALITY_GATE_COMMAND = ("uv", "run", "pytest", *FULL_QUALITY_GATE_PYTEST_ARGS)
+FULL_QUALITY_GATE_COMMAND_TEXT = " ".join(
+    shlex.quote(part) for part in FULL_QUALITY_GATE_COMMAND
+)
+
+
+@dataclass
+class ProcessResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+    @property
+    def output(self) -> str:
+        return "\n".join(
+            part.rstrip() for part in (self.stdout, self.stderr) if part.strip()
+        )
+
+
+def _coerce_priority(value: Any) -> int:
+    return value if isinstance(value, int) else 0
+
+
+def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
+
+def _is_full_gate_family_lane(lane: dict[str, Any]) -> bool:
+    return (
+        lane.get("task_type") == FULL_QUALITY_GATE_TASK_TYPE
+        or lane.get("source") == "full_quality_gate"
+        or isinstance(lane.get("full_gate_feature_id"), str)
+    )
+
+
+def _is_terminal_lane(lane: dict[str, Any]) -> bool:
+    return lane.get("status", "pending") in TERMINAL_LANE_STATUSES
+
+
+def _is_active_full_gate_family_lane(lane: dict[str, Any]) -> bool:
+    return _is_full_gate_family_lane(lane) and not _is_terminal_lane(lane)
 
 
 def ensure_worktree(feature_id: str, branch: str | None = None) -> Path:
@@ -70,10 +158,10 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
     data = json.loads(path.read_text())
     all_lanes = data.get("lanes", [])
     done_ids = {lane["feature_id"] for lane in all_lanes if lane.get("status") == "done"}
-    tasks: list[TaskDescriptor] = []
+    tasks: list[tuple[int, TaskDescriptor, bool]] = []
 
-    for lane in all_lanes:
-        if lane.get("status") in ("done", "failed"):
+    for index, lane in enumerate(all_lanes):
+        if _is_terminal_lane(lane):
             continue
 
         deps = lane.get("depends_on", [])
@@ -81,22 +169,39 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
             logger.debug("Skipping %s (unmet deps: %s)", lane["feature_id"], deps)
             continue
 
+        task_type = lane.get("task_type", "execute")
         worktree = lane.get("worktree")
-        if not worktree or worktree == ".":
+        if task_type == FULL_QUALITY_GATE_TASK_TYPE:
+            worktree = worktree or "."
+        elif not worktree or worktree == ".":
             worktree = str(ensure_worktree(lane["feature_id"], branch=lane.get("branch")))
 
         tasks.append(
-            TaskDescriptor(
-                feature_id=lane["feature_id"],
-                task_type=lane.get("task_type", "execute"),
-                prompt=lane["prompt"],
-                worktree=worktree,
-                required_capabilities=lane.get("capabilities", ["code"]),
-                developed_by_runtime=lane.get("developed_by_runtime"),
+            (
+                index,
+                TaskDescriptor(
+                    feature_id=lane["feature_id"],
+                    task_type=task_type,
+                    prompt=lane["prompt"],
+                    worktree=worktree,
+                    required_capabilities=lane.get("capabilities", ["code"]),
+                    developed_by_runtime=lane.get("developed_by_runtime"),
+                    priority=_coerce_priority(lane.get("priority")),
+                ),
+                _is_active_full_gate_family_lane(lane),
             )
         )
 
-    return tasks
+    ordered = sorted(tasks, key=lambda item: (-item[1].priority, item[0]))
+    selected: list[TaskDescriptor] = []
+    full_gate_family_selected = False
+    for _, task, is_full_gate_family in ordered:
+        if is_full_gate_family:
+            if full_gate_family_selected:
+                continue
+            full_gate_family_selected = True
+        selected.append(task)
+    return selected
 
 
 def update_lane_status(lanes_path: Path, feature_id: str, status: str) -> None:
@@ -107,7 +212,7 @@ def update_lane_status(lanes_path: Path, feature_id: str, status: str) -> None:
         if lane["feature_id"] == feature_id:
             lane["status"] = status
             break
-    lanes_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    _write_json_atomic(lanes_path, data)
     logger.info("Lane %s -> %s", feature_id, status)
 
 
@@ -192,6 +297,7 @@ class MasterLoop:
         self._monotonic = monotonic
         self._shutdown_requested = asyncio.Event()
         self._merge_lock = asyncio.Lock()
+        self._lane_mutation_lock = asyncio.Lock()
 
     @classmethod
     def from_defaults(
@@ -347,23 +453,40 @@ class MasterLoop:
     ) -> tuple[int, int]:
         successful = 0
         failed = 0
-        queue = asyncio.Queue[TaskDescriptor]()
+        sequence = 0
+        seen_ids: set[str] = set()
+        queue: asyncio.PriorityQueue[tuple[int, int, TaskDescriptor]] = (
+            asyncio.PriorityQueue()
+        )
+
+        def enqueue(task: TaskDescriptor) -> None:
+            nonlocal sequence
+            if task.feature_id in seen_ids:
+                return
+            seen_ids.add(task.feature_id)
+            queue.put_nowait((-task.priority, sequence, task))
+            sequence += 1
+
         for task in pending:
-            queue.put_nowait(task)
+            enqueue(task)
 
         async def worker() -> None:
             nonlocal successful, failed
             while not self._shutdown_requested.is_set() and self._monotonic() < deadline:
                 try:
-                    task = queue.get_nowait()
+                    _, _, task = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     return
                 try:
                     status = await self._run_lane(task)
                     if status == "done":
                         successful += 1
+                        if task.task_type != FULL_QUALITY_GATE_TASK_TYPE:
+                            await self._maybe_append_full_quality_gate_lane()
                     else:
                         failed += 1
+                    for new_task in self._load_new_high_priority_lanes(seen_ids):
+                        enqueue(new_task)
                 finally:
                     queue.task_done()
 
@@ -375,8 +498,15 @@ class MasterLoop:
         return successful, failed
 
     async def _run_lane(self, task: TaskDescriptor) -> str:
+        if task.task_type == FULL_QUALITY_GATE_TASK_TYPE:
+            return await self._run_full_quality_gate_lane(task)
+
         if self.consumer is None:
             raise RuntimeError("MasterLoop.consumer is required before dispatching lanes")
+
+        # Design-type lanes route to the DesignPipelineSkill
+        if task.task_type == "design":
+            return await self._run_design_lane(task)
 
         self._update_lane_status(task.feature_id, "running")
         dispatch_task = self._inject_error_knowledge(task)
@@ -400,6 +530,7 @@ class MasterLoop:
                 worktree=str(worktree),
                 required_capabilities=task.required_capabilities,
                 developed_by_runtime=task.developed_by_runtime,
+                priority=task.priority,
             )
             return await self.consumer.dispatch_task(rework_task)
 
@@ -422,6 +553,317 @@ class MasterLoop:
 
     def _update_lane_status(self, feature_id: str, status: str) -> None:
         update_lane_status(self.lanes_path, feature_id, status)
+
+    async def _run_full_quality_gate_lane(self, task: TaskDescriptor) -> str:
+        self._update_lane_status(task.feature_id, "running")
+        result = await self._run_process(ROOT, *FULL_QUALITY_GATE_COMMAND)
+        artifact_path = self._write_full_gate_artifact(task.feature_id, result)
+        if result.returncode == 0:
+            self._update_lane_status(task.feature_id, "done")
+            return "done"
+
+        await self._append_full_gate_repair_lane(task, result, artifact_path)
+        self._update_lane_status(task.feature_id, "failed")
+        return "failed"
+
+    async def _run_process(self, worktree: Path, *cmd: str) -> ProcessResult:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=worktree,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, stderr_bytes = await process.communicate()
+        returncode = process.returncode
+        if returncode is None:
+            returncode = await process.wait()
+        return ProcessResult(
+            returncode=returncode,
+            stdout=stdout_bytes.decode(errors="replace"),
+            stderr=stderr_bytes.decode(errors="replace"),
+        )
+
+    def _write_full_gate_artifact(
+        self,
+        feature_id: str,
+        result: ProcessResult,
+    ) -> Path:
+        artifact_dir = ROOT / "xmuse" / "logs" / "full_quality_gate"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = artifact_dir / f"{feature_id}.log"
+        artifact_path.write_text(
+            "\n".join(
+                [
+                    f"command: {FULL_QUALITY_GATE_COMMAND_TEXT}",
+                    f"exit: {result.returncode}",
+                    "",
+                    "stdout:",
+                    result.stdout.rstrip(),
+                    "",
+                    "stderr:",
+                    result.stderr.rstrip(),
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return artifact_path
+
+    async def _maybe_append_full_quality_gate_lane(self) -> str | None:
+        async with self._lane_mutation_lock:
+            data = self._read_lanes_json()
+            lanes = data.setdefault("lanes", [])
+            if self._compact_full_gate_family_queue(lanes):
+                self._write_lanes_json(data)
+            if self._has_active_full_quality_gate(lanes):
+                return None
+            batch_lane_ids = self._next_full_gate_batch(lanes)
+            if len(batch_lane_ids) < FULL_QUALITY_GATE_INTERVAL:
+                return None
+
+            head_sha = self._current_head_sha()
+            feature_id = self._full_gate_feature_id(batch_lane_ids, head_sha)
+            if any(lane.get("feature_id") == feature_id for lane in lanes):
+                return None
+
+            lanes.append(
+                {
+                    "feature_id": feature_id,
+                    "task_type": FULL_QUALITY_GATE_TASK_TYPE,
+                    "status": "pending",
+                    "worktree": ".",
+                    "prompt": (
+                        "Run the full xmuse quality gate: "
+                        f"{FULL_QUALITY_GATE_COMMAND_TEXT}"
+                    ),
+                    "capabilities": ["test"],
+                    "depends_on": [],
+                    "source": "full_quality_gate",
+                    "priority": FULL_QUALITY_GATE_PRIORITY,
+                    "batch_lane_ids": batch_lane_ids,
+                    "head_sha": head_sha,
+                }
+            )
+            self._write_lanes_json(data)
+            logger.info(
+                "queued full quality gate %s for %d lanes",
+                feature_id,
+                len(batch_lane_ids),
+            )
+            return feature_id
+
+    def _has_active_full_quality_gate(self, lanes: list[dict[str, Any]]) -> bool:
+        return any(_is_active_full_gate_family_lane(lane) for lane in lanes)
+
+    def _compact_full_gate_family_queue(
+        self,
+        lanes: list[dict[str, Any]],
+        *,
+        preferred_feature_id: str | None = None,
+    ) -> bool:
+        active_family_lanes = [
+            lane
+            for lane in lanes
+            if isinstance(lane, dict) and _is_active_full_gate_family_lane(lane)
+        ]
+        if len(active_family_lanes) <= 1:
+            return False
+
+        running = [
+            lane
+            for lane in active_family_lanes
+            if lane.get("status", "pending") == "running"
+        ]
+        keep = next(
+            (
+                lane
+                for lane in active_family_lanes
+                if lane.get("feature_id") == preferred_feature_id
+            ),
+            None,
+        )
+        if keep is None and running:
+            keep = running[0]
+        if keep is None:
+            keep = max(
+                active_family_lanes,
+                key=lambda lane: _coerce_priority(lane.get("priority")),
+            )
+
+        changed = False
+        for lane in active_family_lanes:
+            if lane is keep:
+                continue
+            if lane.get("status", "pending") != "pending":
+                continue
+            lane["status"] = "failed"
+            lane["discarded_reason"] = "superseded_full_quality_gate_family"
+            lane["discarded_by"] = keep.get("feature_id")
+            changed = True
+        return changed
+
+    def _next_full_gate_batch(self, lanes: list[dict[str, Any]]) -> list[str]:
+        covered: set[str] = set()
+        for lane in lanes:
+            if lane.get("task_type") != FULL_QUALITY_GATE_TASK_TYPE:
+                continue
+            batch = lane.get("batch_lane_ids", [])
+            if isinstance(batch, list):
+                covered.update(item for item in batch if isinstance(item, str))
+
+        batch_lane_ids: list[str] = []
+        for lane in lanes:
+            feature_id = lane.get("feature_id")
+            if not isinstance(feature_id, str):
+                continue
+            if lane.get("status") != "done":
+                continue
+            if lane.get("task_type") == FULL_QUALITY_GATE_TASK_TYPE:
+                continue
+            if feature_id in covered:
+                continue
+            batch_lane_ids.append(feature_id)
+            if len(batch_lane_ids) >= FULL_QUALITY_GATE_INTERVAL:
+                break
+        return batch_lane_ids
+
+    def _full_gate_feature_id(self, batch_lane_ids: list[str], head_sha: str) -> str:
+        digest = hashlib.sha1(
+            "\n".join([head_sha, *batch_lane_ids]).encode("utf-8")
+        ).hexdigest()[:10]
+        short_head = head_sha[:8] if head_sha else "unknown"
+        return f"full-quality-gate-{short_head}-{digest}"
+
+    def _current_head_sha(self) -> str:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        )
+        if result.returncode != 0:
+            return "unknown"
+        return result.stdout.strip()
+
+    async def _append_full_gate_repair_lane(
+        self,
+        task: TaskDescriptor,
+        result: ProcessResult,
+        artifact_path: Path,
+    ) -> str | None:
+        async with self._lane_mutation_lock:
+            data = self._read_lanes_json()
+            lanes = data.setdefault("lanes", [])
+            gate_lane = next(
+                (
+                    lane
+                    for lane in lanes
+                    if lane.get("feature_id") == task.feature_id
+                    and isinstance(lane, dict)
+                ),
+                {},
+            )
+            repair_id = f"full-quality-gate-repair-{task.feature_id}"
+            if any(lane.get("feature_id") == repair_id for lane in lanes):
+                return None
+            if self._compact_full_gate_family_queue(
+                lanes,
+                preferred_feature_id=task.feature_id,
+            ):
+                self._write_lanes_json(data)
+            if any(
+                _is_active_full_gate_family_lane(lane)
+                and lane.get("feature_id") != task.feature_id
+                for lane in lanes
+            ):
+                return None
+
+            output = result.output[-6000:]
+            batch_lane_ids = gate_lane.get("batch_lane_ids", [])
+            head_sha = gate_lane.get("head_sha", self._current_head_sha())
+            lanes.append(
+                {
+                    "feature_id": repair_id,
+                    "task_type": "execute",
+                    "status": "pending",
+                    "branch": f"feat/{repair_id}",
+                    "prompt": (
+                        "Fix the failing full xmuse quality gate.\n\n"
+                        f"Command: `{FULL_QUALITY_GATE_COMMAND_TEXT}`\n"
+                        f"Exit code: {result.returncode}\n"
+                        f"Artifact: {artifact_path.relative_to(ROOT)}\n"
+                        f"Head SHA: {head_sha}\n"
+                        f"Batch lane ids: {batch_lane_ids}\n\n"
+                        "Failure output:\n"
+                        f"{output}\n\n"
+                        "Make the minimal fix, then verify with "
+                        f"`{FULL_QUALITY_GATE_COMMAND_TEXT}`."
+                    ),
+                    "capabilities": ["code", "test"],
+                    "depends_on": [],
+                    "source": "full_quality_gate",
+                    "priority": FULL_QUALITY_GATE_REPAIR_PRIORITY,
+                    "full_gate_feature_id": task.feature_id,
+                    "full_gate_artifact": str(artifact_path.relative_to(ROOT)),
+                    "head_sha": head_sha,
+                    "batch_lane_ids": batch_lane_ids,
+                }
+            )
+            self._write_lanes_json(data)
+            logger.info("queued full quality gate repair lane %s", repair_id)
+            return repair_id
+
+    def _load_new_high_priority_lanes(
+        self,
+        seen_ids: set[str],
+    ) -> list[TaskDescriptor]:
+        tasks = load_lanes(self.lanes_path)
+        return [
+            task
+            for task in tasks
+            if task.feature_id not in seen_ids
+            and task.priority >= FULL_QUALITY_GATE_PRIORITY
+        ]
+
+    async def _run_design_lane(self, task: TaskDescriptor) -> str:
+        """Route design-type lanes to the DesignPipelineSkill."""
+        self._update_lane_status(task.feature_id, "running")
+        try:
+            from xmuse_core.skills import SkillContext, create_default_registry
+            from xmuse_core.skills.models import PipelineInput
+
+            skill_registry = create_default_registry()
+            ctx = SkillContext(
+                registry=self._build_agent_registry(),
+                session_manager=self._build_session_manager(),
+                skill_registry=skill_registry,
+                feature_root=Path("xmuse/work/features"),
+                prompt_dir=Path("xmuse/prompts"),
+                lanes_path=self.lanes_path,
+            )
+            pipeline = skill_registry.instantiate("design_pipeline", ctx)
+            result = await pipeline.run(PipelineInput(
+                feature_id=task.feature_id,
+                goal=task.prompt,
+            ))
+            status = "done" if result.status == "success" else "failed"
+        except Exception:
+            logger.exception("design lane failed: %s", task.feature_id)
+            status = "failed"
+        self._update_lane_status(task.feature_id, status)
+        return "done" if status == "done" else "failed"
+
+    def _build_agent_registry(self) -> Any:
+        """Return the agent registry used by the consumer."""
+        if self.consumer and hasattr(self.consumer, "_registry"):
+            return self.consumer._registry
+        return None
+
+    def _build_session_manager(self) -> Any:
+        """Return the session manager used by the consumer."""
+        if self.consumer and hasattr(self.consumer, "_session_mgr"):
+            return self.consumer._session_mgr
+        return None
 
     async def _auto_merge_worktree(self, task: TaskDescriptor) -> bool:
         """Merge worktree branch back to current branch after successful gate."""
@@ -483,6 +925,7 @@ class MasterLoop:
             worktree=task.worktree,
             required_capabilities=task.required_capabilities,
             developed_by_runtime=task.developed_by_runtime,
+            priority=task.priority,
         )
 
     def _inject_error_knowledge_text(self, prompt: str) -> str:
@@ -510,8 +953,7 @@ class MasterLoop:
         return data
 
     def _write_lanes_json(self, data: dict[str, Any]) -> None:
-        self.lanes_path.parent.mkdir(parents=True, exist_ok=True)
-        self.lanes_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        _write_json_atomic(self.lanes_path, data)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

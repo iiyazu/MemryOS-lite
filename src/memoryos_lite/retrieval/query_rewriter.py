@@ -38,8 +38,10 @@ class QueryRewriter:
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: float | None = 60.0,
+        use_structured: bool = True,
     ) -> None:
         self._llm = None
+        self._use_structured = use_structured
         if api_key:
             from langchain_openai import ChatOpenAI
 
@@ -68,15 +70,31 @@ class QueryRewriter:
         if profile_context:
             system += f"\n\nUser profile context:\n{profile_context}"
 
-        structured = self._llm.with_structured_output(RewrittenQuery)
-        result = structured.invoke(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": f"Original query: {query}"},
-            ]
-        )
-        if isinstance(result, RewrittenQuery):
-            return result.rewritten
+        if self._use_structured:
+            structured = self._llm.with_structured_output(RewrittenQuery)
+            result = structured.invoke(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": f"Original query: {query}"},
+                ]
+            )
+            if isinstance(result, RewrittenQuery):
+                return result.rewritten
+        else:
+            import json as _json
+            system += '\n\nRespond with ONLY a JSON object: {"rewritten": "...", "reasoning": "..."}'
+            result = self._llm.invoke(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": f"Original query: {query}"},
+                ]
+            )
+            try:
+                data = _json.loads(result.content)
+                if isinstance(data, dict) and "rewritten" in data:
+                    return data["rewritten"]
+            except (ValueError, AttributeError):
+                pass
         return query
 
     def expand(self, query: str, profile_context: str = "") -> list[str]:
@@ -93,14 +111,26 @@ class QueryRewriter:
         if profile_context:
             system += f"\n\nUser profile context:\n{profile_context}"
 
-        structured = self._llm.with_structured_output(ExpandedQueries)
         try:
-            result = structured.invoke(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": f"Original query: {query}"},
-                ]
-            )
+            if self._use_structured:
+                structured = self._llm.with_structured_output(ExpandedQueries)
+                result = structured.invoke(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": f"Original query: {query}"},
+                    ]
+                )
+            else:
+                import json as _json
+                system += '\n\nRespond with ONLY a JSON object: {"variants": ["query1", "query2", "query3"]}'
+                result = self._llm.invoke(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": f"Original query: {query}"},
+                    ]
+                )
+                data = _json.loads(result.content)
+                result = ExpandedQueries(**data)
         except Exception:
             return [query]
 
