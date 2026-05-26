@@ -362,6 +362,9 @@
       "capabilities": [
         "code",
         "test"
+      ],
+      "depends_on": [
+        "gate-rework-integration"
       ]
     },
     {
@@ -375,7 +378,8 @@
       ],
       "depends_on": [
         "claude-code-launcher",
-        "gate-rework-integration"
+        "gate-rework-integration",
+        "parallel-dispatch"
       ]
     },
     {
@@ -389,7 +393,7 @@
       ],
       "depends_on": [
         "cross-runtime-review",
-        "parallel-dispatch"
+        "error-knowledge-prompt-injection"
       ]
     }
   ]
