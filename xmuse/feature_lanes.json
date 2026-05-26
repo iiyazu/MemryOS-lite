@@ -714,7 +714,8 @@
         "code"
       ],
       "depends_on": [
-        "god-gateway-core"
+        "god-gateway-core",
+        "frontend-scaffold"
       ]
     },
     {
