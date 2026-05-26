@@ -83,6 +83,7 @@ class FakeReworkLoop:
         initial_gate_result: FakeGateResult,
         dispatch_fn,
         gate: FakeGate,
+        max_retries: int = 3,
     ) -> FakeLaneResult:
         self.calls.append((lane, initial_gate_result))
         return self.result

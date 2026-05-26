@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Multi-round autonomous xmuse orchestrator."""
+# ruff: noqa: E402
 from __future__ import annotations
 
 import argparse
@@ -7,6 +8,7 @@ import asyncio
 import json
 import logging
 import signal
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -21,13 +23,92 @@ if str(SRC) not in sys.path:
 if str(XMUSE_DIR) not in sys.path:
     sys.path.insert(0, str(XMUSE_DIR))
 
-from xmuse_main import load_lanes, update_lane_status
+from error_knowledge import ErrorKnowledge
+
 from xmuse_core.agents.consumer import TaskDescriptor, WorklistConsumer
 from xmuse_core.agents.launchers.codex import CodexLauncher
 from xmuse_core.agents.manager import SessionManager
+from xmuse_core.agents.memoryos_client import MemoryOSClient
 from xmuse_core.agents.registry import AgentRegistry, AgentRuntime
 
 logger = logging.getLogger("xmuse.master_loop")
+WORKTREE_BASE = ROOT.parent
+
+
+def ensure_worktree(feature_id: str, branch: str | None = None) -> Path:
+    """Create or reuse a git worktree for a feature lane."""
+
+    wt_path = WORKTREE_BASE / f"memoryOS-{feature_id}"
+    if wt_path.exists():
+        return wt_path
+
+    branch_name = branch or f"feat/{feature_id}"
+    result = subprocess.run(
+        ["git", "worktree", "add", "-b", branch_name, str(wt_path), "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        subprocess.run(
+            ["git", "worktree", "add", str(wt_path), branch_name],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        )
+
+    if wt_path.exists():
+        logger.info("Worktree ready: %s", wt_path)
+    else:
+        logger.warning("Failed to create worktree for %s: %s", feature_id, result.stderr)
+    return wt_path
+
+
+def load_lanes(path: Path) -> list[TaskDescriptor]:
+    """Load pending lanes whose dependencies are complete."""
+
+    data = json.loads(path.read_text())
+    all_lanes = data.get("lanes", [])
+    done_ids = {lane["feature_id"] for lane in all_lanes if lane.get("status") == "done"}
+    tasks: list[TaskDescriptor] = []
+
+    for lane in all_lanes:
+        if lane.get("status") in ("done", "failed"):
+            continue
+
+        deps = lane.get("depends_on", [])
+        if deps and not all(dep in done_ids for dep in deps):
+            logger.debug("Skipping %s (unmet deps: %s)", lane["feature_id"], deps)
+            continue
+
+        worktree = lane.get("worktree")
+        if not worktree or worktree == ".":
+            worktree = str(ensure_worktree(lane["feature_id"], branch=lane.get("branch")))
+
+        tasks.append(
+            TaskDescriptor(
+                feature_id=lane["feature_id"],
+                task_type=lane.get("task_type", "execute"),
+                prompt=lane["prompt"],
+                worktree=worktree,
+                required_capabilities=lane.get("capabilities", ["code"]),
+                developed_by_runtime=lane.get("developed_by_runtime"),
+            )
+        )
+
+    return tasks
+
+
+def update_lane_status(lanes_path: Path, feature_id: str, status: str) -> None:
+    """Write lane status back to feature_lanes.json."""
+
+    data = json.loads(lanes_path.read_text())
+    for lane in data.get("lanes", []):
+        if lane["feature_id"] == feature_id:
+            lane["status"] = status
+            break
+    lanes_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    logger.info("Lane %s -> %s", feature_id, status)
 
 
 class GateResultLike(Protocol):
@@ -41,6 +122,7 @@ class QualityGateLike(Protocol):
 
 class LaneResultLike(Protocol):
     status: str
+    final_errors: list[str] | None
 
 
 class ReworkLoopLike(Protocol):
@@ -50,12 +132,24 @@ class ReworkLoopLike(Protocol):
         initial_gate_result: GateResultLike,
         dispatch_fn: Any,
         gate: QualityGateLike,
+        max_retries: int = 3,
     ) -> LaneResultLike: ...
 
 
 class ConsumerLike(Protocol):
     async def dispatch_task(self, task: TaskDescriptor) -> str: ...
     def shutdown(self) -> None: ...
+
+
+class ErrorKnowledgeLike(Protocol):
+    def record_failure(
+        self,
+        lane_id: str,
+        error_output: str,
+        fix_output: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def inject_context(self, prompt: str) -> str: ...
 
 
 @dataclass
@@ -78,8 +172,10 @@ class MasterLoop:
         consumer: ConsumerLike | None,
         quality_gate: QualityGateLike,
         rework_loop: ReworkLoopLike,
+        error_knowledge: ErrorKnowledgeLike | None = None,
         max_hours: float = 10.0,
         max_concurrent: int = 2,
+        discovery_enabled: bool = True,
         python_executable: str = sys.executable,
         monotonic: Any = time.monotonic,
     ) -> None:
@@ -88,8 +184,10 @@ class MasterLoop:
         self.consumer = consumer
         self.quality_gate = quality_gate
         self.rework_loop = rework_loop
+        self.error_knowledge = error_knowledge
         self.max_hours = max_hours
         self.max_concurrent = max(1, max_concurrent)
+        self.discovery_enabled = discovery_enabled
         self.python_executable = python_executable
         self._monotonic = monotonic
         self._shutdown_requested = asyncio.Event()
@@ -101,30 +199,38 @@ class MasterLoop:
         lanes_path: Path = Path("xmuse/feature_lanes.json"),
         auto_discovery_path: Path = Path("xmuse/auto_discovery.py"),
         agents_path: Path = Path("xmuse/agents.json"),
+        memoryos_url: str = "http://127.0.0.1:8000",
         max_hours: float = 10.0,
         max_concurrent: int = 2,
+        discovery_enabled: bool = True,
     ) -> MasterLoop:
         from xmuse_core.agents.quality_gate import QualityGate
         from xmuse_core.agents.rework_loop import ReworkLoop
 
         registry = AgentRegistry.from_file(agents_path)
+        memoryos = MemoryOSClient(base_url=memoryos_url)
         session_mgr = SessionManager(
             launchers={AgentRuntime.CODEX: CodexLauncher()},
             state_file=Path("xmuse/active_sessions.json"),
+            memoryos_client=memoryos,
         )
         consumer = WorklistConsumer(
             registry=registry,
             session_mgr=session_mgr,
             max_concurrent=max_concurrent,
+            on_complete=lambda fid, st: update_lane_status(lanes_path, fid, st),
         )
+        error_knowledge = ErrorKnowledge()
         return cls(
             lanes_path=lanes_path,
             auto_discovery_path=auto_discovery_path,
             consumer=consumer,
             quality_gate=QualityGate(),
-            rework_loop=ReworkLoop(),
+            rework_loop=ReworkLoop(error_knowledge=error_knowledge),
+            error_knowledge=error_knowledge,
             max_hours=max_hours,
             max_concurrent=max_concurrent,
+            discovery_enabled=discovery_enabled,
         )
 
     async def run(self) -> MasterLoopSummary:
@@ -140,11 +246,13 @@ class MasterLoop:
                 break
 
             summary.rounds += 1
-            discovered = await self._run_auto_discovery()
-            self._merge_discovered_lanes(discovered)
+            new_discovered_count = 0
+            if self.discovery_enabled:
+                discovered = await self._run_auto_discovery()
+                new_discovered_count = self._merge_discovered_lanes(discovered)
             pending = load_lanes(self.lanes_path)
 
-            if not pending and not discovered:
+            if not pending and new_discovered_count == 0:
                 summary.exit_reason = "idle"
                 break
 
@@ -212,19 +320,24 @@ class MasterLoop:
             return []
         return [lane for lane in lanes if isinstance(lane, dict) and lane.get("feature_id")]
 
-    def _merge_discovered_lanes(self, discovered: list[dict[str, Any]]) -> None:
+    def _merge_discovered_lanes(self, discovered: list[dict[str, Any]]) -> int:
         data = self._read_lanes_json()
         lanes = data.setdefault("lanes", [])
         existing_ids = {lane.get("feature_id") for lane in lanes}
+        new_count = 0
         changed = False
         for lane in discovered:
             if lane.get("feature_id") in existing_ids:
                 continue
+            lane.setdefault("status", "pending")
+            lane.setdefault("depends_on", [])
             lanes.append(lane)
             existing_ids.add(lane.get("feature_id"))
+            new_count += 1
             changed = True
         if changed:
             self._write_lanes_json(data)
+        return new_count
 
     async def _dispatch_round(
         self,
@@ -265,7 +378,8 @@ class MasterLoop:
             raise RuntimeError("MasterLoop.consumer is required before dispatching lanes")
 
         self._update_lane_status(task.feature_id, "running")
-        dispatch_status = await self.consumer.dispatch_task(task)
+        dispatch_task = self._inject_error_knowledge(task)
+        dispatch_status = await self.consumer.dispatch_task(dispatch_task)
         if dispatch_status != "done":
             self._update_lane_status(task.feature_id, "failed")
             return "failed"
@@ -275,11 +389,12 @@ class MasterLoop:
             self._update_lane_status(task.feature_id, "done")
             return "done"
 
-        async def dispatch_rework(rework_prompt: str, worktree: Path) -> str:
+        async def dispatch_rework(rework_prompt: str, worktree: str | Path) -> str:
+            enriched_prompt = self._inject_error_knowledge_text(rework_prompt)
             rework_task = TaskDescriptor(
                 feature_id=task.feature_id,
                 task_type="rework",
-                prompt=rework_prompt,
+                prompt=enriched_prompt,
                 worktree=str(worktree),
                 required_capabilities=task.required_capabilities,
                 developed_by_runtime=task.developed_by_runtime,
@@ -291,13 +406,53 @@ class MasterLoop:
             gate_result,
             dispatch_rework,
             self.quality_gate,
+            max_retries=3,
         )
         status = "done" if lane_result.status == "done" else "failed"
+        if status == "failed":
+            self._record_failed_rework(task, gate_result, lane_result)
         self._update_lane_status(task.feature_id, status)
         return status
 
     def _update_lane_status(self, feature_id: str, status: str) -> None:
         update_lane_status(self.lanes_path, feature_id, status)
+
+    def _record_failed_rework(
+        self,
+        task: TaskDescriptor,
+        gate_result: GateResultLike,
+        lane_result: LaneResultLike,
+    ) -> None:
+        if self.error_knowledge is None:
+            return
+        final_errors = lane_result.final_errors or gate_result.errors
+        error_output = "\n\n".join(final_errors)
+        try:
+            self.error_knowledge.record_failure(task.feature_id, error_output)
+        except Exception as exc:
+            logger.warning("error knowledge record_failure failed: %s", exc)
+
+    def _inject_error_knowledge(self, task: TaskDescriptor) -> TaskDescriptor:
+        enriched_prompt = self._inject_error_knowledge_text(task.prompt)
+        if enriched_prompt == task.prompt:
+            return task
+        return TaskDescriptor(
+            feature_id=task.feature_id,
+            task_type=task.task_type,
+            prompt=enriched_prompt,
+            worktree=task.worktree,
+            required_capabilities=task.required_capabilities,
+            developed_by_runtime=task.developed_by_runtime,
+        )
+
+    def _inject_error_knowledge_text(self, prompt: str) -> str:
+        if self.error_knowledge is None:
+            return prompt
+        try:
+            return self.error_knowledge.inject_context(prompt)
+        except Exception as exc:
+            logger.warning("error knowledge injection failed: %s", exc)
+            return prompt
 
     def _read_lanes_json(self) -> dict[str, Any]:
         if not self.lanes_path.exists():
@@ -322,14 +477,32 @@ class MasterLoop:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="xmuse autonomous master loop")
     parser.add_argument("--max-hours", type=float, default=10.0, help="Global timeout in hours")
-    parser.add_argument("--max-concurrent", type=int, default=2, help="Max concurrent lanes")
+    parser.add_argument(
+        "--concurrency",
+        "--max-concurrent",
+        dest="concurrency",
+        type=int,
+        default=2,
+        help="Max concurrent lanes",
+    )
     parser.add_argument("--lanes", default="xmuse/feature_lanes.json", help="Feature lanes file")
+    parser.add_argument("--config", default="xmuse/agents.json", help="Agent registry config")
+    parser.add_argument(
+        "--memoryos-url",
+        default="http://127.0.0.1:8000",
+        help="MemoryOS API URL",
+    )
     parser.add_argument(
         "--auto-discovery",
         default="xmuse/auto_discovery.py",
         help="auto_discovery.py path",
     )
-    parser.add_argument("--agents", default="xmuse/agents.json", help="Agent registry config")
+    parser.add_argument("--agents", dest="config", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--no-discovery",
+        action="store_true",
+        help="Skip auto_discovery.py at round start",
+    )
     return parser.parse_args(argv)
 
 
@@ -341,9 +514,11 @@ async def main(args: argparse.Namespace) -> MasterLoopSummary:
     loop = MasterLoop.from_defaults(
         lanes_path=Path(args.lanes),
         auto_discovery_path=Path(args.auto_discovery),
-        agents_path=Path(args.agents),
+        agents_path=Path(args.config),
+        memoryos_url=args.memoryos_url,
         max_hours=args.max_hours,
-        max_concurrent=args.max_concurrent,
+        max_concurrent=args.concurrency,
+        discovery_enabled=not args.no_discovery,
     )
     loop.install_signal_handlers()
     summary = await loop.run()

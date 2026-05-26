@@ -12,8 +12,8 @@ class FakeGate:
         self._results = results
         self.checked_worktrees: list[str] = []
 
-    def check(self, worktree: str) -> GateResult:
-        self.checked_worktrees.append(worktree)
+    def check(self, worktree: str | Path) -> GateResult:
+        self.checked_worktrees.append(str(worktree))
         return self._results.pop(0)
 
 
