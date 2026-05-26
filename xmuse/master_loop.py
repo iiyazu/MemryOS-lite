@@ -412,11 +412,13 @@ class MasterLoop:
         )
         status = "done" if lane_result.status == "done" else "failed"
         if status == "done":
-            self._auto_merge_worktree(task)
+            merged = await self._auto_merge_worktree(task)
+            if not merged:
+                status = "merge_failed"
         elif status == "failed":
             self._record_failed_rework(task, gate_result, lane_result)
         self._update_lane_status(task.feature_id, status)
-        return status
+        return "done" if status == "done" else "failed"
 
     def _update_lane_status(self, feature_id: str, status: str) -> None:
         update_lane_status(self.lanes_path, feature_id, status)
