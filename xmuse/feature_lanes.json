@@ -11,108 +11,285 @@
       "task_type": "execute",
       "prompt": "Implement src/xmuse_core/agents/quality_gate.py — a post-dispatch quality gate.\n\nRequirements:\n1. Class QualityGate with async method `check(worktree: Path) -> GateResult`\n2. GateResult dataclass: passed: bool, errors: list[str], checks: dict[str, bool]\n3. Checks to run (all in the worktree):\n   - pytest: `uv run pytest tests/ -x -q` → pass if exit 0\n   - ruff: `uv run ruff check src/ xmuse/` → pass if exit 0\n   - diff_sanity: git diff --stat HEAD~1 → fail if >1000 insertions\n4. Each check runs as asyncio.create_subprocess_exec\n5. If any check fails, GateResult.passed = False, errors contains the failure output\n6. Add tests in tests/test_xmuse_quality_gate.py that mock subprocess results\n\nExisting context:\n- src/xmuse_core/agents/manager.py has dispatch_one_shot returning AgentOutput\n- bootstrap_gate.sh exists as shell reference but we need a Python async version\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/quality-gate",
-      "capabilities": ["code", "test"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "rework-loop",
       "task_type": "execute",
       "prompt": "Implement src/xmuse_core/agents/rework_loop.py — retry failed lanes with error context.\n\nRequirements:\n1. Class ReworkLoop with async method `run(lane: TaskDescriptor, initial_gate_result: GateResult, dispatch_fn, gate: QualityGate, max_retries=3) -> LaneResult`\n2. LaneResult dataclass: status ('done'|'failed'), attempts: int, final_errors: list[str]\n3. On each retry:\n   - Build a rework prompt that includes: original prompt + gate errors + attempt number\n   - Call dispatch_fn(rework_prompt, worktree)\n   - Run gate.check(worktree)\n   - If passed → return done\n4. After max_retries exhausted → return failed with accumulated errors\n5. Add tests in tests/test_xmuse_rework_loop.py\n\nExisting context:\n- src/xmuse_core/agents/quality_gate.py (QualityGate, GateResult) — implemented by prior lane\n- src/xmuse_core/agents/manager.py has dispatch_one_shot\n- src/xmuse_core/agents/consumer.py has TaskDescriptor\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/rework-loop",
-      "capabilities": ["code", "test"],
-      "depends_on": ["quality-gate"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "quality-gate"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "lane-status-writer",
       "task_type": "execute",
       "prompt": "Implement lane status writeback in xmuse/xmuse_main.py.\n\nRequirements:\n1. After dispatch_one_shot completes, update the lane's status in feature_lanes.json:\n   - exit 0 + gate passed → status: 'done'\n   - exit 0 + gate failed after rework → status: 'failed'\n   - timeout → status: 'failed'\n2. Add function `update_lane_status(lanes_path: Path, feature_id: str, status: str)`\n3. This function reads the JSON, finds the lane by feature_id, sets status, writes back\n4. Call it from the consumer after each dispatch completes\n5. Add tests in tests/test_xmuse_lane_status.py\n\nExisting context:\n- xmuse/feature_lanes.json has lanes array with feature_id and optional status field\n- xmuse/xmuse_main.py loads lanes filtering out status='done' and status='failed'\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/lane-status-writer",
-      "capabilities": ["code", "test"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "master-loop",
       "task_type": "execute",
       "prompt": "Implement xmuse/master_loop.py — the multi-round autonomous orchestrator.\n\nRequirements:\n1. Class MasterLoop with async method `run()`\n2. Each round:\n   a. Run auto_discovery.py --all → parse JSON output → generate new TaskDescriptors\n   b. Merge with pending lanes from feature_lanes.json (skip done/failed)\n   c. Dispatch all pending lanes via WorklistConsumer (parallel for independent lanes)\n   d. After each lane completes: run QualityGate → ReworkLoop if failed\n   e. Update lane status in feature_lanes.json\n3. Termination conditions:\n   - No pending lanes and auto_discovery returns empty → exit\n   - Global timeout (configurable, default 10h) → graceful shutdown\n   - 3 consecutive rounds with zero successful lanes → exit\n4. CLI: `python xmuse/master_loop.py [--max-hours 10] [--max-concurrent 2]`\n5. Signal handling: SIGTERM/SIGINT → finish current lanes, then exit\n6. Add tests in tests/test_xmuse_master_loop.py (mock subprocess + dispatch)\n\nExisting context:\n- xmuse/auto_discovery.py outputs JSON array of lanes to stdout\n- src/xmuse_core/agents/quality_gate.py has QualityGate\n- src/xmuse_core/agents/rework_loop.py has ReworkLoop\n- xmuse/xmuse_main.py has load_lanes() and ensure_worktree()\n- src/xmuse_core/agents/consumer.py has WorklistConsumer\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/master-loop",
-      "capabilities": ["code", "test"],
-      "depends_on": ["quality-gate", "rework-loop", "lane-status-writer"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "quality-gate",
+        "rework-loop",
+        "lane-status-writer"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "error-knowledge",
       "task_type": "execute",
       "prompt": "Implement xmuse/error_knowledge.py — accumulate and retrieve error patterns.\n\nRequirements:\n1. ErrorKnowledge class with JSON file storage (xmuse/error_knowledge.json)\n2. Each entry has 7 slots (inspired by lessons-learned pattern):\n   - pit: what happened (the error)\n   - root_cause: why it happened\n   - trigger: conditions that cause recurrence\n   - fix: how it was resolved\n   - verification: how to confirm the fix works\n   - lesson: what to remember for next time\n   - scope: which types of tasks this applies to\n3. Methods:\n   - record_failure(lane_id, error_output, fix_output=None) → auto-extract pit + root_cause\n   - find_relevant(prompt: str, top_k=3) → list of relevant entries (keyword match)\n   - inject_context(prompt: str) → prepend relevant lessons to prompt\n   - mark_resolved(entry_id, fix, verification, lesson)\n4. Integration point: called before dispatch_one_shot to enrich prompt\n5. Add tests in tests/test_xmuse_error_knowledge.py\n\nExisting context:\n- xmuse/xmuse_error_knowledge.py exists (old version) — read it for reference but implement fresh\n- The 7-slot pattern comes from cat-cafe-tutorials lesson 14\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/error-knowledge",
-      "capabilities": ["code", "test"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "memoryos-dispatch-integration",
       "task_type": "execute",
       "prompt": "Wire MemoryOSClient into the dispatch flow in src/xmuse_core/agents/manager.py.\n\nRequirements:\n1. Add optional `memoryos_client: MemoryOSClient | None` parameter to SessionManager.__init__\n2. In dispatch_one_shot, before sending prompt to codex:\n   - If memoryos_client is set: create_session(f'xmuse:{feature_id}')\n   - build_context(session_id, prompt) → prepend to formatted prompt\n3. After dispatch completes:\n   - ingest(session_id, 'user', prompt)\n   - ingest(session_id, 'assistant', stdout[:4000])\n4. All memoryos calls are best-effort (catch errors, log warning, continue)\n5. Update tests in tests/test_xmuse_core_agents_manager.py\n6. Update xmuse/xmuse_main.py to pass memoryos_client to SessionManager\n\nExisting context:\n- src/xmuse_core/agents/memoryos_client.py has MemoryOSClient with create_session, build_context, ingest\n- All methods already have degraded mode (return None/empty on failure)\n- memoryOS API runs on http://127.0.0.1:8000\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/memoryos-dispatch-integration",
-      "capabilities": ["code", "test"],
-      "depends_on": ["master-loop"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "master-loop"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "error-knowledge-integration",
       "task_type": "execute",
       "prompt": "Integrate ErrorKnowledge into the dispatch and rework flow.\n\nRequirements:\n1. In master_loop.py, before dispatching each lane:\n   - Call error_knowledge.inject_context(prompt) to enrich with relevant lessons\n2. In rework_loop.py, after each failed attempt:\n   - Call error_knowledge.record_failure(lane_id, gate_errors)\n3. After successful rework:\n   - Call error_knowledge.mark_resolved(entry_id, fix_summary, verification, lesson)\n4. Update xmuse/master_loop.py and src/xmuse_core/agents/rework_loop.py\n5. Add integration test that verifies error knowledge accumulates across retries\n\nExisting context:\n- xmuse/error_knowledge.py has ErrorKnowledge class with record_failure, find_relevant, inject_context, mark_resolved\n- src/xmuse_core/agents/rework_loop.py has ReworkLoop\n- xmuse/master_loop.py has MasterLoop\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/error-knowledge-integration",
-      "capabilities": ["code", "test"],
-      "depends_on": ["error-knowledge", "master-loop"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "error-knowledge",
+        "master-loop"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "self-improvement-detection",
       "task_type": "execute",
       "prompt": "Implement self-improvement detection and safe restart in xmuse/master_loop.py.\n\nRequirements:\n1. After each lane completes, check if it modified files in src/xmuse_core/agents/ or xmuse/master_loop.py or xmuse/xmuse_main.py\n2. If yes: set a flag `_restart_required = True`\n3. At end of current round (all lanes in this batch done):\n   - If _restart_required: checkpoint pending lanes to xmuse/pending_checkpoint.json\n   - Run smoke test (import all xmuse_core.agents modules)\n   - If smoke passes: os.execv() to restart self with same args\n   - If smoke fails: git checkout the modified files, log warning, continue\n4. Add tests that verify the detection logic (mock git diff output)\n\nExisting context:\n- xmuse/overnight_runner.sh has a shell-level smoke_test function — this is the Python equivalent\n- SessionManager.graceful_shutdown already supports pending_tasks parameter\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/self-improvement-detection",
-      "capabilities": ["code", "test"],
-      "depends_on": ["master-loop"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "master-loop"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "mcp-xmuse-server",
       "task_type": "execute",
       "prompt": "Implement xmuse/mcp_server.py — an MCP server exposing xmuse operations as tools.\n\nRequirements:\n1. Use FastAPI + SSE transport (MCP over HTTP)\n2. Expose these MCP tools:\n   - list_lanes() → returns current feature_lanes.json content\n   - enqueue_lane(feature_id, prompt, capabilities) → adds a new lane\n   - get_status(feature_id) → returns lane status + active session info\n   - abort_lane(feature_id) → aborts running dispatch\n   - get_error_knowledge(query) → searches error knowledge for relevant entries\n   - get_logs(feature_id) → returns execution log for a lane\n3. Server runs on port 8100 (separate from memoryOS on 8000)\n4. Add tests in tests/test_xmuse_mcp_server.py using TestClient\n5. This allows other CLI agents (Claude Code, Codex) to interact with xmuse\n\nExisting context:\n- xmuse/feature_lanes.json is the task queue\n- xmuse/active_sessions.json tracks running sessions\n- xmuse/error_knowledge.json stores error patterns\n- xmuse/logs/ contains per-round execution logs\n- FastAPI is already a dependency (used by memoryOS)\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/mcp-xmuse-server",
-      "capabilities": ["code", "test"],
-      "depends_on": ["error-knowledge", "lane-status-writer"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "error-knowledge",
+        "lane-status-writer"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "memoryos-middleware-enhancement",
       "task_type": "execute",
       "prompt": "Enhance memoryOS middleware for xmuse agent integration.\n\nRequirements:\n1. Add RateLimitMiddleware to src/memoryos_lite/middleware.py:\n   - Per-client rate limiting (by X-API-Key or IP)\n   - Default: 100 req/min\n   - Return 429 with Retry-After header when exceeded\n2. Add CORSMiddleware configuration (allow xmuse GUI frontend)\n3. Add /sessions/{id}/context endpoint that combines:\n   - Recent messages (last 10)\n   - Relevant memory pages (top 3 by similarity)\n   - Error knowledge entries (if xmuse session)\n   Returns a single formatted context string ready for prompt injection\n4. Update src/memoryos_lite/api/app.py to register new middleware\n5. Add tests\n\nExisting context:\n- src/memoryos_lite/middleware.py has RequestIdMiddleware, ApiKeyAuthMiddleware, StructuredLoggingMiddleware\n- src/memoryos_lite/api/app.py is the FastAPI app\n- src/memoryos_lite/config.py has Settings with memoryos_api_key, memoryos_cors_origins\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/memoryos-middleware-enhancement",
-      "capabilities": ["code", "test"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "skill-plan-execute-review",
       "task_type": "execute",
       "prompt": "Extract the plan-execute-review-rework pattern into a reusable skill template.\n\nRequirements:\n1. Create xmuse/skills/plan_execute_review.py\n2. Class PlanExecuteReviewSkill:\n   - plan(feature_id, goal) → generates a plan prompt, dispatches planner agent, returns plan.md\n   - execute(feature_id, plan) → dispatches implementer agent with plan as context\n   - review(feature_id, worktree) → dispatches reviewer agent, returns verdict\n   - rework(feature_id, verdict) → dispatches rework agent with review feedback\n   - run(feature_id, goal) → orchestrates the full cycle: plan → execute → review → rework if needed\n3. Each step uses dispatch_one_shot with appropriate prompts\n4. The skill is configurable: max_rework_attempts, skip_plan (for simple tasks)\n5. Add tests in tests/test_xmuse_skill_plan_execute_review.py\n\nExisting context:\n- src/xmuse_core/agents/manager.py has SessionManager.dispatch_one_shot\n- src/xmuse_core/agents/quality_gate.py has QualityGate\n- src/xmuse_core/agents/rework_loop.py has ReworkLoop\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/skill-plan-execute-review",
-      "capabilities": ["code", "test"],
-      "depends_on": ["quality-gate", "rework-loop"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "quality-gate",
+        "rework-loop"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "xmuse-dashboard-api",
       "task_type": "execute",
       "prompt": "Implement xmuse/dashboard_api.py — REST API for the xmuse GUI frontend.\n\nRequirements:\n1. FastAPI app on port 8200\n2. Endpoints:\n   - GET /api/lanes → list all lanes with status\n   - GET /api/lanes/{id} → lane detail + execution log\n   - POST /api/lanes → create new lane (human submits feature request)\n   - POST /api/lanes/{id}/approve → approve a completed lane for merge\n   - POST /api/lanes/{id}/reject → reject and optionally trigger rework\n   - GET /api/sessions → list active codex sessions\n   - GET /api/errors → list error knowledge entries\n   - GET /api/metrics → execution stats (lanes done/failed/pending, avg time)\n3. CORS enabled for localhost:3000 (frontend dev server)\n4. Reads from: feature_lanes.json, active_sessions.json, error_knowledge.json, logs/\n5. Add tests in tests/test_xmuse_dashboard_api.py\n\nExisting context:\n- xmuse/feature_lanes.json, xmuse/active_sessions.json, xmuse/error_knowledge.json\n- xmuse/logs/ contains round logs\n- FastAPI is already a dependency\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/xmuse-dashboard-api",
-      "capabilities": ["code", "test"],
-      "depends_on": ["lane-status-writer", "error-knowledge"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "lane-status-writer",
+        "error-knowledge"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "xmuse-dashboard-frontend",
       "task_type": "execute",
       "prompt": "Implement a minimal xmuse dashboard frontend.\n\nRequirements:\n1. Create xmuse/frontend/ directory with a simple HTML + vanilla JS dashboard (no build step needed)\n2. Pages:\n   - Lane overview: table of all lanes with status badges (pending/running/done/failed)\n   - Lane detail: shows prompt, execution log, gate results\n   - Error knowledge: searchable list of error patterns\n   - Submit lane: form to create a new lane (feature_id + prompt + capabilities)\n3. Fetches data from xmuse dashboard API (http://localhost:8200/api/)\n4. Auto-refreshes every 10 seconds\n5. Serve via `python -m http.server 3000` from xmuse/frontend/\n6. Clean, minimal CSS (no framework needed)\n\nExisting context:\n- xmuse/dashboard_api.py serves the REST API on port 8200\n- Endpoints: GET /api/lanes, GET /api/lanes/{id}, POST /api/lanes, GET /api/errors, GET /api/metrics\n\nWrite clean code. Commit when done.",
       "branch": "feat/xmuse-dashboard-frontend",
-      "capabilities": ["code"],
-      "depends_on": ["xmuse-dashboard-api"]
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "xmuse-dashboard-api"
+      ],
+      "status": "done"
     },
     {
       "feature_id": "auto-discovery-enhanced",
       "task_type": "execute",
       "prompt": "Enhance xmuse/auto_discovery.py with additional discovery sources.\n\nRequirements:\n1. Add --mypy flag: run `uv run mypy src/ --ignore-missing-imports` → parse errors → generate fix lanes\n2. Add --coverage flag: run `uv run pytest --cov=src --cov-report=json` → find files with <50% coverage → generate test lanes\n3. Add --git-issues flag: parse TODO/FIXME/HACK comments in code → generate cleanup lanes\n4. Update --all to include all sources\n5. Add deduplication: if a lane with same feature_id already exists in feature_lanes.json, skip it\n6. Add priority scoring: test failures > type errors > lint > coverage > TODOs\n7. Update tests\n\nExisting context:\n- xmuse/auto_discovery.py already handles --pytest and --ruff\n- Output format: JSON array of lane objects with feature_id, task_type, prompt, capabilities, source\n\nWrite clean, tested code. Commit when done.",
       "branch": "feat/auto-discovery-enhanced",
-      "capabilities": ["code", "test"],
-      "depends_on": ["master-loop"]
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "depends_on": [
+        "master-loop"
+      ],
+      "status": "done"
+    },
+    {
+      "feature_id": "frontend-scaffold",
+      "task_type": "execute",
+      "prompt": "Scaffold a Next.js 14 (App Router) project in xmuse/frontend/.\n\nRequirements:\n1. Run: npx create-next-app@latest xmuse/frontend --typescript --tailwind --eslint --app --src-dir --no-import-alias\n2. Install additional deps: pnpm add zustand swr recharts lucide-react\n3. Create .env.local with NEXT_PUBLIC_API_URL=http://localhost:8200\n4. Verify: cd xmuse/frontend && pnpm build succeeds\n5. Remove the default Next.js boilerplate pages (keep layout.tsx)\n6. Set up tailwind.config.ts with dark mode 'class' and custom colors:\n   - bg-app: slate-950, bg-sidebar: slate-900, bg-card: slate-800\n   - accent: cyan-400, success: emerald-500, error: red-500, warning: amber-500\n7. Create src/app/globals.css with dark theme defaults\n8. Commit when done.\n\nIMPORTANT: Delete the existing xmuse/frontend/ directory (old vanilla HTML files) before scaffolding.",
+      "branch": "feat/frontend-scaffold",
+      "capabilities": [
+        "code"
+      ]
+    },
+    {
+      "feature_id": "frontend-app-shell",
+      "task_type": "execute",
+      "prompt": "Implement the AppShell layout in xmuse/frontend/ (Next.js 14 App Router).\n\nRequirements:\n1. Create src/components/AppShell.tsx — the root layout wrapper with three columns:\n   - ActivityRail (48px fixed width, left icon nav)\n   - Sidebar (280px default, resizable via drag handle)\n   - Main content area (flex-1)\n2. Create src/components/ActivityRail.tsx:\n   - Vertical icon buttons: MessageSquare (lanes), BarChart3 (metrics), AlertTriangle (errors), Settings\n   - Use lucide-react icons\n   - Active state: cyan-400 highlight + left border indicator\n   - Bottom: green/red connection status dot\n3. Create src/components/Sidebar.tsx:\n   - Accepts children (content changes per page)\n   - Header with page title\n   - Resizable width via mouse drag (store width in Zustand)\n4. Create src/stores/uiStore.ts:\n   - sidebarWidth: number (default 280, min 200, max 500)\n   - activePage: 'lanes' | 'metrics' | 'errors' | 'settings'\n   - theme: 'dark' | 'light'\n5. Wire AppShell into src/app/layout.tsx\n6. Style: dark slate background, subtle borders (slate-700), smooth transitions\n7. Commit when done.\n\nExisting context:\n- Project scaffolded with Next.js 14 + Tailwind + TypeScript\n- tailwind.config.ts has custom dark theme colors\n- Use 'use client' for interactive components",
+      "branch": "feat/frontend-app-shell",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "frontend-scaffold"
+      ]
+    },
+    {
+      "feature_id": "frontend-api-layer",
+      "task_type": "execute",
+      "prompt": "Implement the API client and data hooks in xmuse/frontend/.\n\nRequirements:\n1. Create src/lib/api.ts:\n   - Base URL from NEXT_PUBLIC_API_URL env var\n   - fetchApi<T>(path, options?) wrapper with error handling\n   - Type definitions: Lane, LaneDetail, ErrorEntry, Metrics, Session\n2. Create src/hooks/useLanes.ts:\n   - useSWR hook fetching GET /api/lanes, auto-refresh 5s\n   - Returns { lanes, isLoading, error, mutate }\n3. Create src/hooks/useLaneDetail.ts:\n   - useSWR for GET /api/lanes/{id}, refresh 5s when lane is running\n4. Create src/hooks/useMetrics.ts:\n   - useSWR for GET /api/metrics\n5. Create src/hooks/useErrors.ts:\n   - useSWR for GET /api/errors\n6. Create src/hooks/useConnection.ts:\n   - Polls GET /api/metrics every 10s to check API health\n   - Returns { connected: boolean }\n7. Create src/stores/laneStore.ts (Zustand):\n   - selectedLaneId: string | null\n   - searchQuery: string\n   - statusFilter: string[]\n8. Commit when done.\n\nExisting context:\n- Dashboard API runs on http://localhost:8200\n- Endpoints: GET /api/lanes, GET /api/lanes/{id}, POST /api/lanes, GET /api/errors, GET /api/metrics, GET /api/sessions\n- Use SWR for data fetching with auto-refresh",
+      "branch": "feat/frontend-api-layer",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "frontend-scaffold"
+      ]
+    },
+    {
+      "feature_id": "frontend-lanes-page",
+      "task_type": "execute",
+      "prompt": "Implement the Lanes/Chat page in xmuse/frontend/.\n\nRequirements:\n1. Create src/app/lanes/page.tsx — the default page\n2. Sidebar content (src/components/lanes/LaneSidebar.tsx):\n   - Search input at top\n   - Status filter chips (all, pending, running, done, failed)\n   - Scrollable lane list\n3. Create src/components/lanes/LaneItem.tsx:\n   - Status avatar (colored circle with icon)\n   - Feature ID as title\n   - Branch name as subtitle\n   - Status badge (colored pill)\n   - Click to select (updates laneStore.selectedLaneId)\n   - Active state highlight\n4. Create src/components/lanes/ChatView.tsx:\n   - Conversation-style message flow for selected lane\n   - Messages: prompt (user bubble, right-aligned), execution log (system, left), gate result (success/error card), final status\n5. Create src/components/lanes/MessageBubble.tsx:\n   - Variants: user (purple/indigo), system (slate), success (emerald border), error (red border)\n   - Label text (PROMPT, EXECUTION LOG, QUALITY GATE, STATUS)\n   - Code blocks with dark background for logs\n6. Create src/components/lanes/InputBar.tsx:\n   - Textarea + Send button at bottom\n   - POST /api/lanes/{id}/reject with message to trigger rework\n7. Wire into AppShell: when activePage='lanes', show LaneSidebar in Sidebar slot\n8. Commit when done.\n\nExisting context:\n- src/hooks/useLanes.ts and src/hooks/useLaneDetail.ts provide data\n- src/stores/laneStore.ts has selectedLaneId and searchQuery\n- AppShell.tsx renders Sidebar with children based on activePage\n- Use Tailwind dark theme classes",
+      "branch": "feat/frontend-lanes-page",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "frontend-app-shell",
+        "frontend-api-layer"
+      ]
+    },
+    {
+      "feature_id": "frontend-metrics-page",
+      "task_type": "execute",
+      "prompt": "Implement the Metrics/Analytics page in xmuse/frontend/.\n\nRequirements:\n1. Create src/app/metrics/page.tsx\n2. Sidebar content (src/components/metrics/MetricsSidebar.tsx):\n   - Time range buttons: 1h, 6h, 24h, 7d\n   - Status filter checkboxes\n3. Create src/components/metrics/SummaryCards.tsx:\n   - 4 cards in a grid: Total Lanes, Success Rate (%), Avg Time (s), Active Sessions\n   - Each card: icon + value + label\n   - Color-coded: cyan for total, emerald for success, amber for time, blue for active\n4. Create src/components/metrics/Charts.tsx:\n   - Use Recharts library\n   - Pie chart: status distribution (done/failed/pending/running)\n   - Bar chart: execution time per lane (horizontal bars)\n   - Responsive, dark theme compatible (use slate colors for grid/axis)\n5. Wire into AppShell routing\n6. Commit when done.\n\nExisting context:\n- src/hooks/useMetrics.ts provides metrics data from GET /api/metrics\n- Recharts is already installed\n- Dark theme: use slate-700 for chart grid lines, cyan-400/emerald-500/red-500 for data colors",
+      "branch": "feat/frontend-metrics-page",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "frontend-app-shell",
+        "frontend-api-layer"
+      ]
+    },
+    {
+      "feature_id": "frontend-errors-page",
+      "task_type": "execute",
+      "prompt": "Implement the Error Knowledge page in xmuse/frontend/.\n\nRequirements:\n1. Create src/app/errors/page.tsx\n2. Sidebar content (src/components/errors/ErrorSidebar.tsx):\n   - Search input\n   - Scope filter: all, code, test, infra\n   - Count display\n3. Create src/components/errors/ErrorCard.tsx:\n   - Card showing 7-slot error knowledge entry:\n     - Title (pit summary, bold)\n     - Root cause (muted text)\n     - Trigger conditions\n     - Fix applied (green highlight)\n     - Verification command (code block)\n     - Lesson learned (italic)\n     - Scope tags\n   - Expandable: click to show full details, collapsed shows title + root cause only\n4. Create src/components/errors/ErrorGrid.tsx:\n   - Responsive grid of ErrorCards (1-2 columns)\n   - Client-side search filtering\n   - Empty state when no matches\n5. Wire into AppShell routing\n6. Commit when done.\n\nExisting context:\n- src/hooks/useErrors.ts provides error entries from GET /api/errors\n- Error entries have fields: id, pit, root_cause, trigger, fix, verification, lesson, scope, lane_id\n- Dark theme with slate backgrounds, emerald for fix, red for error indicators",
+      "branch": "feat/frontend-errors-page",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "frontend-app-shell",
+        "frontend-api-layer"
+      ]
+    },
+    {
+      "feature_id": "frontend-settings-page",
+      "task_type": "execute",
+      "prompt": "Implement the Settings page in xmuse/frontend/.\n\nRequirements:\n1. Create src/app/settings/page.tsx\n2. Sidebar content (src/components/settings/SettingsSidebar.tsx):\n   - Section nav: General, Agents, MemoryOS, Theme\n   - Click to scroll to section\n3. Create src/components/settings/SettingsPanel.tsx:\n   - General section: API URL input, refresh interval slider (1-30s), max concurrent input\n   - Agents section: read-only display of agents.json content (formatted JSON)\n   - MemoryOS section: connection URL, status indicator (green/red), test connection button\n   - Theme section: dark/light toggle switch\n4. Settings persist to localStorage via Zustand persist middleware\n5. Create src/stores/settingsStore.ts:\n   - apiUrl, refreshInterval, maxConcurrent, theme\n   - persist to localStorage\n6. Wire into AppShell routing\n7. Commit when done.\n\nExisting context:\n- Zustand with persist middleware for localStorage\n- Dark theme default, light theme as option\n- API URL default: http://localhost:8200",
+      "branch": "feat/frontend-settings-page",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "frontend-app-shell"
+      ]
+    },
+    {
+      "feature_id": "frontend-new-lane-modal",
+      "task_type": "execute",
+      "prompt": "Implement the New Lane creation modal in xmuse/frontend/.\n\nRequirements:\n1. Create src/components/lanes/NewLaneModal.tsx:\n   - Triggered by a '+' button in the LaneSidebar header\n   - Modal overlay with form:\n     - Feature ID input (required)\n     - Prompt textarea (required, large)\n     - Capabilities multi-select chips (code, test, review)\n     - Branch name input (optional, auto-generated from feature_id)\n     - Dependencies multi-select (from existing lane IDs)\n   - Submit: POST /api/lanes with form data\n   - On success: close modal, refresh lane list, select new lane\n   - On error: show error message inline\n2. Style: dark modal with backdrop blur, rounded corners, cyan accent on focus\n3. Keyboard: Escape to close, Cmd+Enter to submit\n4. Commit when done.\n\nExisting context:\n- POST /api/lanes accepts: { feature_id, prompt, capabilities, task_type, status }\n- src/hooks/useLanes.ts has mutate() to refresh lane list\n- src/stores/laneStore.ts has selectedLaneId to auto-select after creation",
+      "branch": "feat/frontend-new-lane-modal",
+      "capabilities": [
+        "code"
+      ],
+      "depends_on": [
+        "frontend-lanes-page"
+      ]
     }
   ]
 }
