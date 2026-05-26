@@ -211,6 +211,8 @@ class SessionManager:
             })
         self._state_file.write_text(json.dumps({"sessions": sessions}))
 
+    _DEFAULT_TIMEOUT: float = 3600.0
+
     async def dispatch_one_shot(
         self,
         agent: AgentDescriptor,
@@ -218,7 +220,7 @@ class SessionManager:
         prompt: str,
         worktree: Path,
         context: str = "",
-        timeout: float | None = None,
+        timeout: float | None = _DEFAULT_TIMEOUT,
     ) -> AgentOutput:
         launcher = self._launchers[agent.runtime]
         cmd = launcher.build_command(feature_id, worktree)

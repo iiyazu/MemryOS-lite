@@ -6,9 +6,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
-import shlex
 import signal
 import subprocess
 import sys
@@ -36,51 +36,10 @@ from xmuse_core.agents.registry import AgentRegistry, AgentRuntime
 logger = logging.getLogger("xmuse.master_loop")
 WORKTREE_BASE = ROOT.parent
 FULL_QUALITY_GATE_TASK_TYPE = "full_quality_gate"
-FULL_QUALITY_GATE_INTERVAL = 12
 FULL_QUALITY_GATE_PRIORITY = 100
 FULL_QUALITY_GATE_REPAIR_PRIORITY = 110
 TERMINAL_LANE_STATUSES = {"done", "failed", "merge_failed"}
-FULL_QUALITY_GATE_IGNORES = (
-    "tests/test_agent.py",
-    "tests/test_agent_demo.py",
-    "tests/test_cli_agent_demo.py",
-    "tests/test_budget.py",
-    "tests/test_conflict.py",
-    "tests/test_conflict_adversarial.py",
-    "tests/test_conflict_slots.py",
-    "tests/test_evals_advanced.py",
-    "tests/test_evidence_integration.py",
-    "tests/test_evidence_representer.py",
-    "tests/test_hybrid_multiquery.py",
-    "tests/test_item_retrieval.py",
-    "tests/test_item_tools.py",
-    "tests/test_observability.py",
-    "tests/test_pagination_hotpath.py",
-    "tests/test_patch_edge_cases.py",
-    "tests/test_performance.py",
-    "tests/test_rag_pipeline.py",
-    "tests/test_retrieval.py",
-)
-FULL_QUALITY_GATE_EXPRESSION = (
-    "not ("
-    "test_memoryos_baseline_preserves_required_sources or "
-    "test_hard_cases_preserve_baseline_differentiation or "
-    "explicit_v1 or "
-    "dropped_relevant_memoryos_page or "
-    "windowed_page_diagnostics or "
-    "temporal_anchor_exposes_page_candidate"
-    ")"
-)
-FULL_QUALITY_GATE_PYTEST_ARGS = (
-    "-q",
-    *(f"--ignore={path}" for path in FULL_QUALITY_GATE_IGNORES),
-    "-k",
-    FULL_QUALITY_GATE_EXPRESSION,
-)
-FULL_QUALITY_GATE_COMMAND = ("uv", "run", "pytest", *FULL_QUALITY_GATE_PYTEST_ARGS)
-FULL_QUALITY_GATE_COMMAND_TEXT = " ".join(
-    shlex.quote(part) for part in FULL_QUALITY_GATE_COMMAND
-)
+DEFAULT_GATE_PROFILES_PATH = ROOT / "xmuse" / "gate_profiles.json"
 
 
 @dataclass
@@ -98,6 +57,34 @@ class ProcessResult:
 
 def _coerce_priority(value: Any) -> int:
     return value if isinstance(value, int) else 0
+
+
+def _root_head_sha() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+_TASK_DESCRIPTOR_FIELDS = {
+    "feature_id",
+    "task_type",
+    "prompt",
+    "worktree",
+    "capabilities",
+    "developed_by_runtime",
+    "priority",
+    "gate_profile",
+    "gate_profiles",
+    "base_head_sha",
+}
+
+
+def _lane_metadata(lane: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in lane.items() if key not in _TASK_DESCRIPTOR_FIELDS}
 
 
 def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
@@ -159,6 +146,7 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
     all_lanes = data.get("lanes", [])
     done_ids = {lane["feature_id"] for lane in all_lanes if lane.get("status") == "done"}
     tasks: list[tuple[int, TaskDescriptor, bool]] = []
+    mutated = False
 
     for index, lane in enumerate(all_lanes):
         if _is_terminal_lane(lane):
@@ -175,6 +163,15 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
             worktree = worktree or "."
         elif not worktree or worktree == ".":
             worktree = str(ensure_worktree(lane["feature_id"], branch=lane.get("branch")))
+            lane["worktree"] = worktree
+            lane["base_head_sha"] = lane.get("base_head_sha") or _root_head_sha()
+            mutated = True
+
+        base_head_sha = lane.get("base_head_sha")
+        if task_type != FULL_QUALITY_GATE_TASK_TYPE and not isinstance(base_head_sha, str):
+            base_head_sha = _root_head_sha()
+            lane["base_head_sha"] = base_head_sha
+            mutated = True
 
         tasks.append(
             (
@@ -187,10 +184,25 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
                     required_capabilities=lane.get("capabilities", ["code"]),
                     developed_by_runtime=lane.get("developed_by_runtime"),
                     priority=_coerce_priority(lane.get("priority")),
+                    gate_profile=(
+                        lane.get("gate_profile")
+                        if isinstance(lane.get("gate_profile"), str)
+                        else None
+                    ),
+                    gate_profiles=[
+                        item
+                        for item in lane.get("gate_profiles", [])
+                        if isinstance(item, str)
+                    ],
+                    lane_metadata=_lane_metadata(lane),
+                    base_head_sha=base_head_sha if isinstance(base_head_sha, str) else None,
                 ),
                 _is_active_full_gate_family_lane(lane),
             )
         )
+
+    if mutated:
+        _write_json_atomic(path, data)
 
     ordered = sorted(tasks, key=lambda item: (-item[1].priority, item[0]))
     selected: list[TaskDescriptor] = []
@@ -205,24 +217,35 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
 
 
 def update_lane_status(lanes_path: Path, feature_id: str, status: str) -> None:
-    """Write lane status back to feature_lanes.json."""
+    """Write lane status back to feature_lanes.json (with file lock)."""
+    import fcntl
 
-    data = json.loads(lanes_path.read_text())
-    for lane in data.get("lanes", []):
-        if lane["feature_id"] == feature_id:
-            lane["status"] = status
-            break
-    _write_json_atomic(lanes_path, data)
+    lanes_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lanes_path, "r+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            data = json.loads(f.read())
+            for lane in data.get("lanes", []):
+                if lane["feature_id"] == feature_id:
+                    lane["status"] = status
+                    break
+            f.seek(0)
+            f.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+            f.truncate()
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
     logger.info("Lane %s -> %s", feature_id, status)
 
 
 class GateResultLike(Protocol):
     passed: bool
     errors: list[str]
+    gate_report: dict[str, object] | None
+    gate_warnings: list[str]
 
 
 class QualityGateLike(Protocol):
-    async def check(self, worktree: Path) -> GateResultLike: ...
+    async def check(self, worktree: Path, **kwargs: Any) -> GateResultLike: ...
 
 
 class LaneResultLike(Protocol):
@@ -282,6 +305,7 @@ class MasterLoop:
         max_concurrent: int = 2,
         discovery_enabled: bool = True,
         python_executable: str = sys.executable,
+        gate_profiles_path: Path = DEFAULT_GATE_PROFILES_PATH,
         monotonic: Any = time.monotonic,
     ) -> None:
         self.lanes_path = lanes_path
@@ -294,6 +318,7 @@ class MasterLoop:
         self.max_concurrent = max(1, max_concurrent)
         self.discovery_enabled = discovery_enabled
         self.python_executable = python_executable
+        self.gate_profiles_path = gate_profiles_path
         self._monotonic = monotonic
         self._shutdown_requested = asyncio.Event()
         self._merge_lock = asyncio.Lock()
@@ -332,12 +357,16 @@ class MasterLoop:
             lanes_path=lanes_path,
             auto_discovery_path=auto_discovery_path,
             consumer=consumer,
-            quality_gate=QualityGate(),
+            quality_gate=QualityGate(
+                profile_config_path=DEFAULT_GATE_PROFILES_PATH,
+                repo_root=ROOT,
+            ),
             rework_loop=ReworkLoop(error_knowledge=error_knowledge),
             error_knowledge=error_knowledge,
             max_hours=max_hours,
             max_concurrent=max_concurrent,
             discovery_enabled=discovery_enabled,
+            gate_profiles_path=DEFAULT_GATE_PROFILES_PATH,
         )
 
     async def run(self) -> MasterLoopSummary:
@@ -515,7 +544,15 @@ class MasterLoop:
             self._update_lane_status(task.feature_id, "failed")
             return "failed"
 
-        gate_result = await self.quality_gate.check(Path(task.worktree))
+        gate_result = await self._check_quality_gate(
+            self.quality_gate,
+            Path(task.worktree),
+            feature_id=task.feature_id,
+            gate_profile=task.gate_profile,
+            gate_profiles=task.gate_profiles,
+            base_head_sha=task.base_head_sha,
+        )
+        self._record_gate_report(task.feature_id, gate_result)
         if gate_result.passed:
             merged = await self._auto_merge_worktree(task)
             self._update_lane_status(task.feature_id, "done" if merged else "merge_failed")
@@ -531,6 +568,10 @@ class MasterLoop:
                 required_capabilities=task.required_capabilities,
                 developed_by_runtime=task.developed_by_runtime,
                 priority=task.priority,
+                gate_profile=task.gate_profile,
+                gate_profiles=task.gate_profiles,
+                lane_metadata=task.lane_metadata,
+                base_head_sha=task.base_head_sha,
             )
             return await self.consumer.dispatch_task(rework_task)
 
@@ -554,17 +595,72 @@ class MasterLoop:
     def _update_lane_status(self, feature_id: str, status: str) -> None:
         update_lane_status(self.lanes_path, feature_id, status)
 
+    def _record_gate_report(self, feature_id: str, result: GateResultLike) -> None:
+        report = getattr(result, "gate_report", None)
+        warnings = getattr(result, "gate_warnings", None) or []
+        if report is None and not warnings:
+            return
+        data = json.loads(self.lanes_path.read_text(encoding="utf-8"))
+        for lane in data.get("lanes", []):
+            if lane.get("feature_id") != feature_id:
+                continue
+            if report is not None:
+                lane["gate_report"] = report
+            if warnings:
+                lane["gate_warnings"] = list(warnings)
+            break
+        _write_json_atomic(self.lanes_path, data)
+
     async def _run_full_quality_gate_lane(self, task: TaskDescriptor) -> str:
         self._update_lane_status(task.feature_id, "running")
-        result = await self._run_process(ROOT, *FULL_QUALITY_GATE_COMMAND)
-        artifact_path = self._write_full_gate_artifact(task.feature_id, result)
-        if result.returncode == 0:
+        gate_result = await self._check_quality_gate(
+            self.quality_gate,
+            ROOT,
+            feature_id=task.feature_id,
+            gate_profile=task.gate_profile,
+            gate_profiles=task.gate_profiles or ["strict-product"],
+            changed_paths=[],
+            base_head_sha=task.base_head_sha,
+        )
+        self._record_gate_report(task.feature_id, gate_result)
+        if gate_result.passed:
             self._update_lane_status(task.feature_id, "done")
             return "done"
 
-        await self._append_full_gate_repair_lane(task, result, artifact_path)
+        artifact_path = self._write_full_gate_artifact_from_errors(
+            task.feature_id,
+            gate_result.errors,
+        )
+        await self._append_full_gate_repair_lane(task, gate_result, artifact_path)
         self._update_lane_status(task.feature_id, "failed")
         return "failed"
+
+    async def _check_quality_gate(
+        self,
+        gate: QualityGateLike,
+        worktree: Path,
+        **kwargs: Any,
+    ) -> GateResultLike:
+        signature = inspect.signature(gate.check)
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        accepted = {
+            name
+            for name, parameter in signature.parameters.items()
+            if parameter.kind
+            in {
+                inspect.Parameter.KEYWORD_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }
+        }
+        if accepts_kwargs or any(name in accepted for name in kwargs):
+            filtered = kwargs if accepts_kwargs else {
+                key: value for key, value in kwargs.items() if key in accepted
+            }
+            return await gate.check(worktree, **filtered)
+        return await gate.check(worktree)
 
     async def _run_process(self, worktree: Path, *cmd: str) -> ProcessResult:
         process = await asyncio.create_subprocess_exec(
@@ -583,31 +679,22 @@ class MasterLoop:
             stderr=stderr_bytes.decode(errors="replace"),
         )
 
-    def _write_full_gate_artifact(
+    def _write_full_gate_artifact_from_errors(
         self,
         feature_id: str,
-        result: ProcessResult,
+        errors: list[str],
     ) -> Path:
         artifact_dir = ROOT / "xmuse" / "logs" / "full_quality_gate"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         artifact_path = artifact_dir / f"{feature_id}.log"
-        artifact_path.write_text(
-            "\n".join(
-                [
-                    f"command: {FULL_QUALITY_GATE_COMMAND_TEXT}",
-                    f"exit: {result.returncode}",
-                    "",
-                    "stdout:",
-                    result.stdout.rstrip(),
-                    "",
-                    "stderr:",
-                    result.stderr.rstrip(),
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
+        artifact_path.write_text("\n\n".join(errors) + "\n", encoding="utf-8")
         return artifact_path
+
+    def _full_gate_interval(self) -> int:
+        from xmuse_core.gates.loader import load_gate_config
+
+        config = load_gate_config(self.gate_profiles_path, repo_root=ROOT)
+        return config.defaults.full_gate_interval
 
     async def _maybe_append_full_quality_gate_lane(self) -> str | None:
         async with self._lane_mutation_lock:
@@ -618,7 +705,7 @@ class MasterLoop:
             if self._has_active_full_quality_gate(lanes):
                 return None
             batch_lane_ids = self._next_full_gate_batch(lanes)
-            if len(batch_lane_ids) < FULL_QUALITY_GATE_INTERVAL:
+            if len(batch_lane_ids) < self._full_gate_interval():
                 return None
 
             head_sha = self._current_head_sha()
@@ -632,16 +719,15 @@ class MasterLoop:
                     "task_type": FULL_QUALITY_GATE_TASK_TYPE,
                     "status": "pending",
                     "worktree": ".",
-                    "prompt": (
-                        "Run the full xmuse quality gate: "
-                        f"{FULL_QUALITY_GATE_COMMAND_TEXT}"
-                    ),
+                    "prompt": "Run the strict-product xmuse quality gate.",
+                    "gate_profiles": ["strict-product"],
                     "capabilities": ["test"],
                     "depends_on": [],
                     "source": "full_quality_gate",
                     "priority": FULL_QUALITY_GATE_PRIORITY,
                     "batch_lane_ids": batch_lane_ids,
                     "head_sha": head_sha,
+                    "base_head_sha": head_sha,
                 }
             )
             self._write_lanes_json(data)
@@ -723,7 +809,7 @@ class MasterLoop:
             if feature_id in covered:
                 continue
             batch_lane_ids.append(feature_id)
-            if len(batch_lane_ids) >= FULL_QUALITY_GATE_INTERVAL:
+            if len(batch_lane_ids) >= self._full_gate_interval():
                 break
         return batch_lane_ids
 
@@ -748,7 +834,7 @@ class MasterLoop:
     async def _append_full_gate_repair_lane(
         self,
         task: TaskDescriptor,
-        result: ProcessResult,
+        result: GateResultLike,
         artifact_path: Path,
     ) -> str | None:
         async with self._lane_mutation_lock:
@@ -778,7 +864,7 @@ class MasterLoop:
             ):
                 return None
 
-            output = result.output[-6000:]
+            output = "\n\n".join(result.errors)[-6000:]
             batch_lane_ids = gate_lane.get("batch_lane_ids", [])
             head_sha = gate_lane.get("head_sha", self._current_head_sha())
             lanes.append(
@@ -789,15 +875,14 @@ class MasterLoop:
                     "branch": f"feat/{repair_id}",
                     "prompt": (
                         "Fix the failing full xmuse quality gate.\n\n"
-                        f"Command: `{FULL_QUALITY_GATE_COMMAND_TEXT}`\n"
-                        f"Exit code: {result.returncode}\n"
+                        "Profile: strict-product\n"
                         f"Artifact: {artifact_path.relative_to(ROOT)}\n"
                         f"Head SHA: {head_sha}\n"
                         f"Batch lane ids: {batch_lane_ids}\n\n"
                         "Failure output:\n"
                         f"{output}\n\n"
-                        "Make the minimal fix, then verify with "
-                        f"`{FULL_QUALITY_GATE_COMMAND_TEXT}`."
+                        "Make the minimal fix, then verify with the "
+                        "strict-product gate profile."
                     ),
                     "capabilities": ["code", "test"],
                     "depends_on": [],
@@ -806,6 +891,7 @@ class MasterLoop:
                     "full_gate_feature_id": task.feature_id,
                     "full_gate_artifact": str(artifact_path.relative_to(ROOT)),
                     "head_sha": head_sha,
+                    "base_head_sha": head_sha,
                     "batch_lane_ids": batch_lane_ids,
                 }
             )
@@ -871,31 +957,54 @@ class MasterLoop:
         if not wt_path.exists() or str(wt_path) == ".":
             return True
         branch = task.feature_id
-        result = subprocess.run(
-            ["git", "-C", str(wt_path), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True,
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", str(wt_path), "rev-parse", "--abbrev-ref", "HEAD",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        if result.returncode == 0:
-            branch = result.stdout.strip()
-        diff_check = subprocess.run(
-            ["git", "log", f"HEAD..{branch}", "--oneline"],
-            capture_output=True, text=True, cwd=ROOT,
+        stdout, _ = await proc.communicate()
+        if proc.returncode == 0:
+            branch = stdout.decode().strip()
+
+        proc = await asyncio.create_subprocess_exec(
+            "git", "log", f"HEAD..{branch}", "--oneline",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=ROOT,
         )
-        if not diff_check.stdout.strip():
+        stdout, _ = await proc.communicate()
+        if not stdout.decode().strip():
             logger.info("No new commits on %s to merge", branch)
             return True
-        async with self._merge_lock:
-            merge_result = subprocess.run(
-                ["git", "merge", "--no-ff", branch, "-m",
-                 f"auto-merge: {task.feature_id} (lane done)"],
-                capture_output=True, text=True, cwd=ROOT,
+
+        proc = await asyncio.create_subprocess_exec(
+            "git", "diff", "--shortstat", f"HEAD...{branch}",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=ROOT,
+        )
+        stat_out, _ = await proc.communicate()
+        stat_text = stat_out.decode()
+        import re
+        insertions_match = re.search(r"(\d+)\s+insertion", stat_text)
+        if insertions_match and int(insertions_match.group(1)) > 1000:
+            logger.warning(
+                "Refusing auto-merge for %s: %s insertions exceeds 1000 limit",
+                branch, insertions_match.group(1),
             )
-        if merge_result.returncode == 0:
+            return False
+
+        async with self._merge_lock:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "merge", "--no-ff", branch, "-m",
+                f"auto-merge: {task.feature_id} (lane done)",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                cwd=ROOT,
+            )
+            _, stderr = await proc.communicate()
+        if proc.returncode == 0:
             logger.info("Auto-merged %s into main branch", branch)
             return True
         logger.warning(
             "Auto-merge failed for %s: %s",
-            branch, merge_result.stderr[:500],
+            branch, stderr.decode()[:500],
         )
         return False
 
@@ -926,6 +1035,10 @@ class MasterLoop:
             required_capabilities=task.required_capabilities,
             developed_by_runtime=task.developed_by_runtime,
             priority=task.priority,
+            gate_profile=task.gate_profile,
+            gate_profiles=task.gate_profiles,
+            lane_metadata=task.lane_metadata,
+            base_head_sha=task.base_head_sha,
         )
 
     def _inject_error_knowledge_text(self, prompt: str) -> str:
