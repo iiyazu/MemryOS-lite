@@ -83,10 +83,10 @@ Example shape:
 {
   "schema_version": 1,
   "defaults": {
-    "lane_local_profile": "strict-product",
     "full_gate_profile": "strict-product",
     "full_gate_interval": 20,
-    "unknown_diff_policy": "strict-product"
+    "unknown_diff_policy": "strict-product",
+    "unclassified_test_policy": "fail"
   },
   "command_catalog": {
     "pytest": {
@@ -131,8 +131,17 @@ Example shape:
 }
 ```
 
+This JSON is an abbreviated shape example. The production
+`strict-product` profile is invalid unless it includes the current-product
+manifest described in the test selection rules.
+
 `timeout_s=0` means no timeout. This preserves the user's requirement that long
 lane verification must not be killed by a fixed timeout.
+
+Command catalog entries are not shell snippets. `argv` and profile `args` are
+lists of argv parts. `cwd` must resolve inside the repository. Unknown command
+fields fail validation. A profile may add `args` only when the catalog entry has
+`allow_extra_args=true`.
 
 ## Test Selection Rules
 
@@ -144,7 +153,8 @@ Profiles may use:
 - a small `-k` expression only as a migration tool.
 
 `strict-product` must not rely on a large ignore list. It must explicitly name
-the current product tests it runs.
+the current product tests it runs. The first implementation must include a
+manifest of file and nodeid ownership for each profile.
 
 Mixed files need nodeid selection or test splitting before they can be safely
 included. Examples:
@@ -157,6 +167,27 @@ included. Examples:
   kernel trace tests.
 - `tests/test_api.py` currently uses a shared service fixture and may need a
   current-product fixture before it enters `strict-product`.
+
+Declared mixed files need nodeid ownership. The coverage guard fails if a mixed
+file has tests that are not assigned to exactly one profile by nodeid or marker.
+Whole-file ownership is allowed only for files declared as single-surface files.
+
+The first `strict-product` config must not be a placeholder. It must include a
+manifest for at least these current-product areas:
+
+- whole-file or nodeid coverage for `tests/test_v3_path.py`;
+- core memory service/store tests that do not depend on page/item legacy paths;
+- episode store, episode retrieval, recall pipeline, recall cache, and query
+  expansion tests;
+- current-product API and middleware tests that run under the current-product
+  environment;
+- xmuse core tests for master loop, quality gate, rework, auto-discovery,
+  consumer/session/registry/launchers/routing/callback server, MCP server, and
+  overnight runner.
+
+Files known to be mixed (`test_engine.py`, `test_context_composer.py`,
+`test_v3_contracts.py`, and `test_api.py`) must be represented with nodeids,
+markers, or a documented split-before-include step.
 
 ## Current-Product Environment
 
@@ -173,6 +204,10 @@ MEMORYOS_AGENT_KERNEL=off
 This avoids accidentally running strict-product under legacy defaults from
 global pytest fixtures or developer shell state.
 
+The gate runner overlays profile `env` over the process environment. The
+profile value wins over the caller shell, pytest fixture defaults, and inherited
+agent environment for the command process.
+
 ## Resolution Rules
 
 Lane JSON may include:
@@ -182,15 +217,45 @@ Lane JSON may include:
 
 `gate_profiles` wins over `gate_profile` if both are present.
 
+`load_lanes()` must preserve gate metadata by extending `TaskDescriptor` with:
+
+- `gate_profile: str | None`;
+- `gate_profiles: list[str]`;
+- `lane_metadata: dict[str, Any]`;
+- `base_head_sha: str | None`.
+
+Unknown lane fields that are relevant to gates are retained in `lane_metadata`.
+Full-gate lanes use the same metadata path as normal lanes.
+
+Changed paths are computed from a defined base:
+
+- lane-local gates compare the lane worktree branch against the root repository
+  `HEAD` that the worktree was created from. The implementation stores this as
+  `base_head_sha` in lane metadata when the worktree is created.
+- full-gate lanes use the completed lane batch metadata and root `HEAD` recorded
+  when the full-gate lane is created. They do not infer product scope from the
+  repair worktree.
+- if `base_head_sha` is missing for an old lane, the resolver uses the current
+  worktree merge-base with the root branch and records
+  `legacy_diff_base_inferred` in the report.
+
 Resolution order:
 
-1. If explicit profile metadata exists, use it.
+1. If explicit profile metadata exists, start with that profile set.
 2. If no explicit profile metadata exists, infer profiles from changed file
    paths using each profile's `diff_selectors`.
 3. If no selector matches, use the configured `unknown_diff_policy`.
-4. If an explicit nonblocking profile is selected but the diff touches a
-   blocking current-product path, fail closed with a blocking
-   `profile_mismatch` gate report.
+4. If explicit profiles were provided, validate that the explicit profile set
+   covers every changed path whose selector maps to a blocking profile.
+5. If a changed path maps to a blocking profile that is missing from the
+   explicit profile set, fail closed with a blocking `profile_mismatch` gate
+   report. This applies to under-scoped blocking profiles as well as
+   nonblocking `historical`.
+
+When multiple profiles match, the resolver runs the union of all matching
+profiles. It does not choose a single highest-priority profile. Duplicate
+commands are deduplicated only when command id, args, cwd, and env are
+identical.
 
 The resolver records why each profile was selected:
 
@@ -198,6 +263,7 @@ The resolver records why each profile was selected:
 - `diff_selector`
 - `unknown_diff_policy`
 - `profile_mismatch`
+- `legacy_diff_base_inferred`
 
 ## Execution Model
 
@@ -214,6 +280,11 @@ The implementation uses three units:
 - command argv, cwd, env overlay, exit code, stdout/stderr artifact path;
 - blocking and nonblocking result summaries;
 - profile mismatch details, if any.
+
+Reports are written under `xmuse/logs/gates/<feature_id>/`. The latest report
+path is also written back to the lane as `gate_report`. Nonblocking failures are
+recorded in `gate_warnings` and are visible to dashboard/status readers, but
+they do not change terminal lane status.
 
 ## Lane-Local Gate Flow
 
@@ -278,6 +349,10 @@ guard test:
 - fail if a new test file is unclassified.
 
 This guard checks profile ownership, not whether every test is blocking.
+Single-surface files may be assigned by file path. Mixed files must be assigned
+by nodeid or marker. A mixed file with unassigned nodeids fails the guard unless
+the file is explicitly marked for later splitting and assigned to `historical`
+as nonblocking.
 
 ## Error Handling
 
@@ -287,7 +362,8 @@ The system fails closed for:
 - unknown profile ids in lane JSON;
 - unknown command ids;
 - free-form command strings;
-- profile mismatch between explicit nonblocking metadata and product-path diffs;
+- profile mismatch between explicit profile metadata and changed paths that map
+  to missing blocking profiles;
 - unclassified changed paths when `unknown_diff_policy` is not configured.
 
 The system records nonblocking reports for:
@@ -317,4 +393,3 @@ Implementation should include tests for:
 - full gate lane generation with `gate_profiles=["strict-product"]`;
 - nonblocking historical failures not creating repair lanes;
 - profile coverage guard for test files.
-
