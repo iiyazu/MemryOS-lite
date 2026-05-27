@@ -28,14 +28,22 @@ class GodSessionLayer:
         worktree: Path,
     ) -> GodSessionRecord:
         live = self._find_live_session_by_role(role)
-        if live is not None and live.session.is_alive():
+        if live is not None:
             self._assert_session_shape_matches(live, agent, worktree)
-            return live.record
+            if live.session.is_alive():
+                return live.record
 
         launcher = self._launchers[agent.runtime]
         command = launcher.build_command(role, worktree)
         env = launcher.build_env(role)
         session = await LocalSession.spawn(command, env=env)
+        if live is not None:
+            self._live_sessions[live.record.god_session_id] = LiveGodSession(
+                record=live.record,
+                session=session,
+                worktree=worktree,
+            )
+            return live.record
         record = self._registry.create(
             role=role,
             agent_name=agent.name,
@@ -74,7 +82,7 @@ class GodSessionLayer:
         )
 
     def _find_live_session_by_role(self, role: str) -> LiveGodSession | None:
-        for live in self._live_sessions.values():
+        for live in reversed(list(self._live_sessions.values())):
             if live.record.role == role:
                 return live
         return None

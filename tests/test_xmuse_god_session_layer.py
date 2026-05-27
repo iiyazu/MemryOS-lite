@@ -107,6 +107,37 @@ async def test_ensure_session_rejects_role_reuse_when_shape_differs(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_ensure_session_respawns_dead_role_once_then_reuses_new_live_session(tmp_path, monkeypatch):
+    launcher = FakeLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    spawned_sessions: list[FakeSession] = []
+
+    async def fake_spawn(command, env=None):
+        session = FakeSession()
+        spawned_sessions.append(session)
+        return session
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+
+    first = await layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
+    spawned_sessions[0]._alive = False
+
+    second = await layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
+    third = await layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
+
+    assert first.god_session_id == second.god_session_id == third.god_session_id
+    assert len(spawned_sessions) == 2
+    assert launcher.build_command_calls == [("execute", tmp_path), ("execute", tmp_path)]
+    assert launcher.build_env_calls == ["execute", "execute"]
+
+
+@pytest.mark.asyncio
 async def test_send_message_routes_by_god_session_id_not_feature_id(tmp_path, monkeypatch):
     launcher = FakeLauncher()
     layer = GodSessionLayer(
