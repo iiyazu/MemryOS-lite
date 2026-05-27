@@ -366,6 +366,67 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
 ]
 
+# Platform God tools (used by Execution God and Review God agents)
+PLATFORM_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "name": "get_lane",
+        "description": "Get full lane details by feature_id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"lane_id": {"type": "string"}},
+            "required": ["lane_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_gate_report",
+        "description": "Get the most recent gate execution report for a lane.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"lane_id": {"type": "string"}},
+            "required": ["lane_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_diff",
+        "description": "Get the git diff of a lane's worktree.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"lane_id": {"type": "string"}},
+            "required": ["lane_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "query_knowledge",
+        "description": "Search error_knowledge for relevant past failures.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "top_k": {"type": "integer", "default": 3},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "update_lane_status",
+        "description": "Update lane status (drives the state machine).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "lane_id": {"type": "string"},
+                "status": {"type": "string"},
+                "metadata": {"type": "object"},
+            },
+            "required": ["lane_id", "status"],
+            "additionalProperties": False,
+        },
+    },
+]
+
 
 def _tool_result(ops: XmuseOperations, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     if name == "list_lanes":
@@ -380,6 +441,13 @@ def _tool_result(ops: XmuseOperations, name: str, arguments: dict[str, Any]) -> 
         return _content_json(ops.get_error_knowledge(**arguments))
     if name == "get_logs":
         return _content_json(ops.get_logs(**arguments))
+    # Platform God tools — delegate to McpToolHandler
+    if name in ("get_lane", "get_gate_report", "get_diff", "query_knowledge", "update_lane_status"):
+        from xmuse_core.platform.mcp_tools import McpToolHandler
+        from xmuse_core.platform.state_machine import LaneStateMachine
+        sm = LaneStateMachine(ops.lanes_path)
+        handler = McpToolHandler(state_machine=sm, xmuse_root=ops.xmuse_root)
+        return _content_json(handler.call(name, arguments))
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -406,7 +474,7 @@ async def _handle_json_rpc(payload: dict[str, Any], ops: XmuseOperations) -> JSO
         if method == "notifications/initialized":
             return JSONResponse(_json_rpc_response(request_id, {}))
         if method == "tools/list":
-            return JSONResponse(_json_rpc_response(request_id, {"tools": TOOL_SCHEMAS}))
+            return JSONResponse(_json_rpc_response(request_id, {"tools": TOOL_SCHEMAS + PLATFORM_TOOL_SCHEMAS}))
         if method == "tools/call":
             if not isinstance(params, dict):
                 raise ValueError("params must be an object")

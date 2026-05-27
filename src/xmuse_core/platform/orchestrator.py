@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -130,7 +131,53 @@ class PlatformOrchestrator:
         asyncio.create_task(self._run_execution_god(lane_id))
 
     async def _run_gate(self, lane_id: str) -> bool:
-        return True
+        lane = self._sm.get_lane(lane_id)
+        worktree = Path(lane.get("worktree", "."))
+        gate_profile = lane.get("gate_profile")
+
+        try:
+            from xmuse_core.gates.loader import load_gate_config
+            from xmuse_core.gates.resolver import GateProfileResolver
+            from xmuse_core.gates.runner import GateRunner
+
+            config_path = self._root / "gate_profiles.json"
+            if not config_path.exists():
+                logger.warning("No gate_profiles.json, skipping gate for %s", lane_id)
+                return True
+
+            config = load_gate_config(config_path, repo_root=self._root.parent)
+            resolver = GateProfileResolver(config)
+
+            explicit_profiles = [gate_profile] if gate_profile else []
+            changed = self._get_changed_paths(worktree)
+
+            plan = resolver.resolve(
+                feature_id=lane_id,
+                worktree=worktree,
+                explicit_profiles=explicit_profiles,
+                changed_paths=changed,
+            )
+
+            runner = GateRunner(
+                repo_root=self._root.parent,
+                logs_root=self._root / "logs" / "gates",
+            )
+            report = await runner.run(plan)
+            return report.passed
+
+        except Exception as exc:
+            logger.exception("Gate failed for %s: %s", lane_id, exc)
+            return False
+
+    def _get_changed_paths(self, worktree: Path) -> list[str]:
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD"],
+                cwd=worktree, capture_output=True, text=True, timeout=10,
+            )
+            return [p for p in result.stdout.strip().splitlines() if p]
+        except Exception:
+            return []
 
     def _build_execution_prompt(self, lane: dict[str, Any]) -> str:
         prompt_path = self._root / EXECUTION_GOD.skill_prompt_path
