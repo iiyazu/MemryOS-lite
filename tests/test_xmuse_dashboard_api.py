@@ -46,8 +46,18 @@ def test_list_lanes_returns_status_for_every_lane(tmp_path):
     assert response.status_code == 200
     assert response.json() == {
         "lanes": [
-            {"feature_id": "done-lane", "status": "done", "prompt": "ship it"},
-            {"feature_id": "new-lane", "status": "pending", "prompt": "build it"},
+            {
+                "feature_id": "done-lane",
+                "status": "done",
+                "effective_status": "done",
+                "prompt": "ship it",
+            },
+            {
+                "feature_id": "new-lane",
+                "status": "pending",
+                "effective_status": "ready",
+                "prompt": "build it",
+            },
         ]
     }
 
@@ -209,15 +219,76 @@ def test_sessions_and_errors_read_supported_file_shapes(tmp_path):
     }
 
 
-def test_metrics_counts_lane_statuses_and_average_time(tmp_path):
+def test_sessions_support_mcp_dict_shape(tmp_path):
+    _write_json(
+        tmp_path / "active_sessions.json",
+        {
+            "sessions": {
+                "running": {"session_id": "sess-1", "pid": 123, "status": "running"}
+            }
+        },
+    )
+
+    response = _client(tmp_path).get("/api/sessions")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sessions": [
+            {
+                "feature_id": "running",
+                "session_id": "sess-1",
+                "pid": 123,
+                "status": "running",
+            }
+        ]
+    }
+
+
+def test_sessions_support_god_session_registry_shape(tmp_path):
+    _write_json(
+        tmp_path / "active_sessions.json",
+        {
+            "sessions": [
+                {
+                    "god_session_id": "god-1",
+                    "role": "executor",
+                    "session_address": "xmuse://sessions/god-1",
+                    "session_inbox_id": "inbox-1",
+                    "status": "running",
+                    "pid": 456,
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).get("/api/sessions")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "sessions": [
+            {
+                "god_session_id": "god-1",
+                "role": "executor",
+                "session_address": "xmuse://sessions/god-1",
+                "session_inbox_id": "inbox-1",
+                "status": "running",
+                "pid": 456,
+            }
+        ]
+    }
+
+
+def test_metrics_use_normalized_lane_states(tmp_path):
     _write_json(
         tmp_path / "feature_lanes.json",
         {
             "lanes": [
-                {"feature_id": "a", "status": "done", "duration_seconds": 10},
-                {"feature_id": "b", "status": "failed", "duration_seconds": 30},
-                {"feature_id": "c", "status": "running"},
-                {"feature_id": "d"},
+                {"feature_id": "ready-lane", "status": "pending", "duration_seconds": 10},
+                {"feature_id": "requeued-lane", "status": "reworking", "duration_seconds": 30},
+                {"feature_id": "done-lane", "status": "merged"},
+                {"feature_id": "terminated-lane", "status": "failed"},
+                {"feature_id": "gate-failed-lane", "status": "gate_failed"},
+                {"feature_id": "exec-failed-lane", "status": "exec_failed"},
             ]
         },
     )
@@ -226,10 +297,82 @@ def test_metrics_counts_lane_statuses_and_average_time(tmp_path):
 
     assert response.status_code == 200
     assert response.json() == {
-        "total": 4,
+        "total": 6,
         "done": 1,
-        "failed": 1,
+        "ready": 1,
+        "requeued": 1,
+        "failed": 3,
         "pending": 2,
+        "avg_time_seconds": 20.0,
+    }
+
+
+def test_approve_accepts_merged_lane(tmp_path):
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {"lanes": [{"feature_id": "ready", "status": "merged", "prompt": "ready"}]},
+    )
+
+    response = _client(tmp_path).post("/api/lanes/ready/approve")
+
+    assert response.status_code == 200
+    assert response.json()["approval_status"] == "approved"
+
+
+def test_approve_awaiting_final_action_merge_resolves_hold(tmp_path):
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {"lanes": [{"feature_id": "ready", "status": "awaiting_final_action", "prompt": "ready"}]},
+    )
+    _write_json(
+        tmp_path / "final_actions.json",
+        {
+            "holds": [
+                {
+                    "id": "final-1",
+                    "lane_id": "ready",
+                    "verdict_id": "verdict-1",
+                    "action": "merge",
+                    "target_status": "reviewed",
+                    "status": "pending",
+                    "summary": "merge now",
+                }
+            ]
+        },
+    )
+
+    response = _client(tmp_path).post("/api/lanes/ready/approve")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "merged"
+    data = json.loads((tmp_path / "feature_lanes.json").read_text(encoding="utf-8"))
+    assert data["lanes"][0]["status"] == "merged"
+    holds = json.loads((tmp_path / "final_actions.json").read_text(encoding="utf-8"))
+    assert holds["holds"][0]["status"] == "approved"
+
+
+def test_metrics_treats_merged_lane_as_completed(tmp_path):
+    _write_json(
+        tmp_path / "feature_lanes.json",
+        {
+            "lanes": [
+                {"feature_id": "a", "status": "merged", "duration_seconds": 10},
+                {"feature_id": "b", "status": "failed", "duration_seconds": 30},
+                {"feature_id": "c", "status": "running"},
+            ]
+        },
+    )
+
+    response = _client(tmp_path).get("/api/metrics")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "total": 3,
+        "done": 1,
+        "ready": 0,
+        "requeued": 0,
+        "failed": 1,
+        "pending": 1,
         "avg_time_seconds": 20.0,
     }
 
@@ -249,3 +392,23 @@ def test_cors_allows_localhost_frontend(tmp_path):
 
 def test_default_port_is_dashboard_port():
     assert dashboard_api.DEFAULT_PORT == 8200
+
+
+def test_dashboard_lists_resolutions_and_verdicts_from_read_models(tmp_path):
+    _write_json(
+        tmp_path / "read_models" / "resolutions.json",
+        {"resolutions": [{"resolution_id": "res-1", "status": "approved"}]},
+    )
+    _write_json(
+        tmp_path / "read_models" / "verdicts.json",
+        {"verdicts": [{"verdict_id": "verdict-1", "decision": "merge"}]},
+    )
+
+    client = _client(tmp_path)
+    resolutions = client.get("/api/resolutions")
+    verdicts = client.get("/api/verdicts")
+
+    assert resolutions.status_code == 200
+    assert resolutions.json()["resolutions"][0]["resolution_id"] == "res-1"
+    assert verdicts.status_code == 200
+    assert verdicts.json()["verdicts"][0]["decision"] == "merge"
