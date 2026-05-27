@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from uuid import uuid4
 
 
@@ -31,6 +32,13 @@ class GodSessionRegistry:
         session_address: str,
         session_inbox_id: str,
     ) -> GodSessionRecord:
+        sessions = self.list()
+        for existing in sessions:
+            if existing.session_address == session_address:
+                raise ValueError(f"duplicate session_address: {session_address}")
+            if existing.session_inbox_id == session_inbox_id:
+                raise ValueError(f"duplicate session_inbox_id: {session_inbox_id}")
+
         record = GodSessionRecord(
             god_session_id=f"god-{uuid4().hex}",
             role=role,
@@ -39,7 +47,6 @@ class GodSessionRegistry:
             session_address=session_address,
             session_inbox_id=session_inbox_id,
         )
-        sessions = self.list()
         sessions.append(record)
         self._write(sessions)
         return record
@@ -70,17 +77,7 @@ class GodSessionRegistry:
         sessions = self.list()
         for index, record in enumerate(sessions):
             if record.god_session_id == god_session_id:
-                updated = GodSessionRecord(
-                    god_session_id=record.god_session_id,
-                    role=record.role,
-                    agent_name=record.agent_name,
-                    runtime=record.runtime,
-                    session_address=record.session_address,
-                    session_inbox_id=record.session_inbox_id,
-                    status=record.status,
-                    assignment_feature_id=feature_id,
-                    pid=record.pid,
-                )
+                updated = replace(record, assignment_feature_id=feature_id)
                 sessions[index] = updated
                 self._write(sessions)
                 return updated
@@ -94,4 +91,14 @@ class GodSessionRegistry:
     def _write(self, sessions: list[GodSessionRecord]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"sessions": [asdict(session) for session in sessions]}
-        self.path.write_text(json.dumps(payload))
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=self.path.parent,
+            prefix=f"{self.path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(payload, handle)
+            temp_path = Path(handle.name)
+        temp_path.replace(self.path)

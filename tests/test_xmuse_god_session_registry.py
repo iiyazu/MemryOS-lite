@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 
 
@@ -78,3 +80,78 @@ def test_assign_updates_feature_without_changing_god_session_id(tmp_path):
     reloaded = GodSessionRegistry(path).get(created.god_session_id)
     assert reloaded.god_session_id == created.god_session_id
     assert reloaded.assignment_feature_id == "feature-123"
+
+
+def test_create_rejects_duplicate_session_address(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+    registry.create(
+        role="planner",
+        agent_name="alpha",
+        runtime="codex",
+        session_address="addr://shared",
+        session_inbox_id="inbox-alpha",
+    )
+
+    with pytest.raises(ValueError, match="session_address"):
+        registry.create(
+            role="reviewer",
+            agent_name="beta",
+            runtime="claude_code",
+            session_address="addr://shared",
+            session_inbox_id="inbox-beta",
+        )
+
+
+def test_create_rejects_duplicate_session_inbox_id(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    registry = GodSessionRegistry(path)
+    registry.create(
+        role="planner",
+        agent_name="alpha",
+        runtime="codex",
+        session_address="addr://alpha",
+        session_inbox_id="inbox-shared",
+    )
+
+    with pytest.raises(ValueError, match="session_inbox_id"):
+        registry.create(
+            role="reviewer",
+            agent_name="beta",
+            runtime="claude_code",
+            session_address="addr://beta",
+            session_inbox_id="inbox-shared",
+        )
+
+
+def test_assign_preserves_unrelated_fields(tmp_path):
+    path = tmp_path / "god_sessions.json"
+    initial = {
+        "sessions": [
+            {
+                "god_session_id": "god-existing",
+                "role": "planner",
+                "agent_name": "alpha",
+                "runtime": "codex",
+                "session_address": "addr://alpha",
+                "session_inbox_id": "inbox-alpha",
+                "status": "running",
+                "assignment_feature_id": None,
+                "pid": 4242,
+            }
+        ]
+    }
+    path.write_text(json.dumps(initial))
+    registry = GodSessionRegistry(path)
+
+    updated = registry.assign("god-existing", "feature-123")
+
+    assert updated.god_session_id == "god-existing"
+    assert updated.role == "planner"
+    assert updated.agent_name == "alpha"
+    assert updated.runtime == "codex"
+    assert updated.session_address == "addr://alpha"
+    assert updated.session_inbox_id == "inbox-alpha"
+    assert updated.status == "running"
+    assert updated.pid == 4242
+    assert updated.assignment_feature_id == "feature-123"
