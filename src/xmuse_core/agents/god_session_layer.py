@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,7 +20,7 @@ class GodSessionLayer:
         self._launchers = launchers
         self._live_sessions: dict[str, LiveGodSession] = {}
 
-    def ensure_session(
+    async def ensure_session(
         self,
         role: str,
         agent: AgentDescriptor,
@@ -34,7 +33,7 @@ class GodSessionLayer:
         launcher = self._launchers[agent.runtime]
         command = launcher.build_command(role, worktree)
         env = launcher.build_env(role)
-        session = asyncio.run(LocalSession.spawn(command, env=env))
+        session = await LocalSession.spawn(command, env=env)
         record = self._registry.create(
             role=role,
             agent_name=agent.name,
@@ -45,7 +44,7 @@ class GodSessionLayer:
         self._live_sessions[record.god_session_id] = LiveGodSession(record=record, session=session)
         return record
 
-    def send_message(
+    async def send_message(
         self,
         god_session_id: str,
         message_type: str,
@@ -53,13 +52,11 @@ class GodSessionLayer:
         context: str,
     ) -> None:
         live = self._live_sessions[god_session_id]
-        asyncio.run(
-            live.session.send_typed(
-                message_type,
-                god_session_id=god_session_id,
-                prompt=prompt,
-                context=context,
-            )
+        await live.session.send_typed(
+            message_type,
+            god_session_id=god_session_id,
+            prompt=prompt,
+            context=context,
         )
 
     def _find_live_session_by_role(self, role: str) -> LiveGodSession | None:

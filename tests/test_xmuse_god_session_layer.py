@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime, SessionConfig
 
@@ -42,7 +44,8 @@ def _make_agent() -> AgentDescriptor:
     )
 
 
-def test_ensure_session_reuses_live_session_for_role(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_ensure_session_reuses_live_session_for_role(tmp_path, monkeypatch):
     launcher = FakeLauncher()
     layer = GodSessionLayer(
         registry_path=tmp_path / "god_sessions.json",
@@ -62,8 +65,8 @@ def test_ensure_session_reuses_live_session_for_role(tmp_path, monkeypatch):
         fake_spawn,
     )
 
-    first = layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
-    second = layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
+    first = await layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
+    second = await layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
 
     assert first.god_session_id == second.god_session_id
     assert len(spawned_sessions) == 1
@@ -71,7 +74,8 @@ def test_ensure_session_reuses_live_session_for_role(tmp_path, monkeypatch):
     assert launcher.build_env_calls == ["execute"]
 
 
-def test_send_message_routes_by_god_session_id_not_feature_id(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_send_message_routes_by_god_session_id_not_feature_id(tmp_path, monkeypatch):
     launcher = FakeLauncher()
     layer = GodSessionLayer(
         registry_path=tmp_path / "god_sessions.json",
@@ -87,9 +91,9 @@ def test_send_message_routes_by_god_session_id_not_feature_id(tmp_path, monkeypa
         fake_spawn,
     )
 
-    record = layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
+    record = await layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
 
-    layer.send_message(
+    await layer.send_message(
         god_session_id=record.god_session_id,
         message_type="task",
         prompt="ship it",
