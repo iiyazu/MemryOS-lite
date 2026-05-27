@@ -631,6 +631,7 @@ class MasterLoop:
             return await self._run_design_lane(task)
 
         self._update_lane_status(task.feature_id, "running")
+        await self._clean_worktree_before_dispatch(task)
         dispatch_task = self._inject_error_knowledge(task)
         dispatch_task = self._inject_scope_constraint(dispatch_task)
         dispatch_status = await self.consumer.dispatch_task(dispatch_task)
@@ -1393,6 +1394,33 @@ class MasterLoop:
                 changed = True
         if changed:
             self._write_lanes_json(data)
+
+    async def _clean_worktree_before_dispatch(self, task: TaskDescriptor) -> None:
+        """Reset worktree to clean state before dispatch to avoid scope-creep residue."""
+        wt = Path(task.worktree)
+        if not wt.exists() or str(wt) == ".":
+            return
+        if not (wt / ".git").exists() and not (wt / ".git").is_file():
+            return
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, cwd=wt,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return
+        dirty_count = len(result.stdout.strip().splitlines())
+        logger.info(
+            "Cleaning worktree for %s: %d dirty files",
+            task.feature_id, dirty_count,
+        )
+        subprocess.run(
+            ["git", "checkout", "--", "."],
+            capture_output=True, cwd=wt,
+        )
+        subprocess.run(
+            ["git", "clean", "-fd"],
+            capture_output=True, cwd=wt,
+        )
 
     def _read_lanes_json(self) -> dict[str, Any]:
         if not self.lanes_path.exists():
