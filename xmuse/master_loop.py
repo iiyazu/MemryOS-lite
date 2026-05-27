@@ -133,6 +133,7 @@ def ensure_worktree(feature_id: str, branch: str | None = None) -> Path:
 
     wt_path = WORKTREE_BASE / f"memoryOS-{feature_id}"
     if wt_path.exists():
+        _fast_forward_existing_worktree(wt_path)
         return wt_path
 
     branch_name = branch or f"feat/{feature_id}"
@@ -155,6 +156,48 @@ def ensure_worktree(feature_id: str, branch: str | None = None) -> Path:
     else:
         logger.warning("Failed to create worktree for %s: %s", feature_id, result.stderr)
     return wt_path
+
+
+def _fast_forward_existing_worktree(wt_path: Path) -> None:
+    root_head = _root_head_sha()
+    if not root_head:
+        return
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        cwd=wt_path,
+    )
+    if status.returncode != 0:
+        logger.warning("Failed to inspect worktree status: %s", wt_path)
+        return
+    if status.stdout.strip():
+        logger.info("Attempting worktree fast-forward with local changes: %s", wt_path)
+
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", "HEAD", root_head],
+        capture_output=True,
+        text=True,
+        cwd=wt_path,
+    )
+    if ancestor.returncode != 0:
+        logger.info("Skipping worktree fast-forward for divergent worktree: %s", wt_path)
+        return
+
+    merged = subprocess.run(
+        ["git", "merge", "--ff-only", root_head],
+        capture_output=True,
+        text=True,
+        cwd=wt_path,
+    )
+    if merged.returncode != 0:
+        logger.warning(
+            "Failed to fast-forward worktree %s to %s: %s",
+            wt_path,
+            root_head,
+            merged.stderr.strip(),
+        )
 
 
 def load_lanes(path: Path) -> list[TaskDescriptor]:
@@ -190,6 +233,8 @@ def load_lanes(path: Path) -> list[TaskDescriptor]:
             lane["worktree"] = worktree
             lane["base_head_sha"] = lane.get("base_head_sha") or _root_head_sha()
             mutated = True
+        elif Path(worktree).exists():
+            _fast_forward_existing_worktree(Path(worktree))
 
         base_head_sha = lane.get("base_head_sha")
 
@@ -429,6 +474,7 @@ class MasterLoop:
                 break
 
             summary.rounds += 1
+            self._gc_stale_lanes()
             new_discovered_count = 0
             if self.discovery_enabled:
                 discovered = await self._run_auto_discovery()
@@ -586,6 +632,7 @@ class MasterLoop:
 
         self._update_lane_status(task.feature_id, "running")
         dispatch_task = self._inject_error_knowledge(task)
+        dispatch_task = self._inject_scope_constraint(dispatch_task)
         dispatch_status = await self.consumer.dispatch_task(dispatch_task)
         if dispatch_status != "done":
             self._update_lane_status(task.feature_id, "failed")
@@ -1289,6 +1336,63 @@ class MasterLoop:
         except Exception as exc:
             logger.warning("error knowledge injection failed: %s", exc)
             return prompt
+
+    def _inject_scope_constraint(self, task: TaskDescriptor) -> TaskDescriptor:
+        """Append a scope constraint to prevent codex from modifying unrelated files."""
+        constraint = (
+            "\n\n## SCOPE CONSTRAINT (MANDATORY)\n"
+            "Only modify files directly related to this task. "
+            "Do NOT touch files outside the scope of this requirement. "
+            "Specifically:\n"
+            "- Do NOT modify xmuse/master_loop.py, src/xmuse_core/agents/manager.py, "
+            "or src/xmuse_core/gates/review_gate.py unless this task explicitly requires it.\n"
+            "- Do NOT change default timeouts, authentication logic, or review gate behavior.\n"
+            "- Do NOT refactor, rename, or reorganize code outside the stated task.\n"
+            "- If you believe a change to another file is necessary, add a comment explaining why "
+            "but do NOT make the change.\n"
+        )
+        return TaskDescriptor(
+            feature_id=task.feature_id,
+            task_type=task.task_type,
+            prompt=task.prompt + constraint,
+            worktree=task.worktree,
+            required_capabilities=task.required_capabilities,
+            developed_by_runtime=task.developed_by_runtime,
+            priority=task.priority,
+            gate_profile=task.gate_profile,
+            gate_profiles=task.gate_profiles,
+            lane_metadata=task.lane_metadata,
+            base_head_sha=task.base_head_sha,
+        )
+
+    _STALE_RUNNING_HOURS = 4
+
+    def _gc_stale_lanes(self) -> None:
+        """Archive lanes stuck in running state for too long."""
+        data = self._read_lanes_json()
+        lanes = data.get("lanes", [])
+        changed = False
+        now = time.time()
+        for lane in lanes:
+            if lane.get("status") != "running":
+                continue
+            started = lane.get("started_at")
+            if not isinstance(started, (int, float)):
+                lane["started_at"] = now
+                changed = True
+                continue
+            hours_running = (now - started) / 3600
+            if hours_running >= self._STALE_RUNNING_HOURS:
+                logger.warning(
+                    "GC: lane %s stuck running for %.1fh, marking failed",
+                    lane.get("feature_id"),
+                    hours_running,
+                )
+                lane["status"] = "failed"
+                lane["gc_reason"] = f"stuck_running_{hours_running:.1f}h"
+                changed = True
+        if changed:
+            self._write_lanes_json(data)
 
     def _read_lanes_json(self) -> dict[str, Any]:
         if not self.lanes_path.exists():
