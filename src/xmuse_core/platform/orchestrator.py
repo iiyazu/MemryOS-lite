@@ -61,7 +61,11 @@ class PlatformOrchestrator:
             )
 
     async def dispatch_lane(self, lane_id: str) -> None:
-        self._sm.transition(lane_id, "dispatched")
+        import time
+        self._sm.transition(lane_id, "dispatched", metadata={
+            "dispatched_at": time.time(),
+            "god": EXECUTION_GOD.name,
+        })
         asyncio.create_task(self._run_execution_god(lane_id))
 
     async def _run_execution_god(self, lane_id: str) -> None:
@@ -93,16 +97,19 @@ class PlatformOrchestrator:
     async def _on_lane_executed(self, lane_id: str) -> None:
         passed = await self._run_gate(lane_id)
         if passed:
-            self._sm.transition(lane_id, "gated")
+            self._sm.transition(lane_id, "gated", metadata={"gate_passed": True})
         else:
-            self._sm.transition(lane_id, "gated",
-                                metadata={"gate_passed": False})
+            self._sm.transition(lane_id, "gated", metadata={"gate_passed": False})
         asyncio.create_task(self._run_review_god(lane_id))
 
     async def _run_review_god(self, lane_id: str) -> None:
+        import time
         lane = self._sm.get_lane(lane_id)
         prompt = self._build_review_prompt(lane)
         worktree = Path(lane.get("worktree", "."))
+
+        self._sm.transition(lane_id, "gated",
+                            metadata={"god": REVIEW_GOD.name, "review_started_at": time.time()})
 
         result = await self._spawner.spawn(
             god_config=REVIEW_GOD,

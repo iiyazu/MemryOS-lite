@@ -495,6 +495,14 @@ def create_app(xmuse_root: str | Path = DEFAULT_XMUSE_ROOT) -> FastAPI:
     app = FastAPI(title="xmuse MCP Server", version=SERVER_VERSION)
     app.state.xmuse_ops = ops
 
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {"status": "ok", "server": SERVER_NAME, "port": 8100}
