@@ -43,13 +43,29 @@ class AgentSpawner:
                 "codex", "exec",
                 "-m", "o4-mini",
                 "--dangerously-bypass-approvals-and-sandbox",
+                "-c", f'mcp_servers.xmuse-platform.type="sse"',
+                "-c", f'mcp_servers.xmuse-platform.url="http://localhost:{self._mcp_port}/sse"',
                 "-C", str(worktree),
             ]
         return [
             "claude", "--dangerously-skip-permissions",
             "-p", "",
+            "--mcp-config", self._write_mcp_config(),
             "--cwd", str(worktree),
         ]
+
+    def _write_mcp_config(self) -> str:
+        import json, tempfile
+        config = {
+            "mcpServers": {
+                "xmuse-platform": {
+                    "url": f"http://localhost:{self._mcp_port}/sse"
+                }
+            }
+        }
+        path = Path(tempfile.gettempdir()) / "xmuse-mcp-config.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        return str(path)
 
     def _build_env(self, god_config: GodConfig, lane_id: str) -> dict[str, str]:
         env = dict(os.environ)
