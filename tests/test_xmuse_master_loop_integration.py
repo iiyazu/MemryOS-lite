@@ -162,7 +162,8 @@ async def test_error_knowledge_injects_context_before_dispatch(tmp_path, monkeyp
 
     assert summary.successful_lanes == 1
     assert knowledge.prompts == ["original prompt"]
-    assert consumer.prompts == ["LESSON CONTEXT\n\noriginal prompt"]
+    assert consumer.prompts[0].startswith("LESSON CONTEXT\n\noriginal prompt")
+    assert "SCOPE CONSTRAINT" in consumer.prompts[0]
 
 
 @pytest.mark.asyncio

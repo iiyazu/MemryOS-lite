@@ -130,19 +130,21 @@ async def test_dispatch_success(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_one_shot_has_no_default_lane_timeout(tmp_path):
+async def test_dispatch_one_shot_has_default_timeout(tmp_path):
     mgr = SessionManager(
         launchers={AgentRuntime.CODEX: OneShotLauncher()},
         state_file=tmp_path / "active.json",
     )
     process = FakeOneShotProcess()
+    wait_for_calls = []
+
+    async def fake_wait_for(coro, timeout):
+        wait_for_calls.append(timeout)
+        return await coro
 
     with (
         patch("asyncio.create_subprocess_exec", AsyncMock(return_value=process)),
-        patch(
-            "asyncio.wait_for",
-            AsyncMock(side_effect=AssertionError("default dispatch should not time out")),
-        ),
+        patch("asyncio.wait_for", fake_wait_for),
     ):
         result = await mgr.dispatch_one_shot(
             _make_agent(),
@@ -152,8 +154,7 @@ async def test_dispatch_one_shot_has_no_default_lane_timeout(tmp_path):
         )
 
     assert result.status == "success"
-    assert process.communicate_input == b"do something"
-    assert not process.killed
+    assert wait_for_calls == [3600.0]
 
 
 @pytest.mark.asyncio
