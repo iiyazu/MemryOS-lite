@@ -18,6 +18,7 @@ class SessionConfig:
     heartbeat_interval_s: int = 30
     heartbeat_timeout_s: int = 300
     max_context_tokens: int | None = None
+    persistent_role: str | None = None
 
 
 @dataclass
