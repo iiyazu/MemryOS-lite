@@ -75,6 +75,38 @@ async def test_ensure_session_reuses_live_session_for_role(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_ensure_session_rejects_role_reuse_when_shape_differs(tmp_path, monkeypatch):
+    launcher = FakeLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+
+    async def fake_spawn(command, env=None):
+        return FakeSession()
+
+    monkeypatch.setattr(
+        "xmuse_core.agents.god_session_layer.LocalSession.spawn",
+        fake_spawn,
+    )
+
+    await layer.ensure_session(role="execute", agent=_make_agent(), worktree=tmp_path)
+
+    other_agent = AgentDescriptor(
+        runtime=AgentRuntime.CLAUDE_CODE,
+        name="reviewer",
+        capabilities=["code"],
+        session_config=SessionConfig(),
+    )
+    with pytest.raises(RuntimeError, match="role='execute'.*existing live session.*requested agent/worktree"):
+        await layer.ensure_session(
+            role="execute",
+            agent=other_agent,
+            worktree=tmp_path / "other-worktree",
+        )
+
+
+@pytest.mark.asyncio
 async def test_send_message_routes_by_god_session_id_not_feature_id(tmp_path, monkeypatch):
     launcher = FakeLauncher()
     layer = GodSessionLayer(
@@ -110,3 +142,42 @@ async def test_send_message_routes_by_god_session_id_not_feature_id(tmp_path, mo
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_registered_but_unattached_session(tmp_path):
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={},
+    )
+    record = layer._registry.create(
+        role="execute",
+        agent_name="executor",
+        runtime="codex",
+        session_address="@execute",
+        session_inbox_id="inbox-execute",
+    )
+
+    with pytest.raises(RuntimeError, match="registered.*no live transport attached"):
+        await layer.send_message(
+            god_session_id=record.god_session_id,
+            message_type="task",
+            prompt="ship it",
+            context="ctx",
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_unknown_god_session_id(tmp_path):
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "god_sessions.json",
+        launchers={},
+    )
+
+    with pytest.raises(LookupError, match="Unknown god_session_id: god-missing"):
+        await layer.send_message(
+            god_session_id="god-missing",
+            message_type="task",
+            prompt="ship it",
+            context="ctx",
+        )

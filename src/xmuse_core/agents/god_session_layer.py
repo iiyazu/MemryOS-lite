@@ -12,6 +12,7 @@ from xmuse_core.agents.session import LocalSession
 class LiveGodSession:
     record: GodSessionRecord
     session: LocalSession
+    worktree: Path
 
 
 class GodSessionLayer:
@@ -28,6 +29,7 @@ class GodSessionLayer:
     ) -> GodSessionRecord:
         live = self._find_live_session_by_role(role)
         if live is not None and live.session.is_alive():
+            self._assert_session_shape_matches(live, agent, worktree)
             return live.record
 
         launcher = self._launchers[agent.runtime]
@@ -41,7 +43,11 @@ class GodSessionLayer:
             session_address=f"@{role}",
             session_inbox_id=f"inbox-{role}",
         )
-        self._live_sessions[record.god_session_id] = LiveGodSession(record=record, session=session)
+        self._live_sessions[record.god_session_id] = LiveGodSession(
+            record=record,
+            session=session,
+            worktree=worktree,
+        )
         return record
 
     async def send_message(
@@ -51,7 +57,15 @@ class GodSessionLayer:
         prompt: str,
         context: str,
     ) -> None:
-        live = self._live_sessions[god_session_id]
+        live = self._live_sessions.get(god_session_id)
+        if live is None:
+            try:
+                self._registry.get(god_session_id)
+            except KeyError as exc:
+                raise LookupError(f"Unknown god_session_id: {god_session_id}") from exc
+            raise RuntimeError(
+                f"god_session_id '{god_session_id}' is registered but has no live transport attached in this process"
+            )
         await live.session.send_typed(
             message_type,
             god_session_id=god_session_id,
@@ -64,3 +78,18 @@ class GodSessionLayer:
             if live.record.role == role:
                 return live
         return None
+
+    def _assert_session_shape_matches(
+        self,
+        live: LiveGodSession,
+        agent: AgentDescriptor,
+        worktree: Path,
+    ) -> None:
+        if (
+            live.record.agent_name != agent.name
+            or live.record.runtime != agent.runtime.value
+            or live.worktree != worktree
+        ):
+            raise RuntimeError(
+                f"Cannot reuse role='{live.record.role}': existing live session does not match requested agent/worktree"
+            )
