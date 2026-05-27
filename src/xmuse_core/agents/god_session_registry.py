@@ -32,7 +32,7 @@ class GodSessionRegistry:
         session_inbox_id: str,
     ) -> GodSessionRecord:
         record = GodSessionRecord(
-            god_session_id=uuid4().hex,
+            god_session_id=f"god-{uuid4().hex}",
             role=role,
             agent_name=agent_name,
             runtime=runtime,

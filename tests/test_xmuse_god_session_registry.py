@@ -17,7 +17,7 @@ def test_create_persists_stable_god_session_id(tmp_path):
         session_inbox_id="inbox-planner-1",
     )
 
-    assert record.god_session_id
+    assert record.god_session_id.startswith("god-")
     assert record.assignment_feature_id is None
     stored = json.loads(path.read_text())
     assert stored == {
