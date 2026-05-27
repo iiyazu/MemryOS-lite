@@ -1125,7 +1125,10 @@
       ],
       "gate_profile": "xmuse-core",
       "priority": 80,
-      "prompt": "Add authentication to xmuse MCP server and Dashboard API.\n\n## Problem\n\nMCP server (port 8100) and Dashboard API (port 8200) have no authentication.\nAny local process can inject lanes, kill processes, or approve merges.\n\n## Implementation\n\n### 1. Shared secret auth for MCP server\n\nModify the MCP server to require a Bearer token in the Authorization header.\nToken is read from XMUSE_MCP_SECRET env var (or generated and written to\nxmuse/.mcp_secret on first start).\n\n```python\n# In request handler:\nexpected = os.environ.get(\"XMUSE_MCP_SECRET\") or Path(\"xmuse/.mcp_secret\").read_text().strip()\nauth = request.headers.get(\"Authorization\", \"\")\nif auth != f\"Bearer {expected}\":\n    return JSONResponse(status_code=401, content={\"error\": \"unauthorized\"})\n```\n\n### 2. Same auth for Dashboard API\n\nDashboard API reads the same secret. Frontend passes it via localStorage.\nAdd a simple login page that accepts the secret.\n\n### 3. Add .mcp_secret to .gitignore\n\n### 4. Tests\n\n- test_mcp_rejects_unauthenticated_request\n- test_mcp_accepts_valid_bearer_token\n- test_dashboard_rejects_unauthenticated_write\n- test_dashboard_allows_authenticated_write\n\n## Verification\n\n- uv run pytest tests/test_xmuse_mcp_server.py tests/test_xmuse_dashboard_api.py -v\n"
+      "prompt": "Add authentication to xmuse MCP server and Dashboard API.\n\n## Problem\n\nMCP server (port 8100) and Dashboard API (port 8200) have no authentication.\nAny local process can inject lanes, kill processes, or approve merges.\n\n## Implementation\n\n### 1. Shared secret auth for MCP server\n\nModify the MCP server to require a Bearer token in the Authorization header.\nToken is read from XMUSE_MCP_SECRET env var (or generated and written to\nxmuse/.mcp_secret on first start).\n\n```python\n# In request handler:\nexpected = os.environ.get(\"XMUSE_MCP_SECRET\") or Path(\"xmuse/.mcp_secret\").read_text().strip()\nauth = request.headers.get(\"Authorization\", \"\")\nif auth != f\"Bearer {expected}\":\n    return JSONResponse(status_code=401, content={\"error\": \"unauthorized\"})\n```\n\n### 2. Same auth for Dashboard API\n\nDashboard API reads the same secret. Frontend passes it via localStorage.\nAdd a simple login page that accepts the secret.\n\n### 3. Add .mcp_secret to .gitignore\n\n### 4. Tests\n\n- test_mcp_rejects_unauthenticated_request\n- test_mcp_accepts_valid_bearer_token\n- test_dashboard_rejects_unauthenticated_write\n- test_dashboard_allows_authenticated_write\n\n## Verification\n\n- uv run pytest tests/test_xmuse_mcp_server.py tests/test_xmuse_dashboard_api.py -v\n",
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "error-knowledge-bounds",
@@ -1138,7 +1141,10 @@
       ],
       "gate_profile": "xmuse-core",
       "priority": 70,
-      "prompt": "Add size bounds and eviction to error knowledge.\n\n## Problem\n\nerror_knowledge.json grows unbounded. Injected into every prompt, it can\nexceed context windows and degrade agent performance.\n\n## Implementation\n\n### Modify: xmuse/error_knowledge.py (or wherever ErrorKnowledge is defined)\n\n1. Max 20 entries (configurable via XMUSE_ERROR_KNOWLEDGE_MAX_ENTRIES=20)\n2. When adding entry and at capacity, evict oldest entry\n3. Max 500 chars per entry (truncate on insert)\n4. Total injection budget: max 3000 chars when injecting into prompts\n\n### Modify: xmuse/master_loop.py _inject_error_knowledge_text\n\nTruncate total injected text to 3000 chars.\n\n### Tests\n\n- test_error_knowledge_evicts_oldest_at_capacity\n- test_error_knowledge_truncates_long_entries\n- test_injection_respects_budget\n\n## Verification\n\n- uv run pytest tests/ -k \"error_knowledge\" -v\n"
+      "prompt": "Add size bounds and eviction to error knowledge.\n\n## Problem\n\nerror_knowledge.json grows unbounded. Injected into every prompt, it can\nexceed context windows and degrade agent performance.\n\n## Implementation\n\n### Modify: xmuse/error_knowledge.py (or wherever ErrorKnowledge is defined)\n\n1. Max 20 entries (configurable via XMUSE_ERROR_KNOWLEDGE_MAX_ENTRIES=20)\n2. When adding entry and at capacity, evict oldest entry\n3. Max 500 chars per entry (truncate on insert)\n4. Total injection budget: max 3000 chars when injecting into prompts\n\n### Modify: xmuse/master_loop.py _inject_error_knowledge_text\n\nTruncate total injected text to 3000 chars.\n\n### Tests\n\n- test_error_knowledge_evicts_oldest_at_capacity\n- test_error_knowledge_truncates_long_entries\n- test_injection_respects_budget\n\n## Verification\n\n- uv run pytest tests/ -k \"error_knowledge\" -v\n",
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "lane-prompt-validation",
@@ -1151,7 +1157,10 @@
       ],
       "gate_profile": "xmuse-core",
       "priority": 60,
-      "prompt": "Add validation and sanitization for lane prompts before dispatch.\n\n## Problem\n\nLane prompts from feature_lanes.json are passed directly to agents without\nany validation. Could contain prompt injection or exceed context limits.\n\n## Implementation\n\n### New file: src/xmuse_core/prompt_guard.py\n\n```python\nMAX_PROMPT_LENGTH = 8000  # chars\nBLOCKED_PATTERNS = [\n    \"ignore previous instructions\",\n    \"ignore all instructions\",\n    \"you are now\",\n    \"disregard\",\n]\n\ndef validate_prompt(prompt: str, feature_id: str) -> tuple[str, list[str]]:\n    \"\"\"Validate and sanitize a lane prompt. Returns (sanitized, warnings).\"\"\"\n    warnings = []\n    if len(prompt) > MAX_PROMPT_LENGTH:\n        prompt = prompt[:MAX_PROMPT_LENGTH]\n        warnings.append(f\"prompt truncated to {MAX_PROMPT_LENGTH} chars\")\n    for pattern in BLOCKED_PATTERNS:\n        if pattern.lower() in prompt.lower():\n            warnings.append(f\"suspicious pattern detected: {pattern}\")\n    return prompt, warnings\n```\n\n### Modify: xmuse/master_loop.py\n\nCall validate_prompt before dispatch. Log warnings. If suspicious pattern\ndetected, mark lane as \"held_for_review\" instead of dispatching.\n\n### Tests\n\n- test_prompt_truncated_at_limit\n- test_suspicious_pattern_flags_warning\n- test_clean_prompt_passes_unchanged\n\n## Verification\n\n- uv run pytest tests/test_prompt_guard.py -v\n"
+      "prompt": "Add validation and sanitization for lane prompts before dispatch.\n\n## Problem\n\nLane prompts from feature_lanes.json are passed directly to agents without\nany validation. Could contain prompt injection or exceed context limits.\n\n## Implementation\n\n### New file: src/xmuse_core/prompt_guard.py\n\n```python\nMAX_PROMPT_LENGTH = 8000  # chars\nBLOCKED_PATTERNS = [\n    \"ignore previous instructions\",\n    \"ignore all instructions\",\n    \"you are now\",\n    \"disregard\",\n]\n\ndef validate_prompt(prompt: str, feature_id: str) -> tuple[str, list[str]]:\n    \"\"\"Validate and sanitize a lane prompt. Returns (sanitized, warnings).\"\"\"\n    warnings = []\n    if len(prompt) > MAX_PROMPT_LENGTH:\n        prompt = prompt[:MAX_PROMPT_LENGTH]\n        warnings.append(f\"prompt truncated to {MAX_PROMPT_LENGTH} chars\")\n    for pattern in BLOCKED_PATTERNS:\n        if pattern.lower() in prompt.lower():\n            warnings.append(f\"suspicious pattern detected: {pattern}\")\n    return prompt, warnings\n```\n\n### Modify: xmuse/master_loop.py\n\nCall validate_prompt before dispatch. Log warnings. If suspicious pattern\ndetected, mark lane as \"held_for_review\" instead of dispatching.\n\n### Tests\n\n- test_prompt_truncated_at_limit\n- test_suspicious_pattern_flags_warning\n- test_clean_prompt_passes_unchanged\n\n## Verification\n\n- uv run pytest tests/test_prompt_guard.py -v\n",
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "scope-guard-auto-commit",
@@ -1164,7 +1173,10 @@
       ],
       "gate_profile": "xmuse-core",
       "priority": 50,
-      "prompt": "Add scope guard to prevent mega-commits and restrict self-modification paths.\n\n## Problem\n\nRound 1 changed 45 files / 3827 lines in a single commit. The system can\nmodify any file including its own control plane without restriction.\n\n## Implementation\n\n### Modify: xmuse/master_loop.py _auto_merge_worktree\n\nAdd checks before merge:\n1. Max 10 files changed per lane (configurable XMUSE_MAX_FILES_PER_LANE=10)\n2. Max 1000 insertions (already added in safety fix)\n3. If lane touches xmuse/** or src/xmuse_core/**, log a warning:\n   \"self-modification detected: {files}\" (for future review-gate integration)\n\n```python\n# After diff --shortstat check:\nproc = await asyncio.create_subprocess_exec(\n    \"git\", \"diff\", \"--name-only\", f\"HEAD...{branch}\",\n    stdout=asyncio.subprocess.PIPE, cwd=ROOT,\n)\nstdout, _ = await proc.communicate()\nchanged_files = [f for f in stdout.decode().splitlines() if f.strip()]\nif len(changed_files) > max_files:\n    logger.warning(\"Refusing merge: %d files exceeds limit %d\", len(changed_files), max_files)\n    return False\nself_mod = [f for f in changed_files if f.startswith(\"xmuse/\") or f.startswith(\"src/xmuse_core/\")]\nif self_mod:\n    logger.warning(\"Self-modification detected in lane %s: %s\", task.feature_id, self_mod[:5])\n```\n\n### Tests\n\n- test_merge_refused_when_too_many_files\n- test_self_modification_logged_as_warning\n- test_normal_lane_merges_fine\n\n## Verification\n\n- uv run pytest tests/test_xmuse_master_loop.py -v\n"
+      "prompt": "Add scope guard to prevent mega-commits and restrict self-modification paths.\n\n## Problem\n\nRound 1 changed 45 files / 3827 lines in a single commit. The system can\nmodify any file including its own control plane without restriction.\n\n## Implementation\n\n### Modify: xmuse/master_loop.py _auto_merge_worktree\n\nAdd checks before merge:\n1. Max 10 files changed per lane (configurable XMUSE_MAX_FILES_PER_LANE=10)\n2. Max 1000 insertions (already added in safety fix)\n3. If lane touches xmuse/** or src/xmuse_core/**, log a warning:\n   \"self-modification detected: {files}\" (for future review-gate integration)\n\n```python\n# After diff --shortstat check:\nproc = await asyncio.create_subprocess_exec(\n    \"git\", \"diff\", \"--name-only\", f\"HEAD...{branch}\",\n    stdout=asyncio.subprocess.PIPE, cwd=ROOT,\n)\nstdout, _ = await proc.communicate()\nchanged_files = [f for f in stdout.decode().splitlines() if f.strip()]\nif len(changed_files) > max_files:\n    logger.warning(\"Refusing merge: %d files exceeds limit %d\", len(changed_files), max_files)\n    return False\nself_mod = [f for f in changed_files if f.startswith(\"xmuse/\") or f.startswith(\"src/xmuse_core/\")]\nif self_mod:\n    logger.warning(\"Self-modification detected in lane %s: %s\", task.feature_id, self_mod[:5])\n```\n\n### Tests\n\n- test_merge_refused_when_too_many_files\n- test_self_modification_logged_as_warning\n- test_normal_lane_merges_fine\n\n## Verification\n\n- uv run pytest tests/test_xmuse_master_loop.py -v\n",
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "rework-context-enrichment",
@@ -1177,7 +1189,10 @@
       ],
       "gate_profile": "xmuse-core",
       "priority": 90,
-      "prompt": "Enrich rework prompts with diff, original prompt, and expected behavior.\n\n## Problem\n\nCurrent rework only passes gate error output to the retry agent. Missing:\n- What code was actually written (diff)\n- What the original requirement was\n- What specific behavior was expected vs observed\n- Review gate concerns (if review rejected)\n\n## Implementation\n\n### Modify: xmuse/master_loop.py\n\nChange `dispatch_rework` closure in `_run_lane()`:\n\n```python\nasync def dispatch_rework(rework_prompt: str, worktree: str | Path) -> str:\n    # Enrich with context\n    diff = self._get_worktree_diff(worktree, task.base_head_sha)\n    enriched_prompt = f\"\"\"## Rework Required\n\n### Original Task\n{task.prompt[:2000]}\n\n### What Was Implemented (diff summary)\n{diff[:3000]}\n\n### Why It Failed\n{rework_prompt}\n\n### Instructions\nFix the issues above. Do NOT start from scratch — modify the existing code.\nFocus specifically on the failure reasons. Run tests after fixing.\"\"\"\n\n    enriched_prompt = self._inject_error_knowledge_text(enriched_prompt)\n    rework_task = TaskDescriptor(\n        feature_id=task.feature_id,\n        task_type=\"rework\",\n        prompt=enriched_prompt,\n        worktree=str(worktree),\n        required_capabilities=task.required_capabilities,\n        developed_by_runtime=task.developed_by_runtime,\n        priority=task.priority,\n    )\n    return await self.consumer.dispatch_task(rework_task)\n```\n\n### New helper: _get_worktree_diff\n\n```python\ndef _get_worktree_diff(self, worktree: str | Path, base_ref: str | None) -> str:\n    wt = Path(worktree)\n    ref = base_ref or \"HEAD~1\"\n    result = subprocess.run(\n        [\"git\", \"diff\", \"--stat\", ref],\n        capture_output=True, text=True, cwd=wt,\n    )\n    stat = result.stdout[:500] if result.returncode == 0 else \"\"\n    result2 = subprocess.run(\n        [\"git\", \"diff\", ref],\n        capture_output=True, text=True, cwd=wt,\n    )\n    full = result2.stdout[:3000] if result2.returncode == 0 else \"\"\n    return f\"{stat}\\n\\n{full}\"\n```\n\n### When review gate rejects, include concerns:\n\n```python\nif not verdict.approved:\n    concerns_text = \"\\n\".join(f\"- {c}\" for c in verdict.concerns)\n    rework_prompt = f\"Code review rejected:\\n{concerns_text}\\n\\nFix these concerns.\"\n    # This flows into dispatch_rework which adds diff + original prompt\n```\n\n### Tests: tests/test_rework_context.py\n\n- test_rework_prompt_includes_original_task\n- test_rework_prompt_includes_diff\n- test_rework_prompt_includes_failure_reason\n- test_rework_prompt_truncates_long_diff\n- test_review_rejection_includes_concerns_in_rework\n\n## Verification\n\n- uv run pytest tests/test_rework_context.py -v\n- uv run pytest tests/test_xmuse_master_loop.py -q (no regression)\n"
+      "prompt": "Enrich rework prompts with diff, original prompt, and expected behavior.\n\n## Problem\n\nCurrent rework only passes gate error output to the retry agent. Missing:\n- What code was actually written (diff)\n- What the original requirement was\n- What specific behavior was expected vs observed\n- Review gate concerns (if review rejected)\n\n## Implementation\n\n### Modify: xmuse/master_loop.py\n\nChange `dispatch_rework` closure in `_run_lane()`:\n\n```python\nasync def dispatch_rework(rework_prompt: str, worktree: str | Path) -> str:\n    # Enrich with context\n    diff = self._get_worktree_diff(worktree, task.base_head_sha)\n    enriched_prompt = f\"\"\"## Rework Required\n\n### Original Task\n{task.prompt[:2000]}\n\n### What Was Implemented (diff summary)\n{diff[:3000]}\n\n### Why It Failed\n{rework_prompt}\n\n### Instructions\nFix the issues above. Do NOT start from scratch — modify the existing code.\nFocus specifically on the failure reasons. Run tests after fixing.\"\"\"\n\n    enriched_prompt = self._inject_error_knowledge_text(enriched_prompt)\n    rework_task = TaskDescriptor(\n        feature_id=task.feature_id,\n        task_type=\"rework\",\n        prompt=enriched_prompt,\n        worktree=str(worktree),\n        required_capabilities=task.required_capabilities,\n        developed_by_runtime=task.developed_by_runtime,\n        priority=task.priority,\n    )\n    return await self.consumer.dispatch_task(rework_task)\n```\n\n### New helper: _get_worktree_diff\n\n```python\ndef _get_worktree_diff(self, worktree: str | Path, base_ref: str | None) -> str:\n    wt = Path(worktree)\n    ref = base_ref or \"HEAD~1\"\n    result = subprocess.run(\n        [\"git\", \"diff\", \"--stat\", ref],\n        capture_output=True, text=True, cwd=wt,\n    )\n    stat = result.stdout[:500] if result.returncode == 0 else \"\"\n    result2 = subprocess.run(\n        [\"git\", \"diff\", ref],\n        capture_output=True, text=True, cwd=wt,\n    )\n    full = result2.stdout[:3000] if result2.returncode == 0 else \"\"\n    return f\"{stat}\\n\\n{full}\"\n```\n\n### When review gate rejects, include concerns:\n\n```python\nif not verdict.approved:\n    concerns_text = \"\\n\".join(f\"- {c}\" for c in verdict.concerns)\n    rework_prompt = f\"Code review rejected:\\n{concerns_text}\\n\\nFix these concerns.\"\n    # This flows into dispatch_rework which adds diff + original prompt\n```\n\n### Tests: tests/test_rework_context.py\n\n- test_rework_prompt_includes_original_task\n- test_rework_prompt_includes_diff\n- test_rework_prompt_includes_failure_reason\n- test_rework_prompt_truncates_long_diff\n- test_review_rejection_includes_concerns_in_rework\n\n## Verification\n\n- uv run pytest tests/test_rework_context.py -v\n- uv run pytest tests/test_xmuse_master_loop.py -q (no regression)\n",
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "claude-code-launcher",
@@ -1315,26 +1330,32 @@
     {
       "feature_id": "kernel-batch-loop",
       "task_type": "execute",
-      "status": "running",
+      "status": "pending",
       "branch": "feat/kernel-batch-loop",
       "capabilities": [
         "code",
         "test"
       ],
       "gate_profile": "memoryos-kernel",
-      "prompt": "Implement the Kernel Batch Loop (v1) for MemoryOS.\n\nDesign spec: docs/superpowers/specs/2026-05-26-kernel-batch-loop-design.md\n\n## Summary\n\nA lightweight kernel that runs after every N messages (configurable, default 12),\nmakes a single LLM call to decide what memory operations to perform, and writes\nto core memory / archival storage. Single-shot decision — no multi-turn loop.\n\n## Implementation\n\n### 1. New file: src/memoryos_lite/kernel_loop.py\n\nClass `KernelBatchLoop`:\n- __init__(settings, store, core_memory: CoreMemoryService)\n- should_trigger(session_id) -> bool: `len(messages) % batch_size == 0`\n- step(session_id) -> list[dict]: run one kernel decision\n\nTrigger logic: message count modulo KERNEL_BATCH_SIZE. Never blocks ingest.\n\nActions the LLM can return (JSON):\n- core_memory_append: {label, content}\n- core_memory_replace: {label, old_content, new_content}\n- core_memory_delete: {label}\n- archival_write: {content, memory_type}\n- noop: {}\n\nPre-seed canonical blocks on first step: persona (300 tok), preferences (300),\ncontext (400), instructions (200).\n\nSource provenance: auto-construct SourceRef from batch message IDs.\nToken cap: MEMORYOS_KERNEL_CORE_TOKEN_CAP (default 1500) across all blocks.\nJSON parsing: 3-tier fallback (fenced json → raw parse → noop).\nError handling: try/except around kernel_step, never block ingest. Each action\nexecuted independently; failures logged as trace events.\n\n### 2. Modify: src/memoryos_lite/config.py\n\nAdd settings:\n- memoryos_kernel_batch: str = \"off\"  # \"off\" | \"v1\"\n- memoryos_kernel_batch_size: int = 12\n- memoryos_kernel_core_token_cap: int = 1500\n\n### 3. Modify: src/memoryos_lite/engine.py\n\nIn MemoryOSService.__init__: if kernel_batch == \"v1\", create KernelBatchLoop.\nIn ingest() at the end: if kernel exists and should_trigger(), call step() in\ntry/except (never block ingest return).\n\n### 4. New file: tests/test_kernel_loop.py\n\nTests (mock the LLM, use real store):\n- test_should_trigger_at_batch_boundary\n- test_noop_response_does_nothing\n- test_core_memory_append_creates_block\n- test_core_memory_replace_updates_block\n- test_core_memory_delete_soft_deletes\n- test_archival_write_creates_passage\n- test_malformed_json_falls_back_to_noop\n- test_token_cap_prevents_overflow\n- test_kernel_step_never_blocks_ingest_on_error\n\n## Critical API signatures (match exactly)\n\nCoreMemoryService (src/memoryos_lite/core_memory.py):\n- create_block(*, label, description, value, limit_tokens, source_refs, actor, reason, ...)\n- append_block(block_id, addition, *, source_refs, actor, reason, ...)\n- replace_block(block_id, *, old, content, source_refs, actor, reason, ...)\n- delete_block(block_id, *, source_refs, actor, reason, ...)\n- get_block_by_label(label) -> CoreMemoryBlock | None\n- list_blocks() is store.list_core_memory_blocks()\n\nUse actor=\"kernel_batch\", reason=\"kernel batch decision\" for all writes.\nLook up blocks by label via get_block_by_label() to get block_id.\n\nFor archival_write: create ArchivalPassage directly via store.create_archival_passage().\n\nDeepSeek compatibility: do NOT use with_structured_output. Use raw ChatOpenAI.invoke()\nwith JSON instruction in prompt + manual parsing.\n\n## Gate profile\n\nThis lane targets the `memoryos-kernel` gate profile. Tests should be in\ntests/test_kernel_loop.py. The kernel is opt-in (default off) and does not\naffect strict-product gate.\n\n## Verification\n\n- uv run pytest tests/test_kernel_loop.py -v\n- uv run pytest tests/test_v3_path.py tests/test_engine.py -q (no regression)\n"
+      "prompt": "Implement the Kernel Batch Loop (v1) for MemoryOS.\n\nDesign spec: docs/superpowers/specs/2026-05-26-kernel-batch-loop-design.md\n\n## Summary\n\nA lightweight kernel that runs after every N messages (configurable, default 12),\nmakes a single LLM call to decide what memory operations to perform, and writes\nto core memory / archival storage. Single-shot decision — no multi-turn loop.\n\n## Implementation\n\n### 1. New file: src/memoryos_lite/kernel_loop.py\n\nClass `KernelBatchLoop`:\n- __init__(settings, store, core_memory: CoreMemoryService)\n- should_trigger(session_id) -> bool: `len(messages) % batch_size == 0`\n- step(session_id) -> list[dict]: run one kernel decision\n\nTrigger logic: message count modulo KERNEL_BATCH_SIZE. Never blocks ingest.\n\nActions the LLM can return (JSON):\n- core_memory_append: {label, content}\n- core_memory_replace: {label, old_content, new_content}\n- core_memory_delete: {label}\n- archival_write: {content, memory_type}\n- noop: {}\n\nPre-seed canonical blocks on first step: persona (300 tok), preferences (300),\ncontext (400), instructions (200).\n\nSource provenance: auto-construct SourceRef from batch message IDs.\nToken cap: MEMORYOS_KERNEL_CORE_TOKEN_CAP (default 1500) across all blocks.\nJSON parsing: 3-tier fallback (fenced json → raw parse → noop).\nError handling: try/except around kernel_step, never block ingest. Each action\nexecuted independently; failures logged as trace events.\n\n### 2. Modify: src/memoryos_lite/config.py\n\nAdd settings:\n- memoryos_kernel_batch: str = \"off\"  # \"off\" | \"v1\"\n- memoryos_kernel_batch_size: int = 12\n- memoryos_kernel_core_token_cap: int = 1500\n\n### 3. Modify: src/memoryos_lite/engine.py\n\nIn MemoryOSService.__init__: if kernel_batch == \"v1\", create KernelBatchLoop.\nIn ingest() at the end: if kernel exists and should_trigger(), call step() in\ntry/except (never block ingest return).\n\n### 4. New file: tests/test_kernel_loop.py\n\nTests (mock the LLM, use real store):\n- test_should_trigger_at_batch_boundary\n- test_noop_response_does_nothing\n- test_core_memory_append_creates_block\n- test_core_memory_replace_updates_block\n- test_core_memory_delete_soft_deletes\n- test_archival_write_creates_passage\n- test_malformed_json_falls_back_to_noop\n- test_token_cap_prevents_overflow\n- test_kernel_step_never_blocks_ingest_on_error\n\n## Critical API signatures (match exactly)\n\nCoreMemoryService (src/memoryos_lite/core_memory.py):\n- create_block(*, label, description, value, limit_tokens, source_refs, actor, reason, ...)\n- append_block(block_id, addition, *, source_refs, actor, reason, ...)\n- replace_block(block_id, *, old, content, source_refs, actor, reason, ...)\n- delete_block(block_id, *, source_refs, actor, reason, ...)\n- get_block_by_label(label) -> CoreMemoryBlock | None\n- list_blocks() is store.list_core_memory_blocks()\n\nUse actor=\"kernel_batch\", reason=\"kernel batch decision\" for all writes.\nLook up blocks by label via get_block_by_label() to get block_id.\n\nFor archival_write: create ArchivalPassage directly via store.create_archival_passage().\n\nDeepSeek compatibility: do NOT use with_structured_output. Use raw ChatOpenAI.invoke()\nwith JSON instruction in prompt + manual parsing.\n\n## Gate profile\n\nThis lane targets the `memoryos-kernel` gate profile. Tests should be in\ntests/test_kernel_loop.py. The kernel is opt-in (default off) and does not\naffect strict-product gate.\n\n## Verification\n\n- uv run pytest tests/test_kernel_loop.py -v\n- uv run pytest tests/test_v3_path.py tests/test_engine.py -q (no regression)\n",
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "recall-quality-boost",
       "task_type": "execute",
-      "status": "running",
+      "status": "pending",
       "branch": "feat/recall-quality-boost",
       "capabilities": [
         "code",
         "test"
       ],
       "gate_profile": "memoryos-recall",
-      "prompt": "Enable and tune query rewriting + reranking for MemoryOS recall pipeline.\n\n## Context\n\nquery_rewriter.py and reranker.py are implemented and DeepSeek-compatible (use_structured=False\nfallback). Currently disabled by default (MEMORYOS_REWRITE_ENABLED=false, MEMORYOS_RERANK_ENABLED=false).\nLoCoMo scores 70% with BM25-only recall. Goal: enable rewrite+rerank and measure improvement.\n\n## Requirements\n\n### 1. Modify: src/memoryos_lite/config.py\n\nChange defaults:\n- memoryos_rewrite_enabled: bool = True\n- memoryos_rerank_enabled: bool = True\n\n### 2. Modify: .env\n\nEnable rewrite and rerank (already set to true, confirm).\n\n### 3. Run eval comparison\n\nRun LoCoMo 20 cases with rewrite+rerank enabled:\n```bash\nMEMORYOS_REWRITE_ENABLED=true MEMORYOS_RERANK_ENABLED=true   uv run memoryos eval public --benchmark locomo --limit 20 --llm-answer --llm-judge\n```\n\nCompare against baseline (70% without rewrite/rerank).\n\n### 4. If improvement < 5%, tune the rewriter prompt\n\nModify query_rewriter.py system prompt to be more aggressive about:\n- Expanding Chinese abbreviations\n- Adding temporal context\n- Including synonyms for key entities\n\n### 5. Run LME 20 cases to verify no regression\n\n### 6. Document results in docs/superpowers/plans/2026-05-26-recall-quality-results.md\n\n## Verification\n\n- LoCoMo score with rewrite+rerank (target: >75%)\n- LME score must remain 100%\n- No test regressions: uv run pytest tests/test_v3_path.py tests/test_engine.py -q\n"
+      "prompt": "Enable and tune query rewriting + reranking for MemoryOS recall pipeline.\n\n## Context\n\nquery_rewriter.py and reranker.py are implemented and DeepSeek-compatible (use_structured=False\nfallback). Currently disabled by default (MEMORYOS_REWRITE_ENABLED=false, MEMORYOS_RERANK_ENABLED=false).\nLoCoMo scores 70% with BM25-only recall. Goal: enable rewrite+rerank and measure improvement.\n\n## Requirements\n\n### 1. Modify: src/memoryos_lite/config.py\n\nChange defaults:\n- memoryos_rewrite_enabled: bool = True\n- memoryos_rerank_enabled: bool = True\n\n### 2. Modify: .env\n\nEnable rewrite and rerank (already set to true, confirm).\n\n### 3. Run eval comparison\n\nRun LoCoMo 20 cases with rewrite+rerank enabled:\n```bash\nMEMORYOS_REWRITE_ENABLED=true MEMORYOS_RERANK_ENABLED=true   uv run memoryos eval public --benchmark locomo --limit 20 --llm-answer --llm-judge\n```\n\nCompare against baseline (70% without rewrite/rerank).\n\n### 4. If improvement < 5%, tune the rewriter prompt\n\nModify query_rewriter.py system prompt to be more aggressive about:\n- Expanding Chinese abbreviations\n- Adding temporal context\n- Including synonyms for key entities\n\n### 5. Run LME 20 cases to verify no regression\n\n### 6. Document results in docs/superpowers/plans/2026-05-26-recall-quality-results.md\n\n## Verification\n\n- LoCoMo score with rewrite+rerank (target: >75%)\n- LME score must remain 100%\n- No test regressions: uv run pytest tests/test_v3_path.py tests/test_engine.py -q\n",
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "auto-mypy-src-memoryos-lite-retrieval-reranker-py-113-arg-type",
@@ -1346,8 +1367,11 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "running",
-      "depends_on": []
+      "status": "pending",
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "auto-mypy-src-memoryos-lite-retrieval-reranker-py-60-arg-type",
@@ -1359,8 +1383,11 @@
       ],
       "source": "auto",
       "priority": 80,
-      "status": "running",
-      "depends_on": []
+      "status": "pending",
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "auto-ruff-src-memoryos-lite-engine-py-124-1-i001",
@@ -1373,7 +1400,10 @@
       "source": "auto",
       "priority": 60,
       "status": "pending",
-      "depends_on": []
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "god-mcp-server",
@@ -1385,7 +1415,10 @@
         "test"
       ],
       "gate_profile": "xmuse-core",
-      "prompt": "Implement the God MCP server — tool definitions and SSE transport.\n\n## Context\n\nxmuse needs multi-God collaboration via MCP. Three God roles (Plan, Review, Execute)\ncommunicate exclusively through MCP tool calls — both structured operations AND\nfree-form conversation. This lane implements the server side.\n\n## Implementation\n\n### New file: xmuse/god_mcp_server.py\n\nUse the `mcp` Python SDK (pip: `mcp`). SSE transport over HTTP.\n\nTools to expose (grouped by type):\n\n**Conversation tools (trigger LLM reasoning on receiver):**\n- `receive_message(from_god: str, content: str, conversation_id: str | None, mentions: list[str] | None)` — receive a message from another God. Returns ack.\n- `start_conversation(topic: str, participants: list[str], max_rounds: int = 8)` — initiate a brainstorming session. Returns conversation_id.\n\n**Structured operation tools (execute directly, no LLM reasoning):**\n- `propose_lane(feature_id: str, prompt: str, gate_profile: str, priority: int = 0)` — add lane to feature_lanes.json\n- `claim_lane(feature_id: str, claimer_id: str)` — atomically claim a pending lane (CAS on status field)\n- `report_result(feature_id: str, status: str, artifacts: dict | None)` — report lane completion\n- `request_merge(feature_id: str, branch: str)` — request merge approval\n- `approve_merge(feature_id: str, verdict: str, reason: str)` — approve/reject\n- `query_status(feature_id: str | None = None)` — query lane/system status\n\n### Server class:\n\n```python\nclass GodMCPServer:\n    def __init__(self, god_id: str, port: int, lanes_path: Path):\n        self.god_id = god_id\n        self.port = port\n        self.lanes_path = lanes_path\n        self.inbox: list[dict] = []  # received messages\n        self.conversations: dict[str, dict] = {}\n\n    async def start(self): ...\n    async def stop(self): ...\n```\n\n### Key design:\n- `claim_lane` uses file lock + CAS (compare-and-swap on status field) to prevent double-claim\n- `propose_lane` appends to feature_lanes.json atomically\n- `receive_message` appends to self.inbox, returns immediately (async fire-and-forget)\n- Server is stateless except inbox — all lane state lives in feature_lanes.json\n\n### Tests: tests/test_god_mcp_server.py\n\n- test_receive_message_adds_to_inbox\n- test_start_conversation_creates_entry\n- test_propose_lane_appends_to_lanes_file\n- test_claim_lane_atomic_prevents_double_claim\n- test_claim_lane_fails_if_already_claimed\n- test_query_status_returns_lane_info\n- test_report_result_updates_lane_status\n\n## Verification\n\n- uv run pytest tests/test_god_mcp_server.py -v\n- uv run ruff check xmuse/god_mcp_server.py\n"
+      "prompt": "Implement the God MCP server — tool definitions and SSE transport.\n\n## Context\n\nxmuse needs multi-God collaboration via MCP. Three God roles (Plan, Review, Execute)\ncommunicate exclusively through MCP tool calls — both structured operations AND\nfree-form conversation. This lane implements the server side.\n\n## Implementation\n\n### New file: xmuse/god_mcp_server.py\n\nUse the `mcp` Python SDK (pip: `mcp`). SSE transport over HTTP.\n\nTools to expose (grouped by type):\n\n**Conversation tools (trigger LLM reasoning on receiver):**\n- `receive_message(from_god: str, content: str, conversation_id: str | None, mentions: list[str] | None)` — receive a message from another God. Returns ack.\n- `start_conversation(topic: str, participants: list[str], max_rounds: int = 8)` — initiate a brainstorming session. Returns conversation_id.\n\n**Structured operation tools (execute directly, no LLM reasoning):**\n- `propose_lane(feature_id: str, prompt: str, gate_profile: str, priority: int = 0)` — add lane to feature_lanes.json\n- `claim_lane(feature_id: str, claimer_id: str)` — atomically claim a pending lane (CAS on status field)\n- `report_result(feature_id: str, status: str, artifacts: dict | None)` — report lane completion\n- `request_merge(feature_id: str, branch: str)` — request merge approval\n- `approve_merge(feature_id: str, verdict: str, reason: str)` — approve/reject\n- `query_status(feature_id: str | None = None)` — query lane/system status\n\n### Server class:\n\n```python\nclass GodMCPServer:\n    def __init__(self, god_id: str, port: int, lanes_path: Path):\n        self.god_id = god_id\n        self.port = port\n        self.lanes_path = lanes_path\n        self.inbox: list[dict] = []  # received messages\n        self.conversations: dict[str, dict] = {}\n\n    async def start(self): ...\n    async def stop(self): ...\n```\n\n### Key design:\n- `claim_lane` uses file lock + CAS (compare-and-swap on status field) to prevent double-claim\n- `propose_lane` appends to feature_lanes.json atomically\n- `receive_message` appends to self.inbox, returns immediately (async fire-and-forget)\n- Server is stateless except inbox — all lane state lives in feature_lanes.json\n\n### Tests: tests/test_god_mcp_server.py\n\n- test_receive_message_adds_to_inbox\n- test_start_conversation_creates_entry\n- test_propose_lane_appends_to_lanes_file\n- test_claim_lane_atomic_prevents_double_claim\n- test_claim_lane_fails_if_already_claimed\n- test_query_status_returns_lane_info\n- test_report_result_updates_lane_status\n\n## Verification\n\n- uv run pytest tests/test_god_mcp_server.py -v\n- uv run ruff check xmuse/god_mcp_server.py\n",
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     },
     {
       "feature_id": "god-mcp-client",
@@ -1478,93 +1511,6 @@
       "prompt": "Implement approval policy for human-in-the-loop control.\n\n## Context\n\nImportant workflow nodes (plan approval, merge confirmation) need optional human\naudit. Default is full-auto for overnight runs. Config switches to manual mode.\n\n## Implementation\n\n### New file: src/xmuse_core/approval_policy.py\n\n```python\n@dataclass\nclass ApprovalPolicy:\n    auto_approve_plan: bool = True\n    auto_approve_merge: bool = True\n    require_review_for: list[str] = field(default_factory=list)  # gate_profiles needing human review\n\n    @classmethod\n    def from_env(cls) -> \"ApprovalPolicy\":\n        mode = os.environ.get(\"XMUSE_APPROVAL_POLICY\", \"auto\")\n        if mode == \"manual\":\n            return cls(auto_approve_plan=False, auto_approve_merge=False)\n        return cls()\n```\n\n### Integration with WorkflowEngine:\n- Before PlanStep output is used, check `policy.auto_approve_plan`\n- If False, write plan to file and wait for human approval (file watch or inbox message)\n- Before CommitStep, check `policy.auto_approve_merge`\n\n### Integration with God MCP:\n- When approval needed, Execute God sends to Review God: \"Plan ready for review: {path}\"\n- Review God can approve_merge or request changes\n\n### Config: XMUSE_APPROVAL_POLICY=auto (default) | manual\n\n### Tests: tests/test_approval_policy.py\n\n- test_auto_policy_approves_everything\n- test_manual_policy_blocks_plan_step\n- test_manual_policy_blocks_merge_step\n- test_from_env_reads_config\n\n## Verification\n\n- uv run pytest tests/test_approval_policy.py -v\n"
     },
     {
-      "feature_id": "full-quality-gate-69c77862-ab15d7acae",
-      "task_type": "full_quality_gate",
-      "status": "failed",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "auto-discovery",
-        "quality-gate",
-        "rework-loop",
-        "lane-status-writer",
-        "master-loop",
-        "error-knowledge",
-        "memoryos-dispatch-integration",
-        "error-knowledge-integration",
-        "self-improvement-detection",
-        "mcp-xmuse-server",
-        "memoryos-middleware-enhancement",
-        "skill-plan-execute-review"
-      ],
-      "head_sha": "69c77862373cfea99583e3cf09de262e00a7b497"
-    },
-    {
-      "feature_id": "full-quality-gate-repair-full-quality-gate-69c77862-ab15d7acae",
-      "task_type": "execute",
-      "status": "running",
-      "branch": "feat/full-quality-gate-repair-full-quality-gate-69c77862-ab15d7acae",
-      "prompt": "Fix the failing full xmuse quality gate.\n\nCommand: `uv run pytest -q`\nExit code: 1\nArtifact: xmuse/logs/full_quality_gate/full-quality-gate-69c77862-ab15d7acae.log\nHead SHA: 69c77862373cfea99583e3cf09de262e00a7b497\nBatch lane ids: ['auto-discovery', 'quality-gate', 'rework-loop', 'lane-status-writer', 'master-loop', 'error-knowledge', 'memoryos-dispatch-integration', 'error-knowledge-integration', 'self-improvement-detection', 'mcp-xmuse-server', 'memoryos-middleware-enhancement', 'skill-plan-execute-review']\n\nFailure output:\n           base_head_sha=task.base_head_sha,\n        )\nE       AttributeError: 'MasterLoop' object has no attribute '_run_review_gate'\n\nxmuse/master_loop.py:569: AttributeError\n___________ test_overnight_runner_ignores_preround_dirty_agent_files ___________\n\ntmp_path = PosixPath('/tmp/pytest-of-iiyatu/pytest-1051/test_overnight_runner_ignores_0')\n\n    def test_overnight_runner_ignores_preround_dirty_agent_files(tmp_path: Path) -> None:\n        repo = tmp_path / \"repo\"\n        repo.mkdir()\n        (repo / \"xmuse\").mkdir(exist_ok=True)\n        shutil.copy(Path(\"xmuse/overnight_runner.sh\"), repo / \"xmuse\" / \"overnight_runner.sh\")\n        (repo / \"src\" / \"xmuse_core\" / \"agents\").mkdir(parents=True)\n        dirty_file = repo / \"src\" / \"xmuse_core\" / \"agents\" / \"existing.py\"\n        dirty_file.write_text(\"before\\n\")\n    \n        subprocess.run([\"git\", \"init\"], cwd=repo, check=True, capture_output=True, text=True)\n        subprocess.run([\"git\", \"config\", \"user.email\", \"test@example.com\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"config\", \"user.name\", \"Test User\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"add\", \".\"], cwd=repo, check=True)\n        subprocess.run([\"git\", \"commit\", \"-m\", \"initial\"], cwd=repo, check=True, capture_output=True, text=True)\n        dirty_file.write_text(\"before\\nuser dirty change\\n\")\n    \n        fake_bin = repo / \"fake-bin\"\n        fake_bin.mkdir()\n        (fake_bin / \"uv\").write_text(\"#!/bin/sh\\nexit 0\\n\")\n        (fake_bin / \"python3\").write_text(\"#!/bin/sh\\nprintf '0\\\\n'\\n\")\n        os.chmod(fake_bin / \"uv\", 0o755)\n        os.chmod(fake_bin / \"python3\", 0o755)\n    \n        env = os.environ.copy()\n        env[\"PATH\"] = f\"{fake_bin}:{env['PATH']}\"\n        env[\"XMUSE_MAX_HOURS\"] = \"1\"\n    \n        result = subprocess.run(\n            [\"bash\", \"xmuse/overnight_runner.sh\"],\n            cwd=repo,\n            env=env,\n            check=True,\n            capture_output=True,\n            text=True,\n        )\n    \n>       assert \"Self-modification detected\" not in result.stdout\nE       AssertionError: assert 'Self-modification detected' not in '[2026-05-27... executed.\\n'\nE         \nE         'Self-modification detected' is contained here:\nE           09+08:00] Self-modification detected. Restarting after smoke test.\nE         ?           ++++++++++++++++++++++++++\nE           [master 6237177] chore(xmuse): auto-commit round 1 self-improvement\nE            1 file changed, 1 insertion(+)\nE           [2026-05-27T01:19:09+08:00] Running smoke test...\nE           [2026-05-27T01:19:09+08:00] No pending lanes. Exiting.\nE           [2026-05-27T01:19:10+08:00] Overnight run complete. 1 rounds executed.\n\ntests/test_xmuse_overnight_runner.py:45: AssertionError\n=============================== warnings summary ===============================\n.venv/lib/python3.11/site-packages/langgraph/checkpoint/serde/encrypted.py:5\n  /home/iiyatu/projects/python/memoryOS/.venv/lib/python3.11/site-packages/langgraph/checkpoint/serde/encrypted.py:5: LangChainPendingDeprecationWarning: The default value of `allowed_objects` will change in a future version. Pass an explicit value (e.g., allowed_objects='messages' or allowed_objects='core') to suppress this warning.\n    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer\n\ntests/test_xmuse_core_callback_server.py::test_abort_invalid_creds\n  /home/iiyatu/projects/python/memoryOS/.venv/lib/python3.11/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x795eeb791b20>\n  \n  Traceback (most recent call last):\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_subprocess.py\", line 126, in __del__\n      self.close()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_subprocess.py\", line 104, in close\n      proto.pipe.close()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/unix_events.py\", line 765, in close\n      self.write_eof()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/unix_events.py\", line 751, in write_eof\n      self._loop.call_soon(self._call_connection_lost, None)\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py\", line 762, in call_soon\n      self._check_closed()\n    File \"/home/iiyatu/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/base_events.py\", line 520, in _check_closed\n      raise RuntimeError('Event loop is closed')\n  RuntimeError: Event loop is closed\n  \n  Enable tracemalloc to get traceback where the object was allocated.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_xmuse_core_agents_manager.py::test_dispatch_one_shot_has_no_default_lane_timeout\nFAILED tests/test_xmuse_master_loop.py::test_discovers_merges_dispatches_and_marks_lane_done\nFAILED tests/test_xmuse_master_loop.py::test_shutdown_finishes_current_lane_without_starting_more\nFAILED tests/test_xmuse_master_loop.py::test_twenty_successful_lanes_enqueue_profiled_full_quality_gate\nFAILED tests/test_xmuse_master_loop.py::test_nineteen_successful_lanes_do_not_enqueue_full_quality_gate\nFAILED tests/test_xmuse_master_loop.py::test_historical_nonblocking_gate_warning_does_not_fail_or_repair\nFAILED tests/test_xmuse_master_loop_integration.py::test_error_knowledge_injects_context_before_dispatch\nFAILED tests/test_xmuse_overnight_runner.py::test_overnight_runner_ignores_preround_dirty_agent_files\n8 failed, 919 passed, 1 skipped, 2 warnings in 1084.14s (0:18:04)\n\nMake the minimal fix, then verify with `uv run pytest -q`.",
-      "capabilities": [
-        "code",
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 110,
-      "full_gate_feature_id": "full-quality-gate-69c77862-ab15d7acae",
-      "full_gate_artifact": "xmuse/logs/full_quality_gate/full-quality-gate-69c77862-ab15d7acae.log",
-      "head_sha": "69c77862373cfea99583e3cf09de262e00a7b497",
-      "batch_lane_ids": [
-        "auto-discovery",
-        "quality-gate",
-        "rework-loop",
-        "lane-status-writer",
-        "master-loop",
-        "error-knowledge",
-        "memoryos-dispatch-integration",
-        "error-knowledge-integration",
-        "self-improvement-detection",
-        "mcp-xmuse-server",
-        "memoryos-middleware-enhancement",
-        "skill-plan-execute-review"
-      ]
-    },
-    {
-      "feature_id": "full-quality-gate-69c77862-8006dc57be",
-      "task_type": "full_quality_gate",
-      "status": "pending",
-      "worktree": ".",
-      "prompt": "Run the full xmuse quality gate: uv run pytest -q",
-      "capabilities": [
-        "test"
-      ],
-      "depends_on": [],
-      "source": "full_quality_gate",
-      "priority": 100,
-      "batch_lane_ids": [
-        "xmuse-dashboard-api",
-        "xmuse-dashboard-frontend",
-        "auto-discovery-enhanced",
-        "frontend-scaffold",
-        "frontend-app-shell",
-        "frontend-api-layer",
-        "frontend-lanes-page",
-        "frontend-metrics-page",
-        "frontend-errors-page",
-        "frontend-settings-page",
-        "frontend-new-lane-modal",
-        "master-loop-replace-main"
-      ],
-      "head_sha": "69c77862373cfea99583e3cf09de262e00a7b497"
-    },
-    {
       "feature_id": "god-review-delegation",
       "task_type": "execute",
       "status": "pending",
@@ -1579,6 +1525,102 @@
         "god-mcp-server"
       ],
       "prompt": "Implement Execute God review delegation — God decides review strategy per lane.\n\n## Context\n\nCurrently CodexReviewGate is a fixed gate function called by master_loop after every\nlane passes pytest+ruff. The review is always the same: one codex call with a fixed prompt.\n\nGoal: let Execute God wrap this review capability and make intelligent decisions:\n- Skip review for trivial lanes (auto-ruff, single-line fixes)\n- Use stricter review for self-modification (xmuse/**, src/xmuse_core/**)\n- Request Plan God to re-design if review finds architectural issues\n- Hold for human review if confidence < 0.7\n\n## Implementation\n\n### 1. New file: xmuse/god_review_strategy.py\n\n```python\n@dataclass\nclass ReviewStrategy:\n    skip: bool = False\n    strict: bool = False\n    hold_for_human: bool = False\n    extra_context: str = \"\"\n    reason: str = \"\"\n\nclass GodReviewStrategy:\n    \"\"\"Execute God's review decision logic. No MCP needed — runs inline.\"\"\"\n\n    def __init__(self, llm_cmd: str = \"codex\", model: str = \"gpt-5.5\"):\n        self.llm_cmd = llm_cmd\n        self.model = model\n\n    async def decide_strategy(self, task: TaskDescriptor, diff_stat: str) -> ReviewStrategy:\n        \"\"\"Decide review strategy based on lane characteristics.\"\"\"\n        # Rule-based fast path (no LLM needed)\n        if task.feature_id.startswith(\"auto-ruff\") or task.feature_id.startswith(\"auto-mypy\"):\n            return ReviewStrategy(skip=True, reason=\"trivial auto-fix\")\n\n        is_self_mod = any(\n            f.startswith(\"xmuse/\") or f.startswith(\"src/xmuse_core/\")\n            for f in diff_stat.splitlines()\n        )\n        if is_self_mod:\n            return ReviewStrategy(\n                strict=True,\n                extra_context=\"This lane modifies xmuse control plane. Check for safety regressions.\",\n                reason=\"self-modification detected\",\n            )\n\n        # For complex lanes, could use LLM to decide (future: God reasoning)\n        return ReviewStrategy(reason=\"standard review\")\n```\n\n### 2. Modify: xmuse/master_loop.py\n\nIn `_review_lane_before_merge()`:\n\n```python\nasync def _review_lane_before_merge(self, task, gate_result):\n    if self.review_gate is None:\n        return True\n\n    # God strategy decision\n    strategy = await self._decide_review_strategy(task)\n    if strategy.skip:\n        logger.info(\"Review skipped for %s: %s\", task.feature_id, strategy.reason)\n        return True\n    if strategy.hold_for_human:\n        self._update_lane_status(task.feature_id, \"held_for_review\")\n        return False\n\n    # Execute review with strategy context\n    verdict = await self._run_review_gate(task, gate_result, extra_context=strategy.extra_context)\n    ...\n```\n\nAdd `_decide_review_strategy`:\n```python\nasync def _decide_review_strategy(self, task):\n    if self._god_review_strategy is None:\n        from god_review_strategy import GodReviewStrategy\n        self._god_review_strategy = GodReviewStrategy()\n    diff_stat = self._get_worktree_diff_stat(task.worktree, task.base_head_sha)\n    return await self._god_review_strategy.decide_strategy(task, diff_stat)\n```\n\n### 3. Modify: src/xmuse_core/gates/review_gate.py\n\nAdd `extra_context` parameter to `review()`:\n- If extra_context provided, append to review prompt\n- Strict mode adds self-modification audit checklist\n\n### 4. Future God MCP integration point\n\nWhen god-mcp-server is ready, `decide_strategy` becomes a God MCP tool call:\n```python\n# Future: delegate to God reasoning\nif self.god_instance:\n    strategy = await self.god_instance.call_tool(\"decide_review_strategy\", {...})\n```\n\nFor now it's rule-based + inline, no MCP dependency.\n\n### 5. Tests: tests/test_god_review_strategy.py\n\n- test_trivial_auto_fix_skips_review\n- test_self_modification_triggers_strict\n- test_normal_lane_gets_standard_review\n- test_strategy_integrates_with_master_loop\n\n## Verification\n\n- uv run pytest tests/test_god_review_strategy.py tests/test_xmuse_master_loop.py -v\n- uv run ruff check xmuse/god_review_strategy.py\n"
+    },
+    {
+      "feature_id": "auto-mypy-src-xmuse-core-agents-quality-gate-py-128-arg-type",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/xmuse_core/agents/quality_gate.py:128.\n\nExact error message:\nsrc/xmuse_core/agents/quality_gate.py:128: error: Argument 1 to \"load_gate_config\" has incompatible type \"Path | None\"; expected \"Path\"  [arg-type]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
+    },
+    {
+      "feature_id": "auto-mypy-src-xmuse-core-agents-quality-gate-py-129-assignment",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/xmuse_core/agents/quality_gate.py:129.\n\nExact error message:\nsrc/xmuse_core/agents/quality_gate.py:129: error: Incompatible types in assignment (expression has type \"GateConfig\", variable has type \"None\")  [assignment]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
+    },
+    {
+      "feature_id": "auto-mypy-src-xmuse-core-agents-quality-gate-py-133-assignment",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/xmuse_core/agents/quality_gate.py:133.\n\nExact error message:\nsrc/xmuse_core/agents/quality_gate.py:133: error: Incompatible types in assignment (expression has type \"GateRunner\", variable has type \"None\")  [assignment]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
+    },
+    {
+      "feature_id": "auto-mypy-src-xmuse-core-gates-coverage-py-61-attr-defined",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/xmuse_core/gates/coverage.py:61.\n\nExact error message:\nsrc/xmuse_core/gates/coverage.py:61: error: \"stmt\" has no attribute \"name\"  [attr-defined]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
+    },
+    {
+      "feature_id": "auto-mypy-src-xmuse-core-gates-coverage-py-68-attr-defined",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/xmuse_core/gates/coverage.py:68.\n\nExact error message:\nsrc/xmuse_core/gates/coverage.py:68: error: \"stmt\" has no attribute \"name\"  [attr-defined]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
+    },
+    {
+      "feature_id": "auto-mypy-src-xmuse-core-gates-coverage-py-69-attr-defined",
+      "task_type": "execute",
+      "prompt": "Fix mypy type error in src/xmuse_core/gates/coverage.py:69.\n\nExact error message:\nsrc/xmuse_core/gates/coverage.py:69: error: \"stmt\" has no attribute \"decorator_list\"  [attr-defined]\n\nRun `uv run mypy src/ --ignore-missing-imports` to verify the fix.",
+      "capabilities": [
+        "code",
+        "test"
+      ],
+      "source": "auto",
+      "priority": 80,
+      "status": "pending",
+      "depends_on": [],
+      "base_head_sha": "201071c6602c61aeeb1783746f733bed1bb0ffd5",
+      "auto_retry": true,
+      "retry_count": 0
     }
   ]
 }

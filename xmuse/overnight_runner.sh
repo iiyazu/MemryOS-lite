@@ -45,14 +45,19 @@ while true; do
     check_timeout
     log "=== Round $ROUND ==="
 
+    # Snapshot tracked-file state before master_loop runs
+    PRE_DIFF=$(git diff --name-only 2>/dev/null || true)
+
     # Run master_loop.py (it exits when queue is empty)
     uv run python xmuse/master_loop.py \
         --lanes xmuse/feature_lanes.json \
         --config xmuse/agents.json \
         --concurrency 2 2>&1 | tee "xmuse/logs/round_${ROUND}.log" || true
 
-    # Check if self-modification happened
-    if git diff --name-only 2>/dev/null | grep -qE "master_loop|xmuse_main|agents/"; then
+    # Check if self-modification happened (only new changes since round start)
+    POST_DIFF=$(git diff --name-only 2>/dev/null || true)
+    NEW_CHANGES=$(comm -13 <(echo "$PRE_DIFF" | sort) <(echo "$POST_DIFF" | sort))
+    if echo "$NEW_CHANGES" | grep -qE "master_loop|xmuse_main|agents/"; then
         log "Self-modification detected. Restarting after smoke test."
         git add -u
         git commit -m "chore(xmuse): auto-commit round $ROUND self-improvement" || true
