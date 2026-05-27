@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from xmuse_core.agents import god_session_registry as registry_module
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 
 
@@ -155,3 +158,36 @@ def test_assign_preserves_unrelated_fields(tmp_path):
     assert updated.status == "running"
     assert updated.pid == 4242
     assert updated.assignment_feature_id == "feature-123"
+
+
+def test_create_and_assign_use_sidecar_file_lock(tmp_path, monkeypatch):
+    path = tmp_path / "god_sessions.json"
+    lock_calls: list[tuple[str, int]] = []
+
+    def fake_flock(handle, operation):
+        lock_calls.append((Path(handle.name).name, operation))
+
+    monkeypatch.setattr(
+        registry_module,
+        "fcntl",
+        SimpleNamespace(LOCK_EX=1, LOCK_UN=2, flock=fake_flock),
+        raising=False,
+    )
+    registry = GodSessionRegistry(path)
+
+    created = registry.create(
+        role="planner",
+        agent_name="alpha",
+        runtime="codex",
+        session_address="addr://alpha",
+        session_inbox_id="inbox-alpha",
+    )
+    registry.assign(created.god_session_id, "feature-123")
+
+    assert path.with_name(f"{path.name}.lock").exists()
+    assert lock_calls == [
+        (f"{path.name}.lock", 1),
+        (f"{path.name}.lock", 2),
+        (f"{path.name}.lock", 1),
+        (f"{path.name}.lock", 2),
+    ]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -23,6 +25,7 @@ class GodSessionRecord:
 class GodSessionRegistry:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self.lock_path = self.path.with_name(f"{self.path.name}.lock")
 
     def create(
         self,
@@ -32,24 +35,25 @@ class GodSessionRegistry:
         session_address: str,
         session_inbox_id: str,
     ) -> GodSessionRecord:
-        sessions = self.list()
-        for existing in sessions:
-            if existing.session_address == session_address:
-                raise ValueError(f"duplicate session_address: {session_address}")
-            if existing.session_inbox_id == session_inbox_id:
-                raise ValueError(f"duplicate session_inbox_id: {session_inbox_id}")
+        with self._locked_file():
+            sessions = self.list()
+            for existing in sessions:
+                if existing.session_address == session_address:
+                    raise ValueError(f"duplicate session_address: {session_address}")
+                if existing.session_inbox_id == session_inbox_id:
+                    raise ValueError(f"duplicate session_inbox_id: {session_inbox_id}")
 
-        record = GodSessionRecord(
-            god_session_id=f"god-{uuid4().hex}",
-            role=role,
-            agent_name=agent_name,
-            runtime=runtime,
-            session_address=session_address,
-            session_inbox_id=session_inbox_id,
-        )
-        sessions.append(record)
-        self._write(sessions)
-        return record
+            record = GodSessionRecord(
+                god_session_id=f"god-{uuid4().hex}",
+                role=role,
+                agent_name=agent_name,
+                runtime=runtime,
+                session_address=session_address,
+                session_inbox_id=session_inbox_id,
+            )
+            sessions.append(record)
+            self._write(sessions)
+            return record
 
     def list(self) -> list[GodSessionRecord]:
         payload = self._read()
@@ -74,14 +78,15 @@ class GodSessionRegistry:
         raise KeyError(session_inbox_id)
 
     def assign(self, god_session_id: str, feature_id: str | None) -> GodSessionRecord:
-        sessions = self.list()
-        for index, record in enumerate(sessions):
-            if record.god_session_id == god_session_id:
-                updated = replace(record, assignment_feature_id=feature_id)
-                sessions[index] = updated
-                self._write(sessions)
-                return updated
-        raise KeyError(god_session_id)
+        with self._locked_file():
+            sessions = self.list()
+            for index, record in enumerate(sessions):
+                if record.god_session_id == god_session_id:
+                    updated = replace(record, assignment_feature_id=feature_id)
+                    sessions[index] = updated
+                    self._write(sessions)
+                    return updated
+            raise KeyError(god_session_id)
 
     def _read(self) -> dict[str, list[dict[str, object]]]:
         if not self.path.exists():
@@ -102,3 +107,13 @@ class GodSessionRegistry:
             json.dump(payload, handle)
             temp_path = Path(handle.name)
         temp_path.replace(self.path)
+
+    @contextmanager
+    def _locked_file(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("a+", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
