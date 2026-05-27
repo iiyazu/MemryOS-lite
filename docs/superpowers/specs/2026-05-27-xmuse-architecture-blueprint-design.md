@@ -73,6 +73,13 @@ Primary objects:
 - `ExecutionRun`
 - `ReviewVerdict`
 
+Important boundary:
+
+- today's xmuse execution kernel is not yet a lane-graph-native scheduler
+- dependency semantics, final-action gating, and structured verdict mapping
+  must be added around the current execution kernel rather than assumed to
+  already exist inside it
+
 ### Control Plane
 
 Responsible for:
@@ -238,6 +245,21 @@ Owns:
 
 This is where the current `src/xmuse_core/platform/*` line belongs.
 
+For the target architecture, this module is the execution kernel, not the full
+execution-plane product surface. The current stack is suitable for:
+
+- lane execution
+- gate invocation
+- review trigger points
+- merge/rework reconciliation
+
+It is not yet sufficient on its own for:
+
+- lane-graph dependency scheduling
+- true execution-lifetime concurrency control
+- four-way structured verdict handling
+- human final-action approval before merge or terminate
+
 ### Review Council
 
 Owns post-execution deliberation and verdict formation.
@@ -308,6 +330,51 @@ Introduce structured resolution and lane graph snapshots as the only execution e
 ### Phase 3
 
 Introduce structured review verdicts and retire old master control as a primary workflow engine.
+
+## Known Gaps Against Current Code
+
+The blueprint intentionally targets a future shape that exceeds the current
+runtime in several places.
+
+### Dependency scheduling
+
+Current `platform_runner.py` dispatches pending lanes by priority. It does not
+yet interpret dependency graphs or lane-group readiness.
+
+Blueprint implication:
+
+- dependency-aware scheduling is a required extension
+- the current runner can be retained as a worker loop, but not treated as a
+  complete lane-graph scheduler
+
+### Effective concurrency control
+
+Current dispatch uses a bounded dispatch loop, but actual execution detaches
+into background tasks in the orchestrator.
+
+Blueprint implication:
+
+- true execution concurrency must be made explicit
+- concurrency cannot be assumed to be enforced simply because the runner has a
+  `max_concurrent` flag
+
+### Structured review outcomes
+
+Current review flow is effectively merge-or-rework oriented.
+
+Blueprint implication:
+
+- `patch-forward` and `terminate` require explicit execution-plane state
+  extensions and adapters
+
+### Human final-action gate
+
+Current reviewed lanes auto-merge through the execution kernel.
+
+Blueprint implication:
+
+- merge and terminate approval require a new pre-final-action control point
+- this gate should not be hand-waved as a simple UI toggle
 
 ## Non-Goals for the Blueprint
 

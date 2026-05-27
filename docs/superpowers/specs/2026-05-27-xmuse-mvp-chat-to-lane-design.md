@@ -119,8 +119,12 @@ Visible concepts:
 
 ### Step 5: Execution
 
-- The execution plane projects the lane graph into the current xmuse lane runner.
-- Existing `PlatformOrchestrator`, `LaneStateMachine`, `AgentSpawner`, and `GateRunner` remain the execution core.
+- The execution plane projects the lane graph into the current xmuse execution
+  kernel.
+- Existing `PlatformOrchestrator`, `LaneStateMachine`, `AgentSpawner`, and
+  `GateRunner` remain the execution core for ready-to-run lanes.
+- Dependency-aware scheduling is not assumed to already exist in the current
+  runner and must be added by an MVP adapter layer.
 
 ### Step 6: Review
 
@@ -229,16 +233,39 @@ Allowed MVP decisions:
 ### Existing modules to reuse
 
 1. `src/xmuse_core/platform/*`
-   Reuse as the execution plane kernel.
+   Reuse as the execution plane kernel, not as a complete lane-graph-aware
+   scheduler.
 
 2. `src/xmuse_core/gates/*`
    Reuse as gate infrastructure.
 
 3. `xmuse/mcp_server.py`
-   Reuse as the API facade for execution and platform tools, but do not turn it into the full chat-plane brain.
+   Reuse as the API facade for execution and platform tools, but do not turn it
+   into the full chat-plane brain.
 
 4. `xmuse/platform_runner.py`
    Reuse as execution worker loop with lane reconciliation.
+
+### Explicit MVP extensions around the reused kernel
+
+The following capabilities are required in the MVP but are not treated as
+already provided by the current execution stack:
+
+1. `LaneGraph readiness projection`
+   A projection layer determines which lanes are dependency-ready and only then
+   materializes them into the transitional execution queue.
+
+2. `Execution-lifetime concurrency control`
+   Concurrency must be enforced over running lane executions, not only over
+   dispatch calls.
+
+3. `Structured verdict adapter`
+   The single review GOD must emit a four-way `ReviewVerdict`, and an adapter
+   must map that into the current state machine until the kernel is extended.
+
+4. `Final-action hold`
+   Merge and terminate must pause at an explicit pre-final-action checkpoint
+   when human approval is required.
 
 ### Legacy modules to avoid extending
 
@@ -261,6 +288,9 @@ The MVP must support two mandatory human gate switches:
    Approval before `merge` or `terminate` is applied.
 
 Optional later gates are explicitly deferred.
+
+For the MVP, `approve_final_action` is implemented as a pre-final-action hold,
+not as a passive UI prompt after the kernel has already committed the outcome.
 
 ## Patch-Forward Semantics
 
@@ -300,6 +330,13 @@ Acceptable transitional projections:
 
 The MVP should introduce explicit structured objects even if their first persistence layer is simple.
 
+For dependency scheduling in the MVP:
+
+- `feature_lanes.json` may remain the transitional execution queue
+- but only dependency-ready lanes should be projected into that queue
+- the authoritative dependency model remains the `LaneGraph`, not the flat lane
+  file
+
 ## Testing Strategy
 
 The MVP should prove behavior through focused tests at four levels:
@@ -335,6 +372,37 @@ Introduce structured resolution and lane graph as the only supported path into n
 ### Phase 3
 
 Add structured review verdict handling and reduce reliance on legacy master-loop assets.
+
+## Current-Stack Compatibility Notes
+
+The MVP deliberately reuses the current xmuse execution kernel, but only within
+clear limits.
+
+### What is genuinely reused
+
+- lane execution runtime
+- gate execution
+- execution artifact production
+- review trigger points
+- merge/rework lifecycle hooks
+
+### What must be added around it
+
+- conversation and proposal services
+- approval-to-structure flow
+- lane-graph dependency projection
+- pre-final-action approval hold
+- structured four-way verdict handling
+
+### What is net-new
+
+- chat plane
+- gateway/router
+- dashboard read model
+- structured resolution persistence
+
+`xmuse/mcp_server.py` in the MVP remains primarily an execution and control
+facade. It should not be read as proof that a chat-plane API already exists.
 
 ## Open Constraints Fixed by This Spec
 
