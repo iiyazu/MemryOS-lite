@@ -297,6 +297,54 @@ Definitions:
 The status `executed` refers to lane worker completion, not execute GOD
 lifetime.
 
+## Mixed-Run State Compatibility
+
+During migration, the current MVP runtime and dashboard will continue to see
+legacy lane states from `src/xmuse_core/platform/state_machine.py` and
+`feature_lanes.json`.
+
+This section defines the required compatibility contract so runtime modules and
+dashboard read models do not guess independently.
+
+### Authoritative rule during mixed-run
+
+- `LaneGraph` remains the authoritative source for `planned` lanes
+- projected lane queue entries remain the source for currently runnable or
+  currently running work
+- dashboard and controller must normalize legacy states through the same mapping
+  layer until run-native states are fully deployed
+
+### Legacy-to-target mapping
+
+| Current MVP state | Mixed-run semantic meaning | Target semantic status | Notes |
+|---|---|---|---|
+| graph-only, not projected | lane exists but is not dependency-ready | `planned` | not represented in `feature_lanes.json`; must be read from `LaneGraph` |
+| `pending` | dependency-ready and waiting for dispatch | `ready` | projected queue entry; dashboard must render as ready, not as generic pending |
+| `dispatched` | worker slot assigned | `dispatched` | same meaning |
+| `executed` | worker completed, pre-gate result exists | `executed` | same meaning |
+| `gated` | gate passed and review task should exist or be created | `under_review` during bridge, then `gated` + review task | once `ReviewInbox` exists, runtime must emit `ReviewTask` before rendering review progress |
+| `reviewed` | legacy bridge verdict accepted | `reviewed` | this state may exist only through verdict bridge; it must not mean "metadata implies review" |
+| `awaiting_final_action` | final-action hold pending | `awaiting_final_action` | same meaning |
+| `merged` | merged | `merged` | same meaning |
+| `rejected` | legacy rework requested | `requeued` | preserved only as bridge state |
+| `reworking` | legacy retry loop active | `requeued` | preserved only as bridge state |
+| `exec_failed` | worker execution failed | `exec_failed` transitional failure bucket | may later fold into run-level failure model, but must remain distinguishable during migration |
+| `gate_failed` | gate failed | `gate_failed` transitional failure bucket | must remain distinguishable from execute failure during migration |
+| `failed` | terminal failure under old runtime | `terminated` unless bridge can recover a more specific failure cause | migration code should prefer cause-specific mapping when `failure_reason` is available |
+
+### Dashboard contract during mixed-run
+
+- dashboard metrics must aggregate normalized states, not raw legacy values
+- dashboard approval logic must operate on normalized completion states
+- any view that shows `planned` lanes must merge `LaneGraph` data with projected
+  lane queue data rather than reading only `feature_lanes.json`
+
+### Retirement rule
+
+The statement `reviewed status == verdict exists` is retired as a target
+semantic rule, but it remains valid only through the explicit bridge defined in
+this spec until the legacy status machine is removed.
+
 ## Review Model
 
 The review stack is split into three parts.
@@ -357,6 +405,60 @@ Allowed decisions:
 
 Runtime must consume verdict objects directly.
 It must not infer review outcome by reverse-engineering lane metadata.
+
+## Verdict Bridge for Incremental Migration
+
+The current codebase already defines a minimal shared verdict object in
+`src/xmuse_core/structuring/models.py` and uses
+`src/xmuse_core/platform/verdict_adapter.py` as a bridge into lane metadata and
+final-action logic.
+
+Migration must not rely on that metadata bridge as the long-term source of
+truth, but it also must not require a flag day replacement.
+
+### Bridge rule
+
+- introduce a new authoritative review-plane verdict model and store
+- keep the current structuring-layer `ReviewVerdict` temporarily as a legacy
+  transport DTO
+- every legacy verdict must be up-converted into the authoritative verdict
+  store before any lane transition, final-action hold creation, or dashboard
+  publication occurs
+
+### Required enrichment at up-conversion time
+
+If a legacy DTO does not carry the full target schema, bridge code must enrich
+it from review task context and lane/graph context before persistence.
+
+Required enriched fields:
+
+- `graph_id`
+- `resolution_id`
+- `reviewer_session_id`
+- `created_at`
+- lineage references required by patch-forward or terminate flows
+
+### Bridge constraints
+
+- no runtime path may treat scattered lane metadata as a substitute for a
+  persisted verdict object
+- `verdict_adapter.py` may remain as transition logic, but it must consume
+  authoritative verdict records rather than becoming the permanent truth source
+- dashboard verdict views must read the verdict store, not reverse-engineer lane
+  metadata
+
+### Model evolution decision
+
+During migration, the review-plane authoritative model should be introduced in
+a dedicated review-plane module rather than replacing the existing structuring
+model in place on day one.
+
+Reason:
+
+- reduces cross-module churn
+- allows old call sites to keep emitting the minimal DTO briefly
+- makes the up-conversion bridge explicit and removable
+- prevents silent fallback to metadata-based semantics
 
 ## Verdict Consumption Semantics
 
@@ -434,11 +536,20 @@ Work:
 - host `ExecuteGodSession`
 - host `ReviewGodSession`
 - route communication through the platform router
+- introduce stable GOD addressing independent of `feature_id`, `lane_id`, or
+  task identity
+- add a persistent session registry keyed by `god_session_id`
+- add stable `session_address` and `session_inbox_id` concepts for routing and
+  work delivery
 
 Compatibility:
 
 - keep current orchestrator temporarily
 - reinterpret current spawner as worker launcher
+- reuse the `agents/*` substrate where practical, but phase 1 is incomplete if
+  active sessions are still keyed by `feature_id`
+- `feature_id` may remain on work assignments, but must not remain the primary
+  session identity key
 
 ### Phase 2: Split Execute Session from Worker Execution
 
@@ -477,6 +588,8 @@ Compatibility:
 
 - keep current review adapter logic only as bridge code until full verdict
   ingestion exists
+- require the bridge to persist an authoritative verdict record before any lane
+  status transition derived from review
 
 ### Phase 4: Formalize Control Plane Objects
 
