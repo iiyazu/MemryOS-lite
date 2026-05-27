@@ -72,7 +72,8 @@ async def test_on_lane_reviewed_transitions_to_merged(setup):
     orch = PlatformOrchestrator(
         lanes_path=lanes_path, xmuse_root=tmp_path, mcp_port=9999,
     )
-    await orch.on_lane_reviewed("lane-1")
+    with patch.object(orch, "_auto_merge", new_callable=AsyncMock, return_value=True):
+        await orch.on_lane_reviewed("lane-1")
     lane = orch._sm.get_lane("lane-1")
     assert lane["status"] == "merged"
 

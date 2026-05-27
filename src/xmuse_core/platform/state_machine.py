@@ -11,7 +11,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     "dispatched": {"executed", "exec_failed"},
     "executed": {"gated"},
     "gated": {"reviewed", "rejected", "gate_failed"},
-    "reviewed": {"merged"},
+    "reviewed": {"merged", "failed"},
     "rejected": {"reworking", "failed"},
     "reworking": {"dispatched"},
     "exec_failed": {"failed", "reworking"},

@@ -116,8 +116,63 @@ class PlatformOrchestrator:
                                 metadata={"failure_reason": "review_timeout"})
 
     async def on_lane_reviewed(self, lane_id: str) -> None:
-        self._sm.transition(lane_id, "merged")
-        logger.info("Lane %s merged", lane_id)
+        lane = self._sm.get_lane(lane_id)
+        worktree = Path(lane.get("worktree", "."))
+        merged = await self._auto_merge(lane_id, worktree)
+        if merged:
+            self._sm.transition(lane_id, "merged")
+            logger.info("Lane %s merged successfully", lane_id)
+        else:
+            self._sm.transition(lane_id, "failed",
+                                metadata={"failure_reason": "merge_failed"})
+            logger.warning("Lane %s merge failed", lane_id)
+
+    async def _auto_merge(self, lane_id: str, worktree: Path) -> bool:
+        try:
+            diff_check = subprocess.run(
+                ["git", "diff", "--stat", "HEAD"],
+                cwd=worktree, capture_output=True, text=True, timeout=10,
+            )
+            insertions = 0
+            for line in diff_check.stdout.splitlines():
+                if "insertion" in line or "deletion" in line:
+                    parts = line.split(",")
+                    for part in parts:
+                        if "insertion" in part:
+                            insertions += int(part.strip().split()[0])
+            if insertions > 1000:
+                logger.warning("Lane %s diff too large (%d insertions), skipping merge",
+                               lane_id, insertions)
+                return False
+
+            result = subprocess.run(
+                ["git", "checkout", "main"],
+                cwd=worktree, capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning("Cannot checkout main for %s: %s", lane_id, result.stderr)
+                return False
+
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=worktree, capture_output=True, text=True, timeout=5,
+            )
+            merge_branch = lane_id
+
+            result = subprocess.run(
+                ["git", "merge", "--no-ff", merge_branch, "-m",
+                 f"feat(xmuse): merge lane {lane_id}"],
+                cwd=worktree, capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning("Merge failed for %s: %s", lane_id, result.stderr)
+                subprocess.run(["git", "merge", "--abort"],
+                               cwd=worktree, capture_output=True, timeout=5)
+                return False
+            return True
+        except Exception as exc:
+            logger.exception("Auto-merge error for %s: %s", lane_id, exc)
+            return False
 
     async def on_lane_rejected(self, lane_id: str) -> None:
         lane = self._sm.get_lane(lane_id)
