@@ -41,8 +41,11 @@ chat → proposal → resolution → projection → feature_lanes.json → platf
    nohup uv run python xmuse/chat_api.py > /tmp/chat_api.log 2>&1 &
    ```
 
-2. 确保 platform_runner 在线。如果没在线：
+2. 确保 platform_runner 在线。如果没在线或已过期：
    ```bash
+   # 先杀旧的
+   pkill -TERM -f platform_runner 2>/dev/null; sleep 3; pkill -9 -f platform_runner 2>/dev/null
+   # 重启（10h 匹配 goal 时长）
    nohup env XMUSE_GOD_RUNTIME=codex XMUSE_CODEX_MODEL=gpt-5.5 XMUSE_NON_GOD_CODEX_MODEL=gpt-5.4 XMUSE_PEER_CHAT_RUNTIME=codex XMUSE_CHAT_DRIVER_RUNTIME=codex uv run python xmuse/platform_runner.py --max-hours 10 --max-concurrent 8 --auto-evolve --decomposer peer-chat > /tmp/runner.log 2>&1 &
    ```
 
@@ -132,6 +135,38 @@ tail -10 /tmp/runner*.log 2>/dev/null | grep -E "ERROR|WARN|Dispatch|merged|fail
 | codex rate limit（日志里 `rate_limit`） | 正常，recovery manager 会自动退避重试，不需干预 |
 | 所有 lane 都 done/merged/failed，无 active | 任务完成，可以结束监控 |
 | chat-driver 没有触发（architect-god 没回复） | 手动 tick：`curl -s -X POST http://localhost:8201/api/chat/tick` |
+| 有价值的 failed lane 需要重试 | 重置为 pending（见下方命令），runner 会重新 dispatch |
+
+### 重置 failed lane 为 pending（允许重试）
+
+仅对属于 `orchestrator_decoupling` 或 `a2a_` track 的 failed lane 执行。不要重置旧的 failed lane。
+
+```bash
+python3 -c "
+import json
+from pathlib import Path
+p = Path('xmuse/feature_lanes.json')
+d = json.loads(p.read_text())
+n = 0
+for l in d['lanes']:
+    if not isinstance(l, dict): continue
+    if l.get('status') not in ('failed', 'exec_failed', 'gate_failed'): continue
+    fid = l.get('feature_id', '')
+    # 只重置本次 session 相关的 lane
+    if not any(k in fid for k in ('c-phase', 'orchestrator', 'decoupling', 'a2a', 'projection', 'execution', 'adapters')): continue
+    l['status'] = 'pending'
+    l['retry_count'] = 0
+    l.pop('dispatched_at', None)
+    l.pop('god_runtime', None)
+    l['manual_recovery'] = 'reset failed lane for retry'
+    n += 1
+    print(f'  reset: {fid[:70]}')
+p.write_text(json.dumps(d, indent=2, ensure_ascii=False) + '\n')
+print(f'total reset: {n}')
+"
+```
+
+限制：每个 lane 最多重置 2 次。如果同一个 lane 已经被重置过 2 次仍然 fail，不再重置，标记为永久失败。
 
 ### 标记失败 lane 的方法
 
