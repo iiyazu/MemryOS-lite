@@ -19,6 +19,7 @@ from xmuse_core.platform.event_bus import EventBus
 from xmuse_core.platform.execution import gate as execution_gate
 from xmuse_core.platform.execution import merger as execution_merger
 from xmuse_core.platform.execution import review as execution_review
+from xmuse_core.platform.execution.transport import SpawnerTransport
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
 from xmuse_core.platform.mcp_tools import McpToolHandler
 from xmuse_core.platform.projection.dependents import reproject_dependents_if_needed
@@ -42,7 +43,6 @@ from xmuse_core.self_evolution.recovery import (
     RecoveryConfig,
     RecoveryEvent,
     RecoveryManager,
-    TransientRecoveryError,
 )
 from xmuse_core.structuring.graph_store import LaneGraphStore
 from xmuse_core.structuring.models import (
@@ -113,6 +113,7 @@ class PlatformOrchestrator:
         self._sm = LaneStateMachine(lanes_path)
         self._bus = EventBus()
         self._spawner = AgentSpawner(repo_root=xmuse_root, mcp_port=mcp_port)
+        self._transport = SpawnerTransport(self._spawner)
         self._root = xmuse_root
         self._graph_store = LaneGraphStore(self._root / "lane_graphs")
         self._require_final_action_approval = require_final_action_approval
@@ -695,19 +696,12 @@ class PlatformOrchestrator:
         prompt: str,
         worktree: Path,
     ) -> Any:
-        result = await self._spawner.spawn(
-            god_config=god,
+        return await self._transport.spawn_god(
+            god=god,
             lane_id=lane_id,
             prompt=prompt,
             worktree=worktree,
         )
-        infra_reason = self._review_infra_failure_reason(result)
-        if infra_reason is not None:
-            output = getattr(result, "stderr", "") or getattr(result, "stdout", "")
-            raise TransientRecoveryError(
-                f"{infra_reason}: {output or 'spawn infrastructure failure'}"
-            )
-        return result
 
     def _review_infra_reason_from_exception(self, exc: BaseException) -> str:
         return execution_review.review_infra_reason_from_exception(exc)
