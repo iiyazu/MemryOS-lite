@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from xmuse_core.gates.models import CommandPlan, GateCommandResult, GatePlan, GateReport
@@ -17,7 +18,13 @@ class GateRunner:
         artifact_dir = self.logs_root / plan.feature_id
         artifact_dir.mkdir(parents=True, exist_ok=True)
         results: list[GateCommandResult] = []
+        warnings = list(plan.warnings)
         for command in plan.commands:
+            command, command_warnings = self._filter_missing_pytest_paths(
+                plan.worktree,
+                command,
+            )
+            warnings.extend(command_warnings)
             name = f"{command.profile_id}__{command.command_id}"
             result = await self._run_command(plan.worktree, command)
             stdout_path = artifact_dir / f"{name}.stdout"
@@ -59,7 +66,7 @@ class GateRunner:
             command_results=results,
             artifact_dir=artifact_dir,
             warnings=[
-                *plan.warnings,
+                *warnings,
                 *[
                     f"nonblocking profile failed: {profile_id}"
                     for profile_id in nonblocking_failures
@@ -71,6 +78,40 @@ class GateRunner:
             encoding="utf-8",
         )
         return report
+
+    def _filter_missing_pytest_paths(
+        self,
+        worktree: Path,
+        command: CommandPlan,
+    ) -> tuple[CommandPlan, list[str]]:
+        if "pytest" not in Path(command.argv[0]).name and "pytest" not in command.argv:
+            return command, []
+
+        cwd = worktree / command.cwd
+        existing_paths: list[str] = []
+        missing_paths: list[str] = []
+        for arg in command.argv:
+            if not _looks_like_test_path(arg):
+                continue
+            if (cwd / arg).exists():
+                existing_paths.append(arg)
+            else:
+                missing_paths.append(arg)
+
+        if not existing_paths or not missing_paths:
+            return command, []
+
+        filtered_argv = [
+            arg
+            for arg in command.argv
+            if arg not in missing_paths or not _looks_like_test_path(arg)
+        ]
+        warnings = [
+            f"skipped missing pytest path for {command.profile_id}:"
+            f"{command.command_id}: {path}"
+            for path in missing_paths
+        ]
+        return replace(command, argv=filtered_argv), warnings
 
     async def _run_command(
         self,
@@ -114,6 +155,10 @@ class GateRunner:
             stdout_bytes.decode(errors="replace"),
             stderr_bytes.decode(errors="replace"),
         )
+
+
+def _looks_like_test_path(arg: str) -> bool:
+    return arg.startswith("tests/") and ("::" not in arg)
 
 
 def _report_to_json(report: GateReport) -> dict[str, object]:

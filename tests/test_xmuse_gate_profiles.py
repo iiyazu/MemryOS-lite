@@ -415,6 +415,51 @@ async def test_gate_runner_marks_blocking_failure(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gate_runner_skips_missing_pytest_file_args_when_some_exist(
+    tmp_path, monkeypatch
+):
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        return FakeProcess(stdout="ok", returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_v3_path.py").write_text("def test_ok(): pass\n")
+    config = _loaded_config(tmp_path)
+    profile = config.profiles["strict-product"]
+    profile.commands[0].args[:] = [
+        "-q",
+        "tests/test_xmuse_overnight_runner.py",
+        "tests/test_v3_path.py",
+    ]
+    plan = GateProfileResolver(config).resolve(
+        feature_id="lane-missing-test",
+        worktree=tmp_path,
+        explicit_profiles=["strict-product"],
+        changed_paths=["src/memoryos_lite/config.py"],
+    )
+
+    report = await GateRunner(repo_root=tmp_path).run(plan)
+
+    assert report.passed is True
+    assert calls[0] == ("uv", "run", "pytest", "-q", "tests/test_v3_path.py")
+    assert report.command_results[0].argv == [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "tests/test_v3_path.py",
+    ]
+    assert report.warnings == [
+        "skipped missing pytest path for strict-product:pytest: "
+        "tests/test_xmuse_overnight_runner.py"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_gate_runner_enforces_command_timeout(tmp_path, monkeypatch):
     class SlowProcess:
         returncode = None

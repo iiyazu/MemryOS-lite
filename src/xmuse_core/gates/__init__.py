@@ -13,13 +13,14 @@ from xmuse_core.gates.models import (
     ProfileDefaults,
 )
 from xmuse_core.gates.resolver import GateProfileResolver, ProfileMismatchError
-from xmuse_core.gates.review_gate import LLMReviewGate, ReviewVerdict
+from xmuse_core.gates.review_gate import CodexReviewGate, LLMReviewGate, ReviewVerdict
 from xmuse_core.gates.runner import GateRunner
 
 __all__ = [
     "CURRENT_PRODUCT_ENV",
     "CommandPlan",
     "CommandSpec",
+    "CodexReviewGate",
     "GateCommand",
     "GateCommandResult",
     "GateConfig",

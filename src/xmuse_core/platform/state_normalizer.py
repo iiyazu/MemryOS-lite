@@ -22,13 +22,17 @@ _STATUS_MAP: dict[str, str] = {
     "reviewed": "reviewed",
     "awaiting_final_action": "awaiting_final_action",
     "merged": "merged",
+    "done": "merged",
+    "completed": "merged",
     "rejected": "requeued",
     "reworking": "requeued",
     "exec_failed": "exec_failed",
     "gate_failed": "gate_failed",
+    "aborted": "terminated",
 }
 
 _TERMINAL_STATUSES = {"merged", "terminated", "exec_failed", "gate_failed"}
+RAW_LANE_STATUSES = frozenset(_STATUS_MAP) | {"failed"}
 _RESERVED_SUMMARY_KEYS = {"total", "terminal"}
 
 
@@ -42,18 +46,23 @@ def normalize_lane_state(lane: dict[str, Any]) -> NormalizedLaneState:
     raw_status = str(lane.get("status") or "pending")
     failure_reason = lane.get("failure_reason")
 
-    if raw_status == "failed":
+    if raw_status == "gate_failed" and failure_reason == "review_infra_unavailable":
+        normalized_status = "review_infra_unavailable"
+        is_terminal = False
+    elif raw_status == "failed":
         normalized_status = (
             failure_reason if isinstance(failure_reason, str) else "terminated"
         )
+        is_terminal = True
     else:
         normalized_status = _STATUS_MAP.get(raw_status, raw_status)
+        is_terminal = normalized_status in _TERMINAL_STATUSES
 
     return NormalizedLaneState(
         feature_id=str(lane.get("feature_id") or ""),
         raw_status=raw_status,
         normalized_status=normalized_status,
-        is_terminal=raw_status == "failed" or normalized_status in _TERMINAL_STATUSES,
+        is_terminal=is_terminal,
     )
 
 

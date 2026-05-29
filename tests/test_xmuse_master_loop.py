@@ -188,6 +188,42 @@ def test_load_lanes_orders_by_priority_without_breaking_dependencies(tmp_path):
     assert [task.priority for task in tasks] == [100, 100, 1, 0]
 
 
+def test_load_lanes_retries_failed_lanes_only_when_opted_in(tmp_path):
+    from master_loop import load_lanes
+
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "plain-failed",
+                "task_type": "execute",
+                "prompt": "plain",
+                "status": "failed",
+                "worktree": str(tmp_path),
+            },
+            {
+                "feature_id": "retry-failed",
+                "task_type": "execute",
+                "prompt": "retry",
+                "status": "failed",
+                "auto_retry": True,
+                "retry_count": 0,
+                "worktree": str(tmp_path),
+            },
+        ],
+    )
+
+    tasks = load_lanes(lanes_path)
+
+    assert [task.feature_id for task in tasks] == ["retry-failed"]
+    lanes = _read_lanes(lanes_path)
+    assert lanes[0]["status"] == "failed"
+    assert lanes[1]["status"] == "pending"
+    assert lanes[1]["retry_count"] == 1
+    assert lanes[1]["worktree"]
+
+
 def test_load_lanes_only_returns_one_active_full_gate_family_lane(tmp_path):
     from master_loop import FULL_QUALITY_GATE_TASK_TYPE, load_lanes
 
@@ -314,6 +350,109 @@ def test_load_lanes_keeps_legacy_lane_without_base_head_sha(tmp_path, monkeypatc
 
     assert task.base_head_sha is None
     assert "base_head_sha" not in lanes[0]
+
+
+def test_load_lanes_refreshes_existing_execute_worktree(tmp_path, monkeypatch):
+    import master_loop
+    from master_loop import load_lanes
+
+    worktree = tmp_path / "existing-worktree"
+    worktree.mkdir()
+    refreshed: list[Path] = []
+    lanes_path = tmp_path / "feature_lanes.json"
+    _write_lanes(
+        lanes_path,
+        [
+            {
+                "feature_id": "existing-lane",
+                "task_type": "execute",
+                "prompt": "do work",
+                "worktree": str(worktree),
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        master_loop,
+        "_fast_forward_existing_worktree",
+        lambda path: refreshed.append(Path(path)),
+    )
+
+    task = load_lanes(lanes_path)[0]
+
+    assert task.worktree == str(worktree)
+    assert refreshed == [worktree]
+
+
+def test_ensure_worktree_fast_forwards_clean_existing_worktree(tmp_path, monkeypatch):
+    import master_loop
+
+    feature_id = "stale-lane"
+    wt_path = tmp_path / f"memoryOS-{feature_id}"
+    wt_path.mkdir()
+    calls: list[tuple[list[str], Path]] = []
+
+    class Result:
+        def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, *, cwd, capture_output, text):  # type: ignore[no-untyped-def]
+        calls.append((list(cmd), Path(cwd)))
+        if cmd[:3] == ["git", "status", "--porcelain"]:
+            return Result(stdout="")
+        if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
+            return Result(returncode=0)
+        if cmd[:3] == ["git", "merge", "--ff-only"]:
+            return Result(returncode=0)
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(master_loop, "WORKTREE_BASE", tmp_path)
+    monkeypatch.setattr(master_loop, "_root_head_sha", lambda: "root-head")
+    monkeypatch.setattr(master_loop.subprocess, "run", fake_run)
+
+    assert master_loop.ensure_worktree(feature_id) == wt_path
+
+    assert calls == [
+        (["git", "status", "--porcelain"], wt_path),
+        (["git", "merge-base", "--is-ancestor", "HEAD", "root-head"], wt_path),
+        (["git", "merge", "--ff-only", "root-head"], wt_path),
+    ]
+
+
+def test_fast_forward_existing_worktree_lets_git_protect_dirty_changes(
+    tmp_path, monkeypatch
+):
+    import master_loop
+
+    calls: list[tuple[list[str], Path]] = []
+
+    class Result:
+        def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(cmd, *, cwd, capture_output, text):  # type: ignore[no-untyped-def]
+        calls.append((list(cmd), Path(cwd)))
+        if cmd[:3] == ["git", "status", "--porcelain"]:
+            return Result(stdout=" M src/example.py\n")
+        if cmd[:3] == ["git", "merge-base", "--is-ancestor"]:
+            return Result(returncode=0)
+        if cmd[:3] == ["git", "merge", "--ff-only"]:
+            return Result(returncode=0)
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(master_loop, "_root_head_sha", lambda: "root-head")
+    monkeypatch.setattr(master_loop.subprocess, "run", fake_run)
+
+    master_loop._fast_forward_existing_worktree(tmp_path)
+
+    assert calls == [
+        (["git", "status", "--porcelain"], tmp_path),
+        (["git", "merge-base", "--is-ancestor", "HEAD", "root-head"], tmp_path),
+        (["git", "merge", "--ff-only", "root-head"], tmp_path),
+    ]
 
 
 def test_full_quality_gate_profile_excludes_isolated_legacy_surfaces():
@@ -881,6 +1020,26 @@ async def test_review_gate_exception_degrades_to_recorded_auto_approval(tmp_path
     assert verdict["approved"] is True
     assert verdict["confidence"] == 0.0
     assert verdict["summary"] == "review gate unavailable, auto-approved"
+
+
+def test_master_loop_builds_codex_review_gate_by_default(monkeypatch):
+    from master_loop import MasterLoop
+
+    monkeypatch.delenv("XMUSE_REVIEW_GATE", raising=False)
+    monkeypatch.setenv("XMUSE_REVIEW_MODEL", "gpt-5.5")
+
+    review_gate = MasterLoop._build_review_gate()
+
+    assert review_gate.__class__.__name__ == "CodexReviewGate"
+    assert review_gate._model == "gpt-5.5"
+
+
+def test_master_loop_can_disable_review_gate(monkeypatch):
+    from master_loop import MasterLoop
+
+    monkeypatch.setenv("XMUSE_REVIEW_GATE", "0")
+
+    assert MasterLoop._build_review_gate() is None
 
 
 @pytest.mark.asyncio

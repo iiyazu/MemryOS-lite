@@ -72,7 +72,8 @@ def load_gate_config(path: Path, *, repo_root: Path) -> GateConfig:
         raise GateProfileConfigError("strict-product manifest must not be empty")
     for profile in profiles.values():
         has_manifest = profile.test_files or profile.test_nodeids or profile.test_markers
-        if profile.blocking and not has_manifest:
+        has_commands = bool(profile.commands)
+        if profile.blocking and not has_manifest and not has_commands:
             raise GateProfileConfigError(
                 f"blocking profile manifest must not be empty: {profile.profile_id}"
             )

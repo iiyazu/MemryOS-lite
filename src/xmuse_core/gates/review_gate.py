@@ -86,13 +86,7 @@ class CodexReviewGate:
         )
         if result.returncode != 0:
             stderr = (result.stderr or result.stdout or "").strip()[:500]
-            return ReviewVerdict(
-                approved=False,
-                concerns=[f"codex_review_failed: {stderr}"],
-                summary="codex review process failed",
-                confidence=0.0,
-                self_modification=self_mod,
-            )
+            raise RuntimeError(f"codex_review_failed: {stderr}")
 
         verdict = self._parse_verdict(result.stdout)
         verdict.self_modification = self_mod

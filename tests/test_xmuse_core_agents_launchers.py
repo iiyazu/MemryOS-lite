@@ -19,7 +19,13 @@ def test_codex_build_command():
 def test_claude_code_build_command():
     launcher = ClaudeCodeLauncher()
     cmd = launcher.build_command("my-feature", Path("/tmp/worktree"))
-    assert cmd == ["claude", "--cwd", "/tmp/worktree", "--output-format", "json"]
+    assert cmd == [
+        "claude",
+        "-p",
+        "--dangerously-skip-permissions",
+        "--output-format",
+        "json",
+    ]
 
 
 def test_codex_format_prompt_with_context():
@@ -66,3 +72,13 @@ def test_codex_parse_output_progress_returns_none():
     launcher = CodexLauncher()
     msg = StdoutMessage(type="progress", stage="running")
     assert launcher.parse_output(msg) is None
+
+
+def test_build_default_launchers_covers_every_runtime():
+    from xmuse_core.agents.launchers import build_default_launchers
+    from xmuse_core.agents.registry import AgentRuntime
+
+    launchers = build_default_launchers()
+    assert set(launchers) == set(AgentRuntime)
+    assert isinstance(launchers[AgentRuntime.CODEX], CodexLauncher)
+    assert isinstance(launchers[AgentRuntime.CLAUDE_CODE], ClaudeCodeLauncher)

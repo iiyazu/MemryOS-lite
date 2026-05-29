@@ -111,7 +111,7 @@ class XmuseOperations:
             "task_type": "execute",
             "prompt": prompt,
             "capabilities": [item.strip() for item in capabilities],
-            "status": "queued",
+            "status": "pending",
         }
         lanes.append(lane)
         _atomic_write_json(self.lanes_path, payload)
@@ -474,7 +474,12 @@ async def _handle_json_rpc(payload: dict[str, Any], ops: XmuseOperations) -> JSO
         if method == "notifications/initialized":
             return JSONResponse(_json_rpc_response(request_id, {}))
         if method == "tools/list":
-            return JSONResponse(_json_rpc_response(request_id, {"tools": TOOL_SCHEMAS + PLATFORM_TOOL_SCHEMAS}))
+            return JSONResponse(
+                _json_rpc_response(
+                    request_id,
+                    {"tools": TOOL_SCHEMAS + PLATFORM_TOOL_SCHEMAS},
+                )
+            )
         if method == "tools/call":
             if not isinstance(params, dict):
                 raise ValueError("params must be an object")

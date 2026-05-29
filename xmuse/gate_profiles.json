@@ -8,22 +8,49 @@
   },
   "command_catalog": {
     "pytest": {
-      "argv": ["uv", "run", "pytest"],
+      "argv": [
+        "uv",
+        "run",
+        "pytest"
+      ],
       "cwd": ".",
       "timeout_s": 0,
       "allow_extra_args": true
     },
     "ruff-src": {
-      "argv": ["uv", "run", "ruff", "check", "src/"],
+      "argv": [
+        "uv",
+        "run",
+        "ruff",
+        "check",
+        "src/"
+      ],
       "cwd": ".",
       "timeout_s": 0,
       "allow_extra_args": false
     },
     "ruff-xmuse": {
-      "argv": ["uv", "run", "ruff", "check", "xmuse/"],
+      "argv": [
+        "uv",
+        "run",
+        "ruff",
+        "check",
+        "xmuse/"
+      ],
       "cwd": ".",
       "timeout_s": 0,
       "allow_extra_args": false
+    },
+    "mypy-src": {
+      "argv": [
+        "uv",
+        "run",
+        "mypy",
+        "--ignore-missing-imports"
+      ],
+      "cwd": ".",
+      "timeout_s": 60,
+      "allow_extra_args": true
     }
   },
   "profiles": {
@@ -71,6 +98,9 @@
             "tests/test_xmuse_core_callback_server.py",
             "tests/test_xmuse_mcp_server.py",
             "tests/test_xmuse_overnight_runner.py",
+            "tests/test_xmuse_self_evolution.py",
+            "tests/test_xmuse_self_evolution_checkpoint.py",
+            "tests/test_xmuse_chat_participant_store.py",
             "tests/test_engine.py::test_v3_build_context_includes_core_memory_diagnostics",
             "tests/test_engine.py::test_v3_build_context_promotes_cache_diagnostics_to_legacy_metadata",
             "tests/test_engine.py::test_v3_internal_recall_cache_remains_disabled_by_cache_flag",
@@ -126,7 +156,10 @@
         "tests/test_xmuse_core_routing.py",
         "tests/test_xmuse_core_callback_server.py",
         "tests/test_xmuse_mcp_server.py",
-        "tests/test_xmuse_overnight_runner.py"
+        "tests/test_xmuse_overnight_runner.py",
+        "tests/test_xmuse_self_evolution.py",
+        "tests/test_xmuse_self_evolution_checkpoint.py",
+        "tests/test_xmuse_chat_participant_store.py"
       ],
       "test_nodeids": [
         "tests/test_engine.py::test_v3_build_context_includes_core_memory_diagnostics",
@@ -203,7 +236,9 @@
           ]
         }
       ],
-      "diff_selectors": ["src/memoryos_lite/retrieval/**"],
+      "diff_selectors": [
+        "src/memoryos_lite/retrieval/**"
+      ],
       "test_files": [
         "tests/test_episode_store.py",
         "tests/test_episode_retrieval.py",
@@ -234,7 +269,10 @@
           ]
         }
       ],
-      "diff_selectors": ["src/memoryos_lite/api/**", "src/memoryos_lite/cli.py"],
+      "diff_selectors": [
+        "src/memoryos_lite/api/**",
+        "src/memoryos_lite/cli.py"
+      ],
       "test_files": [
         "tests/test_memoryos_middleware.py",
         "tests/test_memoryos_agent_endpoints.py"
@@ -270,11 +308,19 @@
             "tests/test_xmuse_core_routing.py",
             "tests/test_xmuse_core_callback_server.py",
             "tests/test_xmuse_mcp_server.py",
-            "tests/test_xmuse_overnight_runner.py"
+            "tests/test_xmuse_overnight_runner.py",
+            "tests/test_xmuse_self_evolution.py",
+            "tests/test_xmuse_self_evolution_checkpoint.py",
+            "tests/test_xmuse_chat_participant_store.py",
+            "tests/test_platform_projection_dependents.py",
+            "tests/test_self_evolution_adapters.py"
           ]
         }
       ],
-      "diff_selectors": ["xmuse/**", "src/xmuse_core/**"],
+      "diff_selectors": [
+        "xmuse/**",
+        "src/xmuse_core/**"
+      ],
       "test_files": [
         "tests/test_xmuse_quality_gate.py",
         "tests/test_xmuse_gate_profiles.py",
@@ -294,7 +340,12 @@
         "tests/test_xmuse_core_routing.py",
         "tests/test_xmuse_core_callback_server.py",
         "tests/test_xmuse_mcp_server.py",
-        "tests/test_xmuse_overnight_runner.py"
+        "tests/test_xmuse_overnight_runner.py",
+        "tests/test_xmuse_self_evolution.py",
+        "tests/test_xmuse_self_evolution_checkpoint.py",
+        "tests/test_xmuse_chat_participant_store.py",
+        "tests/test_platform_projection_dependents.py",
+        "tests/test_self_evolution_adapters.py"
       ],
       "test_nodeids": [],
       "test_markers": [],
@@ -307,11 +358,19 @@
       "commands": [
         {
           "command": "pytest",
-          "args": ["-q", "tests/test_xmuse_dashboard_api.py"]
+          "args": [
+            "-q",
+            "tests/test_xmuse_dashboard_api.py"
+          ]
         }
       ],
-      "diff_selectors": ["xmuse/dashboard/**", "xmuse/frontend/**"],
-      "test_files": ["tests/test_xmuse_dashboard_api.py"],
+      "diff_selectors": [
+        "xmuse/dashboard/**",
+        "xmuse/frontend/**"
+      ],
+      "test_files": [
+        "tests/test_xmuse_dashboard_api.py"
+      ],
       "test_nodeids": [],
       "test_markers": [],
       "mixed_test_files": []
@@ -325,11 +384,44 @@
       "commands": [
         {
           "command": "pytest",
-          "args": ["-q", "tests/test_agent_kernel.py"]
+          "args": [
+            "-q",
+            "tests/test_agent_kernel.py"
+          ]
         }
       ],
-      "diff_selectors": ["src/memoryos_lite/agent_kernel.py"],
-      "test_files": ["tests/test_agent_kernel.py"],
+      "diff_selectors": [
+        "src/memoryos_lite/agent_kernel.py"
+      ],
+      "test_files": [
+        "tests/test_agent_kernel.py"
+      ],
+      "test_nodeids": [],
+      "test_markers": [],
+      "mixed_test_files": []
+    },
+    "linter-only": {
+      "description": "Lightweight linter-only gate for auto-discovery lanes (no pytest).",
+      "blocking": true,
+      "env": {},
+      "commands": [
+        {
+          "command": "ruff-src",
+          "args": []
+        },
+        {
+          "command": "ruff-xmuse",
+          "args": []
+        },
+        {
+          "command": "mypy-src",
+          "args": [
+            "src/"
+          ]
+        }
+      ],
+      "diff_selectors": [],
+      "test_files": [],
       "test_nodeids": [],
       "test_markers": [],
       "mixed_test_files": []

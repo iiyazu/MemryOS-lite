@@ -1,4 +1,4 @@
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from memoryos_lite.cache import (
     CacheDiagnostics,
@@ -7,7 +7,7 @@ from memoryos_lite.cache import (
     CacheWriteResult,
 )
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import ItemExtractor, MemoryOSService, OpenAIPageDraftClient, PagingAgent
+from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 from memoryos_lite.schemas import (
     MemoryItem,
@@ -28,6 +28,7 @@ from memoryos_lite.v3_contracts import (
     CoreMemoryBlock,
     SourceRef,
 )
+
 
 def test_context_builder_first_multi_evidence_matching_is_narrow(service):
     assert service.context_builder._needs_multi_evidence("Which event did I attend first?") is True
@@ -688,6 +689,274 @@ def test_service_wires_archival_qdrant_separately_from_page_qdrant(tmp_path):
     assert service.archival_qdrant_store.collection == "memoryos_archival_passages_test"
     assert service.qdrant_store.collection != service.archival_qdrant_store.collection
     assert service.v3_context_composer.archival_searcher.vector_index is not None
+
+# ---------------------------------------------------------------------------
+# Error recovery mechanisms (evbundle_6ef398723414454ba7212973e08e05f5)
+# Tests: retry logic, graceful degradation, state preservation under failure.
+# ---------------------------------------------------------------------------
+
+
+def test_paging_agent_falls_back_gracefully_when_llm_draft_client_raises(tmp_path):
+    """PagingAgent falls back to heuristic mode when the LLM draft client raises,
+    and does not corrupt the message store."""
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_paging_mode="llm",
+        openai_api_key="sk-test-dummy",
+    )
+    store = create_store(settings)
+    store.reset()
+
+    with patch(
+        "memoryos_lite.legacy_paging.OpenAIPageDraftClient.create_draft",
+        side_effect=RuntimeError("llm unavailable"),
+    ):
+        service = MemoryOSService(store=store, settings=settings)
+        session = service.create_session("fallback-test")
+        for content in [
+            "用户目标是完成 MemoryOS Lite。",
+            "技术栈选择 LangGraph 和 FastAPI。",
+            "需要 benchmark 对比 Sliding Window 和 Vector RAG。",
+            "最终决定不做 Runbook Oncall Agent。",
+        ]:
+            service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+
+        # page() must not raise even when the LLM client fails
+        service.page(session.id)
+
+    # Messages must be intact regardless of paging outcome
+    messages = service.store.list_messages(session.id)
+    assert len(messages) == 4
+    # Traces must record the paging outcome (skipped or committed)
+    traces = service.store.list_traces(session.id)
+    paging_events = [t for t in traces if t.event_type in ("paging_skipped", "page_committed")]
+    assert paging_events
+
+
+def test_ingest_preserves_all_messages_when_paging_raises(tmp_path):
+    """All ingested messages survive even if page() raises an unexpected error."""
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(store=store, settings=settings)
+    session = service.create_session("ingest-resilience")
+
+    for i in range(3):
+        service.ingest(
+            session.id,
+            MessageCreate(role=Role.USER, content=f"Message {i}: stable fact."),
+        )
+
+    with patch.object(service.paging_agent, "create_drafts", side_effect=RuntimeError("boom")):
+        try:
+            service.page(session.id)
+        except RuntimeError:
+            pass
+
+    # All messages must still be present — ingest is independent of paging
+    messages = service.store.list_messages(session.id)
+    assert len(messages) == 3
+
+
+def test_build_context_returns_empty_package_when_store_list_pages_raises(tmp_path):
+    """build_context degrades gracefully when the page store raises, returning
+    a valid (possibly empty) ContextPackage without corrupting session state."""
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_recovery_max_attempts=2,
+        memoryos_recovery_initial_delay_s=0,
+    )
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(store=store, settings=settings)
+    service.recovery._sleep = lambda _delay: None
+    session = service.create_session("context-degradation")
+    service.ingest(session.id, MessageCreate(role=Role.USER, content="Alice lives in Shanghai."))
+
+    with patch.object(service.store, "list_pages", side_effect=RuntimeError("db error")):
+        context = service.build_context(session.id, "Where does Alice live?", budget=200)
+
+    assert context.session_id == session.id
+    assert context.metadata["degraded"] is True
+    assert context.metadata["degraded_component"] == "page_store"
+    # Whether the service swallows or re-raises, the message must still be intact
+    messages = service.store.list_messages(session.id)
+    assert len(messages) == 1
+    assert messages[0].content == "Alice lives in Shanghai."
+    traces = service.store.list_traces(session.id)
+    assert any(t.event_type == "recovery_event" for t in traces)
+    assert any(t.event_type == "context_degraded" for t in traces)
+
+
+def test_v3_context_composer_retry_then_degrades_to_recall_pipeline(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_memory_arch="v3",
+        memoryos_recovery_max_attempts=2,
+        memoryos_recovery_initial_delay_s=0,
+    )
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(store=store, settings=settings)
+    service.recovery._sleep = lambda _delay: None
+    session = service.create_session("v3-recovery")
+    service.ingest(session.id, MessageCreate(role=Role.USER, content="Alice lives in Shanghai."))
+
+    with patch.object(
+        service.v3_context_composer,
+        "build",
+        side_effect=TimeoutError("temporary composer outage"),
+    ):
+        context = service.build_context(session.id, "Where does Alice live?", budget=200)
+
+    assert context.session_id == session.id
+    traces = service.store.list_traces(session.id)
+    recovery_events = [t for t in traces if t.event_type == "recovery_event"]
+    assert any(t.payload["kind"] == "retry_scheduled" for t in recovery_events)
+    assert any(t.event_type == "context_degraded" for t in traces)
+
+
+def test_page_embedding_failure_degrades_and_records_recovery(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / ".memoryos",
+        memoryos_recovery_max_attempts=1,
+    )
+    service = MemoryOSService(
+        settings=settings,
+        embedding_client=DeterministicEmbeddingClient(),
+    )
+    service.recovery._sleep = lambda _delay: None
+    session = service.create_session("embedding-recovery")
+    page = MemoryPage(
+        session_id=session.id,
+        page_type=PageType.SOURCE_SUMMARY,
+        title="Page",
+        summary="Alice lives in Shanghai.",
+    )
+
+    with patch.object(
+        service.embedding_client,
+        "embed",
+        side_effect=TimeoutError("temporary embedding outage"),
+    ):
+        service._index_page_embedding(page)
+
+    traces = service.store.list_traces(session.id)
+    assert any(t.event_type == "recovery_event" for t in traces)
+    assert any(t.payload["kind"] == "degraded" for t in traces if t.event_type == "recovery_event")
+
+
+def test_embedding_client_failure_does_not_corrupt_page_store(tmp_path):
+    """When the embedding client raises during a search, the page store is not
+    modified and previously saved pages remain intact."""
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(store=store, settings=settings)
+    session = service.create_session("embedding-failure")
+
+    page = MemoryPage(
+        id="stable_page",
+        session_id=session.id,
+        page_type=PageType.SOURCE_SUMMARY,
+        title="Stable page",
+        summary="Alice lives in Shanghai.",
+    )
+    service.store.save_page(page)
+
+    with patch.object(
+        service.searcher,
+        "search",
+        side_effect=RuntimeError("embedding service down"),
+    ):
+        try:
+            service.build_context(session.id, "Where does Alice live?", budget=200)
+        except RuntimeError:
+            pass
+
+    # The page must still be intact after the failed search
+    loaded = service.store.load_page("stable_page")
+    assert loaded is not None
+    assert loaded.summary == "Alice lives in Shanghai."
+
+
+def test_patch_verifier_rejects_and_preserves_page_on_bad_old_text(tmp_path):
+    """A failed patch (bad old_text) must not modify the page content."""
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(store=store, settings=settings)
+    session = service.create_session("patch-recovery")
+    service.ingest(
+        session.id,
+        MessageCreate(role=Role.USER, content="Database is PostgreSQL."),
+    )
+    page = MemoryPage(
+        id="patch_recovery_page",
+        session_id=session.id,
+        page_type=PageType.SOURCE_SUMMARY,
+        title="DB page",
+        summary="Database is PostgreSQL.",
+        facts=["Database is PostgreSQL."],
+    )
+    service.store.save_page(page)
+
+    patch = MemoryPatch(
+        operation=PatchOperation.REPLACE,
+        target_page_id=page.id,
+        old_text="Database is MySQL.",  # wrong — does not exist
+        new_text="Database is SQLite.",
+        reason="test bad patch",
+        source_refs=[],
+    )
+    result = service.commit_patch(session.id, patch)
+
+    assert result.verified is False
+    # Page content must be unchanged
+    loaded = service.store.load_page(page.id)
+    assert loaded is not None
+    assert "PostgreSQL" in loaded.summary
+    assert "SQLite" not in loaded.summary
+
+
+def test_multiple_failed_patches_do_not_accumulate_corruption(tmp_path):
+    """Repeated failed patches must not corrupt the page incrementally."""
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+    store.reset()
+    service = MemoryOSService(store=store, settings=settings)
+    session = service.create_session("multi-patch-recovery")
+    service.ingest(
+        session.id,
+        MessageCreate(role=Role.USER, content="Stack is LangGraph."),
+    )
+    page = MemoryPage(
+        id="multi_patch_page",
+        session_id=session.id,
+        page_type=PageType.SOURCE_SUMMARY,
+        title="Stack page",
+        summary="Stack is LangGraph.",
+        facts=["Stack is LangGraph."],
+    )
+    service.store.save_page(page)
+
+    for _ in range(3):
+        bad_patch = MemoryPatch(
+            operation=PatchOperation.REPLACE,
+            target_page_id=page.id,
+            old_text="nonexistent text",
+            new_text="corrupted content",
+            reason="repeated bad patch",
+            source_refs=[],
+        )
+        result = service.commit_patch(session.id, bad_patch)
+        assert result.verified is False
+
+    loaded = service.store.load_page(page.id)
+    assert loaded is not None
+    assert loaded.summary == "Stack is LangGraph."
+    assert "corrupted content" not in loaded.summary
+
 
 def test_store_allows_embeddings_from_different_providers(service):
     session = service.create_session("mixed-embedding-dims")

@@ -71,6 +71,11 @@ def test_sse_endpoint_and_tools_list(tmp_path: Path) -> None:
         "abort_lane",
         "get_error_knowledge",
         "get_logs",
+        "get_lane",
+        "get_gate_report",
+        "get_diff",
+        "query_knowledge",
+        "update_lane_status",
     }
 
 
@@ -97,14 +102,14 @@ def test_list_lanes_and_enqueue_lane_update_feature_lanes(tmp_path: Path) -> Non
         },
     )
 
-    assert created["status"] == "queued"
+    assert created["status"] == "pending"
     lanes = read_json(lanes_path)
     assert lanes["lanes"][-1] == {
         "feature_id": "new-lane",
         "task_type": "execute",
         "prompt": "Implement the new lane.",
         "capabilities": ["code", "test"],
-        "status": "queued",
+        "status": "pending",
     }
 
 

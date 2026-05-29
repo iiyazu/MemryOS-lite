@@ -1,6 +1,7 @@
 import json
+
 import pytest
-from pathlib import Path
+
 from xmuse_core.platform.mcp_tools import McpToolHandler
 from xmuse_core.platform.state_machine import LaneStateMachine
 
@@ -70,6 +71,18 @@ def test_update_lane_status_invalid(setup):
         "lane_id": "lane-1", "status": "merged",
     })
     assert "error" in result
+
+
+def test_update_lane_status_returns_validation_error(setup):
+    handler, sm, _, status_changes = setup
+    result = handler.call("update_lane_status", {
+        "lane_id": "lane-1", "status": "gate_failed",
+    })
+
+    assert "error" in result
+    assert "failure_reason" in result["error"]
+    assert sm.get_lane("lane-1")["status"] == "gated"
+    assert status_changes == []
 
 
 def test_unknown_tool(setup):

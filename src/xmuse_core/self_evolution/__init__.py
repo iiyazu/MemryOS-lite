@@ -1,0 +1,77 @@
+"""Blueprint-anchored self-evolution bootstrap primitives for xmuse."""
+
+from xmuse_core.self_evolution.audit_writer import SelfEvolutionAuditWriter
+from xmuse_core.self_evolution.controller import SelfEvolutionController
+from xmuse_core.self_evolution.models import (
+    ClarificationRequest,
+    ClarificationResolution,
+    ClarificationStatus,
+    EvolutionBudgetWindow,
+    EvolutionDedupRecord,
+    EvolutionGuardrailDecision,
+    EvolutionLineageRecord,
+    EvolutionProposal,
+    EvolutionReviewDecision,
+    RunTerminalAggregation,
+    StructuredEvidenceBundle,
+)
+from xmuse_core.self_evolution.reliability import (
+    AckConsistencyCheck,
+    AckConsistencyGate,
+    AckOutcome,
+    HeartbeatStatus,
+    HeartbeatStore,
+    IncidentClassifier,
+    IncidentLevel,
+    IncidentRecord,
+    RunHeartbeat,
+    StaleArtifactRecord,
+    StaleArtifactVerdict,
+)
+from xmuse_core.self_evolution.recovery import (
+    CircuitBreaker,
+    CircuitOpenError,
+    CircuitState,
+    RecoveryConfig,
+    RecoveryEvent,
+    RecoveryManager,
+    TransientRecoveryError,
+    is_transient_failure,
+)
+from xmuse_core.self_evolution.store import SelfEvolutionStore
+
+__all__ = [
+    "AckConsistencyCheck",
+    "AckConsistencyGate",
+    "AckOutcome",
+    "CircuitBreaker",
+    "CircuitOpenError",
+    "CircuitState",
+    "ClarificationRequest",
+    "ClarificationResolution",
+    "ClarificationStatus",
+    "EvolutionBudgetWindow",
+    "EvolutionDedupRecord",
+    "EvolutionGuardrailDecision",
+    "EvolutionLineageRecord",
+    "EvolutionProposal",
+    "EvolutionReviewDecision",
+    "HeartbeatStatus",
+    "HeartbeatStore",
+    "IncidentClassifier",
+    "IncidentLevel",
+    "IncidentRecord",
+    "RecoveryConfig",
+    "RecoveryEvent",
+    "RecoveryManager",
+    "RunHeartbeat",
+    "RunTerminalAggregation",
+    "SelfEvolutionAuditWriter",
+    "SelfEvolutionController",
+    "SelfEvolutionStore",
+    "StaleArtifactRecord",
+    "StaleArtifactVerdict",
+    "StructuredEvidenceBundle",
+    "TransientRecoveryError",
+    "is_transient_failure",
+]

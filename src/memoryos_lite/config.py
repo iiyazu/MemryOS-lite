@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     memoryos_archival_vector_enabled: bool = True
     memoryos_archival_qdrant_url: str | None = None
     memoryos_archival_qdrant_collection: str = "memoryos_archival_passages"
+    memoryos_recovery_enabled: bool = True
+    memoryos_recovery_max_attempts: int = 3
+    memoryos_recovery_initial_delay_s: float = 0.05
+    memoryos_recovery_max_delay_s: float = 2.0
+    memoryos_recovery_backoff_multiplier: float = 2.0
+    memoryos_recovery_circuit_failure_threshold: int = 5
+    memoryos_recovery_circuit_recovery_timeout_s: float = 60.0
+    memoryos_recovery_graceful_degradation: bool = True
 
     # Middleware
     memoryos_api_key: str | None = None
@@ -85,6 +93,28 @@ class Settings(BaseSettings):
     def validate_cache_namespace(cls, value: str) -> str:
         if not value.strip(":").strip():
             raise ValueError("MEMORYOS_CACHE_NAMESPACE must not be empty")
+        return value
+
+    @field_validator(
+        "memoryos_recovery_max_attempts",
+        "memoryos_recovery_circuit_failure_threshold",
+    )
+    @classmethod
+    def validate_recovery_positive_ints(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("recovery attempt and circuit threshold settings must be positive")
+        return value
+
+    @field_validator(
+        "memoryos_recovery_initial_delay_s",
+        "memoryos_recovery_max_delay_s",
+        "memoryos_recovery_backoff_multiplier",
+        "memoryos_recovery_circuit_recovery_timeout_s",
+    )
+    @classmethod
+    def validate_recovery_non_negative_floats(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("recovery timing settings must be non-negative")
         return value
 
     @property

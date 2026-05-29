@@ -8,7 +8,13 @@ from xmuse_core.agents.protocol import AgentOutput, StdoutMessage
 
 class ClaudeCodeLauncher:
     def build_command(self, feature_id: str, worktree: Path) -> list[str]:
-        return ["claude", "--cwd", str(worktree), "--output-format", "json"]
+        return [
+            "claude",
+            "-p",
+            "--dangerously-skip-permissions",
+            "--output-format",
+            "json",
+        ]
 
     def format_prompt(self, task: str, context: str) -> str:
         if context:

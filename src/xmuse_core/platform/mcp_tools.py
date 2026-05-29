@@ -10,6 +10,7 @@ from xmuse_core.platform.state_machine import (
     InvalidTransitionError,
     LaneStateMachine,
 )
+from xmuse_core.platform.state_validation import StateValidationError
 
 
 def _query_terms(query: str) -> set[str]:
@@ -95,5 +96,5 @@ class McpToolHandler:
             if self._on_status_change:
                 self._on_status_change(lane_id, status)
             return lane
-        except (InvalidTransitionError, KeyError) as exc:
+        except (InvalidTransitionError, StateValidationError, KeyError) as exc:
             return {"error": str(exc)}

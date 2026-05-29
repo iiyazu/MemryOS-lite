@@ -62,21 +62,15 @@ Found 1 error.
     assert auto_discovery.main(["--ruff"]) == 0
 
     lanes = json.loads(capsys.readouterr().out)
-    assert lanes == [
-        {
-            "feature_id": "auto-ruff-src-memoryos-lite-example-py-3-1-f401",
-            "task_type": "execute",
-            "prompt": (
-                "Fix ruff lint error in src/memoryos_lite/example.py.\n\n"
-                "Exact error message:\n"
-                "src/memoryos_lite/example.py:3:1: F401 `json` imported but unused\n\n"
-                "Run `uv run ruff check src/ xmuse/` to verify the fix."
-            ),
-            "capabilities": ["code", "test"],
-            "source": "auto",
-            "priority": 60,
-        }
-    ]
+    assert len(lanes) == 1
+    assert lanes[0]["feature_id"] == "batch-ruff-src-memoryos-lite-example-py"
+    assert lanes[0]["task_type"] == "execute"
+    assert lanes[0]["capabilities"] == ["code", "test"]
+    assert lanes[0]["source"] == "auto"
+    assert lanes[0]["priority"] == 60
+    assert lanes[0]["gate_profile"] == "linter-only"
+    assert "Fix all ruff lint errors" in lanes[0]["prompt"]
+    assert "F401" in lanes[0]["prompt"]
 
 
 def test_discovers_mypy_error_lane(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
@@ -95,15 +89,16 @@ Found 2 errors in 1 file (checked 1 source file)
     assert auto_discovery.main(["--mypy"]) == 0
 
     lanes = json.loads(capsys.readouterr().out)
-    assert [lane["feature_id"] for lane in lanes] == [
-        "auto-mypy-src-memoryos-lite-example-py-12-return-value",
-        "auto-mypy-src-memoryos-lite-example-py-18-5-name-defined",
-    ]
+    assert len(lanes) == 1
+    assert lanes[0]["feature_id"] == "batch-mypy-src-memoryos-lite-example-py"
     assert lanes[0]["task_type"] == "execute"
     assert lanes[0]["capabilities"] == ["code", "test"]
     assert lanes[0]["source"] == "auto"
     assert lanes[0]["priority"] == 80
-    assert "Run `uv run mypy src/ --ignore-missing-imports`" in lanes[0]["prompt"]
+    assert lanes[0]["gate_profile"] == "linter-only"
+    assert "Fix all mypy type errors" in lanes[0]["prompt"]
+    assert "return-value" in lanes[0]["prompt"]
+    assert "name-defined" in lanes[0]["prompt"]
 
 
 def test_discovers_low_coverage_test_lane(
@@ -192,7 +187,7 @@ def test_deduplicates_against_existing_feature_lanes(
         json.dumps(
             {
                 "lanes": [
-                    {"feature_id": "auto-mypy-src-memoryos-lite-example-py-12-return-value"}
+                    {"feature_id": "batch-mypy-src-memoryos-lite-example-py"}
                 ]
             }
         ),

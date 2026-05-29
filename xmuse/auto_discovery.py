@@ -147,6 +147,7 @@ def parse_ruff_output(output: str) -> list[dict[str, object]]:
     lanes: list[dict[str, object]] = []
     seen: set[str] = set()
     lines = output.splitlines()
+    file_errors: dict[str, list[str]] = {}
 
     for line in lines:
         match = RUFF_CLASSIC_RE.match(line.strip())
@@ -158,24 +159,7 @@ def parse_ruff_output(output: str) -> list[dict[str, object]]:
         if key in seen:
             continue
         seen.add(key)
-        lanes.append(
-            make_lane(
-                feature_id_parts=[
-                    "auto",
-                    "ruff",
-                    path,
-                    match.group("line"),
-                    match.group("column"),
-                    match.group("code").lower(),
-                ],
-                prompt=(
-                    f"Fix ruff lint error in {path}.\n\n"
-                    f"Exact error message:\n{exact_message}\n\n"
-                    "Run `uv run ruff check src/ xmuse/` to verify the fix."
-                ),
-                priority=PRIORITY_RUFF,
-            )
-        )
+        file_errors.setdefault(path, []).append(exact_message)
 
     for index, line in enumerate(lines):
         code_match = RUFF_CODE_RE.match(line.strip())
@@ -190,22 +174,20 @@ def parse_ruff_output(output: str) -> list[dict[str, object]]:
         if key in seen:
             continue
         seen.add(key)
+        file_errors.setdefault(path, []).append(exact_message)
+
+    for path, errors in sorted(file_errors.items()):
+        error_list = "\n".join(f"- {e}" for e in errors)
         lanes.append(
             make_lane(
-                feature_id_parts=[
-                    "auto",
-                    "ruff",
-                    path,
-                    line_number,
-                    column,
-                    code_match.group("code").lower(),
-                ],
+                feature_id_parts=["batch", "ruff", path],
                 prompt=(
-                    f"Fix ruff lint error in {path}.\n\n"
-                    f"Exact error message:\n{exact_message}\n\n"
+                    f"Fix all ruff lint errors in {path}.\n\n"
+                    f"Errors ({len(errors)}):\n{error_list}\n\n"
                     "Run `uv run ruff check src/ xmuse/` to verify the fix."
                 ),
                 priority=PRIORITY_RUFF,
+                gate_profile="linter-only",
             )
         )
 
@@ -215,32 +197,31 @@ def parse_ruff_output(output: str) -> list[dict[str, object]]:
 def parse_mypy_output(output: str) -> list[dict[str, object]]:
     lanes: list[dict[str, object]] = []
     seen: set[str] = set()
+    file_errors: dict[str, list[str]] = {}
     for line in output.splitlines():
         match = MYPY_ERROR_RE.match(line.strip())
         if match is None:
             continue
         path = match.group("path")
-        line_number = match.group("line")
-        column = match.group("column")
-        code = match.group("code") or slugify(match.group("message"))[:32]
         exact_message = line.strip()
         key = f"mypy:{exact_message}"
         if key in seen:
             continue
         seen.add(key)
-        location_parts = [path, line_number]
-        if column:
-            location_parts.append(column)
-        location_parts.append(code)
+        file_errors.setdefault(path, []).append(exact_message)
+
+    for path, errors in sorted(file_errors.items()):
+        error_list = "\n".join(f"- {e}" for e in errors)
         lanes.append(
             make_lane(
-                feature_id_parts=["auto", "mypy", *location_parts],
+                feature_id_parts=["batch", "mypy", path],
                 prompt=(
-                    f"Fix mypy type error in {path}:{line_number}.\n\n"
-                    f"Exact error message:\n{exact_message}\n\n"
+                    f"Fix all mypy type errors in {path}.\n\n"
+                    f"Errors ({len(errors)}):\n{error_list}\n\n"
                     "Run `uv run mypy src/ --ignore-missing-imports` to verify the fix."
                 ),
                 priority=PRIORITY_MYPY,
+                gate_profile="linter-only",
             )
         )
     return lanes
@@ -338,8 +319,9 @@ def make_lane(
     prompt: str,
     *,
     priority: int,
+    gate_profile: str | None = None,
 ) -> dict[str, object]:
-    return {
+    lane: dict[str, object] = {
         "feature_id": slugify("-".join(feature_id_parts)),
         "task_type": "execute",
         "prompt": prompt,
@@ -347,6 +329,9 @@ def make_lane(
         "source": "auto",
         "priority": priority,
     }
+    if gate_profile:
+        lane["gate_profile"] = gate_profile
+    return lane
 
 
 def finalize_lanes(

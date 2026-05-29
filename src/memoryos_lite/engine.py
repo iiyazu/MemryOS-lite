@@ -1,10 +1,10 @@
 import hashlib
+import logging
 import re
 import time
-from dataclasses import dataclass
-from typing import Any, Protocol
+from functools import wraps
+from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
@@ -36,6 +36,11 @@ from memoryos_lite.observability import (
     PAGE_ERRORS_TOTAL,
     PAGE_TOTAL,
     RETRIEVAL_HITS,
+    bind_observability_context,
+    current_observability_context,
+    log_event,
+    observability_context,
+    timed_core_operation,
 )
 from memoryos_lite.retrieval import (
     EmbeddingClient,
@@ -103,6 +108,7 @@ from memoryos_lite.v3_contracts import (
     SourceRef,
     ToolPolicyRule,
 )
+from xmuse_core.self_evolution.recovery import RecoveryConfig, RecoveryEvent, RecoveryManager
 
 __all__ = [
     "ContextRotGuard",
@@ -110,6 +116,33 @@ __all__ = [
     "PagingAgent",
     "SearchHit",
 ]
+
+logger = logging.getLogger(__name__)
+
+
+def _instrument_engine_operation(operation: str):  # type: ignore[no-untyped-def]
+    def decorator(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            raw_session_id = kwargs.get("session_id")
+            session_id = (
+                str(raw_session_id)
+                if raw_session_id is not None
+                else str(args[0])
+                if args and isinstance(args[0], str)
+                else None
+            )
+            with observability_context(session_id=session_id), timed_core_operation(
+                component="engine",
+                operation=operation,
+                logger=logger,
+                session_id=session_id,
+            ):
+                return func(self, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 class ContextRotGuard:
@@ -122,13 +155,13 @@ class ContextRotGuard:
 
 
 from memoryos_lite.legacy_paging import (  # noqa: E402
+    _UPDATE_MARKERS,
     ItemExtractor,
     OpenAIPageDraftClient,
     PageDraftClient,
     PageVerifier,
     PagingAgent,
     _RankedMessageEvidence,
-    _UPDATE_MARKERS,
 )
 
 
@@ -830,6 +863,10 @@ class MemoryOSService:
         self.settings = settings or get_settings()
         self.store = store or create_store(self.settings)
         self.tokenizer = TokenEstimator()
+        self.recovery = RecoveryManager(
+            self._recovery_config_from_settings(),
+            observer=self._observe_recovery_event,
+        )
         self.rot_guard = ContextRotGuard(self.settings, self.tokenizer)
         llm_client: PageDraftClient | None = None
         llm_init_error: str | None = None
@@ -850,13 +887,21 @@ class MemoryOSService:
         self.embedding_client = embedding_client or self._default_embedding_client()
         lexical = LexicalSearcher()
         qdrant_store: QdrantEmbeddingStore | None = None
-        if self.settings.qdrant_url and self.embedding_client is not None:
+        qdrant_url = self.settings.qdrant_url
+        embedding_client_for_pages = self.embedding_client
+        if qdrant_url and embedding_client_for_pages is not None:
             try:
-                qdrant_store = QdrantEmbeddingStore(
-                    url=self.settings.qdrant_url,
-                    collection=self.settings.qdrant_collection,
-                    dim=self.embedding_client.dim,
-                    timeout=self.settings.memoryos_qdrant_timeout_s,
+                qdrant_store = self.recovery.execute(
+                    "engine.qdrant_pages",
+                    "connect",
+                    lambda: QdrantEmbeddingStore(
+                        url=qdrant_url,
+                        collection=self.settings.qdrant_collection,
+                        dim=embedding_client_for_pages.dim,
+                        timeout=self.settings.memoryos_qdrant_timeout_s,
+                    ),
+                    fallback=lambda _exc: None,
+                    critical=False,
                 )
             except Exception as exc:
                 qdrant_store = None
@@ -869,27 +914,36 @@ class MemoryOSService:
         )
         archival_qdrant_store: QdrantArchivalPassageStore | None = None
         archival_vector_index: ArchivalVectorIndex | None = None
+        archival_qdrant_url = self.settings.memoryos_archival_qdrant_url
+        embedding_client_for_archival = self.embedding_client
         if (
             self.settings.memoryos_archival_vector_enabled
-            and self.settings.memoryos_archival_qdrant_url
-            and self.embedding_client is not None
+            and archival_qdrant_url
+            and embedding_client_for_archival is not None
         ):
             try:
-                archival_qdrant_store = QdrantArchivalPassageStore(
-                    url=self.settings.memoryos_archival_qdrant_url,
-                    collection=self.settings.memoryos_archival_qdrant_collection,
-                    dim=self.embedding_client.dim,
-                    timeout=self.settings.memoryos_qdrant_timeout_s,
-                )
-                archival_vector_index = ArchivalVectorIndex(
-                    embedding_client=self.embedding_client,
-                    vector_store=archival_qdrant_store,
-                    config=ArchivalEmbeddingConfig(
-                        provider=self.settings.memoryos_embedding_provider,
-                        model=self.settings.memoryos_embedding_model,
-                        dim=self.embedding_client.dim,
+                archival_qdrant_store = self.recovery.execute(
+                    "engine.qdrant_archival",
+                    "connect",
+                    lambda: QdrantArchivalPassageStore(
+                        url=archival_qdrant_url,
+                        collection=self.settings.memoryos_archival_qdrant_collection,
+                        dim=embedding_client_for_archival.dim,
+                        timeout=self.settings.memoryos_qdrant_timeout_s,
                     ),
+                    fallback=lambda _exc: None,
+                    critical=False,
                 )
+                if archival_qdrant_store is not None:
+                    archival_vector_index = ArchivalVectorIndex(
+                        embedding_client=embedding_client_for_archival,
+                        vector_store=archival_qdrant_store,
+                        config=ArchivalEmbeddingConfig(
+                            provider=self.settings.memoryos_embedding_provider,
+                            model=self.settings.memoryos_embedding_model,
+                            dim=embedding_client_for_archival.dim,
+                        ),
+                    )
             except Exception as exc:
                 archival_qdrant_store = None
                 archival_vector_index = None
@@ -995,6 +1049,42 @@ class MemoryOSService:
                 item_llm = None
         self.item_extractor = ItemExtractor(self.settings, llm_client=item_llm)
         self.item_searcher = ItemSearcher(embedding_client=self.embedding_client)
+
+    def _recovery_config_from_settings(self) -> RecoveryConfig:
+        return RecoveryConfig(
+            enabled=self.settings.memoryos_recovery_enabled,
+            max_attempts=self.settings.memoryos_recovery_max_attempts,
+            initial_delay_s=self.settings.memoryos_recovery_initial_delay_s,
+            max_delay_s=self.settings.memoryos_recovery_max_delay_s,
+            backoff_multiplier=self.settings.memoryos_recovery_backoff_multiplier,
+            circuit_failure_threshold=(
+                self.settings.memoryos_recovery_circuit_failure_threshold
+            ),
+            circuit_recovery_timeout_s=(
+                self.settings.memoryos_recovery_circuit_recovery_timeout_s
+            ),
+            graceful_degradation=self.settings.memoryos_recovery_graceful_degradation,
+        )
+
+    def _observe_recovery_event(self, event: RecoveryEvent) -> None:
+        log_event(
+            logger,
+            logging.INFO,
+            "memoryos_recovery_event",
+            recovery_event=event.to_payload(),
+        )
+
+    def _trace_recovery_event(self, session_id: str, event: RecoveryEvent) -> None:
+        try:
+            self.trace(session_id, "recovery_event", event.to_payload())
+        except Exception:
+            log_event(
+                logger,
+                logging.DEBUG,
+                "recovery_trace_persist_failed",
+                session_id=session_id,
+                component=event.component,
+            )
 
     def _archive_rag(self) -> MemoryOSArchiveRAG:
         return MemoryOSArchiveRAG(self.store)
@@ -1229,48 +1319,69 @@ class MemoryOSService:
         return tool_names
 
     def create_session(self, title: str) -> Any:
-        session = self.store.create_session(title)
-        self.trace(session.id, "session_created", {"title": title})
-        return session
+        with timed_core_operation(
+            component="engine",
+            operation="create_session",
+            logger=logger,
+            log_success=True,
+        ):
+            session = self.store.create_session(title)
+            bind_observability_context(session_id=session.id)
+            self.trace(session.id, "session_created", {"title": title})
+            log_event(
+                logger,
+                logging.INFO,
+                "session_created",
+                session_id=session.id,
+            )
+            return session
 
     def ingest(self, session_id: str, request: MessageCreate) -> IngestResponse:
-        self._require_session(session_id)
-        INGEST_TOTAL.inc()
-        message = Message(
+        with observability_context(session_id=session_id), timed_core_operation(
+            component="engine",
+            operation="ingest",
+            logger=logger,
             session_id=session_id,
-            role=request.role,
-            content=request.content,
-            metadata=request.metadata,
-            token_count=self.tokenizer.count(request.content),
-        )
-        self.store.add_message(message)
-        if self.settings.resolved_recall_pipeline == "v2":
-            created = self.store.ensure_episodes_for_session(session_id)
-            if created:
-                self.trace(session_id, "episode_indexed", {"created": created})
-        token_count = self.store.session_token_count(session_id)
-        should_page = token_count >= self.settings.rot_safe_budget
-        self.trace(
-            session_id,
-            "message_ingested",
-            {
-                "message_id": message.id,
-                "token_count": message.token_count,
-                "should_page": should_page,
-            },
-        )
-        return IngestResponse(
-            message=message,
-            should_page=should_page,
-            session_token_count=token_count,
-        )
+        ):
+            self._require_session(session_id)
+            INGEST_TOTAL.inc()
+            message = Message(
+                session_id=session_id,
+                role=request.role,
+                content=request.content,
+                metadata=request.metadata,
+                token_count=self.tokenizer.count(request.content),
+            )
+            self.store.add_message(message)
+            if self.settings.resolved_recall_pipeline == "v2":
+                created = self.store.ensure_episodes_for_session(session_id)
+                if created:
+                    self.trace(session_id, "episode_indexed", {"created": created})
+            token_count = self.store.session_token_count(session_id)
+            should_page = token_count >= self.settings.rot_safe_budget
+            self.trace(
+                session_id,
+                "message_ingested",
+                {
+                    "message_id": message.id,
+                    "token_count": message.token_count,
+                    "should_page": should_page,
+                },
+            )
+            return IngestResponse(
+                message=message,
+                should_page=should_page,
+                session_token_count=token_count,
+            )
 
+    @_instrument_engine_operation("maybe_page")
     def maybe_page(self, session_id: str) -> MemoryPage | None:
         if self.store.session_token_count(session_id) < self.settings.rot_safe_budget:
             self.trace(session_id, "paging_skipped", {"reason": "below_rot_safe_budget"})
             return None
         return self.page(session_id)
 
+    @_instrument_engine_operation("page")
     def page(self, session_id: str) -> MemoryPage | None:
         self._require_session(session_id)
         messages = self.store.list_messages(session_id)
@@ -1513,7 +1624,8 @@ class MemoryOSService:
             )
 
     def _index_page_embedding(self, page: MemoryPage) -> None:
-        if self.embedding_client is None:
+        embedding_client = self.embedding_client
+        if embedding_client is None:
             return
         text = " ".join(
             filter(
@@ -1530,14 +1642,25 @@ class MemoryOSService:
         if not text.strip():
             return
         t0 = time.perf_counter()
-        try:
-            vector = self.embedding_client.embed(text)
+
+        def _embed_and_store() -> None:
+            vector = embedding_client.embed(text)
             if not vector:
                 return
             EMBEDDING_SECONDS.observe(time.perf_counter() - t0)
             self.store.set_page_embedding(page.id, vector)
             if self.qdrant_store is not None:
                 self.qdrant_store.upsert(page.id, vector)
+
+        try:
+            self.recovery.execute(
+                "engine.page_embedding",
+                "index",
+                _embed_and_store,
+                fallback=lambda _exc: None,
+                critical=False,
+                observer=lambda event: self._trace_recovery_event(page.session_id, event),
+            )
         except Exception as exc:
             PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
             self.trace(
@@ -1548,15 +1671,32 @@ class MemoryOSService:
 
     def _index_item_embedding(self, item: MemoryItem) -> bool:
         """Embed and store item vector. Returns True on success."""
-        if self.embedding_client is None or not item.content.strip():
+        embedding_client = self.embedding_client
+        if embedding_client is None or not item.content.strip():
             return False
-        try:
-            vector = self.embedding_client.embed(item.content)
+
+        def _embed_and_store() -> bool:
+            vector = embedding_client.embed(item.content)
             if vector:
                 self.store.set_item_embedding(item.id, vector)
                 return True
+            return False
+
+        try:
+            return self.recovery.execute(
+                "engine.item_embedding",
+                "index",
+                _embed_and_store,
+                fallback=lambda _exc: False,
+                critical=False,
+                observer=lambda event: self._trace_recovery_event(item.session_id, event),
+            )
         except Exception:
-            pass
+            self.trace(
+                item.session_id,
+                "embedding_failed",
+                {"item_id": item.id, "error": "item embedding failed"},
+            )
         return False
 
     def _prepare_item_evidence(
@@ -1634,6 +1774,7 @@ class MemoryOSService:
         }
         return candidates, trace
 
+    @_instrument_engine_operation("build_context")
     def build_context(
         self,
         session_id: str,
@@ -1645,31 +1786,55 @@ class MemoryOSService:
         self._require_session(session_id)
         t0 = time.perf_counter()
         messages = self.store.list_messages(session_id)
-        pages = self.store.list_pages(session_id, include_superseded=False)
-        superseded_pages = self.store.list_pages(session_id, include_superseded=True)
-        superseded_pages = [p for p in superseded_pages if p.superseded_by is not None]
-        if include_global_core:
-            global_cores = [
-                p for p in self.store.list_global_core_pages() if p.superseded_by is None
+
+        page_store_degraded: dict[str, str] = {}
+
+        def _load_context_pages() -> tuple[list[MemoryPage], list[MemoryPage]]:
+            loaded_pages = self.store.list_pages(session_id, include_superseded=False)
+            loaded_superseded = self.store.list_pages(session_id, include_superseded=True)
+            loaded_superseded = [
+                p for p in loaded_superseded if p.superseded_by is not None
             ]
-            existing_ids = {p.id for p in pages}
-            pages.extend(p for p in global_cores if p.id not in existing_ids)
+            if include_global_core:
+                global_cores = [
+                    p
+                    for p in self.store.list_global_core_pages()
+                    if p.superseded_by is None
+                ]
+                existing_ids = {p.id for p in loaded_pages}
+                loaded_pages.extend(p for p in global_cores if p.id not in existing_ids)
+            return loaded_pages, loaded_superseded
+
+        def _page_store_fallback(exc: BaseException) -> tuple[list[MemoryPage], list[MemoryPage]]:
+            page_store_degraded["reason"] = str(exc)
+            return [], []
+
+        pages, superseded_pages = self.recovery.execute(
+            "engine.page_store",
+            "list_context_pages",
+            _load_context_pages,
+            fallback=_page_store_fallback,
+            critical=False,
+            observer=lambda event: self._trace_recovery_event(session_id, event),
+        )
         effective_budget = (
             min(budget, self.settings.hard_limit)
             if budget is not None
             else self.dynamic_budget.compute(messages, pages, task)
         )
-        if self._should_route_to_v3_context():
-            v3_package = self.v3_context_composer.build(
-                ContextComposerRequest(
-                    session_id=session_id,
-                    task=task,
-                    budget=effective_budget,
-                    retrieval_query=retrieval_query,
-                    identity_scope=IdentityScope(session_id=session_id),
-                )
+        if page_store_degraded:
+            task_tokens = self.tokenizer.count(task)
+            package = ContextPackage(
+                session_id=session_id,
+                task=task,
+                task_tokens=task_tokens,
+                estimated_tokens=task_tokens,
+                metadata={
+                    "degraded": True,
+                    "degraded_component": "page_store",
+                    "degraded_reason": page_store_degraded["reason"],
+                },
             )
-            package = self._context_package_from_v3(v3_package)
             elapsed = time.perf_counter() - t0
             CONTEXT_BUILD_SECONDS.observe(elapsed)
             CONTEXT_TOKENS.observe(package.estimated_tokens)
@@ -1679,39 +1844,117 @@ class MemoryOSService:
                 )
             self.trace(
                 session_id,
+                "context_degraded",
+                {
+                    "component": "page_store",
+                    "reason": page_store_degraded["reason"],
+                    "fallback": "empty_context",
+                },
+            )
+            self.trace(
+                session_id,
                 "context_built",
                 {
                     "task": task,
                     "budget": effective_budget,
                     "budget_source": "explicit" if budget is not None else "dynamic",
                     "estimated_tokens": package.estimated_tokens,
-                    "memory_arch": "v3",
-                    "v3_layer_counts": package.metadata["v3_layer_counts"],
-                    "v3_budget_decisions": package.metadata["v3_budget_decisions"],
-                    "v3_component_accounting": package.metadata[
-                        "v3_component_accounting"
-                    ],
-                    "v3_final_context_trace": package.metadata[
-                        "v3_final_context_trace"
-                    ],
-                    "v3_component_token_totals": package.metadata[
-                        "v3_component_token_totals"
-                    ],
-                    "v3_component_drop_counts": package.metadata[
-                        "v3_component_drop_counts"
-                    ],
-                    "locomo_neighbor_diagnostics": package.metadata[
-                        "locomo_neighbor_diagnostics"
-                    ],
+                    "task_tokens": package.task_tokens,
+                    "task_truncated": package.task_truncated,
+                    "memory_arch": self.settings.resolved_memory_arch,
+                    "degraded": True,
+                    "degraded_component": "page_store",
                 },
             )
             return package
-        if self.settings.resolved_recall_pipeline == "v2":
-            package = self.recall_pipeline.build_context(
+        if self._should_route_to_v3_context():
+            request = ContextComposerRequest(
                 session_id=session_id,
                 task=task,
                 budget=effective_budget,
                 retrieval_query=retrieval_query,
+                identity_scope=IdentityScope(session_id=session_id),
+            )
+            try:
+                v3_package = self.recovery.execute(
+                    "engine.v3_context_composer",
+                    "build_context",
+                    lambda: self.v3_context_composer.build(request),
+                    critical=True,
+                    observer=lambda event: self._trace_recovery_event(session_id, event),
+                )
+            except Exception as exc:
+                self.trace(
+                    session_id,
+                    "context_degraded",
+                    {
+                        "component": "v3_context_composer",
+                        "reason": str(exc),
+                        "fallback": "recall_pipeline"
+                        if self.settings.resolved_recall_pipeline == "v2"
+                        else "legacy_context_builder",
+                    },
+                )
+                pages = self.store.list_pages(session_id, include_superseded=False)
+            else:
+                package = self._context_package_from_v3(v3_package)
+                elapsed = time.perf_counter() - t0
+                CONTEXT_BUILD_SECONDS.observe(elapsed)
+                CONTEXT_TOKENS.observe(package.estimated_tokens)
+                if effective_budget > 0:
+                    CONTEXT_BUDGET_USED_RATIO.observe(
+                        package.estimated_tokens / effective_budget
+                    )
+                self.trace(
+                    session_id,
+                    "context_built",
+                    {
+                        "task": task,
+                        "budget": effective_budget,
+                        "budget_source": "explicit" if budget is not None else "dynamic",
+                        "estimated_tokens": package.estimated_tokens,
+                        "memory_arch": "v3",
+                        "v3_layer_counts": package.metadata["v3_layer_counts"],
+                        "v3_budget_decisions": package.metadata["v3_budget_decisions"],
+                        "v3_component_accounting": package.metadata[
+                            "v3_component_accounting"
+                        ],
+                        "v3_final_context_trace": package.metadata[
+                            "v3_final_context_trace"
+                        ],
+                        "v3_component_token_totals": package.metadata[
+                            "v3_component_token_totals"
+                        ],
+                        "v3_component_drop_counts": package.metadata[
+                            "v3_component_drop_counts"
+                        ],
+                        "locomo_neighbor_diagnostics": package.metadata[
+                            "locomo_neighbor_diagnostics"
+                        ],
+                    },
+                )
+                return package
+        if self.settings.resolved_recall_pipeline == "v2":
+            package = self.recovery.execute(
+                "engine.recall_pipeline",
+                "build_context",
+                lambda: self.recall_pipeline.build_context(
+                    session_id=session_id,
+                    task=task,
+                    budget=effective_budget,
+                    retrieval_query=retrieval_query,
+                ),
+                fallback=lambda _exc: ContextPackage(
+                    session_id=session_id,
+                    task=task,
+                    task_tokens=self.tokenizer.count(task),
+                    metadata={
+                        "degraded": True,
+                        "degraded_component": "recall_pipeline",
+                    },
+                ),
+                critical=False,
+                observer=lambda event: self._trace_recovery_event(session_id, event),
             )
             elapsed = time.perf_counter() - t0
             CONTEXT_BUILD_SECONDS.observe(elapsed)
@@ -1964,6 +2207,7 @@ class MemoryOSService:
             deduped.append(source_id)
         return deduped
 
+    @_instrument_engine_operation("search")
     def search(
         self,
         query: str,
@@ -1990,6 +2234,7 @@ class MemoryOSService:
             )
         return hits
 
+    @_instrument_engine_operation("commit_patch")
     def commit_patch(self, session_id: str, patch: MemoryPatch) -> MemoryPatch:
         self._require_session(session_id)
         page = self.store.load_page(patch.target_page_id) if patch.target_page_id else None
@@ -2029,6 +2274,7 @@ class MemoryOSService:
         )
         return verified
 
+    @_instrument_engine_operation("apply_patch")
     def apply_patch(self, session_id: str, patch: MemoryPatch) -> bool:
         """Apply a verified patch to the target page's content. Returns True on success."""
         if not patch.verified:
@@ -2080,6 +2326,7 @@ class MemoryOSService:
             PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
             self.trace(session_id, "embedding_failed", {"page_id": page.id, "error": str(exc)})
 
+    @_instrument_engine_operation("create_item")
     def create_item(
         self,
         session_id: str,
@@ -2116,6 +2363,7 @@ class MemoryOSService:
         })
         return item
 
+    @_instrument_engine_operation("search_items")
     def search_items(
         self,
         session_id: str,
@@ -2155,6 +2403,7 @@ class MemoryOSService:
             for h in hits
         ]
 
+    @_instrument_engine_operation("patch_item")
     def patch_item(
         self,
         session_id: str,
@@ -2180,6 +2429,7 @@ class MemoryOSService:
         return f"Item {item_id} updated."
 
     def trace(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        payload = {**current_observability_context(), **payload}
         self.store.add_trace(
             TraceEvent(session_id=session_id, event_type=event_type, payload=payload)
         )

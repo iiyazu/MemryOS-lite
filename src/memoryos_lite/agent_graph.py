@@ -11,10 +11,14 @@ Demonstrates:
 - Tool-calling agent node
 - interrupt_before for human-in-the-loop on conflicts
 - Checkpointer for state persistence
+- Lineage merge coordination (prevents premature termination)
 """
 
 from __future__ import annotations
 
+import logging
+import time
+import uuid
 from typing import Annotated, Any, Literal, TypedDict, cast
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -27,8 +31,29 @@ from langgraph.prebuilt import ToolNode
 from memoryos_lite.agent_answer_eval import evaluate_agent_answer
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.observability import (
+    current_observability_context,
+    log_event,
+    observability_context,
+    record_core_operation,
+    timed_core_operation,
+)
 from memoryos_lite.schemas import ContextPackage, MessageCreate, Role
 from memoryos_lite.tools import create_item_tools, create_memory_tools
+from xmuse_core.self_evolution.recovery import RecoveryEvent
+
+logger = logging.getLogger(__name__)
+
+
+class LineageMergeRecord(TypedDict):
+    """Record of a single lineage's contribution to the merged state."""
+
+    lineage_id: str
+    intent: str
+    observation_summary: str
+    conflict_detected: bool
+    human_approved: bool
+    result: str
 
 
 class AgentState(TypedDict, total=False):
@@ -47,6 +72,13 @@ class AgentState(TypedDict, total=False):
     memory_decision: MemoryDecision | None
     memory_observation: MemoryObservation | None
     observation_summary: str
+    # Lineage tracking fields
+    lineage_id: str
+    active_lineages: list[str]
+    merged_lineages: list[LineageMergeRecord]
+    lineage_merge_complete: bool
+    pending_lineages: list[str]
+    degraded_components: list[str]
 
 
 class MemoryDecision(TypedDict):
@@ -72,6 +104,118 @@ class MemoryObservation(TypedDict):
     recalled_item_ids: list[str]
     patched_item_id: str | None
     error: str | None
+
+
+class LineageCoordinator:
+    """Tracks active lineages and coordinates merge before terminal state.
+
+    A lineage represents a single execution path through the agent graph.
+    The coordinator ensures that all active lineages are consolidated into
+    a merged state record before the graph reaches END, preventing premature
+    termination that would leave lineage state unaccounted for.
+    """
+
+    def __init__(self) -> None:
+        self._active: set[str] = set()
+        self._completed: dict[str, LineageMergeRecord] = {}
+
+    def register(self, lineage_id: str) -> None:
+        """Register a new active lineage."""
+        self._active.add(lineage_id)
+
+    def complete(self, lineage_id: str, record: LineageMergeRecord) -> None:
+        """Mark a lineage as completed with its merge record."""
+        self._active.discard(lineage_id)
+        self._completed[lineage_id] = record
+
+    def all_merged(self) -> bool:
+        """Return True when no active lineages remain unmerged."""
+        return len(self._active) == 0
+
+    def merged_records(self) -> list[LineageMergeRecord]:
+        return list(self._completed.values())
+
+    def pending_count(self) -> int:
+        return len(self._active)
+
+
+class IncompleteLineageMergeError(RuntimeError):
+    """Raised when a graph path attempts to terminate with unmerged lineages."""
+
+    def __init__(self, pending_lineages: list[str]) -> None:
+        self.pending_lineages = list(pending_lineages)
+        super().__init__(
+            "graph lineage merge coordination pending: "
+            + ", ".join(self.pending_lineages)
+        )
+
+
+def _new_lineage_id() -> str:
+    return f"lin_{uuid.uuid4().hex[:12]}"
+
+
+def _record_agent_recovery_event(
+    service: MemoryOSService,
+    session_id: str,
+    event: RecoveryEvent,
+) -> None:
+    service.trace(session_id, "agent_recovery_event", event.to_payload())
+
+
+def _add_degraded_component(state: AgentState, component: str) -> AgentState:
+    components = list(state.get("degraded_components", []))
+    if component not in components:
+        components.append(component)
+    return _state_with(state, degraded_components=components)
+
+
+def _lineage_record_for_state(state: AgentState, lineage_id: str) -> LineageMergeRecord:
+    """Build a compact terminal contribution record for a graph lineage."""
+    return LineageMergeRecord(
+        lineage_id=lineage_id,
+        intent=str(state.get("intent", "")),
+        observation_summary=str(state.get("observation_summary", "")),
+        conflict_detected=bool(state.get("conflict_detected", False)),
+        human_approved=bool(state.get("human_approved", False)),
+        result=str(state.get("result", "")),
+    )
+
+
+def lineage_merge_node_fn(state: AgentState) -> AgentState:
+    """Merge all tracked lineages into state before the graph can terminate.
+
+    LangGraph conditional branches are mutually exclusive in this demo, but
+    callers and checkpointers can resume with pre-populated lineage metadata.
+    This node is therefore the single terminal coordinator: every active
+    lineage ID must have a merge record before END is reachable.
+    """
+    lineage_id = state.get("lineage_id") or _new_lineage_id()
+    active_lineages = list(dict.fromkeys([*state.get("active_lineages", []), lineage_id]))
+    merged_by_id: dict[str, LineageMergeRecord] = {
+        record["lineage_id"]: record
+        for record in state.get("merged_lineages", [])
+        if record.get("lineage_id")
+    }
+
+    if lineage_id not in merged_by_id:
+        merged_by_id[lineage_id] = _lineage_record_for_state(state, lineage_id)
+
+    merged_lineages = list(merged_by_id.values())
+    pending = [lineage for lineage in active_lineages if lineage not in merged_by_id]
+    return _state_with(
+        state,
+        lineage_id=lineage_id,
+        active_lineages=pending,
+        merged_lineages=merged_lineages,
+        lineage_merge_complete=not pending,
+        pending_lineages=pending,
+    )
+
+
+def assert_lineage_merge_complete(state: AgentState) -> None:
+    """Prevent terminalization while active lineage records are still missing."""
+    if not state.get("lineage_merge_complete", False):
+        raise IncompleteLineageMergeError(list(state.get("pending_lineages", [])))
 
 
 def memory_think_node_fn(
@@ -201,6 +345,64 @@ def _state_with(state: AgentState, **updates: Any) -> AgentState:
     return cast(AgentState, {**state, **updates})
 
 
+def _instrument_agent_node(
+    node_name: str,
+    func: Any,
+    *,
+    default_session_id: str,
+) -> Any:
+    def wrapper(state: AgentState) -> AgentState:
+        session_id = str(state.get("session_id", default_session_id))
+        lineage_id = state.get("lineage_id")
+        with observability_context(
+            session_id=session_id,
+            lane_id=str(lineage_id) if lineage_id else None,
+        ):
+            start = time.perf_counter()
+            try:
+                result = func(state)
+            except Exception as exc:
+                elapsed_s = time.perf_counter() - start
+                record_core_operation(
+                    component="agent_graph",
+                    operation=node_name,
+                    elapsed_s=elapsed_s,
+                    status="error",
+                    error_type=type(exc).__name__,
+                )
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "agent_graph_node_failed",
+                    component="agent_graph",
+                    operation=node_name,
+                    session_id=session_id,
+                    latency_ms=round(elapsed_s * 1000, 3),
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
+                raise
+            elapsed_s = time.perf_counter() - start
+            record_core_operation(
+                component="agent_graph",
+                operation=node_name,
+                elapsed_s=elapsed_s,
+                status="ok",
+            )
+            log_event(
+                logger,
+                logging.DEBUG,
+                "agent_graph_node_completed",
+                component="agent_graph",
+                operation=node_name,
+                session_id=session_id,
+                latency_ms=round(elapsed_s * 1000, 3),
+            )
+            return result
+
+    return wrapper
+
+
 def _content_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -276,38 +478,65 @@ def build_agent_graph(
     Architecture:
         entry → Router (LLM intent classification)
           ├→ "ingest" → IngestNode → should_page?
-          │                           ├→ yes: PagingNode → BuildContext → END
-          │                           └→ no: BuildContext → END
-          ├→ "recall" → ToolAgent (search + read) → BuildContext → END
-          └→ "update" → ToolAgent (patch) → ConflictCheck
-                                              ├→ conflict: interrupt → END
-                                              └→ no conflict: END
+          │                           ├→ yes: PagingNode → ToolAgent → MemoryThink
+          │                           └→ no:              ToolAgent → MemoryThink
+          │                                                              ↓
+          ├→ "recall" → ToolAgent → MemoryThink → MemoryAction → MemoryObserve
+          │                                                              ↓
+          └→ "update" → ToolAgent → MemoryThink → MemoryAction → MemoryObserve
+                                                                        ↓
+                                                               BuildContext
+                                                                 ├→ answer (recall)
+                                                                 ├→ conflict_check (update+conflict)
+                                                                 └→ lineage_merge (all paths)
+                                                                        ↓
+                                                                       END
+
+    Lineage merge coordination:
+        All execution paths converge at lineage_merge before END.
+        The LineageCoordinator ensures no lineage terminates without
+        recording its contribution to the merged state. This prevents
+        premature termination that would leave lineage state unaccounted.
     """
-    settings = settings or service.settings
-    api_key = settings.chat_api_key or ""
-    base_url = settings.chat_base_url
+    with observability_context(session_id=session_id), timed_core_operation(
+        component="agent_graph",
+        operation="build_agent_graph",
+        logger=logger,
+        session_id=session_id,
+    ):
+        settings = settings or service.settings
+        api_key = settings.chat_api_key or ""
+        base_url = settings.chat_base_url
 
-    kwargs: dict[str, Any] = {}
-    if base_url:
-        kwargs["base_url"] = base_url
+        kwargs: dict[str, Any] = {}
+        if base_url:
+            kwargs["base_url"] = base_url
 
-    if llm is None:
-        llm = ChatOpenAI(
-            model=settings.chat_model,
-            api_key=api_key,  # type: ignore[arg-type]
-            temperature=0,
-            timeout=settings.memoryos_llm_timeout_s,
-            **kwargs,
-        )
+        if llm is None:
+            llm = ChatOpenAI(
+                model=settings.chat_model,
+                api_key=api_key,  # type: ignore[arg-type]
+                temperature=0,
+                timeout=settings.memoryos_llm_timeout_s,
+                **kwargs,
+            )
 
-    tools = create_memory_tools(service, session_id)
-    tools.extend(create_item_tools(service, session_id))
-    llm_with_tools = llm.bind_tools(tools)
+        tools = create_memory_tools(service, session_id)
+        tools.extend(create_item_tools(service, session_id))
+        llm_with_tools = llm.bind_tools(tools)
 
     # --- Node definitions ---
 
     def router_node(state: AgentState) -> AgentState:
         """Classify user intent: ingest, recall, or update."""
+        lineage_id = state.get("lineage_id") or _new_lineage_id()
+        active_lineages = list(dict.fromkeys([*state.get("active_lineages", []), lineage_id]))
+        state = _state_with(
+            state,
+            lineage_id=lineage_id,
+            active_lineages=active_lineages,
+            lineage_merge_complete=False,
+        )
         messages = state.get("messages", [])
         if not messages:
             return _state_with(state, intent="recall")
@@ -322,15 +551,26 @@ def build_agent_graph(
                 "Respond with ONLY the category word."
             )
         )
-        response = llm.invoke([system, HumanMessage(content=last_msg)])
+        session = state.get("session_id", session_id)
+        response = service.recovery.execute(
+            "agent_graph.router_llm",
+            "invoke",
+            lambda: llm.invoke([system, HumanMessage(content=last_msg)]),
+            critical=True,
+            observer=lambda event: _record_agent_recovery_event(service, session, event),
+        )
         intent = _content_text(response.content).strip().lower()
         if intent not in ("ingest", "recall", "update"):
             intent = "recall"
-        session = state.get("session_id", session_id)
         service.trace(
             session,
             "agent_intent_routed",
-            {"intent": intent, "message": last_msg},
+            {
+                **current_observability_context(),
+                "lineage_id": lineage_id,
+                "intent": intent,
+                "message": last_msg,
+            },
         )
         return _state_with(state, intent=intent)
 
@@ -365,30 +605,65 @@ def build_agent_graph(
                 "Be concise and precise in your tool usage."
             )
         )
-        response = llm_with_tools.invoke([system, *messages])
         session = state.get("session_id", session_id)
+        response = service.recovery.execute(
+            "agent_graph.tool_llm",
+            "invoke",
+            lambda: llm_with_tools.invoke([system, *messages]),
+            fallback=lambda exc: HumanMessage(
+                content=f"Tool agent degraded: {type(exc).__name__}: {exc}"
+            ),
+            critical=False,
+            observer=lambda event: _record_agent_recovery_event(service, session, event),
+        )
+        degraded = isinstance(response, HumanMessage)
         service.trace(
             session,
             "agent_tool_agent_invoked",
             {
+                **current_observability_context(),
                 "tool_turns": state.get("tool_turns", 0),
                 "tool_calls": _tool_call_summaries(response),
+                "degraded": degraded,
             },
         )
-        return _state_with(state, messages=[response])
+        next_state = _state_with(state, messages=[response])
+        return _add_degraded_component(next_state, "tool_llm") if degraded else next_state
 
     tool_node = ToolNode(tools)
 
     def tool_executor_node(state: AgentState) -> AgentState:
         """Execute tool calls from the agent."""
-        next_state = cast(AgentState, tool_node.invoke(state))
+        session = state.get("session_id", session_id)
+
+        def _tool_fallback(exc: BaseException) -> AgentState:
+            return _state_with(
+                state,
+                patch_errors=[f"tool execution degraded: {type(exc).__name__}: {exc}"],
+                conflict_detected=True,
+            )
+
+        next_state = cast(
+            AgentState,
+            service.recovery.execute(
+                "agent_graph.tool_executor",
+                "invoke",
+                lambda: tool_node.invoke(state),
+                fallback=_tool_fallback,
+                critical=False,
+                observer=lambda event: _record_agent_recovery_event(service, session, event),
+            ),
+        )
         session = next_state.get("session_id", session_id)
         patch_errors = _latest_patch_errors(service, session)
+        if next_state.get("patch_errors"):
+            patch_errors = [*next_state.get("patch_errors", []), *patch_errors]
         tool_turns = state.get("tool_turns", 0) + 1
         service.trace(
             session,
             "agent_tool_turn_completed",
             {
+                **current_observability_context(),
                 "tool_turns": tool_turns,
                 "patch_errors": patch_errors,
                 "stopped_due_to_max_turns": tool_turns >= settings.agent_max_tool_turns,
@@ -398,10 +673,16 @@ def build_agent_graph(
             service.trace(
                 session,
                 "agent_patch_conflict_detected",
-                {"tool_turns": tool_turns, "errors": patch_errors},
+                {
+                    **current_observability_context(),
+                    "tool_turns": tool_turns,
+                    "errors": patch_errors,
+                },
             )
         return _state_with(
-            next_state,
+            _add_degraded_component(next_state, "tool_executor")
+            if next_state.get("patch_errors")
+            else next_state,
             tool_turns=tool_turns,
             patch_errors=patch_errors,
             conflict_detected=bool(patch_errors),
@@ -425,6 +706,7 @@ def build_agent_graph(
             session,
             "agent_context_evidence_selected",
             {
+                **current_observability_context(),
                 "task": task,
                 "evidence_message_ids": [
                     evidence.message_id for evidence in context.retrieved_evidence
@@ -451,6 +733,7 @@ def build_agent_graph(
                 session,
                 "agent_answered",
                 {
+                    **current_observability_context(),
                     "insufficient_evidence": True,
                     "citation_message_ids": [],
                     "answer_eval": answer_eval.to_report(),
@@ -461,6 +744,7 @@ def build_agent_graph(
                 result=refusal,
             )
 
+        session = state.get("session_id", session_id)
         system = SystemMessage(
             content=(
                 "You are an experimental memory QA node. Answer using only the "
@@ -477,18 +761,40 @@ def build_agent_graph(
                 f"Retrieved evidence:\n{_format_answer_evidence(context)}"
             )
         )
-        response = llm.invoke([system, prompt])
+        response = service.recovery.execute(
+            "agent_graph.answer_llm",
+            "invoke",
+            lambda: llm.invoke([system, prompt]),
+            fallback=lambda exc: HumanMessage(
+                content=(
+                    "Insufficient retrieved evidence to answer with source citations. "
+                    f"Answer generation degraded after {type(exc).__name__}."
+                )
+            ),
+            critical=False,
+            observer=lambda event: _record_agent_recovery_event(service, session, event),
+        )
+        if isinstance(response, HumanMessage):
+            state = _add_degraded_component(state, "answer_llm")
+            service.trace(
+                session,
+                "agent_answer_degraded",
+                {
+                    **current_observability_context(),
+                    "reason": "answer_llm_unavailable",
+                },
+            )
         answer = _content_text(response.content).strip()
         insufficient_evidence = not bool(answer)
         if insufficient_evidence:
             answer = "Insufficient retrieved evidence to answer with source citations."
         result = f"Answer:\n{answer}\n\n{_citation_footer(context)}"
         answer_eval = evaluate_agent_answer(result, context.retrieved_evidence)
-        session = state.get("session_id", session_id)
         service.trace(
             session,
             "agent_answered",
             {
+                **current_observability_context(),
                 "insufficient_evidence": insufficient_evidence,
                 "citation_message_ids": [
                     evidence.message_id for evidence in context.retrieved_evidence
@@ -514,6 +820,28 @@ def build_agent_graph(
                 result="Patch requires review: " + "; ".join(patch_errors),
             )
         return _state_with(state, conflict_detected=False, human_approved=True)
+
+    def lineage_merge_node(state: AgentState) -> AgentState:
+        """Consolidate all lineages before graph termination."""
+        result = lineage_merge_node_fn(state)
+        assert_lineage_merge_complete(result)
+        session = result.get("session_id", session_id)
+        service.trace(
+            session,
+            "agent_lineage_merged",
+            {
+                **current_observability_context(),
+                "lineage_id": result.get("lineage_id"),
+                "active_lineages": result.get("active_lineages", []),
+                "pending_lineages": result.get("pending_lineages", []),
+                "merged_lineage_ids": [
+                    record["lineage_id"]
+                    for record in result.get("merged_lineages", [])
+                ],
+                "lineage_merge_complete": result.get("lineage_merge_complete", False),
+            },
+        )
+        return result
 
     # --- Routing functions ---
 
@@ -548,7 +876,7 @@ def build_agent_graph(
             return "conflict_check"
         if state.get("intent") == "recall":
             return "answer"
-        return END
+        return "lineage_merge"
 
     # --- Build graph ---
 
@@ -561,6 +889,7 @@ def build_agent_graph(
             session,
             "memory_thought",
             {
+                **current_observability_context(),
                 "action": decision["action"] if decision else "none",
                 "reason_code": decision["reason_code"] if decision else "irrelevant",
                 "confidence": decision["confidence"] if decision else 0.0,
@@ -577,6 +906,7 @@ def build_agent_graph(
             session,
             "memory_action",
             {
+                **current_observability_context(),
                 "success": obs["success"] if obs else False,
                 "recalled_item_ids": obs["recalled_item_ids"] if obs else [],
                 "patched_item_id": obs["patched_item_id"] if obs else None,
@@ -592,24 +922,92 @@ def build_agent_graph(
         service.trace(
             session,
             "memory_observation",
-            {"summary": result.get("observation_summary", "")},
+            {
+                **current_observability_context(),
+                "summary": result.get("observation_summary", ""),
+            },
         )
         return result
 
     graph = StateGraph(AgentState)
 
     # Add nodes
-    graph.add_node("router", router_node)
-    graph.add_node("ingest", ingest_node)
-    graph.add_node("paging", paging_node)
-    graph.add_node("tool_agent", tool_agent_node)
-    graph.add_node("tool_executor", tool_executor_node)
-    graph.add_node("memory_think", _memory_think_wrapper)
-    graph.add_node("memory_action", _memory_action_wrapper)
-    graph.add_node("memory_observe", _memory_observe_wrapper)
-    graph.add_node("build_context", build_context_node)
-    graph.add_node("answer", answer_with_citations_node)
-    graph.add_node("conflict_check", conflict_check_node)
+    graph.add_node(
+        "router",
+        _instrument_agent_node("router", router_node, default_session_id=session_id),
+    )
+    graph.add_node(
+        "ingest",
+        _instrument_agent_node("ingest", ingest_node, default_session_id=session_id),
+    )
+    graph.add_node(
+        "paging",
+        _instrument_agent_node("paging", paging_node, default_session_id=session_id),
+    )
+    graph.add_node(
+        "tool_agent",
+        _instrument_agent_node("tool_agent", tool_agent_node, default_session_id=session_id),
+    )
+    graph.add_node(
+        "tool_executor",
+        _instrument_agent_node("tool_executor", tool_executor_node, default_session_id=session_id),
+    )
+    graph.add_node(
+        "memory_think",
+        _instrument_agent_node(
+            "memory_think",
+            _memory_think_wrapper,
+            default_session_id=session_id,
+        ),
+    )
+    graph.add_node(
+        "memory_action",
+        _instrument_agent_node(
+            "memory_action",
+            _memory_action_wrapper,
+            default_session_id=session_id,
+        ),
+    )
+    graph.add_node(
+        "memory_observe",
+        _instrument_agent_node(
+            "memory_observe",
+            _memory_observe_wrapper,
+            default_session_id=session_id,
+        ),
+    )
+    graph.add_node(
+        "build_context",
+        _instrument_agent_node(
+            "build_context",
+            build_context_node,
+            default_session_id=session_id,
+        ),
+    )
+    graph.add_node(
+        "answer",
+        _instrument_agent_node(
+            "answer",
+            answer_with_citations_node,
+            default_session_id=session_id,
+        ),
+    )
+    graph.add_node(
+        "conflict_check",
+        _instrument_agent_node(
+            "conflict_check",
+            conflict_check_node,
+            default_session_id=session_id,
+        ),
+    )
+    graph.add_node(
+        "lineage_merge",
+        _instrument_agent_node(
+            "lineage_merge",
+            lineage_merge_node,
+            default_session_id=session_id,
+        ),
+    )
 
     # Set entry point
     graph.set_entry_point("router")
@@ -642,10 +1040,15 @@ def build_agent_graph(
     graph.add_conditional_edges(
         "build_context",
         route_after_build_context,
-        {"answer": "answer", "conflict_check": "conflict_check", END: END},
+        {
+            "answer": "answer",
+            "conflict_check": "conflict_check",
+            "lineage_merge": "lineage_merge",
+        },
     )
-    graph.add_edge("answer", END)
-    graph.add_edge("conflict_check", END)
+    graph.add_edge("answer", "lineage_merge")
+    graph.add_edge("conflict_check", "lineage_merge")
+    graph.add_edge("lineage_merge", END)
 
     # Compile with checkpointer for state persistence
     checkpointer = MemorySaver()
@@ -669,18 +1072,30 @@ def invoke_agent(
     Returns:
         Final agent state dict.
     """
-    graph = build_agent_graph(service, session_id)
-    config = {"configurable": {"thread_id": thread_id or session_id}}
-    initial_state = {
-        "messages": [HumanMessage(content=user_message)],
-        "session_id": session_id,
-        "intent": "",
-        "should_page": False,
-        "context": None,
-        "conflict_detected": False,
-        "patch_errors": [],
-        "human_approved": False,
-        "result": "",
-        "tool_turns": 0,
-    }
-    return graph.invoke(initial_state, config=config)
+    with observability_context(session_id=session_id), timed_core_operation(
+        component="agent_graph",
+        operation="invoke_agent",
+        logger=logger,
+        session_id=session_id,
+    ):
+        graph = build_agent_graph(service, session_id)
+        config = {"configurable": {"thread_id": thread_id or session_id}}
+        initial_state = {
+            "messages": [HumanMessage(content=user_message)],
+            "session_id": session_id,
+            "intent": "",
+            "should_page": False,
+            "context": None,
+            "conflict_detected": False,
+            "patch_errors": [],
+            "human_approved": False,
+            "result": "",
+            "tool_turns": 0,
+            "lineage_id": _new_lineage_id(),
+            "active_lineages": [],
+            "merged_lineages": [],
+            "lineage_merge_complete": False,
+            "pending_lineages": [],
+            "degraded_components": [],
+        }
+        return graph.invoke(initial_state, config=config)

@@ -8,6 +8,8 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from memoryos_lite.observability import log_event, observability_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +17,8 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get("X-Request-Id") or uuid4().hex
         request.state.request_id = request_id
-        response = await call_next(request)
+        with observability_context(request_id=request_id, trace_id=request_id):
+            response = await call_next(request)
         response.headers["X-Request-Id"] = request_id
         return response
 
@@ -41,14 +44,14 @@ class StructuredLoggingMiddleware(BaseHTTPMiddleware):
         start = time.monotonic()
         response = await call_next(request)
         request_id = getattr(request.state, "request_id", "unknown")
-        logger.info(
+        log_event(
+            logger,
+            logging.INFO,
             "request",
-            extra={
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "status": response.status_code,
-                "latency_ms": round((time.monotonic() - start) * 1000, 2),
-            },
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status=response.status_code,
+            latency_ms=round((time.monotonic() - start) * 1000, 2),
         )
         return response
