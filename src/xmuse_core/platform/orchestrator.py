@@ -16,6 +16,7 @@ from memoryos_lite.observability import (
 )
 from xmuse_core.platform.agent_spawner import AgentSpawner, GodConfig
 from xmuse_core.platform.event_bus import EventBus
+from xmuse_core.platform.execution import executor as execution_executor
 from xmuse_core.platform.execution import gate as execution_gate
 from xmuse_core.platform.execution import merger as execution_merger
 from xmuse_core.platform.execution import review as execution_review
@@ -346,102 +347,17 @@ class PlatformOrchestrator:
             return await self._run_execution_god_inner(lane_id, lane)
 
     async def _run_execution_god_inner(self, lane_id: str, lane: dict[str, Any]) -> None:
-        prompt = self._build_execution_prompt(lane)
-        worktree = Path(lane.get("worktree", "."))
-        god = self._pick_execution_god(lane_id)
-        log_event(
-            logger,
-            logging.INFO,
-            "execution_god_started",
+        await execution_executor.run_execution_god(
             lane_id=lane_id,
-            god=god.name,
-            god_runtime=god.runtime,
+            god=self._pick_execution_god(lane_id),
+            prompt=self._build_execution_prompt(lane),
+            worktree=Path(lane.get("worktree", ".")),
+            sm=self._sm,
+            recovery=self._recovery,
+            transport=self._transport,
+            observer=self._lane_recovery_observer(lane_id),
+            on_executed=self._on_lane_executed,
         )
-        try:
-            result = await self._recovery.execute_async(
-                "orchestrator.execution_god",
-                "spawn",
-                lambda: self._spawn_god_with_result_recovery(
-                    god=god,
-                    lane_id=lane_id,
-                    prompt=prompt,
-                    worktree=worktree,
-                ),
-                is_transient=lambda exc: self._is_spawn_transient(exc),
-                observer=self._lane_recovery_observer(lane_id),
-            )
-        except CircuitOpenError as exc:
-            self._sm.transition(
-                lane_id,
-                "exec_failed",
-                metadata={
-                    "failure_reason": "execution_circuit_open",
-                    "retry_after_s": exc.retry_after_s,
-                    "degraded_component": "execution_god",
-                },
-            )
-            return
-        except Exception as exc:
-            self._sm.transition(
-                lane_id,
-                "exec_failed",
-                metadata={
-                    "failure_reason": "execution_infra_unavailable"
-                    if self._is_spawn_transient(exc)
-                    else "execution_spawn_failed",
-                    "failure_error": str(exc),
-                },
-            )
-            return
-
-        if result.timed_out or self._spawn_result_transient(result):
-            self._recovery.circuit("orchestrator.execution_god").record_failure()
-            if self._recovery.circuit("orchestrator.execution_god").state.value == "open":
-                self._lane_recovery_observer(lane_id)(
-                    RecoveryEvent(
-                        component="orchestrator.execution_god",
-                        operation="spawn",
-                        kind="circuit_opened",
-                        attempt=1,
-                        max_attempts=self._recovery.config.max_attempts,
-                        error_type="SpawnResult",
-                        error=result.stderr or result.stdout or "execution spawn failed",
-                        circuit_state="open",
-                    )
-                )
-            self._lane_recovery_observer(lane_id)(
-                RecoveryEvent(
-                    component="orchestrator.execution_god",
-                    operation="spawn",
-                    kind="operation_failed",
-                    attempt=1,
-                    max_attempts=self._recovery.config.max_attempts,
-                    error_type="SpawnResult",
-                    error=result.stderr or result.stdout or "execution spawn failed",
-                    circuit_state=self._recovery.circuit(
-                        "orchestrator.execution_god"
-                    ).state.value,
-                )
-            )
-        else:
-            self._recovery.circuit("orchestrator.execution_god").record_success()
-
-        if result.timed_out:
-            self._sm.transition(lane_id, "exec_failed",
-                                metadata={"failure_reason": "timeout"})
-            return
-
-        current = self._sm.get_lane(lane_id)
-        if current["status"] == "dispatched":
-            if result.exit_code == 0:
-                log_event(logger, logging.INFO, "execution_god_completed", lane_id=lane_id)
-                self._sm.transition(lane_id, "executed")
-                await self._on_lane_executed(lane_id)
-            else:
-                self._sm.transition(lane_id, "exec_failed",
-                                    metadata={"failure_reason": "non_zero_exit"})
-        elif current["status"] == "executed" and result.exit_code == 0:
-            await self._on_lane_executed(lane_id)
 
     async def _on_lane_executed(self, lane_id: str) -> None:
         lane = self._sm.get_lane(lane_id)
