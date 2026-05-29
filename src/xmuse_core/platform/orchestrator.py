@@ -20,6 +20,7 @@ from xmuse_core.platform.execution import executor as execution_executor
 from xmuse_core.platform.execution import gate as execution_gate
 from xmuse_core.platform.execution import merger as execution_merger
 from xmuse_core.platform.execution import review as execution_review
+from xmuse_core.platform.execution import review_god as execution_review_god
 from xmuse_core.platform.execution.transport import SpawnerTransport
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
 from xmuse_core.platform.mcp_tools import McpToolHandler
@@ -40,14 +41,12 @@ from xmuse_core.platform.verdicts.writer import (
     stable_verdict_id_for_lane,
 )
 from xmuse_core.self_evolution.recovery import (
-    CircuitOpenError,
     RecoveryConfig,
     RecoveryEvent,
     RecoveryManager,
 )
 from xmuse_core.structuring.graph_store import LaneGraphStore
 from xmuse_core.structuring.models import (
-    ReviewDecision,
     ReviewVerdict,
     RunTerminalAggregation,
     StructuredEvidenceBundle,
@@ -409,31 +408,25 @@ class PlatformOrchestrator:
             return await self._run_review_god_inner(lane_id, lane)
 
     async def _run_review_god_inner(self, lane_id: str, lane: dict[str, Any]) -> None:
-        prompt = self._build_review_prompt(lane)
-        worktree = Path(lane.get("worktree", "."))
-        god = self._pick_review_god(lane_id)
-        log_event(
-            logger,
-            logging.INFO,
-            "review_god_started",
+        await execution_review_god.run_review_god(
             lane_id=lane_id,
-            god=god.name,
-            god_runtime=god.runtime,
+            lane=lane,
+            god=self._pick_review_god(lane_id),
+            prompt=self._build_review_prompt(lane),
+            worktree=Path(lane.get("worktree", ".")),
+            sm=self._sm,
+            recovery=self._recovery,
+            transport=self._transport,
+            observer=self._lane_recovery_observer(lane_id),
+            open_review_task=self._open_review_task,
+            stable_verdict_id=self._stable_verdict_id_for_lane,
+            ingest_merge_verdict=self._ingest_merge_verdict_for_lane,
+            ingest_rework_verdict=self._ingest_rework_verdict_for_lane,
+            on_reviewed=self.on_lane_reviewed,
+            on_rejected=self.on_lane_rejected,
         )
 
-        metadata = {
-            "god": god.name,
-            "review_started_at": time.time(),
-        }
-        if lane.get("status") != "gated":
-            self._sm.transition(
-                lane_id,
-                "gated",
-                metadata=metadata,
-            )
-        else:
-            self._sm.update_metadata(lane_id, metadata)
-
+    def _open_review_task(self, lane_id: str) -> None:
         # Open a ReviewTask so the review plane has a persistent audit record.
         gate_report_ref = self._gate_report_ref_for_lane(lane_id)
         try:
@@ -448,155 +441,6 @@ class PlatformOrchestrator:
                 "review_plane_open_task_failed",
                 lane_id=lane_id,
             )
-            review_task = None
-
-        try:
-            result = await self._recovery.execute_async(
-                "orchestrator.review_god",
-                "spawn",
-                lambda: self._spawn_god_with_result_recovery(
-                    god=god,
-                    lane_id=lane_id,
-                    prompt=prompt,
-                    worktree=worktree,
-                ),
-                is_transient=lambda exc: self._is_spawn_transient(exc),
-                observer=self._lane_recovery_observer(lane_id),
-            )
-        except CircuitOpenError as exc:
-            self._sm.transition(
-                lane_id,
-                "gate_failed",
-                metadata={
-                    "failure_reason": "review_infra_unavailable",
-                    "review_infra_reason": "circuit_open",
-                    "review_retry_after_at": time.time() + exc.retry_after_s,
-                    "degraded_component": "review_god",
-                },
-            )
-            return
-        except Exception as exc:
-            self._sm.transition(
-                lane_id,
-                "gate_failed",
-                metadata={
-                    "failure_reason": "review_infra_unavailable"
-                    if self._is_spawn_transient(exc)
-                    else "review_spawn_failed",
-                    "review_infra_reason": self._review_infra_reason_from_exception(exc),
-                    "review_retry_after_at": time.time() + REVIEW_INFRA_RETRY_DELAY_S,
-                    "failure_error": str(exc),
-                },
-            )
-            return
-
-        if result.timed_out or self._spawn_result_transient(result):
-            self._recovery.circuit("orchestrator.review_god").record_failure()
-            if self._recovery.circuit("orchestrator.review_god").state.value == "open":
-                self._lane_recovery_observer(lane_id)(
-                    RecoveryEvent(
-                        component="orchestrator.review_god",
-                        operation="spawn",
-                        kind="circuit_opened",
-                        attempt=1,
-                        max_attempts=self._recovery.config.max_attempts,
-                        error_type="SpawnResult",
-                        error=result.stderr or result.stdout or "review spawn failed",
-                        circuit_state="open",
-                    )
-                )
-            self._lane_recovery_observer(lane_id)(
-                RecoveryEvent(
-                    component="orchestrator.review_god",
-                    operation="spawn",
-                    kind="operation_failed",
-                    attempt=1,
-                    max_attempts=self._recovery.config.max_attempts,
-                    error_type="SpawnResult",
-                    error=result.stderr or result.stdout or "review spawn failed",
-                    circuit_state=self._recovery.circuit("orchestrator.review_god").state.value,
-                )
-            )
-        else:
-            self._recovery.circuit("orchestrator.review_god").record_success()
-
-        if result.timed_out:
-            self._sm.transition(lane_id, "gate_failed",
-                                metadata={"failure_reason": "review_timeout"})
-            return
-
-        if result.exit_code != 0:
-            infra_reason = self._review_infra_failure_reason(result)
-            if infra_reason is not None:
-                self._sm.transition(
-                    lane_id,
-                    "gate_failed",
-                    metadata={
-                        "failure_reason": "review_infra_unavailable",
-                        "review_infra_reason": infra_reason,
-                        "review_retry_after_at": time.time() + REVIEW_INFRA_RETRY_DELAY_S,
-                    },
-                )
-                return
-            self._sm.transition(
-                lane_id,
-                "gate_failed",
-                metadata={"failure_reason": "review_non_zero_exit"},
-            )
-            return
-
-        current = self._sm.get_lane(lane_id)
-        if current.get("status") == "gated" and not result.stdout.strip():
-            self._sm.transition(
-                lane_id,
-                "gate_failed",
-                metadata={"failure_reason": "review_no_verdict"},
-            )
-            return
-
-        if current.get("status") == "gated" and result.stdout.strip():
-            decision, summary, reason = self._infer_review_fallback(result.stdout)
-            if decision == "reviewed":
-                # Stamp a stable review_verdict_id on the lane before
-                # transitioning so that on_lane_reviewed → _build_review_verdict
-                # picks up the same ID that we persist in the review plane store.
-                # Without this, the verdict gets a synthetic ID that cannot be
-                # traced back to the stored verdict, breaking the merged-lane
-                # verdict lineage acceptance signal.
-                verdict_id = self._stable_verdict_id_for_lane(lane_id)
-                self._sm.transition(
-                    lane_id,
-                    "reviewed",
-                    metadata={
-                        "review_decision": ReviewDecision.MERGE.value,
-                        "review_summary": summary,
-                        "review_fallback": "stdout",
-                        "review_fallback_reason": reason,
-                        "review_verdict_id": verdict_id,
-                    },
-                )
-                # Ingest the merge verdict through the review plane so the
-                # task→verdict lineage is preserved for the stdout-fallback
-                # merge path (symmetric to the rework path below).
-                self._ingest_merge_verdict_for_lane(lane_id, summary)
-                await self.on_lane_reviewed(lane_id)
-            else:
-                self._sm.transition(
-                    lane_id,
-                    "rejected",
-                    metadata={
-                        "review_decision": ReviewDecision.REWORK.value,
-                        "review_summary": summary,
-                        "review_fallback": "stdout",
-                        "review_fallback_reason": reason,
-                    },
-                )
-                # Ingest the rework verdict through the review plane so the
-                # task→verdict lineage is preserved even when the lane is
-                # rejected via the stdout-fallback path (not through
-                # on_lane_reviewed).
-                self._ingest_rework_verdict_for_lane(lane_id, summary)
-                await self.on_lane_rejected(lane_id)
 
     def _infer_review_fallback(self, stdout: str) -> tuple[str, str, str]:
         return execution_review.infer_review_fallback(stdout)

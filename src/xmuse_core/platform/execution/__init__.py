@@ -1,6 +1,7 @@
 from xmuse_core.platform.execution.executor import run_execution_god
 from xmuse_core.platform.execution.gate import get_changed_paths, run_gate
 from xmuse_core.platform.execution.merger import auto_merge
+from xmuse_core.platform.execution.review_god import run_review_god
 from xmuse_core.platform.execution.review import (
     infer_review_fallback,
     is_spawn_transient,
@@ -28,5 +29,6 @@ __all__ = [
     "review_infra_reason_from_exception",
     "run_execution_god",
     "run_gate",
+    "run_review_god",
     "spawn_result_transient",
 ]
