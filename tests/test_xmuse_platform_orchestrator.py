@@ -446,9 +446,8 @@ async def test_run_gate_uses_plural_gate_profiles(setup):
             warnings=[],
         )
 
-    with patch.object(
-        orch,
-        "_get_changed_paths",
+    with patch(
+        "xmuse_core.platform.execution.gate.get_changed_paths",
         return_value=[
             "src/xmuse_core/platform/orchestrator.py",
             "src/memoryos_lite/config.py",

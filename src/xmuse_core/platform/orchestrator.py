@@ -17,6 +17,7 @@ from memoryos_lite.observability import (
 )
 from xmuse_core.platform.agent_spawner import AgentSpawner, GodConfig
 from xmuse_core.platform.event_bus import EventBus
+from xmuse_core.platform.execution import gate as execution_gate
 from xmuse_core.platform.final_action_gate import FinalActionGateStore
 from xmuse_core.platform.mcp_tools import McpToolHandler
 from xmuse_core.platform.projection.dependents import reproject_dependents_if_needed
@@ -1128,81 +1129,10 @@ class PlatformOrchestrator:
             return await self._run_gate_inner(lane_id, lane)
 
     async def _run_gate_inner(self, lane_id: str, lane: dict[str, Any]) -> bool:
-        worktree = Path(lane.get("worktree", "."))
-        gate_profile = lane.get("gate_profile")
-        gate_profiles = lane.get("gate_profiles")
-
-        try:
-            from xmuse_core.gates.loader import load_gate_config
-            from xmuse_core.gates.resolver import GateProfileResolver
-            from xmuse_core.gates.runner import GateRunner
-
-            config_path = self._root / "gate_profiles.json"
-            if not config_path.exists():
-                log_event(logger, logging.WARNING, "gate_profiles_missing", lane_id=lane_id)
-                return True
-
-            config = load_gate_config(config_path, repo_root=self._root.parent)
-            resolver = GateProfileResolver(config)
-
-            explicit_profiles: list[str] = []
-            if isinstance(gate_profiles, list):
-                explicit_profiles.extend(str(profile) for profile in gate_profiles)
-            if gate_profile:
-                explicit_profiles.append(str(gate_profile))
-            changed = self._get_changed_paths(worktree)
-            warnings: list[str] = []
-            resolver_changed_paths = changed
-            if explicit_profiles:
-                resolver_changed_paths = []
-                if changed:
-                    warnings.append(
-                        "explicit gate_profiles selected; full dirty-worktree "
-                        "coverage is recorded but not used to reject this lane"
-                    )
-
-            plan = resolver.resolve(
-                feature_id=lane_id,
-                worktree=worktree,
-                explicit_profiles=explicit_profiles,
-                changed_paths=resolver_changed_paths,
-                warnings=warnings,
-            )
-
-            runner = GateRunner(
-                repo_root=self._root.parent,
-                logs_root=self._root / "logs" / "gates",
-            )
-            report = await runner.run(plan)
-            log_event(
-                logger,
-                logging.INFO,
-                "gate_completed",
-                lane_id=lane_id,
-                passed=report.passed,
-            )
-            return report.passed
-
-        except Exception as exc:
-            log_event(
-                logger,
-                logging.ERROR,
-                "gate_failed",
-                lane_id=lane_id,
-                error=str(exc),
-                exc_info=True,
-            )
-            return False
+        return await execution_gate.run_gate(lane_id=lane_id, lane=lane, root=self._root)
 
     def _get_changed_paths(self, worktree: Path) -> list[str]:
-        try:
-            result = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD"],
-                cwd=worktree, capture_output=True, text=True, timeout=10,
-            )
-            return [p for p in result.stdout.strip().splitlines() if p]
-        except Exception:
-            return []
+        return execution_gate.get_changed_paths(worktree)
 
     def _build_execution_prompt(self, lane: dict[str, Any]) -> str:
         return build_execution_prompt(
