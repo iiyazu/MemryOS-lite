@@ -195,6 +195,18 @@ class SelfEvolutionAuditWriter:
                 entry["candidate_lane_count"] = len(candidate_lanes)
                 entry["feature_groups"] = feature_groups
                 entry["author_session_id"] = proposal.author_session_id
+                # Nested view (consumed by dashboard_api tests / frontend).
+                entry["proposal"] = {
+                    "proposal_id": proposal.proposal_id,
+                    "scope_summary": proposal.scope_summary,
+                    "target_track_ids": list(proposal.target_track_ids),
+                    "status": proposal.status.value,
+                    "review_status": proposal.review_status,
+                    "candidate_lane_count": len(candidate_lanes),
+                    "feature_groups": feature_groups,
+                    "status_label": _status_label(proposal.status.value),
+                    "author_session_id": proposal.author_session_id,
+                }
             else:
                 entry["proposal_id"] = record.evolution_proposal_id
                 entry["proposal_status"] = "unknown"
@@ -204,6 +216,17 @@ class SelfEvolutionAuditWriter:
                 entry["candidate_lane_count"] = 0
                 entry["feature_groups"] = []
                 entry["author_session_id"] = None
+                entry["proposal"] = {
+                    "proposal_id": record.evolution_proposal_id,
+                    "scope_summary": "",
+                    "target_track_ids": list(record.target_track_ids),
+                    "status": "unknown",
+                    "review_status": "unknown",
+                    "candidate_lane_count": 0,
+                    "feature_groups": [],
+                    "status_label": "unknown",
+                    "author_session_id": None,
+                }
 
             if aggregation is not None:
                 entry["aggregation_id"] = aggregation.aggregation_id
@@ -217,10 +240,26 @@ class SelfEvolutionAuditWriter:
                 entry["final_action_holds"] = [
                     dict(hold) for hold in aggregation.final_action_holds
                 ]
+                # Nested view (consumed by dashboard_api tests / frontend).
+                entry["aggregation"] = {
+                    "aggregation_id": aggregation.aggregation_id,
+                    "status": aggregation.status.value,
+                    "reason": aggregation.reason,
+                    "terminal": aggregation.terminal,
+                    "lane_counts": dict(aggregation.lane_counts),
+                    "blocked_object_count": len(aggregation.blocked_objects),
+                    "final_action_hold_count": len(aggregation.final_action_holds),
+                }
 
             if conversation is not None:
                 entry["conversation_created_by"] = conversation.created_by
                 entry["conversation_created_at"] = conversation.created_at
+                # Nested view (consumed by dashboard_api tests / frontend).
+                entry["conversation"] = {
+                    "conversation_id": conversation.conversation_id,
+                    "created_by": conversation.created_by,
+                    "created_at": conversation.created_at,
+                }
 
             # Join guardrail decision via the proposal_id on the lineage record
             guardrail = guardrails_by_proposal.get(record.evolution_proposal_id)
