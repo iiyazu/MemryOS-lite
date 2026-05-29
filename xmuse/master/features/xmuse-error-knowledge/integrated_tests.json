@@ -1,0 +1,56 @@
+{
+  "feature_id": "xmuse-error-knowledge",
+  "recorded_by": "manual-audit-agent",
+  "recorded_at": "2026-05-25T09:15:00.000000+00:00",
+  "status": "passed",
+  "branch": "feat/xmuse-error-knowledge",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "base_commit": "dcd746616caa696f8e6fd9277059f9cb981fa6af",
+  "head_commit": "32d566a3356165476ad7c8770f34e66fec171fb2",
+  "master_review_ref": "xmuse/master/features/xmuse-error-knowledge/master_review.json",
+  "slave_ack_ref": "work/features/xmuse-error-knowledge/ack.json",
+  "worktree_clean": true,
+  "artifact_digests": {
+    "ack": "sha256:43e4e3de49863cfe957a7f263c3c50ebe8d790bf3194d5dd78e753dc38fa9ce4",
+    "master_review": "sha256:0746b97ac8b7c2e933b6df77284dfc4f07d1788fce23a4ab4d12b7b288f21c70"
+  },
+  "commands": [
+    {
+      "phase": "focused_feature_tests",
+      "command": "uv run pytest tests/test_xmuse_error_knowledge.py -q",
+      "status": "passed",
+      "exit_code": 0,
+      "summary": "23 passed in 1.30s"
+    },
+    {
+      "phase": "legacy_xmuse_regression",
+      "command": "uv run pytest tests/test_hermes_hardening.py tests/test_hermes_reporter.py -q",
+      "status": "passed",
+      "exit_code": 0,
+      "summary": "57 passed in 0.59s"
+    },
+    {
+      "phase": "static_check",
+      "command": "uv run ruff check xmuse/xmuse_error_knowledge.py tests/test_xmuse_error_knowledge.py",
+      "status": "passed",
+      "exit_code": 0,
+      "summary": "All checks passed!"
+    },
+    {
+      "phase": "static_check",
+      "command": "python3 -m py_compile xmuse/xmuse_error_knowledge.py && git diff --check",
+      "status": "passed",
+      "exit_code": 0,
+      "summary": "compile and whitespace checks passed"
+    }
+  ],
+  "policy_checks": {
+    "v3_default_preserved": true,
+    "v1_fallback_preserved": true,
+    "kernel_default_unchanged": true,
+    "no_product_code_modified": true,
+    "no_benchmark_improvement_claim": true,
+    "no_gate_lowering": true
+  },
+  "version": "1.0"
+}

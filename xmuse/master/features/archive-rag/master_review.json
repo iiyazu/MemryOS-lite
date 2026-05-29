@@ -1,0 +1,23 @@
+{
+  "artifact_digests": {
+    "ack": "sha256:8a4382c6049cb170cea89be55b50805a287eb4fe72c8809f5dfe85b547aea624",
+    "result": "sha256:4926b568c5da61a8f489e492a77e181ff11ed82bfafc91184da1f2557dc1f8fd",
+    "review_verdict": "sha256:4b9cc4173c1414894e727e9bf3d9308d7b428fd299fa5c3346f67c3d1c149022"
+  },
+  "base_commit": "dcd746616caa696f8e6fd9277059f9cb981fa6af",
+  "blocking_findings": [],
+  "branch": "feat/archive-rag",
+  "feature_id": "archive-rag",
+  "head_commit": "15c6edfd7745b7ffefeb2601cac8f9d8cadb266f",
+  "merge_decision": "not_merged",
+  "next_gate": "integrated_tests",
+  "recorded_at": "2026-05-25T05:46:47.064297+00:00",
+  "recorded_by": "master-god",
+  "review_summary": "Deterministic Master review accepted Slave usable ACK, PASS review, result artifact, recorded branches, and clean feature worktree.",
+  "slave_ack_ref": "work/features/archive-rag/ack.json",
+  "slave_result_ref": "work/features/archive-rag/result.md",
+  "slave_review_ref": "work/features/archive-rag/review_verdict.json",
+  "status": "accepted",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "version": "1.0"
+}

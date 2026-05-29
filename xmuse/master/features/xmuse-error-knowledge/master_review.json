@@ -1,0 +1,23 @@
+{
+  "artifact_digests": {
+    "ack": "sha256:43e4e3de49863cfe957a7f263c3c50ebe8d790bf3194d5dd78e753dc38fa9ce4",
+    "result": "sha256:dbedfc84fd9c820f38713677faede6105fbce87882ea8a5c350c1ef787fca02a",
+    "review_verdict": "sha256:0746b97ac8b7c2e933b6df77284dfc4f07d1788fce23a4ab4d12b7b288f21c70"
+  },
+  "base_commit": "dcd746616caa696f8e6fd9277059f9cb981fa6af",
+  "blocking_findings": [],
+  "branch": "feat/xmuse-error-knowledge",
+  "feature_id": "xmuse-error-knowledge",
+  "head_commit": "dd58b3b8d655892320191a3eeaf3b15a5e2deb37",
+  "merge_decision": "not_merged",
+  "next_gate": "integrated_tests",
+  "recorded_at": "2026-05-25T08:10:56.100638+00:00",
+  "recorded_by": "master-god",
+  "review_summary": "Deterministic Master review accepted Slave usable ACK, PASS review, result artifact, recorded branches, and clean feature worktree.",
+  "slave_ack_ref": "work/features/xmuse-error-knowledge/ack.json",
+  "slave_result_ref": "work/features/xmuse-error-knowledge/result.md",
+  "slave_review_ref": "work/features/xmuse-error-knowledge/review_verdict.json",
+  "status": "accepted",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "version": "1.0"
+}

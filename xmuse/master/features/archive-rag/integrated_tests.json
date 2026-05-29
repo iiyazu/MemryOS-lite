@@ -1,0 +1,48 @@
+{
+  "artifact_digests": {
+    "ack": "sha256:8a4382c6049cb170cea89be55b50805a287eb4fe72c8809f5dfe85b547aea624",
+    "master_review": "sha256:a36f8504f627995ef9990f498e4e0beebdedd8a116cf18674082199099a82e27"
+  },
+  "base_commit": "dcd746616caa696f8e6fd9277059f9cb981fa6af",
+  "branch": "feat/archive-rag",
+  "commands": [
+    {
+      "artifact_digest": "sha256:f6f2738f5f03978547b20e4e945b791edf8f9db7b497ce698a3420e1e11abb46",
+      "artifact_ref": "xmuse/master/features/archive-rag/integrated_command_1.log",
+      "command": "uv run pytest tests/test_archive_rag_boundary.py tests/test_archival_searcher.py tests/test_archival_vector.py -q",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "artifact_digest": "sha256:e59c88ef1039ee7a505b97297ce2e1e53c34b18f87fa4f2d0ada118290ca8b5c",
+      "artifact_ref": "xmuse/master/features/archive-rag/integrated_command_2.log",
+      "command": "uv run pytest tests/test_context_composer.py::test_settings_default_to_v3_composer_with_kernel_off tests/test_engine.py::test_explicit_v1_build_context_excludes_v3_archival_scope_diagnostics -q",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "artifact_digest": "sha256:82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "artifact_ref": "xmuse/master/features/archive-rag/integrated_command_3.log",
+      "command": "uv run ruff check src/memoryos_lite/archive_rag.py src/memoryos_lite/retrieval/archival_searcher.py src/memoryos_lite/retrieval/archival_vector.py tests/test_archive_rag_boundary.py tests/test_archival_searcher.py tests/test_archival_vector.py",
+      "exit_code": 0,
+      "status": "passed"
+    },
+    {
+      "artifact_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "artifact_ref": "xmuse/master/features/archive-rag/integrated_command_4.log",
+      "command": "python3 -m py_compile src/memoryos_lite/archive_rag.py src/memoryos_lite/retrieval/archival_searcher.py src/memoryos_lite/retrieval/archival_vector.py && git diff --check",
+      "exit_code": 0,
+      "status": "passed"
+    }
+  ],
+  "feature_id": "archive-rag",
+  "head_commit": "15c6edfd7745b7ffefeb2601cac8f9d8cadb266f",
+  "master_review_ref": "xmuse/master/features/archive-rag/master_review.json",
+  "recorded_at": "2026-05-25T06:17:11.496706+00:00",
+  "recorded_by": "master-god",
+  "slave_ack_ref": "work/features/archive-rag/ack.json",
+  "status": "passed",
+  "target_branch": "feat/phase-2.5-3-retrieval-agent",
+  "version": "1.0",
+  "worktree_clean": true
+}
