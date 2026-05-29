@@ -187,49 +187,40 @@ class SelfEvolutionAuditWriter:
                         if isinstance(lane, dict) and lane.get("feature_group")
                     }
                 )
-                entry["proposal"] = {
-                    "proposal_id": proposal.proposal_id,
-                    "scope_summary": proposal.scope_summary,
-                    "target_track_ids": list(proposal.target_track_ids),
-                    "status": proposal.status.value,
-                    "review_status": proposal.review_status,
-                    "candidate_lane_count": len(candidate_lanes),
-                    "feature_groups": feature_groups,
-                    # Extra fields useful for the dashboard but not in the
-                    # minimal contract — kept for backward compatibility.
-                    "status_label": _status_label(proposal.status.value),
-                    "author_session_id": proposal.author_session_id,
-                }
+                entry["proposal_id"] = proposal.proposal_id
+                entry["proposal_status"] = proposal.status.value
+                entry["status_label"] = _status_label(proposal.status.value)
+                entry["scope_summary"] = proposal.scope_summary
+                entry["review_status"] = proposal.review_status
+                entry["candidate_lane_count"] = len(candidate_lanes)
+                entry["feature_groups"] = feature_groups
+                entry["author_session_id"] = proposal.author_session_id
             else:
-                entry["proposal"] = {
-                    "proposal_id": record.evolution_proposal_id,
-                    "scope_summary": "",
-                    "target_track_ids": list(record.target_track_ids),
-                    "status": "unknown",
-                    "review_status": "unknown",
-                    "candidate_lane_count": 0,
-                    "feature_groups": [],
-                    "status_label": "unknown",
-                    "author_session_id": None,
-                }
+                entry["proposal_id"] = record.evolution_proposal_id
+                entry["proposal_status"] = "unknown"
+                entry["status_label"] = "unknown"
+                entry["scope_summary"] = ""
+                entry["review_status"] = "unknown"
+                entry["candidate_lane_count"] = 0
+                entry["feature_groups"] = []
+                entry["author_session_id"] = None
 
             if aggregation is not None:
-                entry["aggregation"] = {
-                    "aggregation_id": aggregation.aggregation_id,
-                    "status": aggregation.status.value,
-                    "reason": aggregation.reason,
-                    "terminal": aggregation.terminal,
-                    "lane_counts": dict(aggregation.lane_counts),
-                    "blocked_object_count": len(aggregation.blocked_objects),
-                    "final_action_hold_count": len(aggregation.final_action_holds),
-                }
+                entry["aggregation_id"] = aggregation.aggregation_id
+                entry["run_terminal_status"] = aggregation.status.value
+                entry["run_terminal_reason"] = aggregation.reason
+                entry["terminal"] = aggregation.terminal
+                entry["lane_counts"] = dict(aggregation.lane_counts)
+                entry["blocked_objects"] = [
+                    dict(obj) for obj in aggregation.blocked_objects
+                ]
+                entry["final_action_holds"] = [
+                    dict(hold) for hold in aggregation.final_action_holds
+                ]
 
             if conversation is not None:
-                entry["conversation"] = {
-                    "conversation_id": conversation.conversation_id,
-                    "created_by": conversation.created_by,
-                    "created_at": conversation.created_at,
-                }
+                entry["conversation_created_by"] = conversation.created_by
+                entry["conversation_created_at"] = conversation.created_at
 
             # Join guardrail decision via the proposal_id on the lineage record
             guardrail = guardrails_by_proposal.get(record.evolution_proposal_id)

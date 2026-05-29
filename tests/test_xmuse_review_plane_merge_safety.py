@@ -8,7 +8,8 @@ Covers:
 
 Evidence bundle reference: evbundle_6259476d67dd414a8be293d1025ccb8c
 Spec: blueprint-anchored self-evolution, "Merge guards" section.
-Lane: self-evolution-reliability_hardening-res_e404647bc0cf4611b1f4e42c3c2b3466-graph-v1-review-plane-merge-safety-test-merge-
+Lane: self-evolution-reliability_hardening-res_e404647bc0cf4611b1f4e42c3c2b3466-
+graph-v1-review-plane-merge-safety-test-merge-
 """
 from __future__ import annotations
 
@@ -22,7 +23,6 @@ from xmuse_core.platform.review_plane import (
     ReviewPlaneController,
 )
 from xmuse_core.structuring.models import ReviewDecision, ReviewVerdict
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -116,14 +116,20 @@ def test_check_completeness_exec_failed_is_terminated_without_merge(tmp_path):
     assert report.is_complete is False
 
 
-def test_check_completeness_gate_failed_is_terminated_without_merge(tmp_path):
-    """gate_failed lane without MERGE verdict → terminated_without_merge."""
+def test_check_completeness_gate_failed_is_open_recoverable(tmp_path):
+    """gate_failed lane is recoverable (retry/rework/re-gate) → open_lineages."""
     ctrl = _make_controller(tmp_path, [
-        {"feature_id": "lane-a", "status": "gate_failed", "prompt": "a", "graph_id": "g1"},
+        {
+            "feature_id": "lane-a",
+            "status": "gate_failed",
+            "prompt": "a",
+            "graph_id": "g1",
+        },
     ])
     report = ctrl.check_lineage_merge_completeness("g1")
 
-    assert "lane-a" in report.terminated_without_merge
+    assert "lane-a" in report.open_lineages
+    assert "lane-a" not in report.terminated_without_merge
     assert report.is_complete is False
 
 
