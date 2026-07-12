@@ -6,24 +6,28 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    name: Lint, Type Check, Test
+  quality:
+    name: MemoryOS quality
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
 
       - name: Install Python 3.11
         run: uv python install 3.11
 
-      - name: Sync dependencies (frozen)
-        run: uv sync --frozen --dev
+      - name: Sync all dependencies from the lock
+        run: uv sync --frozen --all-groups
 
       - name: Ruff lint
         run: uv run ruff check .
@@ -35,4 +39,20 @@ jobs:
         run: uv run mypy src
 
       - name: Pytest
+        env:
+          PYTHONWARNINGS: error
+          TMPDIR: /tmp
         run: uv run pytest -q
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Install and smoke-test the wheel
+        run: |
+          uv pip install --python .venv/bin/python --reinstall --no-deps dist/*.whl
+          .venv/bin/python -c "import memoryos_lite; print(memoryos_lite.__path__)"
+          .venv/bin/memoryos --help
+
+      - name: Validate the OpenAPI surface
+        run: |
+          uv run python -c "from memoryos_lite.api.app import app; schema = app.openapi(); assert schema['openapi'] == '3.1.0'; assert len(schema['paths']) == 13"
