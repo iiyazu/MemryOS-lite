@@ -1,0 +1,633 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+
+from memoryos_lite.config import Settings
+from memoryos_lite.core_memory import render_core_memory_blocks
+from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher, SearchMode
+from memoryos_lite.retrieval.archival_vector import ArchivalVectorDiagnostic
+from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
+from memoryos_lite.schemas import Message
+from memoryos_lite.store import MemoryStore
+from memoryos_lite.tokenizer import TokenEstimator
+from memoryos_lite.v3_contracts import (
+    ArchiveEligibilityResult,
+    ArchiveEligibilityScope,
+    ContextComposerRequest,
+    ContextLayerItem,
+    ContextPackageV3,
+    DiagnosticEvent,
+    LayerBudgetDecision,
+    SourceRef,
+    SourceType,
+    message_to_log_entry,
+)
+
+
+@dataclass
+class V3ContextComposer:
+    store: MemoryStore
+    settings: Settings
+    tokenizer: TokenEstimator = field(default_factory=TokenEstimator)
+    recall_pipeline: RecallPipeline | None = None
+    archival_searcher: ArchivalPassageSearcher = field(default_factory=ArchivalPassageSearcher)
+
+    def __post_init__(self) -> None:
+        if self.recall_pipeline is None:
+            self.recall_pipeline = RecallPipeline(
+                store=self.store,
+                settings=self.settings,
+                tokenizer=self.tokenizer,
+            )
+
+    def build(self, request: ContextComposerRequest) -> ContextPackageV3:
+        query = request.retrieval_query or request.task
+        package = ContextPackageV3(
+            session_id=request.session_id,
+            task=request.task,
+            metadata={"memory_arch": "v3", "retrieval_query": query},
+        )
+        used = 0
+        used = self._try_add_layer(
+            package,
+            budget=request.budget,
+            used=used,
+            layer="task",
+            items=[
+                ContextLayerItem(
+                    layer="task",
+                    item_id=f"task_{request.session_id}",
+                    text=request.task,
+                    estimated_tokens=self.tokenizer.count(request.task),
+                    metadata={"reason": "task"},
+                )
+            ],
+        )
+        used = self._try_add_layer(
+            package,
+            budget=request.budget,
+            used=used,
+            layer="core",
+            items=self._core_items(),
+        )
+        recall_items, recall_diagnostics, recall_metadata = self._recall_items(
+            request,
+            query,
+        )
+        package.metadata.update(recall_metadata)
+        used = self._try_add_layer(
+            package,
+            budget=request.budget,
+            used=used,
+            layer="recall",
+            items=recall_items,
+        )
+        package.diagnostics.extend(recall_diagnostics)
+        archival_items, archival_eligibility, archival_search_diagnostics = self._archival_items(
+            request,
+            query,
+        )
+        used = self._try_add_layer(
+            package,
+            budget=request.budget,
+            used=used,
+            layer="archival",
+            items=archival_items,
+        )
+        archival_item_ids = {item.item_id for item in archival_items}
+        selected_archival_items = [
+            item
+            for item in package.items
+            if item.layer == "archival" and item.item_id in archival_item_ids
+        ]
+        archival_eligibility = archival_eligibility.model_copy(
+            update={
+                "selected_passage_ids": [item.item_id for item in selected_archival_items],
+                "selected_source_refs": [
+                    self._source_ref_summary(source_ref)
+                    for item in selected_archival_items
+                    for source_ref in item.source_refs
+                ],
+            }
+        )
+        package.metadata["archival_eligibility"] = archival_eligibility.diagnostics_payload()
+        package.diagnostics.extend(self._archival_search_diagnostics(archival_search_diagnostics))
+        package.diagnostics.extend(
+            self._archival_eligibility_diagnostics(
+                archival_eligibility,
+                selected_items=selected_archival_items,
+            )
+        )
+        used = self._try_add_layer(
+            package,
+            budget=request.budget,
+            used=used,
+            layer="recent",
+            items=self._recent_items(request.session_id),
+        )
+        policy_state, policy_diagnostics = self._context_policy_state(request.session_id)
+        package.metadata["context_policy_state"] = policy_state
+        package.diagnostics.extend(policy_diagnostics)
+        package.metadata["estimated_tokens"] = used
+        self._refresh_component_accounting(package)
+        return package
+
+    def _core_items(self) -> list[ContextLayerItem]:
+        items: list[ContextLayerItem] = []
+        for block in self.store.list_core_memory_blocks():
+            rendered = render_core_memory_blocks([block], tokenizer=self.tokenizer)
+            metadata = rendered.metadata_by_block[block.id]
+            items.append(
+                ContextLayerItem(
+                    layer="core",
+                    item_id=block.id,
+                    text=rendered.text,
+                    estimated_tokens=self.tokenizer.count(rendered.text),
+                    source_refs=list(block.source_refs),
+                    metadata=metadata,
+                )
+            )
+        return items
+
+    def _recall_items(
+        self,
+        request: ContextComposerRequest,
+        query: str,
+    ) -> tuple[list[ContextLayerItem], list[DiagnosticEvent], dict[str, object]]:
+        assert self.recall_pipeline is not None
+        recall = self.recall_pipeline.build_context(
+            session_id=request.session_id,
+            task=request.task,
+            budget=request.budget,
+            retrieval_query=query,
+        )
+        diagnostics = [
+            DiagnosticEvent.model_validate(diagnostic)
+            for diagnostic in recall.metadata.get("recall_diagnostics", [])
+            if isinstance(diagnostic, dict)
+        ]
+        metadata = {
+            "recall_evidence_packets": recall.metadata.get("recall_evidence_packets", []),
+            "recall_candidate_session_ids": recall.metadata.get(
+                "recall_candidate_session_ids",
+                [],
+            ),
+            "recall_planned_session_ids": recall.metadata.get(
+                "recall_planned_session_ids",
+                [],
+            ),
+            "cache": recall.metadata.get("cache", {}),
+            "recall_cache": recall.metadata.get("recall_cache", {}),
+            "query_analysis_cache": recall.metadata.get("query_analysis_cache", {}),
+            "recall_candidate_cache": recall.metadata.get(
+                "recall_candidate_cache",
+                {},
+            ),
+        }
+        if "recall_memory_watermark" in recall.metadata:
+            metadata["recall_memory_watermark"] = recall.metadata["recall_memory_watermark"]
+        return (
+            [
+                ContextLayerItem(
+                    layer="recall",
+                    item_id=evidence.message_id,
+                    text=evidence.text,
+                    estimated_tokens=evidence.estimated_tokens,
+                    source_refs=[
+                        SourceRef(
+                            source_type=SourceType.MESSAGE,
+                            source_id=evidence.message_id,
+                            session_id=request.session_id,
+                        )
+                    ],
+                    metadata={
+                        "role": evidence.role.value,
+                        "reason": evidence.reason,
+                        **evidence.metadata,
+                    },
+                )
+                for evidence in recall.retrieved_evidence
+            ],
+            diagnostics,
+            metadata,
+        )
+
+    def _archival_items(
+        self,
+        request: ContextComposerRequest,
+        query: str,
+    ) -> tuple[list[ContextLayerItem], ArchiveEligibilityResult, list[ArchivalVectorDiagnostic]]:
+        scope = ArchiveEligibilityScope(
+            session_id=request.session_id,
+            identity_scope=request.identity_scope,
+            source_ids=list(request.source_ids),
+            archive_ids=list(request.archive_ids),
+        )
+        eligibility = self.store.list_archival_passages_for_scope(scope)
+        passages = eligibility.eligible_passages
+        search_mode: SearchMode = (
+            "vector" if self.settings.memoryos_archival_vector_enabled else "text"
+        )
+        hits = self.archival_searcher.search(
+            passages,
+            query=query,
+            top_k=5,
+            mode=search_mode,
+        )
+        search_diagnostics = list(self.archival_searcher.last_diagnostics)
+        selected_ids = [hit.passage.id for hit in hits]
+        selected_id_set = set(selected_ids)
+        no_match_ids = [passage.id for passage in passages if passage.id not in selected_id_set]
+        eligibility = eligibility.model_copy(
+            update={
+                "no_match_passage_ids": no_match_ids,
+            }
+        )
+        items = [
+            ContextLayerItem(
+                layer="archival",
+                item_id=hit.passage.id,
+                text=hit.passage.text,
+                estimated_tokens=self.tokenizer.count(hit.passage.text),
+                source_refs=list(hit.source_refs),
+                metadata={
+                    "reason": "archival_selected",
+                    "match_reason": hit.reason,
+                    "score": hit.score,
+                    "source": hit.source,
+                    **hit.metadata,
+                },
+            )
+            for hit in hits
+        ]
+        return items, eligibility, search_diagnostics
+
+    @staticmethod
+    def _source_ref_summary(source_ref: SourceRef) -> dict[str, str | None]:
+        return {
+            "source_type": getattr(source_ref.source_type, "value", source_ref.source_type),
+            "source_id": source_ref.source_id,
+            "session_id": source_ref.session_id,
+        }
+
+    def _source_ref_payload(self, source_ref: SourceRef) -> dict[str, object]:
+        return source_ref.model_dump(mode="json")
+
+    def _source_ids_from_refs(self, source_refs: list[SourceRef]) -> list[str]:
+        seen: set[str] = set()
+        ids: list[str] = []
+        for source_ref in source_refs:
+            if source_ref.source_id and source_ref.source_id not in seen:
+                ids.append(source_ref.source_id)
+                seen.add(source_ref.source_id)
+        return ids
+
+    def _context_policy_state(
+        self,
+        session_id: str,
+    ) -> tuple[dict[str, object], list[DiagnosticEvent]]:
+        candidates = self.store.list_context_policy_candidates(
+            status="applied",
+            session_id=session_id,
+        )
+        payload_candidates: list[dict[str, object]] = []
+        diagnostics: list[DiagnosticEvent] = []
+        for candidate in candidates:
+            source_refs = list(candidate.source_refs)
+            source_ids = self._source_ids_from_refs(source_refs)
+            payload_candidates.append(
+                {
+                    "id": candidate.id,
+                    "policy_type": candidate.policy_type,
+                    "feedback_type": candidate.feedback_type,
+                    "suggested_action": candidate.suggested_action,
+                    "status": candidate.status,
+                    "source_ids": source_ids,
+                    "source_refs": [
+                        self._source_ref_payload(source_ref) for source_ref in source_refs
+                    ],
+                    "metadata": self._jsonable(dict(candidate.metadata)),
+                }
+            )
+            diagnostics.append(
+                DiagnosticEvent(
+                    layer="kernel",
+                    event_type="context_policy_state_read",
+                    item_id=candidate.id,
+                    reason_code=f"context_policy_{candidate.feedback_type}",
+                    included=False,
+                    dropped=False,
+                    source_refs=source_refs,
+                    metadata={
+                        "policy_type": candidate.policy_type,
+                        "feedback_type": candidate.feedback_type,
+                        "suggested_action": candidate.suggested_action,
+                        "status": candidate.status,
+                        "source_ids": source_ids,
+                        "candidate_metadata": self._jsonable(dict(candidate.metadata)),
+                    },
+                )
+            )
+        return {
+            "applied_candidate_count": len(payload_candidates),
+            "applied_candidates": payload_candidates,
+        }, diagnostics
+
+    def _component_from_diagnostic(self, diagnostic: DiagnosticEvent) -> str:
+        if diagnostic.layer != "message_log":
+            return diagnostic.layer
+        if diagnostic.item_id and diagnostic.item_id.startswith("task_"):
+            return "task"
+        if diagnostic.metadata.get("reason") == "recent_message":
+            return "recent"
+        return "message_log"
+
+    def _accounting_row(
+        self,
+        diagnostic: DiagnosticEvent,
+        *,
+        rendered_index: int | None = None,
+    ) -> dict[str, object]:
+        source_refs = list(diagnostic.source_refs)
+        return {
+            "component": self._component_from_diagnostic(diagnostic),
+            "layer": diagnostic.layer,
+            "event_type": diagnostic.event_type,
+            "item_id": diagnostic.item_id,
+            "source_ids": self._source_ids_from_refs(source_refs),
+            "source_refs": [self._source_ref_payload(source_ref) for source_ref in source_refs],
+            "estimated_tokens": diagnostic.budget_tokens or 0,
+            "budget_tokens": diagnostic.budget_tokens,
+            "included": diagnostic.included,
+            "dropped": diagnostic.dropped,
+            "reason_code": diagnostic.reason_code,
+            "score": diagnostic.score,
+            "rendered_index": rendered_index,
+            "metadata": self._jsonable(dict(diagnostic.metadata)),
+        }
+
+    @staticmethod
+    def _jsonable(value: object) -> object:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+    def _refresh_component_accounting(self, package: ContextPackageV3) -> None:
+        rendered_index_by_item: dict[tuple[str, str], int] = {}
+        final_trace: list[dict[str, object]] = []
+        for rendered_index, item in enumerate(package.items):
+            diagnostic = self._diagnostic(item, included=True, dropped=False)
+            row = self._accounting_row(diagnostic, rendered_index=rendered_index)
+            final_trace.append(row)
+            rendered_index_by_item[(str(row["component"]), item.item_id)] = rendered_index
+
+        accounting: list[dict[str, object]] = []
+        seen_select_rows: set[tuple[str, str | None, bool, bool, str]] = set()
+        for diagnostic in package.diagnostics:
+            if diagnostic.event_type not in {
+                "select",
+                "budget",
+                "archival_selected",
+                "archival_eligible_no_match",
+                "archival_scope_excluded",
+                "archival_no_attached_archive",
+                "archival_vector_unavailable",
+                "archival_lexical_fallback",
+                "archival_stale_vector_hit",
+                "archival_scope_excluded_vector_hit",
+            }:
+                continue
+            component = self._component_from_diagnostic(diagnostic)
+            key = (
+                component,
+                diagnostic.item_id,
+                diagnostic.included,
+                diagnostic.dropped,
+                diagnostic.reason_code,
+            )
+            if diagnostic.event_type == "select" and key in seen_select_rows:
+                continue
+            seen_select_rows.add(key)
+            selected_rendered_index = (
+                rendered_index_by_item.get((component, diagnostic.item_id))
+                if diagnostic.included and diagnostic.item_id is not None
+                else None
+            )
+            accounting.append(
+                self._accounting_row(
+                    diagnostic,
+                    rendered_index=selected_rendered_index,
+                )
+            )
+
+        token_totals: dict[str, int] = {}
+        included_counts: dict[str, int] = {}
+        drop_counts: dict[str, int] = {}
+        for row in accounting:
+            component = str(row["component"])
+            if row["included"] is True:
+                token_totals[component] = token_totals.get(component, 0) + int(
+                    self._int_value(row["estimated_tokens"])
+                )
+                included_counts[component] = included_counts.get(component, 0) + 1
+                drop_counts.setdefault(component, 0)
+            if row["dropped"] is True:
+                drop_counts[component] = drop_counts.get(component, 0) + 1
+                included_counts.setdefault(component, 0)
+                token_totals.setdefault(component, 0)
+
+        locomo_rows = [
+            row
+            for row in accounting
+            if row["component"] == "recall"
+            and isinstance(row["metadata"], dict)
+            and (
+                bool(row["metadata"].get("benchmark_session_id"))
+                or bool(row["metadata"].get("packet_session_id"))
+                or bool(row["metadata"].get("evidence_packet_id"))
+                or bool(row["metadata"].get("neighbor_of"))
+                or str(row["reason_code"]).startswith("neighbor_of=")
+            )
+        ]
+        package.metadata.update(
+            {
+                "component_accounting": accounting,
+                "final_context_trace": final_trace,
+                "component_token_totals": token_totals,
+                "component_included_counts": included_counts,
+                "component_drop_counts": drop_counts,
+                "locomo_neighbor_diagnostics": locomo_rows,
+            }
+        )
+
+    @staticmethod
+    def _int_value(value: object) -> int:
+        if isinstance(value, int):
+            return value
+        return 0
+
+    def _archival_eligibility_diagnostics(
+        self,
+        eligibility: ArchiveEligibilityResult,
+        *,
+        selected_items: list[ContextLayerItem],
+    ) -> list[DiagnosticEvent]:
+        diagnostics: list[DiagnosticEvent] = []
+        selected_by_id = {item.item_id: item for item in selected_items}
+        for item in selected_items:
+            diagnostics.append(
+                self._diagnostic(item, included=True, dropped=False).model_copy(
+                    update={"event_type": "archival_selected"}
+                )
+            )
+        eligible_by_id = {passage.id: passage for passage in eligibility.eligible_passages}
+        for passage_id in eligibility.no_match_passage_ids:
+            passage = eligible_by_id[passage_id]
+            diagnostics.append(
+                DiagnosticEvent(
+                    layer="archival",
+                    event_type="archival_eligible_no_match",
+                    item_id=passage.id,
+                    reason_code="archival_no_match",
+                    included=False,
+                    dropped=False,
+                    source_refs=list(passage.source_refs),
+                    metadata={
+                        "archive_id": passage.archive_id,
+                        "source_id": passage.source_id,
+                    },
+                )
+            )
+        scope_excluded_by_id = {
+            passage.id: passage for passage in eligibility.scope_excluded_passages
+        }
+        for passage_id in eligibility.scope_excluded_passage_ids:
+            excluded_passage = scope_excluded_by_id.get(passage_id)
+            diagnostics.append(
+                DiagnosticEvent(
+                    layer="archival",
+                    event_type="archival_scope_excluded",
+                    item_id=passage_id,
+                    reason_code="archival_scope_excluded",
+                    included=False,
+                    dropped=False,
+                    source_refs=(
+                        list(excluded_passage.source_refs) if excluded_passage is not None else []
+                    ),
+                    metadata={
+                        "eligible_archive_ids": list(eligibility.eligible_archive_ids),
+                        "archive_id": (
+                            excluded_passage.archive_id if excluded_passage is not None else None
+                        ),
+                        "source_id": (
+                            excluded_passage.source_id if excluded_passage is not None else None
+                        ),
+                        "file_id": (
+                            excluded_passage.file_id if excluded_passage is not None else None
+                        ),
+                    },
+                )
+            )
+        if (
+            not eligibility.eligible_archive_ids
+            and not eligibility.scope.source_ids
+            and not selected_by_id
+        ):
+            diagnostics.append(
+                DiagnosticEvent(
+                    layer="archival",
+                    event_type="archival_no_attached_archive",
+                    reason_code="archival_no_attached_archive",
+                    included=False,
+                    dropped=False,
+                    metadata={"session_id": eligibility.scope.session_id},
+                )
+            )
+        return diagnostics
+
+    def _archival_search_diagnostics(
+        self,
+        diagnostics: list[ArchivalVectorDiagnostic],
+    ) -> list[DiagnosticEvent]:
+        return [
+            DiagnosticEvent(
+                layer="archival",
+                event_type=diagnostic.event_type,
+                item_id=diagnostic.item_id,
+                reason_code=diagnostic.reason_code,
+                score=diagnostic.score,
+                included=False,
+                dropped=False,
+                metadata=diagnostic.metadata,
+            )
+            for diagnostic in diagnostics
+        ]
+
+    def _recent_items(self, session_id: str) -> list[ContextLayerItem]:
+        messages = self.store.list_messages(session_id)[-self.settings.recent_message_limit :]
+        return [self._message_item(message) for message in messages]
+
+    def _message_item(self, message: Message) -> ContextLayerItem:
+        log_entry = message_to_log_entry(message)
+        return ContextLayerItem(
+            layer="recent",
+            item_id=message.id,
+            text=message.content,
+            estimated_tokens=message.token_count or self.tokenizer.count(message.content),
+            source_refs=list(log_entry.source_refs),
+            metadata={"role": message.role.value, "reason": "recent_message"},
+        )
+
+    def _try_add_layer(
+        self,
+        package: ContextPackageV3,
+        *,
+        budget: int,
+        used: int,
+        layer: str,
+        items: list[ContextLayerItem],
+    ) -> int:
+        layer_used = 0
+        dropped: list[str] = []
+        requested = sum(item.estimated_tokens for item in items)
+        for item in items:
+            if used + item.estimated_tokens <= budget:
+                package.items.append(item)
+                package.diagnostics.append(self._diagnostic(item, included=True, dropped=False))
+                used += item.estimated_tokens
+                layer_used += item.estimated_tokens
+            else:
+                dropped.append(item.item_id)
+                package.diagnostics.append(self._diagnostic(item, included=False, dropped=True))
+        package.budget_decisions.append(
+            LayerBudgetDecision(
+                layer=layer,  # type: ignore[arg-type]
+                requested_tokens=requested,
+                allocated_tokens=min(requested, max(0, budget - (used - layer_used))),
+                used_tokens=layer_used,
+                dropped_item_ids=dropped,
+                reason_code="fit" if not dropped else "budget_drop",
+            )
+        )
+        return used
+
+    @staticmethod
+    def _diagnostic(
+        item: ContextLayerItem,
+        *,
+        included: bool,
+        dropped: bool,
+    ) -> DiagnosticEvent:
+        diagnostic_layer = "message_log" if item.layer in {"task", "recent"} else item.layer
+        reason_code = "budget_drop" if dropped else str(item.metadata.get("reason", item.layer))
+        return DiagnosticEvent(
+            layer=diagnostic_layer,  # type: ignore[arg-type]
+            event_type="select",
+            item_id=item.item_id,
+            reason_code=reason_code,
+            score=item.metadata.get("score"),  # type: ignore[arg-type]
+            included=included,
+            dropped=dropped,
+            budget_tokens=item.estimated_tokens,
+            source_refs=list(item.source_refs),
+            metadata=dict(item.metadata),
+        )

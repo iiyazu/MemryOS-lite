@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import struct
+from collections.abc import Callable
+from typing import Any
 
 
 class DeterministicEmbeddingClient:
@@ -47,3 +49,18 @@ class DeterministicEmbeddingClient:
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return [self.embed(text) for text in texts]
+
+
+class FakePageDraftClient:
+    """Deterministic paging client for eval/test — wraps heuristic draft fn.
+
+    Accepts a callable ``draft_fn(session_id, messages) -> MemoryPageDraft``
+    so the caller (evals.py) can inject ``PagingAgent._heuristic_draft``
+    without creating a circular import.
+    """
+
+    def __init__(self, draft_fn: Callable[..., Any]) -> None:
+        self._draft_fn = draft_fn
+
+    def create_draft(self, messages: Any, context_pages: Any = None) -> Any:
+        return self._draft_fn("_eval_", messages)

@@ -9,7 +9,7 @@ import tiktoken
 def _count_tokens(text: str, use_tiktoken: bool) -> int:
     if use_tiktoken:
         enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text))
+        return len(enc.encode(text, disallowed_special=()))
     return max(1, len(re.findall(r"\w+|[^\w\s]", text)))
 
 
