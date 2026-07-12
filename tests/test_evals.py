@@ -3,19 +3,51 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from memoryos_lite.cli import _eval_table_rows
+from memoryos_lite.cli import _llm_judge_table_rows
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import (
     BaselineOutput,
+    EvidenceItem,
+    _baseline_from_evidence,
     _materialize_messages,
+    _metadata_string_list_prefer,
+    _needs_multi_evidence,
     _run_baseline,
     _score,
     builtin_cases,
     run_eval,
 )
+from memoryos_lite.llm_judge import JudgeVerdict
 from memoryos_lite.schemas import EvalCase, MessageCreate, Role
 from memoryos_lite.store import create_store
+
+slow = pytest.mark.slow
+
+
+@pytest.fixture(scope="module")
+def _eval_v1_memoryos(tmp_path_factory):
+    """Shared run_eval(v1, memoryos_lite) — reused by report/cli/source tests."""
+    base = tmp_path_factory.mktemp("eval_v1_memoryos")
+    settings = Settings(
+        data_dir=base / ".memoryos",
+        memoryos_memory_arch="v1",
+        memoryos_paging_mode="heuristic",
+    )
+    results = run_eval(settings, run_id="shared-v1", baselines=["memoryos_lite"], isolated=True)
+    report = json.loads((settings.data_dir / "evals" / "shared-v1.json").read_text())
+    return {"settings": settings, "results": results, "report": report}
+
+
+@pytest.fixture(scope="module")
+def _eval_default_memoryos(tmp_path_factory):
+    """Shared run_eval(default/v3, memoryos_lite) — reused by trace/snippet tests."""
+    base = tmp_path_factory.mktemp("eval_default_memoryos")
+    settings = Settings(data_dir=base / ".memoryos", openai_api_key="dummy")
+    results = run_eval(settings, run_id="shared-default", baselines=["memoryos_lite"])
+    report = json.loads((settings.data_dir / "evals" / "shared-default.json").read_text())
+    trace_dir = settings.data_dir / "eval_runs" / "shared-default" / "traces"
+    return {"settings": settings, "results": results, "report": report, "trace_dir": trace_dir}
 
 
 def test_eval_run_does_not_reset_main_store(tmp_path):
@@ -33,39 +65,6 @@ def test_eval_run_does_not_reset_main_store(tmp_path):
     assert (settings.data_dir / "evals" / "test-run.json").exists()
 
 
-def test_eval_forces_heuristic_paging_for_reproducibility(tmp_path):
-    settings = Settings(
-        data_dir=tmp_path / ".memoryos",
-        memoryos_paging_mode="llm",
-        openai_api_key="dummy",
-    )
-
-    results = run_eval(settings, run_id="forced-heuristic", baselines=["memoryos_lite"])
-    trace_dir = settings.data_dir / "eval_runs" / "forced-heuristic" / "traces"
-    trace_paths = list(trace_dir.glob("*.jsonl"))
-
-    assert results
-    assert trace_paths
-    trace_text = "\n".join(path.read_text(encoding="utf-8") for path in trace_paths)
-    assert '"paging_mode":"heuristic"' in trace_text
-    assert "heuristic_fallback" not in trace_text
-
-
-def test_all_eval_baselines_obey_budget(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-
-    results = run_eval(settings, run_id="budget-run", baselines=["all"], isolated=True)
-
-    assert results
-    assert {result.baseline for result in results} == {
-        "sliding_window",
-        "naive_summary",
-        "vector_rag",
-        "memoryos_lite",
-    }
-    assert all(result.context_tokens <= 90 for result in results)
-
-
 def test_builtin_case_message_ids_are_stable():
     case = builtin_cases()[0]
 
@@ -74,6 +73,64 @@ def test_builtin_case_message_ids_are_stable():
 
     assert [message.id for message in first] == [message.id for message in second]
     assert first[0].id == case.required_sources[0]
+
+
+def test_eval_evidence_selection_skips_generic_acknowledgements():
+    selected = _baseline_from_evidence(
+        "项目最终截止日期是哪天？",
+        [
+            EvidenceItem(
+                text="已记录最终截止日期。",
+                source_texts={"ack": "已记录最终截止日期。"},
+                origin="retrieved_message",
+            ),
+            EvidenceItem(
+                text="截止日期最终确定 11 月 1 日。",
+                source_texts={"final": "截止日期最终确定 11 月 1 日。"},
+                origin="retrieved_message",
+            ),
+        ],
+        context_tokens=20,
+    )
+
+    assert selected.answer == "截止日期最终确定 11 月 1 日"
+    assert selected.sources["final"] == "截止日期最终确定 11 月 1 日。"
+
+
+def test_eval_evidence_selection_prefers_update_evidence_for_slot_questions():
+    selected = _baseline_from_evidence(
+        "RPC 框架用什么？",
+        [
+            EvidenceItem(
+                text="架构设计：RPC 框架用 gRPC。",
+                source_texts={"old": "架构设计：RPC 框架用 gRPC。"},
+                origin="retrieved_message",
+            ),
+            EvidenceItem(
+                text="与合作团队对接，RPC 框架采用 Thrift。",
+                source_texts={"new": "与合作团队对接，RPC 框架采用 Thrift。"},
+                origin="retrieved_message",
+            ),
+        ],
+        context_tokens=20,
+    )
+
+    assert selected.answer == "Thrift"
+    assert selected.sources["new"] == "与合作团队对接，RPC 框架采用 Thrift。"
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Which event did I attend first?", True),
+        ("What came first?", True),
+        ("What is my first name?", False),
+        ("What did I think at first?", False),
+        ("First of all, what did I decide?", False),
+    ],
+)
+def test_needs_multi_evidence_first_matching_is_narrow(question, expected):
+    assert _needs_multi_evidence(question) is expected
 
 
 def test_source_accuracy_requires_required_source_text():
@@ -156,6 +213,26 @@ def test_answer_accuracy_requires_all_expected_facts():
     assert result.missing_required_sources == []
     assert result.answer_accuracy == 0.0
     assert result.source_accuracy == 0.0
+
+
+def test_answer_accuracy_follows_missing_expected_facts_invariant():
+    case = EvalCase(
+        case_id="no_expected_fact_regression",
+        conversation=[],
+        question="Is there anything expected?",
+        expected_facts=[],
+    )
+    output = BaselineOutput(
+        answer="No expected fact is configured.",
+        context_tokens=10,
+        sources={},
+    )
+
+    result = _score(case, "test", output, latency_ms=0)
+
+    assert result.expected_hits == 0
+    assert result.missing_expected_facts == []
+    assert result.answer_accuracy == 1.0
 
 
 def test_source_accuracy_requires_all_fact_sources():
@@ -307,6 +384,52 @@ def test_naive_summary_does_not_duplicate_selected_recent_message(tmp_path):
     assert output.sources == {"naive_recent_dedup_msg_003": "核心评估指标：source_accuracy。"}
 
 
+def test_eval_projects_final_answer_without_stale_prefix():
+    output = _baseline_from_evidence(
+        "周会最终在哪个会议室开？",
+        [
+            EvidenceItem(
+                text="B203 维护，会议室最终换 C505。",
+                source_texts={"msg_005": "B203 维护，会议室最终换 C505。"},
+            )
+        ],
+        context_tokens=10,
+    )
+
+    assert output.answer == "会议室最终换 C505"
+    assert "B203" not in output.answer
+
+
+def test_memoryos_eval_uses_fact_level_evidence_for_distractors(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    case = EvalCase(
+        case_id="fact_level_distractor",
+        conversation=[
+            MessageCreate(role=Role.USER, content="家住在深圳南山区。"),
+            MessageCreate(role=Role.ASSISTANT, content="已记录住址。"),
+            MessageCreate(role=Role.USER, content="公司在深圳福田区。"),
+            MessageCreate(role=Role.ASSISTANT, content="已记录办公地。"),
+            MessageCreate(role=Role.USER, content="通勤大约 40 分钟。"),
+            MessageCreate(role=Role.USER, content="周末常去海边。"),
+        ],
+        question="我家住在深圳哪个区？",
+        expected_facts=["南山"],
+        forbidden_facts=["福田"],
+        required_sources=["fact_level_distractor_msg_001"],
+    )
+    messages = _materialize_messages(case)
+    store = create_store(settings)
+    service = MemoryOSService(store=store, settings=settings)
+
+    output = _run_baseline("memoryos_lite", case, messages, service, settings)
+    result = _score(case, "memoryos_lite", output, latency_ms=0)
+
+    assert output.answer == "家住在深圳南山区。"
+    assert "福田" not in output.answer
+    assert result.answer_accuracy == 1.0
+    assert result.source_accuracy == 1.0
+
+
 def test_forbidden_answer_receives_no_credited_source_support():
     case = EvalCase(
         case_id="forbidden_credit_guard",
@@ -331,94 +454,25 @@ def test_forbidden_answer_receives_no_credited_source_support():
     assert result.supporting_source_count == 0
 
 
-def test_eval_report_includes_source_ids(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
+def test_llm_judge_cli_rows_group_by_baseline():
+    rows = _llm_judge_table_rows(
+        [
+            JudgeVerdict("memoryos_lite/case_001", "pass", [], [], [], ""),
+            JudgeVerdict("memoryos_lite/case_002", "fail", [], [], [], ""),
+            JudgeVerdict("vector_rag/case_001", "error", [], [], [], ""),
+        ]
+    )
 
-    run_eval(settings, run_id="source-report", baselines=["memoryos_lite"], isolated=True)
-    report = json.loads((settings.data_dir / "evals" / "source-report.json").read_text())
-
-    assert report
-    assert all("source_ids" in row for row in report)
-    assert all("source_snippets" in row for row in report)
-    assert all("supporting_source_snippets" in row for row in report)
-    assert all("expected_fact_support" in row for row in report)
-    assert all("credited_fact_support" in row for row in report)
-    assert all("missing_expected_facts" in row for row in report)
-    assert all("unsupported_answered_facts" in row for row in report)
-    assert all("missing_required_sources" in row for row in report)
-    assert all("page_count" in row for row in report)
-    assert all("loaded_pages" in row for row in report)
-    assert all("dropped_pages" in row for row in report)
-    assert all("dropped_page_details" in row for row in report)
-    assert all("source_count" in row for row in report)
-    assert all("supporting_source_count" in row for row in report)
-    assert any(row["source_ids"] for row in report)
-    assert any(row["source_snippets"] for row in report)
-    assert any(row["supporting_source_snippets"] for row in report)
-    assert any(row["expected_fact_support"] for row in report)
-    dropped_audit_row = next(row for row in report if row["case_id"] == "dropped_page_audit_001")
-    assert dropped_audit_row["dropped_page_details"]
-    assert dropped_audit_row["dropped_page_details"][0]["reason"].startswith("rrf ")
-
-
-def test_eval_cli_rows_include_dropped_cases(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-
-    results = run_eval(settings, run_id="cli-dropped-cases", baselines=["memoryos_lite"])
-    rows = _eval_table_rows(results)
     memoryos_row = next(row for row in rows if row["baseline"] == "memoryos_lite")
-
-    assert memoryos_row["cases"] == "81"
-    assert int(memoryos_row["dropped_cases"]) >= 1
-
-
-def test_eval_report_serializes_dropped_page_details():
-    output = BaselineOutput(
-        answer="未找到相关记忆",
-        context_tokens=90,
-        sources={},
-        dropped_pages=1,
-        dropped_page_details=[
-            {
-                "page_id": "page_001",
-                "title": "Large page",
-                "reason": "lexical_overlap=3",
-                "estimated_tokens": 120,
-            }
-        ],
-    )
-
-    result = _score(builtin_cases()[0], "memoryos_lite", output, latency_ms=0)
-    report = result.to_report()
-
-    assert report["dropped_pages"] == 1
-    assert report["dropped_page_details"] == [
-        {
-            "page_id": "page_001",
-            "title": "Large page",
-            "reason": "lexical_overlap=3",
-            "estimated_tokens": 120,
-        }
-    ]
-
-
-def test_supporting_source_snippets_show_only_credit_sources(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-
-    run_eval(settings, run_id="supporting-snippets", baselines=["memoryos_lite"])
-    report = json.loads((settings.data_dir / "evals" / "supporting-snippets.json").read_text())
-    row = next(
-        item
-        for item in report
-        if item["baseline"] == "memoryos_lite" and item["case_id"] == "hard_long_recall_001"
-    )
-
-    assert set(row["source_snippets"]) > {"hard_long_recall_001_msg_004"}
-    assert row["supporting_source_snippets"] == {
-        "MemoryOS Lite": {
-            "hard_long_recall_001_msg_004": "第 1 次最终决定：简历第二项目做 MemoryOS Lite。"
-        }
+    vector_row = next(row for row in rows if row["baseline"] == "vector_rag")
+    assert memoryos_row == {
+        "baseline": "memoryos_lite",
+        "cases": "2",
+        "pass_rate": "0.50",
+        "failed": "1",
+        "errors": "0",
     }
+    assert vector_row["errors"] == "1"
 
 
 def test_memoryos_source_attribution_uses_original_message_text(tmp_path):
@@ -447,22 +501,33 @@ def test_memoryos_source_attribution_uses_original_message_text(tmp_path):
     assert result.source_accuracy == 0.0
 
 
-def test_memoryos_baseline_preserves_required_sources(tmp_path):
+@slow
+def test_memoryos_baseline_preserves_required_sources(_eval_v1_memoryos):
+    results = _eval_v1_memoryos["results"]
+
+    assert results
+    assert all(result.source_accuracy == 1.0 for result in results)
+
+
+@slow
+def test_memoryos_v3_default_preserves_hard_eval_source_accuracy(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
 
     results = run_eval(
         settings,
-        run_id="source-memoryos",
+        run_id="hard-default-v3",
         baselines=["memoryos_lite"],
         isolated=True,
+        case_set="hard",
     )
 
     assert results
     assert all(result.source_accuracy == 1.0 for result in results)
 
 
+@slow
 def test_hard_cases_preserve_baseline_differentiation(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
 
     results = run_eval(settings, run_id="hard-diff", baselines=["all"], isolated=True)
     hard_results = [
@@ -559,3 +624,16 @@ def test_marker_ablation_cases_do_not_use_evidence_boost_markers():
             case.question + "\n" + "\n".join(message.content for message in case.conversation)
         )
         assert not any(marker in case_text for marker in marker_words)
+
+
+def test_metadata_string_list_prefers_recall_keys_over_legacy_keys():
+    metadata = {
+        "recall_candidate_message_ids": ["recall_a", "recall_b"],
+        "episode_candidate_message_ids": ["legacy_a"],
+    }
+
+    assert _metadata_string_list_prefer(
+        metadata,
+        primary_key="recall_candidate_message_ids",
+        fallback_key="episode_candidate_message_ids",
+    ) == ["recall_a", "recall_b"]

@@ -1,22 +1,35 @@
+import re
 from datetime import UTC, datetime
-from typing import Annotated
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Annotated, Any, Literal, cast
 
 import uvicorn
+from langchain_core.messages import AIMessage, HumanMessage
 from rich.console import Console
 from rich.table import Table
-from typer import Option, Typer
+from typer import Argument, Option, Typer
 
-from memoryos_lite.config import get_settings
+from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.evals import EvalResult, run_eval
-from memoryos_lite.graphs import build_memory_graph
-from memoryos_lite.schemas import MessageCreate, Role
+from memoryos_lite.evals import EvalResult, run_eval, run_eval_llm
+from memoryos_lite.llm_judge import JudgeVerdict
+from memoryos_lite.public_benchmarks import PublicBenchmarkResult, run_public_benchmark
+from memoryos_lite.schemas import (
+    ArchiveAttachmentRequest,
+    ArchiveDocumentIngestRequest,
+    ArchiveSourceRefPayload,
+    MessageCreate,
+    Role,
+)
 
 app = Typer(help="MemoryOS Lite CLI")
 demo_app = Typer(help="Run local demos")
 eval_app = Typer(help="Run benchmark tasks")
+archive_app = Typer(help="Ingest and inspect source-backed archive documents")
 app.add_typer(demo_app, name="demo")
 app.add_typer(eval_app, name="eval")
+app.add_typer(archive_app, name="archive")
 console = Console()
 EVAL_TABLE_COLUMNS = [
     "baseline",
@@ -31,6 +44,36 @@ EVAL_TABLE_COLUMNS = [
     "sources",
     "supporting",
 ]
+LLM_JUDGE_TABLE_COLUMNS = ["baseline", "cases", "pass_rate", "failed", "errors"]
+AGENT_ANSWER_TABLE_COLUMNS = [
+    "cases",
+    "has_citation",
+    "uses_retrieved_source",
+    "no_evidence_refusal",
+    "unsupported_rate",
+]
+PUBLIC_TABLE_COLUMNS = [
+    "benchmark",
+    "baseline",
+    "cases",
+    "pass_rate",
+    "source_hit",
+    "session_hit",
+    "msg_src@5",
+    "msg_ses@5",
+    "page_src@k",
+    "page_ses@k",
+    "avg_tokens",
+    "pages",
+    "loaded",
+    "dropped",
+    "srcs/page",
+    "rel_dropped",
+    "sup_rec",
+    "cand_drop",
+    "act_not5",
+    "avg_ms",
+]
 
 
 @app.command()
@@ -42,6 +85,8 @@ def api(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None
 @demo_app.command("run")
 def demo_run() -> None:
     """Run an end-to-end ingest -> page -> context demo."""
+    from memoryos_lite.graphs import build_memory_graph
+
     service = MemoryOSService()
     service.settings.rot_safe_budget = 1
     service.settings.recent_message_limit = 2
@@ -76,26 +121,579 @@ def demo_run() -> None:
         console.print(f"[green]Loaded page[/green] {page.page_id}: {page.title}")
 
 
+class _ScriptedAgentDemoLLM:
+    """Deterministic local LLM stand-in for the CLI demo."""
+
+    def __init__(self, patch_page_id: str) -> None:
+        self.patch_page_id = patch_page_id
+        self._patch_called = False
+
+    def bind_tools(self, tools: list[Any]) -> "_ScriptedAgentDemoLLM":
+        return self
+
+    def invoke(self, messages: list[Any]) -> AIMessage:
+        system_text = _message_text(messages[0]) if messages else ""
+        user_text = _message_text(messages[-1]) if messages else ""
+        if "Classify the user's intent" in system_text:
+            intent = "update" if "patch" in user_text.lower() else "recall"
+            return AIMessage(content=intent)
+        if "memory management agent" in system_text:
+            if "patch" in user_text.lower() and not self._patch_called:
+                self._patch_called = True
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "patch_page",
+                            "args": {
+                                "page_id": self.patch_page_id,
+                                "operation": "replace",
+                                "old_text": "production-ready MemoryOS platform",
+                                "new_text": "eval-driven MemoryOS Lite prototype",
+                            },
+                            "id": "call_demo_patch",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            return AIMessage(content="Tool work finished.")
+        if "experimental memory QA node" in system_text:
+            message_id = _first_message_id(user_text)
+            citation = f" [{message_id}]" if message_id else ""
+            return AIMessage(
+                content=(
+                    "The user decided to build MemoryOS Lite as an "
+                    f"eval-driven Agent/RAG memory prototype{citation}."
+                )
+            )
+        return AIMessage(content="recall")
+
+
+def _message_text(message: Any) -> str:
+    content = getattr(message, "content", message)
+    return str(content)
+
+
+def _first_message_id(text: str) -> str | None:
+    match = re.search(r"message_id=([^\s]+)", text)
+    return match.group(1) if match else None
+
+
+ArchiveScopeType = Literal["agent", "project", "source", "user", "run", "session"]
+ARCHIVE_SCOPE_TYPES: set[ArchiveScopeType] = {
+    "agent",
+    "project",
+    "source",
+    "user",
+    "run",
+    "session",
+}
+
+
+def _cli_service() -> MemoryOSService:
+    return MemoryOSService(settings=get_settings())
+
+
+def _archive_scope_type(value: str) -> ArchiveScopeType:
+    normalized = value.strip().lower()
+    if normalized not in ARCHIVE_SCOPE_TYPES:
+        raise ValueError(
+            "archive scope type must be one of: " + ", ".join(sorted(ARCHIVE_SCOPE_TYPES))
+        )
+    return cast(ArchiveScopeType, normalized)
+
+
+def _archive_source_ref_payload(
+    *,
+    source_type: str,
+    source_id: str,
+    session_id: str | None = None,
+) -> ArchiveSourceRefPayload:
+    return ArchiveSourceRefPayload.model_validate(
+        {
+            "source_type": source_type,
+            "source_id": source_id,
+            "session_id": session_id,
+        }
+    )
+
+
+@demo_app.command("agent")
+def demo_agent(
+    data_dir: Annotated[
+        Path | None,
+        Option(
+            "--data-dir",
+            help="Optional directory for demo storage; defaults to an isolated temp dir.",
+        ),
+    ] = None,
+) -> None:
+    """Run a deterministic LangGraph agent demo without calling a real LLM."""
+    if data_dir is None:
+        with TemporaryDirectory(prefix="memoryos-agent-demo-") as tmp_dir:
+            _run_agent_demo(Path(tmp_dir))
+        return
+    _run_agent_demo(data_dir)
+
+
+def _run_agent_demo(data_dir: Path) -> None:
+    from memoryos_lite.agent_graph import build_agent_graph
+
+    settings = Settings(data_dir=data_dir, openai_api_key=None, recent_message_limit=1)
+    service = MemoryOSService(settings=settings)
+    session = service.create_session("MemoryOS Lite agent demo")
+    seed_messages = [
+        "User first considered a Runbook Oncall Agent for the portfolio.",
+        (
+            "Final decision: build MemoryOS Lite as an eval-driven Agent/RAG "
+            "memory prototype with source attribution."
+        ),
+        "The demo should show citations, conflict review, and bounded tool loops.",
+    ]
+    for content in seed_messages:
+        service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
+    page = service.page(session.id)
+    if page is None:
+        raise RuntimeError("Agent demo setup failed to create a memory page.")
+
+    llm = _ScriptedAgentDemoLLM(page.id)
+    graph = build_agent_graph(service, session.id, settings=settings, llm=llm)
+    config = {"configurable": {"thread_id": "agent-demo"}}
+
+    recall_state = graph.invoke(
+        {
+            "messages": [HumanMessage(content="What project did the user decide to build?")],
+            "session_id": session.id,
+            "intent": "",
+            "should_page": False,
+            "context": None,
+            "conflict_detected": False,
+            "patch_errors": [],
+            "human_approved": False,
+            "result": "",
+            "tool_turns": 0,
+        },
+        config=config,
+    )
+    patch_state = graph.invoke(
+        {
+            "messages": [HumanMessage(content="Patch the page with the corrected positioning.")],
+            "session_id": session.id,
+            "intent": "",
+            "should_page": False,
+            "context": None,
+            "conflict_detected": False,
+            "patch_errors": [],
+            "human_approved": False,
+            "result": "",
+            "tool_turns": 0,
+        },
+        config={"configurable": {"thread_id": "agent-demo-patch"}},
+    )
+
+    console.print("[bold]Agent demo:[/bold] deterministic LangGraph run; no real LLM call")
+    console.print(f"[bold]Session:[/bold] {session.id}")
+    console.print(f"[bold]Paged memory:[/bold] {page.id} ({len(page.source_message_ids)} sources)")
+    console.print("\n[bold]Recall answer[/bold]")
+    console.print(recall_state["result"], markup=False)
+    console.print("\n[bold]Patch conflict review[/bold]")
+    errors = patch_state.get("patch_errors") or ["No patch errors recorded."]
+    for error in errors:
+        console.print(f"- {error}", markup=False)
+    trace_types = [
+        trace.event_type
+        for trace in service.store.list_traces(session.id)
+        if trace.event_type.startswith("agent_")
+    ]
+    console.print("\n[bold]Agent trace[/bold]")
+    console.print(", ".join(trace_types), markup=False)
+
+
+@archive_app.command("ingest")
+def archive_ingest(
+    document_id: Annotated[str, Option("--document-id")],
+    archive_id: Annotated[str | None, Option("--archive-id")] = None,
+    source_id: Annotated[str | None, Option("--source-doc-id")] = None,
+    file_id: Annotated[str | None, Option("--file-id")] = None,
+    title: Annotated[str, Option("--title")] = "Archive document",
+    content: Annotated[str, Option("--content")] = "",
+    source_type: Annotated[str, Option("--source-type")] = "document",
+    source_ref_id: Annotated[str, Option("--source-id")] = "manual_source",
+    session_id: Annotated[str | None, Option("--session-id")] = None,
+) -> None:
+    identity: dict[str, object]
+    if archive_id:
+        identity = {"kind": "archive", "archive_id": archive_id}
+    elif source_id:
+        identity = {"kind": "source", "source_id": source_id, "file_id": file_id}
+    elif file_id:
+        identity = {"kind": "file", "file_id": file_id}
+    else:
+        raise ValueError("archive ingest requires --archive-id, --source-doc-id, or --file-id")
+    service = _cli_service()
+    response = service.ingest_archive_document(
+        ArchiveDocumentIngestRequest.model_validate(
+            {
+                "document_id": document_id,
+                "title": title,
+                "content": content,
+                "source_refs": [
+                    _archive_source_ref_payload(
+                        source_type=source_type,
+                        source_id=source_ref_id,
+                        session_id=session_id,
+                    )
+                ],
+                "identity": identity,
+            }
+        )
+    )
+    table = Table(title="Archive ingest")
+    table.add_column("document")
+    table.add_column("passages")
+    table.add_row(response.document_id, ", ".join(response.passage_ids))
+    console.print(table)
+
+
+@archive_app.command("attach")
+def archive_attach(
+    archive_id: Annotated[str, Option("--archive-id")],
+    scope_type: Annotated[str, Option("--scope-type")],
+    scope_id: Annotated[str, Option("--scope-id")],
+    source_type: Annotated[str, Option("--source-type")] = "document",
+    source_ref_id: Annotated[str, Option("--source-id")] = "manual_source",
+    session_id: Annotated[str | None, Option("--session-id")] = None,
+) -> None:
+    service = _cli_service()
+    response = service.attach_archive(
+        ArchiveAttachmentRequest(
+            archive_id=archive_id,
+            scope_type=_archive_scope_type(scope_type),
+            scope_id=scope_id,
+            source_refs=[
+                _archive_source_ref_payload(
+                    source_type=source_type,
+                    source_id=source_ref_id,
+                    session_id=session_id,
+                )
+            ],
+        )
+    )
+    table = Table(title="Archive attachment")
+    table.add_column("archive")
+    table.add_column("scope")
+    table.add_column("passages")
+    table.add_row(
+        response.archive_id,
+        f"{response.scope_type}:{response.scope_id}",
+        str(response.passage_count),
+    )
+    console.print(table)
+
+
+@archive_app.command("passages")
+def archive_passages(
+    archive_id: Annotated[str | None, Option("--archive-id")] = None,
+    source_id: Annotated[str | None, Option("--source-doc-id")] = None,
+    file_id: Annotated[str | None, Option("--file-id")] = None,
+    producer: Annotated[str | None, Option("--producer")] = None,
+    limit: Annotated[int, Option("--limit")] = 100,
+    offset: Annotated[int, Option("--offset")] = 0,
+) -> None:
+    service = _cli_service()
+    response = service.list_archive_passages(
+        archive_id=archive_id,
+        source_id=source_id,
+        file_id=file_id,
+        producer=producer,
+        limit=limit,
+        offset=offset,
+    )
+    table = Table(title="Archive passages")
+    table.add_column("id")
+    table.add_column("archive")
+    table.add_column("source")
+    for passage in response.passages:
+        table.add_row(
+            passage.id,
+            passage.archive_id or "",
+            passage.source_id or passage.file_id or "",
+        )
+    console.print(table)
+
+
 @eval_app.command("run")
 def eval_run(
     run_id: str | None = None,
     baseline: Annotated[list[str] | None, Option("--baseline", "-b")] = None,
     isolated: bool = True,
+    case_set: Annotated[
+        str, Option("--case-set", "-c", help="builtin | advanced | hard | all")
+    ] = "builtin",
+    llm_judge: Annotated[
+        bool,
+        Option("--llm-judge", help="Score answers with the configured chat LLM judge"),
+    ] = False,
 ) -> None:
     """Run the built-in demo benchmark."""
     settings = get_settings()
     eval_run_id = run_id or datetime.now(UTC).strftime("run_%Y%m%d_%H%M%S")
+    if llm_judge:
+        verdicts = run_eval_llm(
+            settings,
+            run_id=eval_run_id,
+            baselines=baseline or ["all"],
+            isolated=isolated,
+            case_set=case_set,
+        )
+        table = Table(*LLM_JUDGE_TABLE_COLUMNS)
+        for row in _llm_judge_table_rows(verdicts):
+            table.add_row(*(row[column] for column in LLM_JUDGE_TABLE_COLUMNS))
+        console.print(table)
+        console.print(
+            f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}_llm_judge.json'}"
+        )
+        return
     results = run_eval(
         settings,
         run_id=eval_run_id,
         baselines=baseline or ["all"],
         isolated=isolated,
+        case_set=case_set,
     )
     table = Table(*EVAL_TABLE_COLUMNS)
     for row in _eval_table_rows(results):
         table.add_row(*(row[column] for column in EVAL_TABLE_COLUMNS))
     console.print(table)
     console.print(f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}.json'}")
+
+
+@eval_app.command("agent-answer")
+def eval_agent_answer(run_id: str | None = None) -> None:
+    """Run deterministic agent-answer diagnostics without real LLM/API calls."""
+    from memoryos_lite.agent_answer_eval import run_agent_answer_eval
+
+    settings = get_settings()
+    eval_run_id = run_id or datetime.now(UTC).strftime("agent_answer_%Y%m%d_%H%M%S")
+    summary = run_agent_answer_eval(settings, eval_run_id)
+    table = Table(*AGENT_ANSWER_TABLE_COLUMNS)
+    row = _agent_answer_table_row(summary)
+    table.add_row(*(row[column] for column in AGENT_ANSWER_TABLE_COLUMNS))
+    console.print(table)
+    console.print(
+        f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}_agent_answer.json'}"
+    )
+
+
+@eval_app.command("public")
+def eval_public(
+    benchmark: Annotated[str, Option("--benchmark", "-k", help="longmemeval | locomo")],
+    data_path: Annotated[str, Option("--data-path", "-d", help="Path to benchmark JSON")],
+    run_id: str | None = None,
+    baseline: Annotated[list[str] | None, Option("--baseline", "-b")] = None,
+    compare_baselines: Annotated[
+        bool,
+        Option(
+            "--compare-baselines",
+            help=("Run all public baselines; when set, this overrides any --baseline values."),
+        ),
+    ] = False,
+    limit: Annotated[int | None, Option("--limit", "-n", help="Max QA cases to run")] = None,
+    llm_answer: Annotated[
+        bool,
+        Option(
+            "--llm-answer/--no-llm-answer",
+            help="Generate answers with the configured chat LLM over retrieved context",
+        ),
+    ] = False,
+    llm_judge: Annotated[
+        bool,
+        Option("--llm-judge/--no-llm-judge", help="Score answers with the configured chat LLM"),
+    ] = False,
+    comparison_report: Annotated[
+        list[str] | None,
+        Option("--comparison-report", help="Previous public JSON report for case movement"),
+    ] = None,
+    repair_smoke_baseline_report: Annotated[
+        str | None,
+        Option(
+            "--repair-smoke-baseline-report",
+            help="Explicit baseline public JSON report for opt-in LoCoMo repair smoke",
+        ),
+    ] = None,
+    isolated: bool = True,
+) -> None:
+    """Run LongMemEval or LoCoMo JSON through the local benchmark adapter."""
+    settings = get_settings()
+    eval_run_id = run_id or datetime.now(UTC).strftime("public_%Y%m%d_%H%M%S")
+    selected_baselines = ["all"] if compare_baselines else baseline or ["memoryos_lite"]
+    results = run_public_benchmark(
+        settings,
+        benchmark=benchmark,
+        data_path=Path(data_path),
+        run_id=eval_run_id,
+        baselines=selected_baselines,
+        limit=limit,
+        llm_answer=llm_answer,
+        llm_judge=llm_judge,
+        isolated=isolated,
+        comparison_report_paths=[Path(path) for path in comparison_report or []],
+        repair_smoke_baseline_report_path=(
+            Path(repair_smoke_baseline_report) if repair_smoke_baseline_report is not None else None
+        ),
+    )
+    table = Table(*PUBLIC_TABLE_COLUMNS)
+    for row in _public_table_rows(results):
+        table.add_row(*(row[column] for column in PUBLIC_TABLE_COLUMNS))
+    console.print(table)
+    report_name = f"{eval_run_id}_{benchmark.lower()}.json"
+    console.print(f"[bold]Report:[/bold] {settings.data_dir / 'evals' / report_name}")
+
+
+@eval_app.command("manifest")
+def eval_manifest(
+    data_path: Annotated[str, Option("--data-path", "-d", help="Path to LongMemEval JSON")],
+    output_path: Annotated[
+        str, Option("--output", "-o", help="Output manifest path")
+    ] = ".memoryos/evals/manifests/longmemeval_50.json",
+    n: Annotated[int, Option("--n", help="Number of cases to sample")] = 50,
+    seed: Annotated[int, Option("--seed", help="Random seed for sampling")] = 42,
+) -> None:
+    """Create a fixed manifest for LongMemEval subset."""
+    from memoryos_lite.longmemeval_manifest import create_manifest
+
+    create_manifest(Path(data_path), Path(output_path), n=n, seed=seed)
+    console.print(f"[green]Manifest created:[/green] {output_path} ({n} cases, seed={seed})")
+
+
+@eval_app.command("diagnose")
+def eval_diagnose(
+    report_path: Annotated[str, Argument(help="Path to benchmark result JSON")],
+) -> None:
+    """Classify failure modes from a benchmark result file."""
+    from memoryos_lite.diagnostic_report import generate_report, load_results
+
+    results = load_results(Path(report_path))
+    report = generate_report(results)
+
+    console.print(f"\n[bold]Diagnostic Report[/bold] ({report['total_cases']} cases)\n")
+    console.print(f"Source hit rate: [green]{report['source_hit_rate']:.1%}[/green]\n")
+
+    console.print("[bold]Failure Breakdown:[/bold]")
+    for mode, count in sorted(report["failure_breakdown"].items(), key=lambda x: -x[1]):
+        pct = count / report["total_cases"] * 100 if report["total_cases"] > 0 else 0
+        color = "green" if mode == "pass" else "red"
+        console.print(f"  [{color}]{mode}[/{color}]: {count} ({pct:.0f}%)")
+
+    if report["typical_failures"]:
+        console.print("\n[bold]Typical Failures:[/bold]")
+        for mode, case_ids in report["typical_failures"].items():
+            console.print(f"  {mode}: {', '.join(case_ids)}")
+
+    item_contrib = report["item_contribution"]
+    console.print("\n[bold]Item Contribution:[/bold]")
+    console.print(f"  Item helped: {item_contrib['item_helped']}")
+    console.print(f"  Page only: {item_contrib['page_only']}")
+
+
+def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
+    grouped: dict[str, list[JudgeVerdict]] = {}
+    for result in results:
+        baseline = result.case_id.split("/", 1)[0] if "/" in result.case_id else "unknown"
+        grouped.setdefault(baseline, []).append(result)
+    rows: list[dict[str, str]] = []
+    for name, items in grouped.items():
+        passed = sum(1 for item in items if item.verdict == "pass")
+        errors = sum(1 for item in items if item.verdict == "error")
+        rows.append(
+            {
+                "baseline": name,
+                "cases": str(len(items)),
+                "pass_rate": f"{passed / len(items):.2f}",
+                "failed": str(sum(1 for item in items if item.verdict == "fail")),
+                "errors": str(errors),
+            }
+        )
+    return rows
+
+
+def _agent_answer_table_row(summary: Any) -> dict[str, str]:
+    refusal = (
+        "-"
+        if summary.refusal_when_no_evidence is None
+        else f"{summary.refusal_when_no_evidence:.2f}"
+    )
+    return {
+        "cases": str(summary.total_cases),
+        "has_citation": f"{summary.answer_has_citation:.2f}",
+        "uses_retrieved_source": f"{summary.answer_uses_retrieved_source:.2f}",
+        "no_evidence_refusal": refusal,
+        "unsupported_rate": f"{summary.unsupported_answer_rate:.2f}",
+    }
+
+
+def _public_table_rows(results: list[PublicBenchmarkResult]) -> list[dict[str, str]]:
+    grouped: dict[tuple[str, str], list[PublicBenchmarkResult]] = {}
+    for result in results:
+        grouped.setdefault((result.benchmark, result.baseline), []).append(result)
+    rows: list[dict[str, str]] = []
+    for (benchmark, baseline), items in grouped.items():
+        passed = sum(1 for item in items if item.verdict == "pass")
+        source_items = [item for item in items if item.source_hit is not None]
+        session_items = [item for item in items if item.session_hit is not None]
+        source_at_k_items = [item for item in items if item.source_hit_at_k is not None]
+        session_at_k_items = [item for item in items if item.session_hit_at_k is not None]
+        page_source_at_k_items = [
+            item for item in items if item.page_source_overlap_at_k is not None
+        ]
+        page_session_at_k_items = [
+            item for item in items if item.page_session_overlap_at_k is not None
+        ]
+        rows.append(
+            {
+                "benchmark": benchmark,
+                "baseline": baseline,
+                "cases": str(len(items)),
+                "pass_rate": f"{passed / len(items):.2f}",
+                "source_hit": _optional_rate(source_items, "source_hit"),
+                "session_hit": _optional_rate(session_items, "session_hit"),
+                "msg_src@5": _optional_rate(source_at_k_items, "source_hit_at_k"),
+                "msg_ses@5": _optional_rate(session_at_k_items, "session_hit_at_k"),
+                "page_src@k": _optional_rate(
+                    page_source_at_k_items,
+                    "page_source_overlap_at_k",
+                ),
+                "page_ses@k": _optional_rate(
+                    page_session_at_k_items,
+                    "page_session_overlap_at_k",
+                ),
+                "avg_tokens": str(sum(item.context_tokens for item in items) // len(items)),
+                "pages": f"{sum(item.page_count for item in items) / len(items):.1f}",
+                "loaded": f"{sum(item.loaded_pages for item in items) / len(items):.1f}",
+                "dropped": f"{sum(item.dropped_pages for item in items) / len(items):.1f}",
+                "srcs/page": _avg_page_sources(items),
+                "rel_dropped": str(sum(item.dropped_relevant_page_count for item in items)),
+                "sup_rec": str(sum(item.superseded_source_recovered for item in items)),
+                "cand_drop": str(sum(item.candidate_budget_dropped for item in items)),
+                "act_not5": str(sum(item.active_overlap_not_top5 for item in items)),
+                "avg_ms": str(sum(item.latency_ms for item in items) // len(items)),
+            }
+        )
+    return rows
+
+
+def _avg_page_sources(items: list[PublicBenchmarkResult]) -> str:
+    source_counts = [count for item in items for count in item.page_source_counts]
+    if not source_counts:
+        return "-"
+    return f"{sum(source_counts) / len(source_counts):.1f}"
+
+
+def _optional_rate(items: list[PublicBenchmarkResult], field_name: str) -> str:
+    if not items:
+        return "-"
+    hits = sum(1 for item in items if getattr(item, field_name) is True)
+    return f"{hits / len(items):.2f}"
 
 
 def _eval_table_rows(results: list[EvalResult]) -> list[dict[str, str]]:
