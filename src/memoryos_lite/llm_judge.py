@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -52,12 +53,18 @@ class LLMJudge:
     """GPT-as-judge for semantic evaluation of memory recall answers."""
 
     def __init__(self, settings: Settings) -> None:
-        if not settings.openai_api_key:
-            raise ValueError("openai_api_key required for LLM judge")
+        api_key = settings.chat_api_key
+        if not api_key:
+            raise ValueError(f"{settings.chat_api_key_name} required for LLM judge")
+        kwargs: dict[str, Any] = {}
+        if settings.chat_base_url:
+            kwargs["base_url"] = settings.chat_base_url
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=SecretStr(settings.openai_api_key),
+            model=settings.chat_model,
+            api_key=SecretStr(api_key),
             temperature=0.0,
+            timeout=settings.memoryos_llm_timeout_s,
+            **kwargs,
         )
 
     def judge(self, case: EvalCase, answer: str) -> JudgeVerdict:
@@ -68,13 +75,20 @@ class LLMJudge:
             f"Expected facts: {json.dumps(case.expected_facts, ensure_ascii=False)}\n"
             f"Forbidden facts: {json.dumps(case.forbidden_facts, ensure_ascii=False)}"
         )
-        response = self.llm.invoke(
-            [
-                SystemMessage(content=_SYSTEM_PROMPT),
-                HumanMessage(content=user_msg),
-            ]
-        )
-        return self._parse_response(case.case_id, response.content)
+        messages: list[SystemMessage | HumanMessage] = [
+            SystemMessage(content=_SYSTEM_PROMPT),
+            HumanMessage(content=user_msg),
+        ]
+        verdict = self._invoke_judge(case.case_id, messages)
+        if verdict.verdict == "error":
+            return self._invoke_judge(case.case_id, messages)
+        return verdict
+
+    def _invoke_judge(
+        self, case_id: str, messages: list[SystemMessage | HumanMessage]
+    ) -> JudgeVerdict:
+        response = self.llm.invoke(messages)
+        return self._parse_response(case_id, response.content)
 
     def judge_batch(self, cases: list[tuple[EvalCase, str]]) -> list[JudgeVerdict]:
         """Judge multiple (case, answer) pairs."""
@@ -90,9 +104,8 @@ class LLMJudge:
             if text.endswith("```"):
                 text = text[:-3]
             text = text.strip()
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
+        data = self._extract_json_object(text)
+        if data is None:
             return JudgeVerdict(
                 case_id=case_id,
                 verdict="error",
@@ -109,3 +122,18 @@ class LLMJudge:
             forbidden_present=data.get("forbidden_present", []),
             reasoning=data.get("reasoning", ""),
         )
+
+    @staticmethod
+    def _extract_json_object(text: str) -> dict[str, Any] | None:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            if start == -1:
+                return None
+            decoder = json.JSONDecoder()
+            try:
+                data, _ = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                return None
+        return data if isinstance(data, dict) else None

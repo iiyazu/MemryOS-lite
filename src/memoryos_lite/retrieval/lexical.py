@@ -5,6 +5,8 @@ Index is rebuilt only when the page set changes (detected via page ID + version 
 
 from __future__ import annotations
 
+import re
+
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
 from memoryos_lite.retrieval.base import SearchHit
@@ -13,8 +15,8 @@ from memoryos_lite.schemas import MemoryPage
 
 def tokenize(text: str) -> list[str]:
     """Bilingual tokenizer: Latin tokens + CJK unigrams + CJK bigrams."""
-    normalized = text.replace("/", " ").lower()
-    tokens: list[str] = [token for token in normalized.split() if token]
+    normalized = text.lower()
+    tokens: list[str] = re.findall(r"[a-z0-9]+", normalized)
     cjk_chars = [char for char in normalized if "一" <= char <= "鿿"]
     tokens.extend(cjk_chars)
     tokens.extend("".join(pair) for pair in zip(cjk_chars, cjk_chars[1:], strict=False))

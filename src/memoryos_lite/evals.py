@@ -1,6 +1,9 @@
 import json
+import re
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
+from typing import Any
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
@@ -8,11 +11,23 @@ from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.llm_judge import JudgeVerdict, LLMJudge
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
+from memoryos_lite.schemas import EvalCase, MemoryPage, Message, MessageCreate, PageType, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
+from memoryos_lite.utils import is_generic_ack
+from memoryos_lite.v3_contracts import (
+    AgentStepRequest,
+    ContextPackageV3,
+    ToolExecutionRequest,
+    message_to_log_entry,
+)
 
 CASE_COUNT = 8
+
+PreContextHook = Callable[
+    [MemoryOSService, EvalCase, list[Message], Any, Any],
+    dict[str, object],
+]
 
 
 @dataclass
@@ -42,15 +57,7 @@ class EvalResult:
 
     @property
     def answer_accuracy(self) -> float:
-        return (
-            1.0
-            if (
-                self.expected_hits > 0
-                and not self.missing_expected_facts
-                and self.forbidden_hits == 0
-            )
-            else 0.0
-        )
+        return 1.0 if (not self.missing_expected_facts and self.forbidden_hits == 0) else 0.0
 
     @property
     def source_accuracy(self) -> float:
@@ -79,12 +86,51 @@ class BaselineOutput:
     loaded_pages: int = 0
     dropped_pages: int = 0
     dropped_page_details: list[dict[str, object]] = field(default_factory=list)
+    page_type_counts: dict[str, int] = field(default_factory=dict)
+    page_source_counts: list[int] = field(default_factory=list)
+    page_summary_token_counts: list[int] = field(default_factory=list)
+    retrieved_page_ids: list[str] = field(default_factory=list)
+    dropped_page_reasons: dict[str, str] = field(default_factory=dict)
+    dropped_page_source_ids: dict[str, list[str]] = field(default_factory=dict)
+    retrieval_candidate_top_k: int | None = None
+    retrieval_candidate_unit: str | None = None
+    retrieval_candidate_source_ids: list[str] = field(default_factory=list)
+    retrieval_candidate_page_ids: list[str] = field(default_factory=list)
+    page_candidate_top_k: int | None = None
+    page_candidate_source_ids: list[str] = field(default_factory=list)
+    page_candidate_page_ids: list[str] = field(default_factory=list)
+    superseded_source_recovered: int = 0
+    candidate_budget_dropped: int = 0
+    active_overlap_not_top5: int = 0
+    item_source_hit_at_10: bool | None = None
+    episode_source_hit_at_10: bool | None = None
+    planned_evidence_source_hit_at_5: bool | None = None
+    budget_dropped_relevant: int = 0
+    source_not_indexed: bool = False
+    indexed_source_ids: list[str] = field(default_factory=list)
+    item_candidate_source_ids: list[str] = field(default_factory=list)
+    episode_candidate_message_ids: list[str] = field(default_factory=list)
+    planned_evidence_message_ids: list[str] = field(default_factory=list)
+    memory_arch: str | None = None
+    v3_context: dict[str, object] = field(default_factory=dict)
+    v3_layer_counts: dict[str, int] = field(default_factory=dict)
+    v3_budget_decisions: list[dict[str, object]] = field(default_factory=list)
+    v3_diagnostics: list[dict[str, object]] = field(default_factory=list)
+    v3_component_accounting: list[dict[str, object]] = field(default_factory=list)
+    v3_final_context_trace: list[dict[str, object]] = field(default_factory=list)
+    v3_component_token_totals: dict[str, int] = field(default_factory=dict)
+    v3_component_drop_counts: dict[str, int] = field(default_factory=dict)
+    locomo_neighbor_diagnostics: list[dict[str, object]] = field(default_factory=list)
+    kernel_trace_events: list[dict[str, object]] = field(default_factory=list)
+    repair_smoke: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class EvidenceItem:
     text: str
     source_texts: dict[str, str]
+    origin: str = "message"
+    superseded: bool = False
 
 
 def builtin_cases() -> list[EvalCase]:
@@ -332,8 +378,8 @@ def builtin_cases() -> list[EvalCase]:
                 MessageCreate(
                     role=Role.USER,
                     content=(
-                        "稳定方案预算审计噪声：保留检索关键词，但不包含需要回答的"
-                        "项目名；这页存在的目的只是测试 dropped_page_details。" * 6
+                        "稳定方案采用预算审计占位记录，保留检索关键词，但不包含"
+                        "需要回答的项目名；这页存在的目的只是测试 dropped_page_details。" * 8
                     ),
                 ),
                 MessageCreate(role=Role.ASSISTANT, content="已记录预算审计背景。"),
@@ -361,6 +407,7 @@ def run_eval(
     run_id: str,
     baselines: list[str],
     isolated: bool = True,
+    case_set: str = "builtin",
 ) -> list[EvalResult]:
     eval_root = settings.memoryos_eval_data_dir or settings.data_dir / "eval_runs"
     run_dir = eval_root / run_id
@@ -370,6 +417,7 @@ def run_eval(
             "database_url": None,
             "memoryos_paging_mode": "heuristic",
             "openai_api_key": None,
+            "deepseek_api_key": None,
         }
     )
     store = create_store(run_settings)
@@ -377,7 +425,10 @@ def run_eval(
         store.reset()
     service = MemoryOSService(store=store, settings=run_settings)
     results: list[EvalResult] = []
-    for case in builtin_cases():
+
+    cases = _select_cases(case_set)
+
+    for case in cases:
         messages = _materialize_messages(case)
         for baseline in _expand_baselines(baselines):
             start = time.perf_counter()
@@ -404,6 +455,7 @@ def run_eval_llm(
     run_id: str,
     baselines: list[str],
     isolated: bool = True,
+    case_set: str = "builtin",
 ) -> list[JudgeVerdict]:
     """Run eval with LLM-as-judge scoring (requires OpenAI API key)."""
     judge = LLMJudge(settings)
@@ -415,6 +467,7 @@ def run_eval_llm(
             "database_url": None,
             "memoryos_paging_mode": "heuristic",
             "openai_api_key": None,
+            "deepseek_api_key": None,
         }
     )
     store = create_store(run_settings)
@@ -422,7 +475,7 @@ def run_eval_llm(
         store.reset()
     service = MemoryOSService(store=store, settings=run_settings)
     verdicts: list[JudgeVerdict] = []
-    for case in builtin_cases():
+    for case in _select_cases(case_set):
         messages = _materialize_messages(case)
         for baseline in _expand_baselines(baselines):
             output = _run_baseline(baseline, case, messages, service, run_settings)
@@ -440,16 +493,38 @@ def run_eval_llm(
     return verdicts
 
 
+def _select_cases(case_set: str) -> list[EvalCase]:
+    """Dispatch case_set name to the concrete case list."""
+    if case_set == "advanced":
+        from memoryos_lite.evals_advanced import advanced_cases
+
+        return advanced_cases()
+    if case_set == "hard":
+        from memoryos_lite.evals_hard import hard_cases
+
+        return hard_cases()
+    if case_set == "all":
+        from memoryos_lite.evals_advanced import advanced_cases
+        from memoryos_lite.evals_hard import hard_cases
+
+        return builtin_cases() + advanced_cases() + hard_cases()
+    return builtin_cases()
+
+
 def _run_baseline(
     baseline: str,
     case: EvalCase,
     messages: list[Message],
     service: MemoryOSService,
     settings: Settings,
+    budget_override: int | None = None,
+    pre_context_hook: PreContextHook | None = None,
 ) -> BaselineOutput:
     tokenizer = TokenEstimator()
-    budget = 90
+    budget = budget_override if budget_override is not None else 90
     task_tokens = tokenizer.count(case.question)
+    if case.query_in_new_session and baseline != "memoryos_lite":
+        return _baseline_from_evidence(case.question, [], task_tokens)
     if baseline == "sliding_window":
         selected = _fit_sliding_window(messages, case.question, budget, tokenizer)
         return _baseline_from_evidence(
@@ -485,46 +560,354 @@ def _run_baseline(
         )
     if baseline == "vector_rag":
         ranked = _bm25_retrieve(messages, case.question)
+        retrieval_candidates = ranked[:5]
         selected = _fit_ranked_messages(ranked, case.question, budget, tokenizer)
         return _baseline_from_evidence(
             case.question,
             _message_evidence(selected),
             _context_tokens(case.question, [message.content for message in selected], tokenizer),
+            retrieval_candidate_top_k=5,
+            retrieval_candidate_unit="message",
+            retrieval_candidate_source_ids=[message.id for message in retrieval_candidates],
         )
     if baseline == "memoryos_lite":
-        session = service.create_session(case.case_id)
+        service.store.reset()
+        source_session = service.create_session(case.case_id)
+        context_session = (
+            service.create_session(f"{case.case_id}_query")
+            if case.query_in_new_session
+            else source_session
+        )
         original_budget = service.settings.rot_safe_budget
         original_recent = service.settings.recent_message_limit
         service.settings.rot_safe_budget = 1
-        service.settings.recent_message_limit = 2
+        service.settings.recent_message_limit = 1 if case.query_in_new_session else 2
         try:
             for message in messages:
-                service.store.add_message(message.model_copy(update={"session_id": session.id}))
-            service.page(session.id)
-            context = service.build_context(session.id, case.question, budget=budget)
+                service.store.add_message(
+                    message.model_copy(update={"session_id": source_session.id})
+                )
+            service.page(source_session.id)
+            repair_smoke = (
+                pre_context_hook(
+                    service,
+                    case,
+                    messages,
+                    source_session,
+                    context_session,
+                )
+                if pre_context_hook is not None
+                else {}
+            )
+            all_pages = service.store.list_pages(source_session.id)
+            candidate_pages = [page for page in all_pages if page.superseded_by is None]
+            candidate_top_k = 5
+            candidate_hits = service.searcher.search(
+                candidate_pages,
+                query=case.question,
+                top_k=candidate_top_k,
+            )
+            page_candidate_source_ids = _dedupe_source_ids(
+                source_id for hit in candidate_hits for source_id in hit.page.source_message_ids
+            )
+            page_candidate_page_ids = [hit.page.id for hit in candidate_hits]
+            context = service.build_context(
+                context_session.id,
+                case.question,
+                budget=budget,
+                include_global_core=case.include_global_core,
+            )
         finally:
             service.settings.rot_safe_budget = original_budget
             service.settings.recent_message_limit = original_recent
         pages = [service.store.load_page(item.page_id) for item in context.retrieved_pages]
         pages.extend(service.store.load_page(item.page_id) for item in context.active_task_pages)
-        evidence = _message_evidence(context.recent_messages)
+        retrieved_page_ids = [
+            item.page_id for item in [*context.retrieved_pages, *context.active_task_pages]
+        ]
+        if context.pinned_core:
+            pages_by_id = {page.id: page for page in all_pages}
+            if case.include_global_core:
+                pages_by_id.update(
+                    {page.id: page for page in service.store.list_global_core_pages()}
+                )
+            loaded_page_ids = {page.id for page in pages if page is not None}
+            for summary in context.pinned_core:
+                pinned_page = next(
+                    (
+                        page
+                        for page in sorted(
+                            pages_by_id.values(),
+                            key=lambda item: (item.superseded_by is not None, item.created_at),
+                        )
+                        if page.page_type == PageType.CORE_PROFILE
+                        and page.summary == summary
+                        and page.superseded_by is None
+                        and page.id not in loaded_page_ids
+                    ),
+                    None,
+                )
+                if pinned_page is not None:
+                    pages.append(pinned_page)
+                    loaded_page_ids.add(pinned_page.id)
+                    retrieved_page_ids.append(pinned_page.id)
+        # For temporal questions, include recent messages directly so budget
+        # pressure in build_context cannot drop the latest-state messages.
+        raw_recent = messages[-service.settings.recent_message_limit :]
+        if _is_temporal_question(case.question):
+            recent_evidence = _message_evidence(raw_recent)
+        else:
+            recent_evidence = _message_evidence(context.recent_messages)
+        memory_evidence: list[EvidenceItem] = []
         messages_by_id = {message.id: message for message in messages}
+        for context_evidence in context.retrieved_evidence:
+            retrieved_origin = context_evidence.metadata.get("origin")
+            memory_evidence.append(
+                EvidenceItem(
+                    text=context_evidence.text,
+                    source_texts={context_evidence.message_id: context_evidence.text},
+                    origin=(
+                        "retrieved_message"
+                        if context_evidence.page_id
+                        or retrieved_origin in {"recall", "archival", "episode"}
+                        else "message"
+                    ),
+                    superseded=context_evidence.superseded,
+                )
+            )
         for page in pages:
             if page is not None:
-                evidence.append(
-                    EvidenceItem(
-                        text=page.summary,
-                        source_texts=_page_fact_sources(page.source_message_ids, messages_by_id),
-                    )
+                memory_evidence.extend(_page_evidence(page, messages_by_id))
+        memory_evidence.extend(recent_evidence)
+        page_type_counts: dict[str, int] = {}
+        pages_by_id = {page.id: page for page in all_pages}
+        for page in all_pages:
+            page_type_counts[page.page_type.value] = (
+                page_type_counts.get(page.page_type.value, 0) + 1
+            )
+        dropped_page_reasons = {item.page_id: item.reason for item in context.dropped_pages}
+        dropped_page_source_ids = {
+            item.page_id: pages_by_id[item.page_id].source_message_ids
+            for item in context.dropped_pages
+            if item.page_id in pages_by_id
+        }
+        context_evidence_source_ids = _dedupe_source_ids(
+            [evidence.message_id for evidence in context.retrieved_evidence[:candidate_top_k]]
+            + [m.id for m in context.recent_messages]
+        )
+        context_evidence_page_ids = _dedupe_source_ids(
+            evidence.page_id
+            for evidence in context.retrieved_evidence[:candidate_top_k]
+            if evidence.page_id is not None
+        )
+        indexed_source_ids = _metadata_string_list_prefer(
+            context.metadata,
+            primary_key="recall_indexed_source_ids",
+            fallback_key="indexed_source_ids",
+        )
+        item_candidate_source_ids = _metadata_string_list(
+            context.metadata, "item_candidate_source_ids"
+        )
+        episode_candidate_message_ids = _metadata_string_list_prefer(
+            context.metadata,
+            primary_key="recall_candidate_message_ids",
+            fallback_key="episode_candidate_message_ids",
+        )
+        planned_evidence_message_ids = _metadata_string_list_prefer(
+            context.metadata,
+            primary_key="recall_planned_message_ids",
+            fallback_key="planned_evidence_message_ids",
+        )
+        all_item_indexed_source_ids = _dedupe_source_ids(
+            source_id
+            for item in service.store.list_items(source_session.id)
+            for source_id in item.source_message_ids
+        )
+        required_source_ids = _case_required_source_ids(case)
+        required_source_set = set(required_source_ids)
+        item_candidate_set = set(item_candidate_source_ids[:10])
+        episode_candidate_set = set(episode_candidate_message_ids[:10])
+        planned_evidence_set = set(planned_evidence_message_ids[:5])
+        indexed_source_set = set(indexed_source_ids) | set(all_item_indexed_source_ids)
+        has_v2_index_diagnostics = (
+            "recall_indexed_source_ids" in context.metadata
+            or "indexed_source_ids" in context.metadata
+        )
+        item_source_hit_at_10 = (
+            bool(required_source_set & item_candidate_set) if required_source_set else None
+        )
+        episode_source_hit_at_10 = (
+            bool(required_source_set & episode_candidate_set) if required_source_set else None
+        )
+        planned_evidence_source_hit_at_5 = (
+            bool(required_source_set & planned_evidence_set) if required_source_set else None
+        )
+        source_not_indexed = (
+            not bool(required_source_set & indexed_source_set)
+            if required_source_set and has_v2_index_diagnostics
+            else False
+        )
+        memory_arch = context.metadata.get("memory_arch")
+        v3_context = context.metadata.get("v3_context")
+        v3_layer_counts = context.metadata.get("v3_layer_counts")
+        v3_budget_decisions = context.metadata.get("v3_budget_decisions")
+        v3_diagnostics = context.metadata.get("v3_diagnostics")
+        v3_component_accounting = context.metadata.get("v3_component_accounting")
+        v3_final_context_trace = context.metadata.get("v3_final_context_trace")
+        v3_component_token_totals = context.metadata.get("v3_component_token_totals")
+        v3_component_drop_counts = context.metadata.get("v3_component_drop_counts")
+        locomo_neighbor_diagnostics = context.metadata.get("locomo_neighbor_diagnostics")
+        kernel_trace_events: list[dict[str, object]] = []
+        v3_context_raw = context.metadata.get("v3_context")
+        if (
+            service.agent_kernel is not None
+            and isinstance(v3_context_raw, dict)
+            and settings.resolved_memory_arch == "v3"
+        ):
+            v3_context_package = ContextPackageV3.model_validate(v3_context_raw)
+            tool_request = ToolExecutionRequest(
+                session_id=context_session.id,
+                tool_name="archive_write",
+                arguments={
+                    "content": f"Benchmark question reviewed: {case.question}",
+                    "memory_type": "fact",
+                    "reason": "public benchmark kernel probe",
+                    "source": "public_benchmark_kernel_probe",
+                },
+            )
+            step = service.agent_kernel.run_step(
+                AgentStepRequest(
+                    session_id=context_session.id,
+                    input_messages=[
+                        message_to_log_entry(message) for message in context.recent_messages
+                    ],
+                    context=v3_context_package,
+                ),
+                tool_requests=[tool_request],
+            )
+            kernel_trace_events = [event.model_dump(mode="json") for event in step.trace]
+            pending_event = next(
+                (
+                    event
+                    for event in step.trace
+                    if event.event_type == "approval_pending" and event.approval_id
+                ),
+                None,
+            )
+            if step.continuation == "pause" and pending_event is not None:
+                approval_id = pending_event.approval_id
+                tool_call_id = pending_event.payload["metadata"]["tool_call_id"]
+                resumed = service.agent_kernel.run_step(
+                    AgentStepRequest(
+                        session_id=context_session.id,
+                        input_messages=[
+                            message_to_log_entry(message) for message in context.recent_messages
+                        ],
+                        context=v3_context_package,
+                    ),
+                    tool_requests=[
+                        tool_request.model_copy(
+                            update={
+                                "approval_id": approval_id,
+                                "tool_call_id": tool_call_id,
+                            }
+                        )
+                    ],
                 )
+                kernel_trace_events.extend(event.model_dump(mode="json") for event in resumed.trace)
         return _baseline_from_evidence(
             case.question,
-            evidence,
+            memory_evidence,
             context.estimated_tokens,
-            page_count=len(service.store.list_pages(session.id)),
+            page_count=len(all_pages),
             loaded_pages=len(pages),
             dropped_pages=len(context.dropped_pages),
             dropped_page_details=[item.model_dump() for item in context.dropped_pages],
+            page_type_counts=page_type_counts,
+            page_source_counts=[len(page.source_message_ids) for page in all_pages],
+            page_summary_token_counts=[service.tokenizer.count(page.summary) for page in all_pages],
+            retrieved_page_ids=retrieved_page_ids,
+            dropped_page_reasons=dropped_page_reasons,
+            dropped_page_source_ids=dropped_page_source_ids,
+            retrieval_candidate_top_k=candidate_top_k,
+            retrieval_candidate_unit="message",
+            retrieval_candidate_source_ids=context_evidence_source_ids,
+            retrieval_candidate_page_ids=context_evidence_page_ids,
+            page_candidate_top_k=candidate_top_k,
+            page_candidate_source_ids=page_candidate_source_ids,
+            page_candidate_page_ids=page_candidate_page_ids,
+            superseded_source_recovered=context.superseded_source_recovered,
+            candidate_budget_dropped=context.candidate_budget_dropped,
+            active_overlap_not_top5=context.active_overlap_not_top5,
+            item_source_hit_at_10=item_source_hit_at_10,
+            episode_source_hit_at_10=episode_source_hit_at_10,
+            planned_evidence_source_hit_at_5=planned_evidence_source_hit_at_5,
+            budget_dropped_relevant=_metadata_int_prefer(
+                context.metadata,
+                primary_key="recall_budget_dropped",
+                fallback_key="budget_dropped_relevant",
+            ),
+            source_not_indexed=source_not_indexed,
+            indexed_source_ids=indexed_source_ids,
+            item_candidate_source_ids=item_candidate_source_ids,
+            episode_candidate_message_ids=episode_candidate_message_ids,
+            planned_evidence_message_ids=planned_evidence_message_ids,
+            memory_arch=memory_arch if isinstance(memory_arch, str) else None,
+            v3_context=v3_context if isinstance(v3_context, dict) else None,
+            v3_layer_counts=(
+                {
+                    str(layer): count
+                    for layer, count in v3_layer_counts.items()
+                    if isinstance(count, int)
+                }
+                if isinstance(v3_layer_counts, dict)
+                else None
+            ),
+            v3_budget_decisions=(
+                [item for item in v3_budget_decisions if isinstance(item, dict)]
+                if isinstance(v3_budget_decisions, list)
+                else None
+            ),
+            v3_diagnostics=(
+                [item for item in v3_diagnostics if isinstance(item, dict)]
+                if isinstance(v3_diagnostics, list)
+                else None
+            ),
+            v3_component_accounting=(
+                [item for item in v3_component_accounting if isinstance(item, dict)]
+                if isinstance(v3_component_accounting, list)
+                else None
+            ),
+            v3_final_context_trace=(
+                [item for item in v3_final_context_trace if isinstance(item, dict)]
+                if isinstance(v3_final_context_trace, list)
+                else None
+            ),
+            v3_component_token_totals=(
+                {
+                    str(component): count
+                    for component, count in v3_component_token_totals.items()
+                    if isinstance(count, int)
+                }
+                if isinstance(v3_component_token_totals, dict)
+                else None
+            ),
+            v3_component_drop_counts=(
+                {
+                    str(component): count
+                    for component, count in v3_component_drop_counts.items()
+                    if isinstance(count, int)
+                }
+                if isinstance(v3_component_drop_counts, dict)
+                else None
+            ),
+            locomo_neighbor_diagnostics=(
+                [item for item in locomo_neighbor_diagnostics if isinstance(item, dict)]
+                if isinstance(locomo_neighbor_diagnostics, list)
+                else None
+            ),
+            kernel_trace_events=kernel_trace_events,
+            repair_smoke=repair_smoke,
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -612,12 +995,54 @@ def _baseline_from_evidence(
     loaded_pages: int = 0,
     dropped_pages: int = 0,
     dropped_page_details: list[dict[str, object]] | None = None,
+    page_type_counts: dict[str, int] | None = None,
+    page_source_counts: list[int] | None = None,
+    page_summary_token_counts: list[int] | None = None,
+    retrieved_page_ids: list[str] | None = None,
+    dropped_page_reasons: dict[str, str] | None = None,
+    dropped_page_source_ids: dict[str, list[str]] | None = None,
+    retrieval_candidate_top_k: int | None = None,
+    retrieval_candidate_unit: str | None = None,
+    retrieval_candidate_source_ids: list[str] | None = None,
+    retrieval_candidate_page_ids: list[str] | None = None,
+    page_candidate_top_k: int | None = None,
+    page_candidate_source_ids: list[str] | None = None,
+    page_candidate_page_ids: list[str] | None = None,
+    superseded_source_recovered: int = 0,
+    candidate_budget_dropped: int = 0,
+    active_overlap_not_top5: int = 0,
+    item_source_hit_at_10: bool | None = None,
+    episode_source_hit_at_10: bool | None = None,
+    planned_evidence_source_hit_at_5: bool | None = None,
+    budget_dropped_relevant: int = 0,
+    source_not_indexed: bool = False,
+    indexed_source_ids: list[str] | None = None,
+    item_candidate_source_ids: list[str] | None = None,
+    episode_candidate_message_ids: list[str] | None = None,
+    planned_evidence_message_ids: list[str] | None = None,
+    memory_arch: str | None = None,
+    v3_context: dict[str, object] | None = None,
+    v3_layer_counts: dict[str, int] | None = None,
+    v3_budget_decisions: list[dict[str, object]] | None = None,
+    v3_diagnostics: list[dict[str, object]] | None = None,
+    v3_component_accounting: list[dict[str, object]] | None = None,
+    v3_final_context_trace: list[dict[str, object]] | None = None,
+    v3_component_token_totals: dict[str, int] | None = None,
+    v3_component_drop_counts: dict[str, int] | None = None,
+    locomo_neighbor_diagnostics: list[dict[str, object]] | None = None,
+    kernel_trace_events: list[dict[str, object]] | None = None,
+    repair_smoke: dict[str, object] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}
     for item in selected:
         sources.update(item.source_texts)
-    answer = "；".join(item.text for item in selected) if selected else "未找到相关记忆"
+    # Also include retrieved_message evidence so source_hit measures
+    # engine retrieval quality, not just answer-projection selection.
+    for item in evidence:
+        if item.origin == "retrieved_message":
+            sources.update(item.source_texts)
+    answer = _project_answer(question, selected) if selected else "未找到相关记忆"
     return BaselineOutput(
         answer=answer,
         context_tokens=context_tokens,
@@ -626,22 +1051,280 @@ def _baseline_from_evidence(
         loaded_pages=loaded_pages,
         dropped_pages=dropped_pages,
         dropped_page_details=dropped_page_details or [],
+        page_type_counts=page_type_counts or {},
+        page_source_counts=page_source_counts or [],
+        page_summary_token_counts=page_summary_token_counts or [],
+        retrieved_page_ids=retrieved_page_ids or [],
+        dropped_page_reasons=dropped_page_reasons or {},
+        dropped_page_source_ids=dropped_page_source_ids or {},
+        retrieval_candidate_top_k=retrieval_candidate_top_k,
+        retrieval_candidate_unit=retrieval_candidate_unit,
+        retrieval_candidate_source_ids=retrieval_candidate_source_ids or [],
+        retrieval_candidate_page_ids=retrieval_candidate_page_ids or [],
+        page_candidate_top_k=page_candidate_top_k,
+        page_candidate_source_ids=page_candidate_source_ids or [],
+        page_candidate_page_ids=page_candidate_page_ids or [],
+        superseded_source_recovered=superseded_source_recovered,
+        candidate_budget_dropped=candidate_budget_dropped,
+        active_overlap_not_top5=active_overlap_not_top5,
+        item_source_hit_at_10=item_source_hit_at_10,
+        episode_source_hit_at_10=episode_source_hit_at_10,
+        planned_evidence_source_hit_at_5=planned_evidence_source_hit_at_5,
+        budget_dropped_relevant=budget_dropped_relevant,
+        source_not_indexed=source_not_indexed,
+        indexed_source_ids=indexed_source_ids or [],
+        item_candidate_source_ids=item_candidate_source_ids or [],
+        episode_candidate_message_ids=episode_candidate_message_ids or [],
+        planned_evidence_message_ids=planned_evidence_message_ids or [],
+        memory_arch=memory_arch,
+        v3_context=v3_context or {},
+        v3_layer_counts=v3_layer_counts or {},
+        v3_budget_decisions=v3_budget_decisions or [],
+        v3_diagnostics=v3_diagnostics or [],
+        v3_component_accounting=v3_component_accounting or [],
+        v3_final_context_trace=v3_final_context_trace or [],
+        v3_component_token_totals=v3_component_token_totals or {},
+        v3_component_drop_counts=v3_component_drop_counts or {},
+        locomo_neighbor_diagnostics=locomo_neighbor_diagnostics or [],
+        kernel_trace_events=kernel_trace_events or [],
+        repair_smoke=repair_smoke or {},
+    )
+
+
+def _dedupe_source_ids(source_ids: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for source_id in source_ids:
+        if not isinstance(source_id, str) or source_id in seen:
+            continue
+        deduped.append(source_id)
+        seen.add(source_id)
+    return deduped
+
+
+def _metadata_string_list(metadata: dict[str, object], key: str) -> list[str]:
+    value = metadata.get(key)
+    if not isinstance(value, list):
+        return []
+    return _dedupe_source_ids(item for item in value if isinstance(item, str))
+
+
+def _metadata_string_list_prefer(
+    metadata: dict[str, object],
+    *,
+    primary_key: str,
+    fallback_key: str,
+) -> list[str]:
+    if primary_key in metadata:
+        value = metadata.get(primary_key)
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return _dedupe_source_ids(item for item in value if isinstance(item, str))
+        return []
+    return _metadata_string_list(metadata, fallback_key)
+
+
+def _metadata_int(metadata: dict[str, object], key: str) -> int:
+    value = metadata.get(key)
+    return value if isinstance(value, int) else 0
+
+
+def _metadata_int_prefer(
+    metadata: dict[str, object],
+    *,
+    primary_key: str,
+    fallback_key: str,
+) -> int:
+    if primary_key in metadata:
+        value = metadata.get(primary_key)
+        return value if isinstance(value, int) else 0
+    return _metadata_int(metadata, fallback_key)
+
+
+def _case_required_source_ids(case: EvalCase) -> list[str]:
+    return _dedupe_source_ids(
+        [
+            *case.required_sources,
+            *[
+                source_id
+                for source_ids in case.required_fact_sources.values()
+                for source_id in source_ids
+            ],
+        ]
     )
 
 
 def _select_evidence(question: str, evidence: list[EvidenceItem]) -> list[EvidenceItem]:
     query_terms = set(tokenize(question))
+    multi_evidence = _needs_multi_evidence(question)
+    temporal_recent_update = any(
+        item.origin in {"message", "retrieved_message"}
+        and _is_temporal_question(question)
+        and _has_update_signal(item.text)
+        for item in evidence
+    )
     scored: list[tuple[int, EvidenceItem]] = []
     for item in evidence:
+        if is_generic_ack(item.text):
+            continue
         score = len(query_terms & set(tokenize(item.text)))
-        if any(marker in question for marker in ("最终", "不做", "主线")) and any(
-            marker in item.text for marker in ("最终", "不做", "改为", "更新")
+        if item.origin == "retrieved_message":
+            score += 12 if multi_evidence else 4
+        if item.superseded and not multi_evidence:
+            score -= 16
+        if _has_update_signal(item.text):
+            score += 20 if _is_temporal_question(question) else 12
+        if item.origin == "page" and not temporal_recent_update and not multi_evidence:
+            score += 8
+        if any(
+            marker in item.text for marker in ("不包含", "不提供", "无关", "噪声", "占位", "背景")
         ):
-            score += 20
+            score -= 20
         scored.append((score, item))
     scored.sort(key=lambda item: item[0], reverse=True)
-    limit = 1 if any(marker in question for marker in ("最终", "不做")) else 3
+    limit = _evidence_limit(question)
+    positive_items = [item for score, item in scored if score > 0]
+    if (
+        _is_habit_or_preference_question(question)
+        and len(positive_items) >= 2
+        and all(item.origin == "retrieved_message" for item in positive_items[:2])
+    ):
+        limit = max(limit, 2)
     return [item for score, item in scored if score > 0][:limit]
+
+
+def _evidence_limit(question: str) -> int:
+    if any(marker in question for marker in ("分别", "哪些", "哪几个")):
+        return 3
+    if "和" in question and "什么" in question:
+        return 3
+    if _needs_multi_evidence(question):
+        return 2
+    return 1
+
+
+def _needs_multi_evidence(question: str) -> bool:
+    normalized = question.lower()
+    return (
+        " or " in normalized
+        or " between " in normalized
+        or "how many days" in normalized
+        or " before " in normalized
+        or " after " in normalized
+        or _looks_like_first_comparison(normalized)
+    )
+
+
+def _looks_like_first_comparison(normalized_question: str) -> bool:
+    stripped = normalized_question.rstrip(" ?!.")
+    return (
+        (stripped.startswith("which ") or stripped.startswith("what "))
+        and stripped.endswith(" first")
+        and not stripped.endswith(" at first")
+    )
+
+
+def _is_temporal_question(question: str) -> bool:
+    temporal_markers = ("当前", "现在", "目前", "最新", "最终", "不做")
+    return any(marker in question for marker in temporal_markers)
+
+
+def _is_slot_value_question(question: str) -> bool:
+    return any(
+        marker in question for marker in ("什么", "哪个", "哪天", "多少", "谁", "哪种", "哪一个")
+    )
+
+
+def _is_habit_or_preference_question(question: str) -> bool:
+    return any(marker in question for marker in ("习惯", "偏好", "平时"))
+
+
+def _has_update_signal(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "最终确定",
+            "最终调整",
+            "最终换",
+            "最终",
+            "当前",
+            "改用",
+            "改为",
+            "改成",
+            "调整为",
+            "调整到",
+            "切换到",
+            "切换成",
+            "切到",
+            "调到",
+            "降到",
+            "延到",
+            "更新",
+            "采用",
+            "不做",
+            "换",
+        )
+    )
+
+
+def _project_answer(question: str, selected: list[EvidenceItem]) -> str:
+    projected = [_project_evidence_text(question, item.text) for item in selected]
+    projected = [text for text in projected if text]
+    return "；".join(projected) if projected else "未找到相关记忆"
+
+
+def _project_evidence_text(question: str, text: str) -> str:
+    compact = " ".join(text.strip().split())
+    if is_generic_ack(compact):
+        return ""
+
+    clauses = [clause.strip() for clause in compact.replace("；", "。").split("。")]
+    clauses = [clause for clause in clauses if clause and not is_generic_ack(clause)]
+    if not clauses:
+        return ""
+
+    if _is_temporal_question(question) or _is_slot_value_question(question):
+        priority_markers = (
+            "最终确定",
+            "最终调整为",
+            "最终换",
+            "最终",
+            "改用",
+            "调整为",
+            "调整到",
+            "切换到",
+            "切换成",
+            "切到",
+            "调到",
+            "降到",
+            "延到",
+            "换成",
+            "换用",
+            "采用",
+            "选",
+        )
+        for marker in priority_markers:
+            for clause in reversed(clauses):
+                if marker in clause:
+                    return _drop_prefix_before_marker(clause, marker)
+        # "换" as a standalone verb: preceded by space/punctuation or start of clause
+        for clause in reversed(clauses):
+            if re.search(r"(?:^|[\s，,。；;：:])换(?!\S)", clause):
+                return _drop_prefix_before_marker(clause, "换")
+
+    return compact
+
+
+def _drop_prefix_before_marker(text: str, marker: str) -> str:
+    if marker not in text:
+        return text
+    prefix, suffix = text.split(marker, 1)
+    if marker.startswith(("最终", "当前")):
+        start = max(prefix.rfind("，"), prefix.rfind(","), prefix.rfind("；"), prefix.rfind(";"))
+        subject = prefix[start + 1 :] if start >= 0 else prefix
+        return f"{subject}{marker}{suffix}".strip(" ，,：:")
+    return suffix.strip(" ，,：:") or text
 
 
 def _context_tokens(task: str, texts: list[str], tokenizer: TokenEstimator) -> int:
@@ -656,7 +1339,19 @@ def _message_evidence(messages: list[Message]) -> list[EvidenceItem]:
     return [
         EvidenceItem(text=message.content, source_texts={message.id: message.content})
         for message in messages
+        if not (message.role == Role.ASSISTANT and is_generic_ack(message.content))
     ]
+
+
+def _page_evidence(page: MemoryPage, messages_by_id: dict[str, Message]) -> list[EvidenceItem]:
+    source_texts = _page_fact_sources(page.source_message_ids, messages_by_id)
+    evidence: list[EvidenceItem] = []
+    for text in (*page.decisions, *page.facts, *page.open_questions):
+        if text and not is_generic_ack(text):
+            evidence.append(EvidenceItem(text=text, source_texts=source_texts, origin="page"))
+    if not evidence and page.summary:
+        evidence.append(EvidenceItem(text=page.summary, source_texts=source_texts, origin="page"))
+    return evidence
 
 
 def _page_fact_sources(

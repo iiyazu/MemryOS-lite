@@ -11,8 +11,6 @@ migration because the project had no prior revisions.
 
 from __future__ import annotations
 
-from typing import Any
-
 import sqlalchemy as sa
 
 from alembic import op
@@ -24,28 +22,7 @@ branch_labels: str | None = None
 depends_on: str | None = None
 
 
-EMBEDDING_DIM = 1536
-
-
-def _embedding_column() -> sa.Column[Any]:
-    """Return an embedding column typed per dialect.
-
-    Postgres gets ``vector(1536)`` via pgvector; SQLite falls back to ``TEXT``
-    holding a JSON-encoded array so dev/test stays single-file.
-    """
-    bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        from pgvector.sqlalchemy import Vector  # imported lazily to keep SQLite envs lean
-
-        return sa.Column("embedding", Vector(EMBEDDING_DIM), nullable=True)
-    return sa.Column("embedding", sa.Text(), nullable=True)
-
-
 def upgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-
     op.create_table(
         "sessions",
         sa.Column("id", sa.String(length=64), primary_key=True),
@@ -77,7 +54,7 @@ def upgrade() -> None:
         sa.Column("source_message_ids_json", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("confidence", sa.Integer(), nullable=False, server_default="80"),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
-        _embedding_column(),
+        sa.Column("embedding", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
     )
