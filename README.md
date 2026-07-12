@@ -1,5 +1,8 @@
 # MemoryOS Lite
 
+[![CI](https://github.com/iiyazu/MemryOS-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/iiyazu/MemryOS-lite/actions/workflows/ci.yml)
+[License: MIT](LICENSE)
+
 面向长对话的 eval-driven、source-attributed Agent/RAG memory prototype。
 
 MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文组装和来源证明做成可测、可追溯的闭环。它是原型，不是生产级 MemoryOS：当前服务没有完整的远程认证、多租户、限流或生产 ownership model。
