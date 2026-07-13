@@ -9,6 +9,7 @@ from memoryos_lite.core_memory import CoreMemoryService
 from memoryos_lite.memory_lifecycle import MemoryLifecycleService
 from memoryos_lite.schemas import new_id, utc_now
 from memoryos_lite.store import MemoryStore
+from memoryos_lite.store_protocols import PromotionMaintenanceStore
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
     ApprovalState,
@@ -260,7 +261,7 @@ class ArchiveMaintenanceService:
 
 @dataclass
 class PromotionMaintenanceService:
-    store: MemoryStore
+    store: PromotionMaintenanceStore
     lifecycle: MemoryLifecycleService | None = None
 
     def __post_init__(self) -> None:
