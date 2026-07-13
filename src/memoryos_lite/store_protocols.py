@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from typing import Any, Literal, Protocol, runtime_checkable
+
+from sqlalchemy.orm import Session as DbSession
 
 from memoryos_lite.schemas import Episode, Message
 from memoryos_lite.v3_contracts import (
@@ -89,6 +92,16 @@ class MemoryLifecycleStore(Protocol):
         *,
         status: PromotionStatus,
         metadata: dict[str, Any] | None = None,
+    ) -> PromotionCandidate | None: ...
+
+
+@runtime_checkable
+class PromotionMaintenanceStore(CoreMemoryStore, MemoryLifecycleStore, Protocol):
+    def db(self) -> AbstractContextManager[DbSession]: ...
+
+    def get_promotion_candidate(
+        self,
+        candidate_id: str,
     ) -> PromotionCandidate | None: ...
 
 
