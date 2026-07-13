@@ -38,8 +38,7 @@ def test_promotion_maintenance_store_contract_preserves_schema_and_rolls_back(tm
         with store.db() as db:
             db.execute(
                 text(
-                    "insert into sessions (id, title, created_at) "
-                    "values (:id, :title, :created_at)"
+                    "insert into sessions (id, title, created_at) values (:id, :title, :created_at)"
                 ),
                 {
                     "id": "session_rollback",
