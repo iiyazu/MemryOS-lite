@@ -170,11 +170,17 @@ class TraceEvent(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class BuildContextResponseProfile(StrEnum):
+    FULL = "full"
+    SOURCE_EVIDENCE_V1 = "source_evidence/v1"
+
+
 class BuildContextRequest(BaseModel):
     task: str
     budget: int | None = Field(default=None, gt=0)
     retrieval_query: str | None = None
     include_global_core: bool = False
+    response_profile: BuildContextResponseProfile = BuildContextResponseProfile.FULL
 
 
 class SearchRequest(BaseModel):
