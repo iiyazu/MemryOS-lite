@@ -13,7 +13,7 @@ from memoryos_lite.public_failure_replay import (
     validate_phase9_case_coverage,
 )
 
-REPORT_PATH = Path(".memoryos/evals/phase8_locomo50_20260522T151605Z_locomo.json")
+REPORT_PATH = Path(__file__).parent / "fixtures/public_failure_replay/phase8_cases.json"
 CONTEXT_BUNDLE = "tests/fixtures/public_failure_replay/phase9_context_bundle.md"
 
 REQUIRED_REPLAY_FIELDS = {
