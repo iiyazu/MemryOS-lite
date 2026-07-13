@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from memoryos_lite.schemas import new_id, utc_now
-from memoryos_lite.store import MemoryStore
+from memoryos_lite.store_protocols import CoreMemoryStore
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
     ApprovalState,
@@ -88,7 +88,7 @@ def _format_metadata(metadata: dict[str, Any]) -> str:
 
 @dataclass
 class CoreMemoryService:
-    store: MemoryStore
+    store: CoreMemoryStore
     tokenizer: TokenEstimator
 
     def create_block(

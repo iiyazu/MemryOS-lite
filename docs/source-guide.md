@@ -26,7 +26,12 @@ MemoryOSService
 |---|---|
 | `config.py` | Runtime settings, feature flags, LLM/Qdrant configuration. |
 | `schemas.py` | Pydantic models for messages, episodes, pages, items, traces, context, evals. |
-| `store.py` | SQLite persistence, JSON debug mirrors, trace storage, episode backfill. |
+| `store.py` | Thin public `MemoryStore` composition root and stable imports. |
+| `store_models.py` / `store_runtime.py` | SQLite schema, engine lifecycle, migrations, and transactions. |
+| `store_sessions.py` | Session, message, episode, and recall-watermark persistence. |
+| `store_archive.py` | Core/archive documents, passages, attachments, and governed-memory persistence. |
+| `store_legacy.py` | Page/item indexes, patches, traces, debug mirrors, and maintenance. |
+| `store_protocols.py` | Consumer-specific structural persistence contracts. |
 | `engine.py` | Application facade and v1 context/paging orchestration. |
 | `retrieval/` | Search primitives and v2 recall helpers. |
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |

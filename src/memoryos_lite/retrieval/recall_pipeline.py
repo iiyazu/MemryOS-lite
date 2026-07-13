@@ -21,7 +21,7 @@ from memoryos_lite.config import Settings
 from memoryos_lite.retrieval.episode_searcher import EpisodeHit, RecallMemorySearcher
 from memoryos_lite.retrieval.query_analyzer import QueryAnalysis, QueryAnalyzer, QueryKind
 from memoryos_lite.schemas import ContextEvidence, ContextPackage, utc_now
-from memoryos_lite.store import MemoryStore
+from memoryos_lite.store_protocols import RecallIndexStore
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
     DiagnosticEvent,
@@ -33,7 +33,7 @@ from memoryos_lite.v3_contracts import (
 class RecallPipeline:
     def __init__(
         self,
-        store: MemoryStore,
+        store: RecallIndexStore,
         settings: Settings,
         tokenizer: TokenEstimator | None = None,
         cache: DerivedCache | None = None,
