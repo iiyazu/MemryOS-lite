@@ -4,8 +4,14 @@ from memoryos_lite.api import app as api_app_module
 from memoryos_lite.api.app import app, get_service
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import MemoryPage, PageType, Role
+from memoryos_lite.schemas import ContextPackage, MemoryPage, PageType, Role
 from memoryos_lite.store import create_store
+from memoryos_lite.v3_contracts import (
+    ContextLayerItem,
+    ContextPackageV3,
+    SourceRef,
+    SourceType,
+)
 
 
 def test_api_smoke(service):
@@ -182,6 +188,55 @@ def test_api_build_context_source_evidence_failure_is_stable_422(
         )
         assert response.status_code == 422
         assert response.json() == {"detail": "source_evidence_v3_context_missing"}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_compact_source_evidence_omits_non_finite_score(service, monkeypatch):
+    session = service.create_session("non-finite-source-evidence")
+    invalid = ContextLayerItem(
+        layer="archival",
+        item_id="invalid",
+        text="invalid score",
+        estimated_tokens=1,
+        source_refs=[SourceRef(source_type=SourceType.DOCUMENT, source_id="source-invalid")],
+        metadata={
+            "archive_id": "archive-1",
+            "document_id": "document-1",
+            "score": float("nan"),
+        },
+    )
+    valid = ContextLayerItem(
+        layer="archival",
+        item_id="valid",
+        text="valid score",
+        estimated_tokens=1,
+        source_refs=[SourceRef(source_type=SourceType.DOCUMENT, source_id="source-valid")],
+        metadata={"archive_id": "archive-1", "document_id": "document-1", "score": 0.75},
+    )
+    package = ContextPackage(
+        session_id=session.id,
+        task="Recall",
+        metadata={
+            "v3_context": ContextPackageV3(
+                session_id=session.id,
+                task="Recall",
+                items=[invalid, valid],
+            ).model_dump(mode="json")
+        },
+    )
+    monkeypatch.setattr(service, "build_context", lambda **_kwargs: package)
+    app.dependency_overrides[get_service] = lambda: service
+    client = TestClient(app)
+    try:
+        response = client.post(
+            f"/sessions/{session.id}/build-context",
+            json={"task": "Recall", "response_profile": "source_evidence/v1"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert [item["item_id"] for item in response.json()["items"]] == ["valid"]
+        assert response.json()["omitted_count"] == 1
     finally:
         app.dependency_overrides.clear()
 

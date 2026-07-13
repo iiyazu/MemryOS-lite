@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
+from math import isfinite
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -27,6 +28,7 @@ def _canonical_bytes(value: object) -> bytes:
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -63,7 +65,7 @@ class SourceEvidenceItem(BaseModel):
     text: str
     estimated_tokens: int = Field(ge=0)
     content_sha256: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    score: float
+    score: float = Field(allow_inf_nan=False)
     rank: int = Field(ge=1)
     truncated: Literal[False] = False
 
@@ -131,6 +133,12 @@ def _candidate(item: Any, *, rank: int, tokenizer: TokenEstimator) -> dict[str, 
     score = item.metadata.get("score")
     if not isinstance(score, (int, float)) or isinstance(score, bool):
         return None
+    try:
+        score_value = float(score)
+    except OverflowError:
+        return None
+    if not isfinite(score_value):
+        return None
     tokens = tokenizer.count(text)
     return {
         "item_id": item_id,
@@ -140,7 +148,7 @@ def _candidate(item: Any, *, rank: int, tokenizer: TokenEstimator) -> dict[str, 
         "text": text,
         "estimated_tokens": tokens,
         "content_sha256": f"sha256:{sha256(text.encode('utf-8')).hexdigest()}",
-        "score": float(score),
+        "score": score_value,
         "rank": rank,
         "truncated": False,
     }

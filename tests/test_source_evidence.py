@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 from pydantic import ValidationError
@@ -171,6 +172,19 @@ def test_empty_envelope_too_large_has_stable_reason() -> None:
         build_source_evidence(_package(), max_bytes=16)
 
 
+@pytest.mark.parametrize("score", [math.nan, math.inf, -math.inf])
+def test_non_finite_scores_are_omitted_before_json_serialization(score: float) -> None:
+    envelope = build_source_evidence(
+        _package(_item("invalid", score=score), _item("valid", "whole"))
+    )
+
+    assert [item["item_id"] for item in envelope["items"]] == ["valid"]
+    assert envelope["omitted_count"] == 1
+    assert envelope["truncated"] is True
+    assert json.dumps(envelope, allow_nan=False)
+    assert validate_source_evidence(envelope) == envelope
+
+
 @pytest.mark.parametrize(
     ("path", "value"),
     [
@@ -180,6 +194,7 @@ def test_empty_envelope_too_large_has_stable_reason() -> None:
         (("estimated_tokens",), 999),
         (("omitted_count",), 1),
         (("diagnostics_digest",), "sha256:" + "0" * 64),
+        (("items", 0, "score"), math.nan),
     ],
 )
 def test_validation_rejects_mutated_evidence(path: tuple[object, ...], value: object) -> None:
