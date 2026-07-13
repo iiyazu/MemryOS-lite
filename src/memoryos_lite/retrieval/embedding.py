@@ -11,7 +11,7 @@ from typing import Protocol
 
 from memoryos_lite.retrieval.base import EmbeddingClient, SearchHit, cosine_similarity
 from memoryos_lite.schemas import MemoryPage
-from memoryos_lite.store import MemoryStore
+from memoryos_lite.store_protocols import PageEmbeddingStore
 
 
 class QdrantEmbeddingStore(Protocol):
@@ -26,7 +26,7 @@ class QdrantEmbeddingStore(Protocol):
 class EmbeddingSearcher:
     def __init__(
         self,
-        store: MemoryStore,
+        store: PageEmbeddingStore,
         client: EmbeddingClient,
         qdrant_store: QdrantEmbeddingStore | None = None,
     ) -> None:
