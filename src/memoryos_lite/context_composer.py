@@ -9,7 +9,7 @@ from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher, S
 from memoryos_lite.retrieval.archival_vector import ArchivalVectorDiagnostic
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import Message
-from memoryos_lite.store import MemoryStore
+from memoryos_lite.store_protocols import ContextComposerStore
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
     ArchiveEligibilityResult,
@@ -27,7 +27,7 @@ from memoryos_lite.v3_contracts import (
 
 @dataclass
 class V3ContextComposer:
-    store: MemoryStore
+    store: ContextComposerStore
     settings: Settings
     tokenizer: TokenEstimator = field(default_factory=TokenEstimator)
     recall_pipeline: RecallPipeline | None = None

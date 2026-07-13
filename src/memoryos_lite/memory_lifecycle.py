@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from memoryos_lite.core_memory import CoreMemoryService
 from memoryos_lite.schemas import new_id, utc_now
-from memoryos_lite.store import MemoryStore
+from memoryos_lite.store_protocols import MemoryLifecycleStore
 from memoryos_lite.v3_contracts import (
     ApprovalState,
     ArchivalMemory,
@@ -16,7 +16,7 @@ from memoryos_lite.v3_contracts import (
 
 @dataclass
 class MemoryLifecycleService:
-    store: MemoryStore
+    store: MemoryLifecycleStore
     core_memory: CoreMemoryService | None = None
 
     def create_candidate(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from memoryos_lite.store import MemoryStore
+from memoryos_lite.store_protocols import ArchiveIngestStore
 from memoryos_lite.v3_contracts import (
     ArchivalChunk,
     ArchivalDocument,
@@ -120,7 +120,7 @@ class MemoryOSArchiveRAG:
 
     def __init__(
         self,
-        store: MemoryStore,
+        store: ArchiveIngestStore,
         *,
         parser: ArchiveDocumentParser | None = None,
         splitter: ArchiveTextSplitter | None = None,
