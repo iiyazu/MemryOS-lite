@@ -18,6 +18,7 @@ from memoryos_lite.schemas import (
     ArchiveDocumentIngestResponse,
     ArchivePassageListResponse,
     BuildContextRequest,
+    BuildContextResponseProfile,
     CreateSessionRequest,
     IngestResponse,
     MemoryPage,
@@ -26,6 +27,7 @@ from memoryos_lite.schemas import (
     Session,
     TraceEvent,
 )
+from memoryos_lite.source_evidence import build_source_evidence
 
 
 @lru_cache(maxsize=1)
@@ -45,8 +47,16 @@ app.add_middleware(RequestIdMiddleware)
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "capabilities": {
+            "build_context_profiles": [
+                BuildContextResponseProfile.FULL.value,
+                BuildContextResponseProfile.SOURCE_EVIDENCE_V1.value,
+            ]
+        },
+    }
 
 
 @app.post("/sessions", response_model=Session)
@@ -84,7 +94,7 @@ def build_context(
     service: ServiceDep,
 ):
     try:
-        return service.build_context(
+        package = service.build_context(
             session_id=session_id,
             task=request.task,
             budget=request.budget,
@@ -93,6 +103,12 @@ def build_context(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if request.response_profile is BuildContextResponseProfile.SOURCE_EVIDENCE_V1:
+        try:
+            return build_source_evidence(package)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return package
 
 
 @app.post("/archives/ingest", response_model=ArchiveDocumentIngestResponse)
