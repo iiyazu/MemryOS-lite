@@ -9,7 +9,7 @@ from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, overload
 
-from sqlalchemy import select
+from sqlalchemy import and_, false, func, or_, select, true
 from sqlalchemy.orm import Session as DbSession
 
 from memoryos_lite.schemas import Message, utc_now
@@ -849,18 +849,57 @@ class ArchiveStoreMixin:
         scope: ArchiveEligibilityScope,
     ) -> ArchiveEligibilityResult:
         eligible_archive_ids = self.resolve_attached_archive_ids(scope)
-        all_passages = self.list_archival_passages()
-        source_ids = set(scope.source_ids)
-        eligible_passages = [
-            passage
-            for passage in all_passages
-            if (passage.archive_id is not None and passage.archive_id in eligible_archive_ids)
-            or (passage.source_id is not None and passage.source_id in source_ids)
-        ]
-        eligible_ids = {passage.id for passage in eligible_passages}
-        scope_excluded_passages = [
-            passage for passage in all_passages if passage.id not in eligible_ids
-        ]
+        archive_ids = self._dedupe_strings(eligible_archive_ids)
+        source_ids = self._dedupe_strings(scope.source_ids)
+        archive_match = (
+            ArchivalPassageRecord.archive_id.in_(archive_ids) if archive_ids else false()
+        )
+        source_match = ArchivalPassageRecord.source_id.in_(source_ids) if source_ids else false()
+        eligible_predicate = or_(archive_match, source_match)
+        archive_excluded = (
+            or_(
+                ArchivalPassageRecord.archive_id.is_(None),
+                ~ArchivalPassageRecord.archive_id.in_(archive_ids),
+            )
+            if archive_ids
+            else true()
+        )
+        source_excluded = (
+            or_(
+                ArchivalPassageRecord.source_id.is_(None),
+                ~ArchivalPassageRecord.source_id.in_(source_ids),
+            )
+            if source_ids
+            else true()
+        )
+        excluded_predicate = and_(archive_excluded, source_excluded)
+        order_by = (
+            ArchivalPassageRecord.created_at.asc(),
+            ArchivalPassageRecord.id.asc(),
+        )
+        with self.db() as db:
+            eligible_count = int(
+                db.scalar(select(func.count(ArchivalPassageRecord.id)).where(eligible_predicate))
+                or 0
+            )
+            excluded_count = int(
+                db.scalar(select(func.count(ArchivalPassageRecord.id)).where(excluded_predicate))
+                or 0
+            )
+            eligible_records = list(
+                db.scalars(
+                    select(ArchivalPassageRecord).where(eligible_predicate).order_by(*order_by)
+                )
+            )
+            excluded_records = list(
+                db.scalars(
+                    select(ArchivalPassageRecord).where(excluded_predicate).order_by(*order_by)
+                )
+            )
+        if eligible_count != len(eligible_records) or excluded_count != len(excluded_records):
+            raise RuntimeError("archival passage scope changed during SQL read")
+        eligible_passages = [self._passage_from_record(record) for record in eligible_records]
+        scope_excluded_passages = [self._passage_from_record(record) for record in excluded_records]
         return ArchiveEligibilityResult(
             scope=scope,
             eligible_archive_ids=eligible_archive_ids,

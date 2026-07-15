@@ -47,14 +47,36 @@ app.add_middleware(RequestIdMiddleware)
 
 
 @app.get("/health")
-def health() -> dict[str, object]:
+def health(service: ServiceDep) -> dict[str, object]:
+    # Constructing the service here is intentional: for the managed
+    # full-local profile this proves that the offline FastEmbed model can be
+    # loaded before Workroom reports Hybrid readiness.  The response exposes
+    # only booleans and fixed capability names, never model paths or errors.
+    semantic_ready = False
+    if service.embedding_client is not None:
+        try:
+            # FastEmbed loads its ONNX model lazily; touching ``dim`` is the
+            # capability proof, not merely an import check.
+            semantic_ready = service.embedding_client.dim > 0
+        except Exception:
+            semantic_ready = False
+    external_governance = service.settings.resolved_agent_kernel == "external"
     return {
         "status": "ok",
         "capabilities": {
             "build_context_profiles": [
                 BuildContextResponseProfile.FULL.value,
                 BuildContextResponseProfile.SOURCE_EVIDENCE_V1.value,
-            ]
+                BuildContextResponseProfile.SOURCE_EVIDENCE_V2.value,
+            ],
+            "hybrid": {
+                "lexical": True,
+                "semantic": semantic_ready,
+                "rrf": semantic_ready,
+            },
+            "message_ingest": True,
+            "agentic_advisory": external_governance,
+            "paging": service.settings.memoryos_paging_mode.strip().lower() != "off",
         },
     }
 
@@ -76,7 +98,11 @@ def ingest(
     try:
         return service.ingest(session_id, request)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        detail = str(exc)
+        raise HTTPException(
+            status_code=409 if detail.startswith("external_id conflict") else 404,
+            detail=detail,
+        ) from exc
 
 
 @app.post("/sessions/{session_id}/page", response_model=MemoryPage | None)
@@ -103,8 +129,13 @@ def build_context(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if request.response_profile is BuildContextResponseProfile.SOURCE_EVIDENCE_V1:
+    if request.response_profile in {
+        BuildContextResponseProfile.SOURCE_EVIDENCE_V1,
+        BuildContextResponseProfile.SOURCE_EVIDENCE_V2,
+    }:
         try:
+            if request.response_profile is BuildContextResponseProfile.SOURCE_EVIDENCE_V2:
+                return build_source_evidence(package, schema_version="v2")
             return build_source_evidence(package)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -190,6 +221,17 @@ def trace(session_id: str, service: ServiceDep) -> list[TraceEvent]:
     return service.store.list_traces(session_id)
 
 
+@app.get("/sessions/{session_id}/advisories")
+def advisories(session_id: str, service: ServiceDep) -> dict[str, object]:
+    """Expose only bounded external-governance candidates to the Room host."""
+
+    try:
+        items = service.list_external_advisories(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"schema": "memoryos_external_advisories/v1", "items": items}
+
+
 @app.post("/sessions/{session_id}/ingest-batch")
 def ingest_batch(
     session_id: str,
@@ -203,7 +245,12 @@ def ingest_batch(
     messages = request.get("messages", [])
     results = []
     for msg in messages:
-        msg_obj = MessageCreate(role=msg["role"], content=msg["content"])
+        msg_obj = MessageCreate(
+            role=msg["role"],
+            content=msg["content"],
+            external_id=msg.get("external_id"),
+            metadata=msg.get("metadata", {}),
+        )
         results.append(service.ingest(session_id, msg_obj))
     return results
 

@@ -421,7 +421,7 @@ class ContextPolicyCandidate(BaseModel):
 
 
 class ContextLayerItem(BaseModel):
-    layer: Literal["task", "core", "recall", "archival", "recent", "fallback"]
+    layer: Literal["task", "core", "page", "recall", "archival", "recent", "fallback"]
     item_id: str
     text: str
     estimated_tokens: int = Field(ge=0)
