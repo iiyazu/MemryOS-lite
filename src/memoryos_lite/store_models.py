@@ -49,11 +49,15 @@ class MessageRecord(Base):
     session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    __table_args__ = (Index("ix_messages_session_created", "session_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_messages_session_created", "session_id", "created_at"),
+        Index("uq_messages_session_external", "session_id", "external_id", unique=True),
+    )
 
 
 class EpisodeRecord(Base):
@@ -136,6 +140,35 @@ class TraceRecord(Base):
 
     __table_args__ = (
         Index("ix_trace_events_session_type_created", "session_id", "event_type", "created_at"),
+    )
+
+
+class MaintenanceAdvisoryRecord(Base):
+    """Durable, source-referenced external-governance suggestions.
+
+    This is deliberately separate from trace retention: compact traces may
+    discard payloads, while the host still needs to reconcile a bounded,
+    idempotent advisory into its own approval ledger.
+    """
+
+    __tablename__ = "maintenance_advisories"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    proposal_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "uq_maintenance_advisories_session_fingerprint",
+            "session_id",
+            "fingerprint",
+            unique=True,
+        ),
+        Index("ix_maintenance_advisories_session_created", "session_id", "created_at"),
     )
 
 
@@ -356,6 +389,7 @@ for _compat_type in (
     ItemRecord,
     PatchRecord,
     TraceRecord,
+    MaintenanceAdvisoryRecord,
     CoreMemoryBlockRecord,
     CoreMemoryHistoryRecord,
     ArchivalDocumentRecord,

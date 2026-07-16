@@ -51,6 +51,9 @@ from memoryos_lite.store_models import (
     ItemRecord as ItemRecord,
 )
 from memoryos_lite.store_models import (
+    MaintenanceAdvisoryRecord as MaintenanceAdvisoryRecord,
+)
+from memoryos_lite.store_models import (
     MessageRecord as MessageRecord,
 )
 from memoryos_lite.store_models import (

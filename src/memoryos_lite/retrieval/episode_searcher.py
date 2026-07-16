@@ -3,6 +3,7 @@ from dataclasses import dataclass, field, replace
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
+from memoryos_lite.retrieval.base import EmbeddingClient, cosine_similarity
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.retrieval.query_analyzer import QueryAnalysis, QueryKind
 from memoryos_lite.schemas import Episode, Role
@@ -125,6 +126,30 @@ class EpisodeHit:
 
 
 class RecallMemorySearcher:
+    def __init__(self, embedding_client: EmbeddingClient | None = None) -> None:
+        self.embedding_client = embedding_client
+
+    def _semantic_scores(
+        self,
+        entries: Sequence[RecallMemoryEntry],
+        query: str,
+    ) -> dict[str, float]:
+        client = self.embedding_client
+        if client is None or not entries or not query.strip():
+            return {}
+        try:
+            query_vector = client.embed(query)
+            vectors = client.embed_batch([entry.text for entry in entries])
+        except Exception:
+            return {}
+        if not query_vector or len(vectors) != len(entries):
+            return {}
+        return {
+            entry.message_id: max(0.0, float(cosine_similarity(query_vector, vector)))
+            for entry, vector in zip(entries, vectors, strict=False)
+            if vector
+        }
+
     def search(
         self,
         episodes: Sequence[Episode | RecallMemoryEntry],
@@ -147,11 +172,33 @@ class RecallMemorySearcher:
         corpus = [tokenize(entry.index_text) for entry in entries]
         bm25 = BM25Okapi(corpus)
         scores = bm25.get_scores(query_tokens)
+        lexical_scores = {
+            entry.message_id: float(score)
+            for entry, entry_tokens, score in zip(entries, corpus, scores, strict=False)
+            if len(query_content_tokens & _content_tokens(entry_tokens)) > 0
+        }
+        lexical_rank = {
+            message_id: rank
+            for rank, (message_id, _score) in enumerate(
+                sorted(lexical_scores.items(), key=lambda pair: (-pair[1], pair[0])),
+                start=1,
+            )
+        }
+        semantic_scores = self._semantic_scores(entries, query)
+        semantic_rank = {
+            message_id: rank
+            for rank, (message_id, _score) in enumerate(
+                sorted(semantic_scores.items(), key=lambda pair: (-pair[1], pair[0])),
+                start=1,
+            )
+            if _score > 0
+        }
         by_session_and_position = {(entry.session_id, entry.position): entry for entry in entries}
         direct_hits: list[EpisodeHit] = []
         for entry, entry_tokens, score in zip(entries, corpus, scores, strict=False):
             token_overlap = len(query_content_tokens & _content_tokens(entry_tokens))
-            if token_overlap <= 0:
+            semantic_score = semantic_scores.get(entry.message_id, 0.0)
+            if token_overlap <= 0 and semantic_score <= 0:
                 continue
             role_boost = 0.0
             if (
@@ -174,17 +221,43 @@ class RecallMemorySearcher:
                 and entry.temporal_scope
             ):
                 session_boost = 1.0
-            adjusted = float(score) + token_overlap + role_boost + temporal_boost + session_boost
+            if self.embedding_client is None:
+                adjusted = (
+                    float(score) + token_overlap + role_boost + temporal_boost + session_boost
+                )
+                source = "recall_memory"
+                reason = f"recall_memory={adjusted:.4f} overlap={token_overlap}"
+            else:
+                lexical_position = lexical_rank.get(entry.message_id)
+                semantic_position = semantic_rank.get(entry.message_id)
+                rrf = (1.0 / (60 + lexical_position) if lexical_position else 0.0) + (
+                    1.0 / (60 + semantic_position) if semantic_position else 0.0
+                )
+                adjusted = rrf + role_boost + temporal_boost + session_boost
+                source = "recall_hybrid"
+                reason = (
+                    f"rrf={rrf:.6f} lexical_rank={lexical_position or 0} "
+                    f"semantic_rank={semantic_position or 0}"
+                )
             if adjusted <= 0:
                 continue
             features: dict[str, float] = {
                 "token_overlap": float(token_overlap),
                 "bm25_score": float(score),
+                "semantic_score": float(semantic_score),
                 "role_boost": role_boost,
                 "temporal_boost": temporal_boost,
                 "session_boost": session_boost,
                 "adjusted_score": adjusted,
             }
+            if self.embedding_client is not None:
+                features.update(
+                    {
+                        "lexical_rank": float(lexical_rank.get(entry.message_id, 0)),
+                        "semantic_rank": float(semantic_rank.get(entry.message_id, 0)),
+                        "rrf_score": adjusted - role_boost - temporal_boost - session_boost,
+                    }
+                )
             feature_metadata: dict[str, object] = {key: value for key, value in features.items()}
             diagnostics = [
                 _diagnostic(entry, "direct_hit", adjusted, True, feature_metadata),
@@ -218,7 +291,8 @@ class RecallMemorySearcher:
                 EpisodeHit(
                     episode=entry,
                     score=adjusted,
-                    reason=f"recall_memory={adjusted:.4f} overlap={token_overlap}",
+                    reason=reason,
+                    source=source,
                     diagnostics=tuple(diagnostics),
                     rank_features=features,
                 )

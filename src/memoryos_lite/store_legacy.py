@@ -1,13 +1,14 @@
 """Legacy persistence slice composed with the concrete store runtime."""
 
 import json
+import re
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session as DbSession
 
 from memoryos_lite.schemas import (
@@ -19,11 +20,114 @@ from memoryos_lite.schemas import (
     TraceEvent,
     utc_now,
 )
-from memoryos_lite.store_models import Base, ItemRecord, PageRecord, PatchRecord, TraceRecord
+from memoryos_lite.store_models import (
+    Base,
+    ItemRecord,
+    MaintenanceAdvisoryRecord,
+    PageRecord,
+    PatchRecord,
+    TraceRecord,
+)
+
+if TYPE_CHECKING:
+    from memoryos_lite.config import Settings
 
 
 class LegacyStoreMixin:
     """Legacy page, item, trace, and maintenance persistence methods."""
+
+    # Supplied by StoreRuntimeMixin in the concrete MemoryStore composition.
+    settings: "Settings"
+
+    _COMPACT_TRACE_SESSION_LIMIT = 2_048
+    _COMPACT_TRACE_TOTAL_LIMIT = 16_384
+    _COMPACT_TRACE_FIELD_LIMIT = 64
+
+    @staticmethod
+    def _advisory_timestamp(value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+    def add_maintenance_advisory(
+        self,
+        *,
+        session_id: str,
+        proposal_type: str,
+        content: str,
+        source_refs: list[dict[str, str]],
+    ) -> dict[str, object]:
+        """Persist one bounded external-governance advisory idempotently."""
+
+        canonical = json.dumps(
+            {
+                "session_id": session_id,
+                "proposal_type": proposal_type,
+                "content": content,
+                "source_refs": source_refs,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        fingerprint = sha256(canonical.encode("utf-8")).hexdigest()
+        advisory_id = f"advisory_{fingerprint[:40]}"
+        with self.db() as db:
+            existing = db.scalar(
+                select(MaintenanceAdvisoryRecord).where(
+                    MaintenanceAdvisoryRecord.session_id == session_id,
+                    MaintenanceAdvisoryRecord.fingerprint == fingerprint,
+                )
+            )
+            if existing is None:
+                existing = MaintenanceAdvisoryRecord(
+                    id=advisory_id,
+                    session_id=session_id,
+                    fingerprint=fingerprint,
+                    proposal_type=proposal_type,
+                    content=content,
+                    source_refs_json=json.dumps(source_refs, ensure_ascii=False),
+                    created_at=utc_now(),
+                )
+                db.add(existing)
+        return {
+            "advisory_id": advisory_id,
+            "session_id": session_id,
+            "fingerprint": fingerprint,
+            "proposal_type": proposal_type,
+            "content": content,
+            "source_refs": source_refs,
+            "created_at": self._advisory_timestamp(existing.created_at),
+        }
+
+    def list_maintenance_advisories(
+        self, session_id: str, *, limit: int = 32
+    ) -> list[dict[str, object]]:
+        clean_limit = max(1, min(int(limit), 64))
+        with self.db() as db:
+            rows = list(
+                db.scalars(
+                    select(MaintenanceAdvisoryRecord)
+                    .where(MaintenanceAdvisoryRecord.session_id == session_id)
+                    .order_by(
+                        MaintenanceAdvisoryRecord.created_at.asc(),
+                        MaintenanceAdvisoryRecord.id.asc(),
+                    )
+                    .limit(clean_limit)
+                )
+            )
+        return [
+            {
+                "advisory_id": row.id,
+                "session_id": row.session_id,
+                "fingerprint": row.fingerprint,
+                "proposal_type": row.proposal_type,
+                "content": row.content,
+                "source_refs": json.loads(row.source_refs_json),
+                "created_at": self._advisory_timestamp(row.created_at),
+            }
+            for row in rows
+        ]
 
     engine: Engine
 
@@ -185,20 +289,104 @@ class LegacyStoreMixin:
             )
         return patch
 
+    @staticmethod
+    def _compact_trace_payload(event: TraceEvent) -> dict[str, Any]:
+        """Return bounded observability data without retaining trace content.
+
+        Compact traces are intentionally useful for health/accounting checks only:
+        event payload values are represented by safe scalar counts and a digest.
+        This keeps the database bounded and avoids copying prompts, retrieved text,
+        provider output, or source paths into the managed sidecar trace.
+        """
+        canonical = json.dumps(
+            {"event_type": event.event_type, "payload": event.payload},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        counts: dict[str, int] = {}
+        count_suffixes = (
+            "_count",
+            "_size",
+            "_tokens",
+            "_token_count",
+            "_duration_ms",
+            "_elapsed_ms",
+            "_attempt",
+            "_turns",
+            "_rank",
+            "_total",
+        )
+        for key in sorted(event.payload):
+            if len(counts) >= LegacyStoreMixin._COMPACT_TRACE_FIELD_LIMIT:
+                break
+            value = event.payload[key]
+            if not isinstance(key, str):
+                continue
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int) and (
+                key.endswith(count_suffixes) or key in {"count", "size", "total"}
+            ):
+                counts[key[:64]] = value
+            elif isinstance(value, (list, dict)) and (
+                key.endswith(("_ids", "_items", "_events", "_refs", "_results"))
+            ):
+                counts[f"{key[:56]}_count"] = len(value)
+        stage = event.event_type[:64]
+        for key in ("stage", "phase", "reason_code", "status", "kind"):
+            candidate = event.payload.get(key)
+            if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", candidate):
+                stage = candidate
+                break
+        return {
+            "schema": "memoryos_trace_compact/v1",
+            "stage": stage,
+            "counts": counts,
+            "digest": sha256(canonical).hexdigest(),
+        }
+
+    def _trim_compact_trace_records(self, db: DbSession, session_id: str) -> None:
+        """Keep compact trace retention bounded per session and globally."""
+        session_keep_ids = (
+            select(TraceRecord.id)
+            .where(TraceRecord.session_id == session_id)
+            .order_by(TraceRecord.created_at.desc(), TraceRecord.id.desc())
+            .limit(self._COMPACT_TRACE_SESSION_LIMIT)
+        )
+        db.execute(
+            delete(TraceRecord).where(
+                TraceRecord.session_id == session_id,
+                ~TraceRecord.id.in_(session_keep_ids),
+            )
+        )
+        total_keep_ids = (
+            select(TraceRecord.id)
+            .order_by(TraceRecord.created_at.desc(), TraceRecord.id.desc())
+            .limit(self._COMPACT_TRACE_TOTAL_LIMIT)
+        )
+        db.execute(delete(TraceRecord).where(~TraceRecord.id.in_(total_keep_ids)))
+
     def add_trace(self, event: TraceEvent) -> TraceEvent:
+        trace_mode = self.settings.resolved_trace_mode
+        payload = self._compact_trace_payload(event) if trace_mode == "compact" else event.payload
         with self.db() as db:
             db.add(
                 TraceRecord(
                     id=event.id,
                     session_id=event.session_id,
                     event_type=event.event_type,
-                    payload_json=json.dumps(event.payload, ensure_ascii=False),
+                    payload_json=json.dumps(payload, ensure_ascii=False),
                     created_at=event.created_at,
                 )
             )
-        trace_path = self.traces_dir / f"{event.session_id}.jsonl"
-        with trace_path.open("a", encoding="utf-8") as file:
-            file.write(event.model_dump_json() + "\n")
+            if trace_mode == "compact":
+                self._trim_compact_trace_records(db, event.session_id)
+        if trace_mode != "compact":
+            trace_path = self.traces_dir / f"{event.session_id}.jsonl"
+            with trace_path.open("a", encoding="utf-8") as file:
+                file.write(event.model_dump_json() + "\n")
         return event
 
     def list_traces(self, session_id: str) -> list[TraceEvent]:

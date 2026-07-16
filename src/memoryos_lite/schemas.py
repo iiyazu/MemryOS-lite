@@ -38,6 +38,7 @@ class PatchOperation(StrEnum):
 class MessageCreate(BaseModel):
     role: Role
     content: str
+    external_id: str | None = Field(default=None, min_length=1, max_length=255)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -173,6 +174,7 @@ class TraceEvent(BaseModel):
 class BuildContextResponseProfile(StrEnum):
     FULL = "full"
     SOURCE_EVIDENCE_V1 = "source_evidence/v1"
+    SOURCE_EVIDENCE_V2 = "source_evidence/v2"
 
 
 class BuildContextRequest(BaseModel):
@@ -348,6 +350,7 @@ class IngestResponse(BaseModel):
     message: Message
     should_page: bool
     session_token_count: int
+    replayed: bool = False
 
 
 class EvalCase(BaseModel):

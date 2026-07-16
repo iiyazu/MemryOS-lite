@@ -149,10 +149,10 @@ def test_archival_search_uses_vector_primary_and_rehydrates_hits_from_loader():
     assert hits[0].metadata["vector_provider"] == "test"
 
 
-def test_archival_hybrid_search_uses_vector_hits_when_available():
+def test_archival_hybrid_search_fuses_lexical_and_vector_hits():
     target = _passage(
         "apsg_target",
-        "semantic-target metro preference",
+        "favorite transport semantic-target metro preference",
         tags=["transport"],
     )
     lexical_distractor = _passage(
@@ -176,7 +176,10 @@ def test_archival_hybrid_search_uses_vector_hits_when_available():
 
     assert [hit.passage.id for hit in hits] == ["apsg_target"]
     assert hits[0].source == "archival_hybrid"
-    assert "qdrant_cosine" in hits[0].reason
+    assert "rrf" in hits[0].reason
+    assert "embedding=" in hits[0].reason
+    assert "lexical=" in hits[0].reason
+    assert set(hits[0].metadata["rrf_components"]) == {"embedding", "lexical"}
 
 
 def test_archival_search_falls_back_to_lexical_when_vector_unavailable():

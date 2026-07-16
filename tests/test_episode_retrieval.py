@@ -4,6 +4,20 @@ from memoryos_lite.schemas import Episode, Role
 from memoryos_lite.v3_contracts import RecallMemoryEntry
 
 
+class _TinyEmbedding:
+    dim = 2
+
+    def embed(self, text: str) -> list[float]:
+        return (
+            [1.0, 0.0]
+            if any(word in text for word in ("query", "concept", "match"))
+            else [0.0, 1.0]
+        )
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed(text) for text in texts]
+
+
 def _recall_entry(
     message_id: str,
     text: str,
@@ -117,6 +131,27 @@ def test_recall_searcher_returns_structured_direct_hit_diagnostics():
         "direct_hit",
         "rank",
     }
+
+
+def test_recall_searcher_fuses_bm25_and_fastembed_with_rrf():
+    entries = [
+        _recall_entry("lexical", "semantic match lexical anchor", 1),
+        _recall_entry("semantic", "unrelated concept", 2),
+    ]
+
+    hits = RecallMemorySearcher(embedding_client=_TinyEmbedding()).search(
+        entries, "semantic query", top_k=2
+    )
+
+    assert {hit.episode.message_id for hit in hits} == {"lexical", "semantic"}
+    assert all(hit.source == "recall_hybrid" for hit in hits)
+    lexical = next(hit for hit in hits if hit.episode.message_id == "lexical")
+    semantic = next(hit for hit in hits if hit.episode.message_id == "semantic")
+    assert lexical.rank_features["lexical_rank"] == 1.0
+    assert lexical.rank_features["semantic_rank"] == 1.0
+    assert semantic.rank_features["lexical_rank"] == 0.0
+    assert semantic.rank_features["semantic_rank"] == 2.0
+    assert all(hit.rank_features["rrf_score"] > 0 for hit in hits)
 
 
 def test_recall_searcher_expands_neighbors_and_dedupes_message_ids():

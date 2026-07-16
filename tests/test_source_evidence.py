@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 
@@ -9,6 +10,8 @@ from pydantic import ValidationError
 from memoryos_lite.schemas import ContextPackage
 from memoryos_lite.source_evidence import (
     SOURCE_EVIDENCE_SCHEMA,
+    SourceEvidenceV2Item,
+    SourceEvidenceV2Ref,
     build_source_evidence,
     validate_source_evidence,
 )
@@ -214,3 +217,67 @@ def test_missing_or_invalid_v3_context_fails_closed() -> None:
     package.metadata["v3_context"] = {"items": "not-a-list"}
     with pytest.raises(ValueError, match="source_evidence_v3_context_invalid"):
         build_source_evidence(package)
+
+
+def test_v2_refs_reject_internal_source_types_and_unscoped_messages() -> None:
+    with pytest.raises(ValidationError):
+        SourceEvidenceV2Ref(source_type="passage", source_id="passage-1")
+    with pytest.raises(ValidationError):
+        SourceEvidenceV2Ref(source_type="message", source_id="message-1")
+
+
+def test_v2_items_reject_mixed_refs_and_archival_message_refs() -> None:
+    common = {
+        "item_id": "item-1",
+        "text": "grounded fact",
+        "estimated_tokens": 2,
+        "content_sha256": "sha256:" + hashlib.sha256(b"grounded fact").hexdigest(),
+        "derived": True,
+        "source_complete": True,
+        "rank": 1,
+    }
+    message = SourceEvidenceV2Ref(
+        source_type="message", source_id="message-1", session_id="session-1"
+    )
+    document = SourceEvidenceV2Ref(source_type="document", source_id="document-1")
+    with pytest.raises(ValidationError):
+        SourceEvidenceV2Item(
+            **common,
+            layer="recall",
+            source_refs=[message, document],
+        )
+    with pytest.raises(ValidationError):
+        SourceEvidenceV2Item(
+            **common,
+            layer="archival",
+            source_refs=[message],
+        )
+
+
+def test_v2_builder_omits_non_public_and_mixed_source_refs() -> None:
+    internal = ContextLayerItem(
+        layer="recall",
+        item_id="internal",
+        text="internal source",
+        estimated_tokens=2,
+        source_refs=[SourceRef(source_type=SourceType.PASSAGE, source_id="passage-1")],
+        metadata={"score": 0.5},
+    )
+    mixed = ContextLayerItem(
+        layer="recall",
+        item_id="mixed",
+        text="mixed source",
+        estimated_tokens=2,
+        source_refs=[
+            SourceRef(
+                source_type=SourceType.MESSAGE,
+                source_id="message-1",
+                session_id="session-1",
+            ),
+            SourceRef(source_type=SourceType.DOCUMENT, source_id="document-1"),
+        ],
+        metadata={"score": 0.5},
+    )
+    envelope = build_source_evidence(_package(internal, mixed), schema_version="v2")
+    assert envelope["items"] == []
+    assert envelope["omitted_count"] == 2

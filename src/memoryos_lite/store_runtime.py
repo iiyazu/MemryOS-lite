@@ -50,23 +50,38 @@ class StoreRuntimeMixin:
                     "WHERE type = 'table' AND name = 'core_memory_blocks'"
                 )
             ).fetchone()
-            if table_exists is None:
-                return
-            columns = {
-                row[1] for row in conn.execute(text("PRAGMA table_info(core_memory_blocks)"))
-            }
-            if "read_only" not in columns:
-                conn.execute(
-                    text(
-                        "ALTER TABLE core_memory_blocks "
-                        "ADD COLUMN read_only BOOLEAN NOT NULL DEFAULT 0"
+            if table_exists is not None:
+                columns = {
+                    row[1] for row in conn.execute(text("PRAGMA table_info(core_memory_blocks)"))
+                }
+                if "read_only" not in columns:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE core_memory_blocks "
+                            "ADD COLUMN read_only BOOLEAN NOT NULL DEFAULT 0"
+                        )
                     )
-                )
-            if "tags_json" not in columns:
+                if "tags_json" not in columns:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE core_memory_blocks "
+                            "ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'"
+                        )
+                    )
+            message_table = conn.execute(
+                text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'")
+            ).fetchone()
+            if message_table is not None:
+                message_columns = {
+                    row[1] for row in conn.execute(text("PRAGMA table_info(messages)"))
+                }
+                if "external_id" not in message_columns:
+                    conn.execute(text("ALTER TABLE messages ADD COLUMN external_id VARCHAR(255)"))
                 conn.execute(
                     text(
-                        "ALTER TABLE core_memory_blocks "
-                        "ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'"
+                        "CREATE UNIQUE INDEX IF NOT EXISTS "
+                        "uq_messages_session_external "
+                        "ON messages(session_id, external_id)"
                     )
                 )
 

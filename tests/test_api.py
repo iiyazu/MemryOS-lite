@@ -102,8 +102,18 @@ def test_api_build_context_full_profile_is_default(service):
         app.dependency_overrides.clear()
 
 
-def test_api_build_context_rejects_unsupported_profile(service):
-    session = service.create_session("unsupported-profile")
+def test_api_build_context_accepts_source_evidence_v2_profile(service):
+    session = service.create_session("source-evidence-v2-profile")
+    service.build_context = lambda **_kwargs: ContextPackage(
+        session_id=session.id,
+        task="What should be recalled?",
+        metadata={
+            "v3_context": ContextPackageV3(
+                session_id=session.id,
+                task="What should be recalled?",
+            ).model_dump(mode="json")
+        },
+    )
     app.dependency_overrides[get_service] = lambda: service
     client = TestClient(app)
     try:
@@ -115,10 +125,8 @@ def test_api_build_context_rejects_unsupported_profile(service):
             },
         )
 
-        assert response.status_code == 422
-        detail = response.json()["detail"]
-        assert detail[0]["loc"] == ["body", "response_profile"]
-        assert detail[0]["type"] == "enum"
+        assert response.status_code == 200
+        assert response.json()["schema"] == "memoryos_source_evidence/v2"
     finally:
         app.dependency_overrides.clear()
 
@@ -247,12 +255,16 @@ def test_health_advertises_build_context_profiles():
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "capabilities": {
-            "build_context_profiles": ["full", "source_evidence/v1"],
-        },
-    }
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["capabilities"]["build_context_profiles"] == [
+        "full",
+        "source_evidence/v1",
+        "source_evidence/v2",
+    ]
+    assert payload["capabilities"]["hybrid"]["lexical"] is True
+    assert payload["capabilities"]["hybrid"]["rrf"] is payload["capabilities"]["hybrid"]["semantic"]
+    assert payload["capabilities"]["message_ingest"] is True
 
 
 def test_api_search_accepts_bare_query(service):

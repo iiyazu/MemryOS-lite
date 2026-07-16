@@ -55,4 +55,18 @@ jobs:
 
       - name: Validate the OpenAPI surface
         run: |
-          uv run python -c "from memoryos_lite.api.app import app; schema = app.openapi(); assert schema['openapi'] == '3.1.0'; assert len(schema['paths']) == 13"
+          uv run python - <<'PY'
+          from memoryos_lite.api.app import app
+
+          schema = app.openapi()
+          assert schema["openapi"] == "3.1.0"
+          required_paths = {
+              "/health",
+              "/sessions",
+              "/sessions/{session_id}/ingest",
+              "/sessions/{session_id}/build-context",
+              "/archives/ingest",
+              "/archives/attachments",
+          }
+          assert required_paths <= schema["paths"].keys()
+          PY

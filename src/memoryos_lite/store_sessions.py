@@ -72,12 +72,37 @@ class SessionStoreMixin:
                     session_id=message.session_id,
                     role=message.role.value,
                     content=message.content,
+                    external_id=message.external_id,
                     metadata_json=json.dumps(message.metadata, ensure_ascii=False),
                     created_at=message.created_at,
                     token_count=message.token_count,
                 )
             )
         return message
+
+    def get_message_by_external_id(self, session_id: str, external_id: str) -> Message | None:
+        """Load the durable message bound to a caller-owned idempotency key."""
+        with self.db() as db:
+            record = db.scalar(
+                select(MessageRecord).where(
+                    MessageRecord.session_id == session_id,
+                    MessageRecord.external_id == external_id,
+                )
+            )
+        return self._message_from_record(record) if record is not None else None
+
+    @staticmethod
+    def _message_from_record(record: MessageRecord) -> Message:
+        return Message(
+            id=record.id,
+            session_id=record.session_id,
+            role=Role(record.role),
+            content=record.content,
+            external_id=record.external_id,
+            metadata=json.loads(record.metadata_json),
+            created_at=record.created_at,
+            token_count=record.token_count,
+        )
 
     def list_messages(self, session_id: str, limit: int | None = None) -> list[Message]:
         with self.db() as db:
@@ -102,6 +127,7 @@ class SessionStoreMixin:
                 session_id=row.session_id,
                 role=Role(row.role),
                 content=row.content,
+                external_id=row.external_id,
                 metadata=json.loads(row.metadata_json),
                 created_at=row.created_at,
                 token_count=row.token_count,
@@ -240,6 +266,7 @@ class SessionStoreMixin:
                     session_id=message_record.session_id,
                     role=Role(message_record.role),
                     content=message_record.content,
+                    external_id=message_record.external_id,
                     metadata=json.loads(message_record.metadata_json),
                     created_at=message_record.created_at,
                     token_count=message_record.token_count,

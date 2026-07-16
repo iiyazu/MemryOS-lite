@@ -226,8 +226,11 @@ class V3ContextComposer:
         )
         eligibility = self.store.list_archival_passages_for_scope(scope)
         passages = eligibility.eligible_passages
+        # Full-local archival retrieval combines the lexical BM25 list with
+        # the optional local vector list.  The searcher keeps ``text`` as the
+        # explicit compatibility path when vector retrieval is disabled.
         search_mode: SearchMode = (
-            "vector" if self.settings.memoryos_archival_vector_enabled else "text"
+            "hybrid" if self.settings.memoryos_archival_vector_enabled else "text"
         )
         hits = self.archival_searcher.search(
             passages,

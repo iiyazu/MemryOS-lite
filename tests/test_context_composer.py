@@ -484,7 +484,7 @@ def test_v3_composer_uses_archival_vector_search_with_source_refs(tmp_path):
         ArchivalPassage(
             id="apsg_target",
             archive_id="archive_attached",
-            text="semantic-target metro preference",
+            text="favorite transport semantic-target metro preference",
             source_refs=[target_ref],
         )
     )
@@ -524,7 +524,9 @@ def test_v3_composer_uses_archival_vector_search_with_source_refs(tmp_path):
 
     archival_items = [item for item in package.items if item.layer == "archival"]
     assert archival_items[0].item_id == "apsg_target"
-    assert archival_items[0].metadata["source"] == "archival_vector"
+    assert archival_items[0].metadata["source"] == "archival_hybrid"
+    assert "rrf" in archival_items[0].metadata["match_reason"]
+    assert set(archival_items[0].metadata["rrf_components"]) == {"embedding", "lexical"}
     assert archival_items[0].source_refs[0].source_id == "msg_target"
     selected = next(
         row

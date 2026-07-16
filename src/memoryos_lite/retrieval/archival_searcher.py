@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
@@ -78,7 +78,8 @@ class ArchivalPassageSearcher:
                 created_to=created_to,
             )
         ]
-        lexical_hits = self._lexical(candidates, query, top_k=top_k)
+        lexical_top_k = max(top_k * 2, 10) if mode == "hybrid" else top_k
+        lexical_hits = self._lexical(candidates, query, top_k=lexical_top_k)
         if mode == "text":
             hits = [
                 self._hit(hit.passage, hit.score, hit.reason, "archival_text")
@@ -96,13 +97,11 @@ class ArchivalPassageSearcher:
             )
             return self._rerank_hits(hits, query=query, top_k=top_k)
         if mode == "hybrid":
-            hits = self._vector_or_fallback(
+            hits = self._hybrid_or_fallback(
                 candidates,
                 query,
                 lexical_hits=lexical_hits,
                 top_k=top_k,
-                fallback_source="archival_hybrid",
-                vector_source="archival_hybrid",
             )
             return self._rerank_hits(hits, query=query, top_k=top_k)
         raise ValueError(f"unsupported archival passage search mode: {mode}")
@@ -165,8 +164,56 @@ class ArchivalPassageSearcher:
         fallback_source: str,
         vector_source: str,
     ) -> list[ArchivalPassageHit]:
+        hits, reason_code = self._vector_hits(
+            candidates,
+            query,
+            top_k=top_k,
+            vector_source=vector_source,
+        )
+        if not hits:
+            return self._lexical_fallback(
+                candidates,
+                lexical_hits,
+                top_k=top_k,
+                source=fallback_source,
+                reason_code=reason_code or "no_usable_vector_hits",
+            )
+        return hits[:top_k]
+
+    def _hybrid_or_fallback(
+        self,
+        candidates: list[ArchivalPassage],
+        query: str,
+        *,
+        lexical_hits: list[ArchivalPassageHit],
+        top_k: int,
+    ) -> list[ArchivalPassageHit]:
+        vector_hits, reason_code = self._vector_hits(
+            candidates,
+            query,
+            top_k=max(top_k * 2, 10),
+            vector_source="archival_vector",
+        )
+        if not vector_hits:
+            return self._lexical_fallback(
+                candidates,
+                lexical_hits,
+                top_k=top_k,
+                source="archival_hybrid",
+                reason_code=reason_code or "no_usable_vector_hits",
+            )
+        return self._rrf_fuse(lexical_hits, vector_hits, top_k=top_k)
+
+    def _vector_hits(
+        self,
+        candidates: list[ArchivalPassage],
+        query: str,
+        *,
+        top_k: int,
+        vector_source: str,
+    ) -> tuple[list[ArchivalPassageHit], str | None]:
         if not candidates:
-            return []
+            return [], "no_vector_candidates"
         if self.vector_index is None:
             self.last_diagnostics.append(
                 ArchivalVectorDiagnostic(
@@ -175,23 +222,11 @@ class ArchivalPassageSearcher:
                     metadata={"candidate_count": len(candidates)},
                 )
             )
-            return self._lexical_fallback(
-                candidates,
-                lexical_hits,
-                top_k=top_k,
-                source=fallback_source,
-                reason_code="no_vector_index",
-            )
+            return [], "no_vector_index"
         result = self.vector_index.search(candidates, query, top_k=top_k)
         self.last_diagnostics.extend(result.diagnostics)
         if not result.hits:
-            return self._lexical_fallback(
-                candidates,
-                lexical_hits,
-                top_k=top_k,
-                source=fallback_source,
-                reason_code="no_vector_hits",
-            )
+            return [], "no_vector_hits"
         hit_ids = [hit.passage_id for hit in result.hits]
         rehydrated = self._load_passages(hit_ids, candidates)
         eligible_ids = {passage.id for passage in candidates}
@@ -233,15 +268,62 @@ class ArchivalPassageSearcher:
                     },
                 )
             )
-        if not hits:
-            return self._lexical_fallback(
-                candidates,
-                lexical_hits,
-                top_k=top_k,
-                source=fallback_source,
-                reason_code="no_usable_vector_hits",
+        return hits, None if hits else "no_usable_vector_hits"
+
+    def _rrf_fuse(
+        self,
+        lexical_hits: list[ArchivalPassageHit],
+        vector_hits: list[ArchivalPassageHit],
+        *,
+        top_k: int,
+        rrf_k: int = 60,
+    ) -> list[ArchivalPassageHit]:
+        contributions: dict[str, dict[str, object]] = {}
+        # Put embedding first for deterministic semantic tie-breaking while
+        # retaining equal RRF weights for both ranked lists.
+        for source, hits in (("embedding", vector_hits), ("lexical", lexical_hits)):
+            for rank, hit in enumerate(hits, start=1):
+                contribution = 1.0 / (rrf_k + rank)
+                entry = contributions.setdefault(
+                    hit.passage.id,
+                    {"hit": hit, "score": 0.0, "components": {}},
+                )
+                entry["score"] = cast(float, entry["score"]) + contribution
+                components = entry["components"]
+                assert isinstance(components, dict)
+                components[source] = float(components.get(source, 0.0)) + contribution
+
+        ordered = sorted(
+            contributions.values(),
+            key=lambda entry: (
+                -cast(float, entry["score"]),
+                -int("embedding" in cast(dict[str, float], entry["components"])),
+                -float(cast(dict[str, float], entry["components"]).get("embedding", 0.0)),
+                str(cast(ArchivalPassageHit, entry["hit"]).passage.id),
+            ),
+        )
+        fused: list[ArchivalPassageHit] = []
+        for entry in ordered[:top_k]:
+            hit = cast(ArchivalPassageHit, entry["hit"])
+            components = cast(dict[str, float], entry["components"])
+            reason = "rrf " + " ".join(
+                f"{name}={value:.4f}" for name, value in sorted(components.items())
             )
-        return hits[:top_k]
+            if "embedding" in components:
+                reason += f"; {hit.reason}"
+            fused.append(
+                self._hit(
+                    hit.passage,
+                    cast(float, entry["score"]),
+                    reason,
+                    "archival_hybrid",
+                    metadata={
+                        **hit.metadata,
+                        "rrf_components": dict(components),
+                    },
+                )
+            )
+        return fused
 
     def _load_passages(
         self,
@@ -301,14 +383,28 @@ class ArchivalPassageSearcher:
             return []
         bm25 = BM25Okapi(corpus)
         scores = bm25.get_scores(query_tokens)
+        scored = [
+            (
+                float(scores[i]),
+                len(query_set.intersection(corpus[i])),
+                passages[i],
+            )
+            for i in matching_indices
+        ]
+        # BM25's IDF can be zero/negative for tiny corpora.  Keep the best
+        # lexical overlap in that case instead of returning common-word
+        # fillers for every eligible passage.
+        if scored and max(score for score, _overlap, _passage in scored) <= 0:
+            best_overlap = max(overlap for _score, overlap, _passage in scored)
+            scored = [item for item in scored if item[1] == best_overlap]
         ranked = sorted(
-            ((float(scores[i]), passages[i]) for i in matching_indices),
-            key=lambda pair: (pair[0], pair[1].created_at, pair[1].id),
+            scored,
+            key=lambda pair: (pair[0], pair[1], pair[2].created_at, pair[2].id),
             reverse=True,
         )
         return [
             self._hit(passage, score, f"bm25={score:.4f}", "archival_text")
-            for score, passage in ranked[:top_k]
+            for score, _overlap, passage in ranked[:top_k]
         ]
 
     def _hit(

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import re
 import time
@@ -8,6 +9,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
+from sqlalchemy.exc import IntegrityError
 
 from memoryos_lite.agent_kernel import (
     SimpleAgentStepRunner,
@@ -996,6 +998,7 @@ class MemoryOSService:
             store=self.store,
             settings=self.settings,
             tokenizer=self.tokenizer,
+            embedding_client=self.embedding_client,
         )
         self.v3_context_composer = V3ContextComposer(
             store=self.store,
@@ -1024,7 +1027,9 @@ class MemoryOSService:
             else None
         )
         self.kernel_maintenance_analyzer = (
-            KernelMaintenanceAnalyzer(self.store) if self.agent_kernel is not None else None
+            KernelMaintenanceAnalyzer(self.store)
+            if self.settings.resolved_agent_kernel in {"v1", "external"}
+            else None
         )
         self.kernel_maintenance_executor = (
             KernelMaintenanceProposalExecutor(
@@ -1345,6 +1350,26 @@ class MemoryOSService:
             )
             return session
 
+    def list_external_advisories(self, session_id: str) -> list[dict[str, object]]:
+        """Return bounded source-backed suggestions for the Room host only."""
+
+        self._require_session(session_id)
+        return self.store.list_maintenance_advisories(session_id, limit=32)
+
+    def _ensure_recall_index(self, session_id: str) -> None:
+        """Backfill derived recall rows after an ingest or its replay.
+
+        Message durability and derived episode indexing are intentionally
+        separate transactions.  If a process dies after the message commit,
+        the next idempotent retry must repair the missing index rather than
+        returning a replay while leaving recall permanently incomplete.
+        """
+        if self.settings.resolved_recall_pipeline != "v2":
+            return
+        created = self.store.ensure_episodes_for_session(session_id)
+        if created:
+            self.trace(session_id, "episode_indexed", {"created": created})
+
     def ingest(self, session_id: str, request: MessageCreate) -> IngestResponse:
         with (
             observability_context(session_id=session_id),
@@ -1357,18 +1382,90 @@ class MemoryOSService:
         ):
             self._require_session(session_id)
             INGEST_TOTAL.inc()
+            if request.external_id is not None:
+                existing = self.store.get_message_by_external_id(
+                    session_id,
+                    request.external_id,
+                )
+                if existing is not None:
+                    expected = {
+                        "role": request.role.value,
+                        "content": request.content,
+                        "metadata": request.metadata,
+                    }
+                    actual = {
+                        "role": existing.role.value,
+                        "content": existing.content,
+                        "metadata": existing.metadata,
+                    }
+                    if json.dumps(expected, ensure_ascii=False, sort_keys=True) != json.dumps(
+                        actual,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ):
+                        raise ValueError(
+                            "external_id conflict: request differs from stored message"
+                        )
+                    self._ensure_recall_index(session_id)
+                    token_count = self.store.session_token_count(session_id)
+                    should_page = token_count >= self.settings.rot_safe_budget
+                    return IngestResponse(
+                        message=existing,
+                        should_page=should_page,
+                        session_token_count=token_count,
+                        replayed=True,
+                    )
             message = Message(
                 session_id=session_id,
                 role=request.role,
                 content=request.content,
+                external_id=request.external_id,
                 metadata=request.metadata,
                 token_count=self.tokenizer.count(request.content),
             )
-            self.store.add_message(message)
-            if self.settings.resolved_recall_pipeline == "v2":
-                created = self.store.ensure_episodes_for_session(session_id)
-                if created:
-                    self.trace(session_id, "episode_indexed", {"created": created})
+            try:
+                self.store.add_message(message)
+            except IntegrityError:
+                # A unique (session_id, external_id) index arbitrates two
+                # first-writers racing on the same idempotency key.  Re-read
+                # the winner and apply the same replay/conflict contract as a
+                # non-racing request; never leak a SQLite IntegrityError.
+                if request.external_id is None:
+                    raise
+                existing = self.store.get_message_by_external_id(
+                    session_id,
+                    request.external_id,
+                )
+                if existing is None:
+                    raise
+                expected = {
+                    "role": request.role.value,
+                    "content": request.content,
+                    "metadata": request.metadata,
+                }
+                actual = {
+                    "role": existing.role.value,
+                    "content": existing.content,
+                    "metadata": existing.metadata,
+                }
+                if json.dumps(expected, ensure_ascii=False, sort_keys=True) != json.dumps(
+                    actual,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ):
+                    raise ValueError(
+                        "external_id conflict: request differs from stored message"
+                    ) from None
+                self._ensure_recall_index(session_id)
+                token_count = self.store.session_token_count(session_id)
+                should_page = token_count >= self.settings.rot_safe_budget
+                return IngestResponse(
+                    message=existing,
+                    should_page=should_page,
+                    session_token_count=token_count,
+                    replayed=True,
+                )
+            self._ensure_recall_index(session_id)
             token_count = self.store.session_token_count(session_id)
             should_page = token_count >= self.settings.rot_safe_budget
             self.trace(
@@ -1384,6 +1481,7 @@ class MemoryOSService:
                 message=message,
                 should_page=should_page,
                 session_token_count=token_count,
+                replayed=False,
             )
 
     @_instrument_engine_operation("maybe_page")
@@ -2047,11 +2145,7 @@ class MemoryOSService:
         task: str,
         v3_package: ContextPackageV3,
     ) -> None:
-        if (
-            self.agent_kernel is None
-            or self.kernel_maintenance_analyzer is None
-            or self.kernel_maintenance_executor is None
-        ):
+        if self.kernel_maintenance_analyzer is None:
             return
         messages = self.store.list_messages(session_id)
         step_request = AgentStepRequest(
@@ -2062,6 +2156,62 @@ class MemoryOSService:
         )
         try:
             analysis = self.kernel_maintenance_analyzer.analyze(step_request)
+            if self.settings.resolved_agent_kernel == "external":
+                # External governance is advisory-only.  The host receives
+                # source-backed proposals and decides whether to create an
+                # xmuse candidate; MemoryOS never mutates its authority here.
+                for proposal in analysis.memory_proposals:
+                    source_refs = [
+                        {
+                            "source_type": ref.source_type.value,
+                            "source_id": ref.source_id,
+                            **(
+                                {"session_id": ref.session_id} if ref.session_id is not None else {}
+                            ),
+                        }
+                        for ref in proposal.tool_request.source_refs
+                        if ref.source_type.value in {"message", "document"}
+                        and isinstance(ref.source_id, str)
+                        and ref.source_id
+                    ]
+                    arguments = proposal.tool_request.arguments
+                    content = arguments.get("content")
+                    if (
+                        isinstance(content, str)
+                        and content.strip()
+                        and len(content.encode("utf-8")) <= 4096
+                        and source_refs
+                    ):
+                        self.store.add_maintenance_advisory(
+                            session_id=session_id,
+                            proposal_type=proposal.proposal_type,
+                            content=content.strip(),
+                            source_refs=source_refs,
+                        )
+                    self.trace(
+                        session_id,
+                        "maintenance_advisory_proposal",
+                        {
+                            "proposal_type": proposal.proposal_type,
+                            "source_ref_count": len(source_refs),
+                        },
+                    )
+                self.trace(
+                    session_id,
+                    "maintenance_kernel_ran",
+                    {
+                        "task": task,
+                        "signal_count": len(analysis.signals),
+                        "decision_count": len(analysis.decisions),
+                        "memory_proposal_count": len(analysis.memory_proposals),
+                        "context_feedback_count": len(analysis.context_feedback),
+                        "submitted": False,
+                        "governance": "external",
+                    },
+                )
+                return
+            if self.kernel_maintenance_executor is None:
+                return
             execution = self.kernel_maintenance_executor.execute(step_request, analysis)
         except Exception as exc:
             self.trace(
