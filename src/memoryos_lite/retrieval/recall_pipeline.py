@@ -18,6 +18,7 @@ from memoryos_lite.cache import (
     create_derived_cache,
 )
 from memoryos_lite.config import Settings
+from memoryos_lite.retrieval.base import EmbeddingClient
 from memoryos_lite.retrieval.episode_searcher import EpisodeHit, RecallMemorySearcher
 from memoryos_lite.retrieval.query_analyzer import QueryAnalysis, QueryAnalyzer, QueryKind
 from memoryos_lite.schemas import ContextEvidence, ContextPackage, utc_now
@@ -37,12 +38,13 @@ class RecallPipeline:
         settings: Settings,
         tokenizer: TokenEstimator | None = None,
         cache: DerivedCache | None = None,
+        embedding_client: EmbeddingClient | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
         self.tokenizer = tokenizer or TokenEstimator()
         self.query_analyzer = QueryAnalyzer()
-        self.recall_searcher = RecallMemorySearcher()
+        self.recall_searcher = RecallMemorySearcher(embedding_client=embedding_client)
         self.cache = cache if cache is not None else self._default_cache(settings)
         self.cache_key_builder = CacheKeyBuilder(namespace=settings.memoryos_cache_namespace)
 

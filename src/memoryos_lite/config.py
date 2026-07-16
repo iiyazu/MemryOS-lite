@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     memoryos_memory_arch: str = "v3"
     memoryos_agent_kernel: str = "off"
     memoryos_recall_pipeline: str = "v2"
+    memoryos_trace_mode: str = "verbose"
     memoryos_evidence_direct_raw_fallback: bool = True
     memoryos_evidence_candidate_top_k: int = 5
     memoryos_evidence_context_neighbors_before: int = 2
@@ -137,8 +138,8 @@ class Settings(BaseSettings):
     @property
     def resolved_agent_kernel(self) -> str:
         val = self.memoryos_agent_kernel.strip().lower()
-        if val not in {"off", "v1"}:
-            raise ValueError("MEMORYOS_AGENT_KERNEL must be 'off' or 'v1'")
+        if val not in {"off", "v1", "external"}:
+            raise ValueError("MEMORYOS_AGENT_KERNEL must be 'off', 'v1', or 'external'")
         return val
 
     @property
@@ -146,6 +147,13 @@ class Settings(BaseSettings):
         val = self.memoryos_recall_pipeline.strip().lower()
         if val not in {"v1", "v2"}:
             raise ValueError("MEMORYOS_RECALL_PIPELINE must be 'v1' or 'v2'")
+        return val
+
+    @property
+    def resolved_trace_mode(self) -> str:
+        val = self.memoryos_trace_mode.strip().lower()
+        if val not in {"verbose", "compact"}:
+            raise ValueError("MEMORYOS_TRACE_MODE must be 'verbose' or 'compact'")
         return val
 
     @property
