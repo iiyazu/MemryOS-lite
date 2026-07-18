@@ -1,20 +1,19 @@
+from __future__ import annotations
+
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 import uvicorn
-from langchain_core.messages import AIMessage, HumanMessage
 from rich.console import Console
 from rich.table import Table
 from typer import Argument, Option, Typer
 
+from memoryos_lite.capabilities import require_remote_capability
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.evals import EvalResult, run_eval, run_eval_llm
-from memoryos_lite.llm_judge import JudgeVerdict
-from memoryos_lite.public_benchmarks import PublicBenchmarkResult, run_public_benchmark
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
@@ -22,6 +21,11 @@ from memoryos_lite.schemas import (
     MessageCreate,
     Role,
 )
+
+if TYPE_CHECKING:
+    from memoryos_lite.evals import EvalResult
+    from memoryos_lite.llm_judge import JudgeVerdict
+    from memoryos_lite.public_benchmarks import PublicBenchmarkResult
 
 app = Typer(help="MemoryOS Lite CLI")
 demo_app = Typer(help="Run local demos")
@@ -85,7 +89,9 @@ def api(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None
 @demo_app.command("run")
 def demo_run() -> None:
     """Run an end-to-end ingest -> page -> context demo."""
+    require_remote_capability("demo.run")
     from memoryos_lite.graphs import build_memory_graph
+    from memoryos_lite.schemas import MessageCreate, Role
 
     service = MemoryOSService()
     service.settings.rot_safe_budget = 1
@@ -128,10 +134,12 @@ class _ScriptedAgentDemoLLM:
         self.patch_page_id = patch_page_id
         self._patch_called = False
 
-    def bind_tools(self, tools: list[Any]) -> "_ScriptedAgentDemoLLM":
+    def bind_tools(self, tools: list[Any]) -> _ScriptedAgentDemoLLM:
         return self
 
-    def invoke(self, messages: list[Any]) -> AIMessage:
+    def invoke(self, messages: list[Any]) -> Any:
+        from langchain_core.messages import AIMessage
+
         system_text = _message_text(messages[0]) if messages else ""
         user_text = _message_text(messages[-1]) if messages else ""
         if "Classify the user's intent" in system_text:
@@ -229,6 +237,7 @@ def demo_agent(
     ] = None,
 ) -> None:
     """Run a deterministic LangGraph agent demo without calling a real LLM."""
+    require_remote_capability("demo.agent")
     if data_dir is None:
         with TemporaryDirectory(prefix="memoryos-agent-demo-") as tmp_dir:
             _run_agent_demo(Path(tmp_dir))
@@ -237,6 +246,8 @@ def demo_agent(
 
 
 def _run_agent_demo(data_dir: Path) -> None:
+    from langchain_core.messages import HumanMessage
+
     from memoryos_lite.agent_graph import build_agent_graph
 
     settings = Settings(data_dir=data_dir, openai_api_key=None, recent_message_limit=1)
@@ -436,6 +447,9 @@ def eval_run(
     ] = False,
 ) -> None:
     """Run the built-in demo benchmark."""
+    require_remote_capability("eval.run")
+    from memoryos_lite.evals import run_eval, run_eval_llm
+
     settings = get_settings()
     eval_run_id = run_id or datetime.now(UTC).strftime("run_%Y%m%d_%H%M%S")
     if llm_judge:
@@ -524,6 +538,9 @@ def eval_public(
     isolated: bool = True,
 ) -> None:
     """Run LongMemEval or LoCoMo JSON through the local benchmark adapter."""
+    require_remote_capability("eval.public")
+    from memoryos_lite.public_benchmarks import run_public_benchmark
+
     settings = get_settings()
     eval_run_id = run_id or datetime.now(UTC).strftime("public_%Y%m%d_%H%M%S")
     selected_baselines = ["all"] if compare_baselines else baseline or ["memoryos_lite"]

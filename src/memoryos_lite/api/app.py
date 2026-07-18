@@ -36,7 +36,7 @@ def get_service() -> MemoryOSService:
 
 
 ServiceDep = Annotated[MemoryOSService, Depends(get_service)]
-app = FastAPI(title="MemoryOS Lite", version="0.1.0")
+app = FastAPI(title="MemoryOS Lite", version="0.2.1")
 app.mount("/metrics", make_asgi_app())
 
 # Middleware (registration order is reverse of request processing order)
