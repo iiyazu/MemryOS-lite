@@ -8,6 +8,7 @@ from memoryos_lite.cache import (
 )
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.retrieval.archival_vector import LocalArchivalVectorStore
 from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 from memoryos_lite.schemas import (
     MemoryItem,
@@ -690,6 +691,20 @@ def test_service_wires_archival_qdrant_separately_from_page_qdrant(tmp_path):
     assert service.archival_qdrant_store.collection == "memoryos_archival_passages_test"
     assert service.qdrant_store.collection != service.archival_qdrant_store.collection
     assert service.v3_context_composer.archival_searcher.vector_index is not None
+
+
+def test_service_uses_local_archival_vectors_without_qdrant(tmp_path):
+    service = MemoryOSService(
+        settings=Settings(
+            data_dir=tmp_path / ".memoryos",
+            memoryos_archival_vector_enabled=True,
+        ),
+        embedding_client=DeterministicEmbeddingClient(),
+    )
+
+    vector_index = service.v3_context_composer.archival_searcher.vector_index
+    assert vector_index is not None
+    assert isinstance(vector_index.vector_store, LocalArchivalVectorStore)
 
 
 # ---------------------------------------------------------------------------

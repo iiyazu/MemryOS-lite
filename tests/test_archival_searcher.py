@@ -6,6 +6,7 @@ from memoryos_lite.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
     ArchivalVectorHit,
     ArchivalVectorIndex,
+    LocalArchivalVectorStore,
 )
 from memoryos_lite.retrieval.providers.qdrant_archival import (
     QdrantArchivalPassageStore,
@@ -180,6 +181,33 @@ def test_archival_hybrid_search_fuses_lexical_and_vector_hits():
     assert "embedding=" in hits[0].reason
     assert "lexical=" in hits[0].reason
     assert set(hits[0].metadata["rrf_components"]) == {"embedding", "lexical"}
+
+
+def test_local_archival_hybrid_contributes_semantic_hits_to_rrf():
+    target = _passage("apsg_target", "semantic-target metro preference")
+    lexical_distractor = _passage("apsg_lexical", "favorite transport distractor")
+    searcher = ArchivalPassageSearcher(
+        vector_index=ArchivalVectorIndex(
+            embedding_client=TinyEmbeddingClient(),
+            vector_store=LocalArchivalVectorStore(dim=3),
+            config=ArchivalEmbeddingConfig(provider="test", model="tiny", dim=3),
+        ),
+        passage_loader=lambda ids: {
+            passage.id: passage for passage in [target, lexical_distractor] if passage.id in ids
+        },
+    )
+
+    hits = searcher.search(
+        [target, lexical_distractor],
+        "favorite transport",
+        mode="hybrid",
+        top_k=2,
+    )
+
+    target_hit = next(hit for hit in hits if hit.passage.id == target.id)
+    assert target_hit.source == "archival_hybrid"
+    assert "rrf" in target_hit.reason
+    assert "embedding=" in target_hit.reason
 
 
 def test_archival_search_falls_back_to_lexical_when_vector_unavailable():
