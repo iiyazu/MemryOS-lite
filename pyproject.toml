@@ -35,7 +35,7 @@ remote = [
     "qdrant-client>=1.14.0",
 ]
 benchmark = [
-    "memoryos-lite[remote]",
+    "memoryos-lite[full-local,remote]",
 ]
 redis = [
     "redis>=5.0.0",
@@ -50,10 +50,15 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "fastembed>=0.8.0",
     "httpx>=0.28.1",
+    "langchain-core>=1.3.3",
+    "langchain-openai>=1.2.1",
+    "langgraph>=1.2.1",
     "mypy>=1.20.2",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
+    "qdrant-client>=1.14.0",
     "ruff>=0.15.12",
 ]
 

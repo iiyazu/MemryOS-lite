@@ -30,8 +30,20 @@ def test_full_local_profile_keeps_remote_and_benchmark_stacks_optional() -> None
     assert any(item.startswith("fastembed") for item in extras["full-local"])
     assert any(item.startswith("langchain-core") for item in extras["remote"])
     assert any(item.startswith("qdrant-client") for item in extras["remote"])
-    assert extras["benchmark"] == ["memoryos-lite[remote]"]
+    assert extras["benchmark"] == ["memoryos-lite[full-local,remote]"]
     assert project["version"] == __version__ == app.version == "0.2.1"
+
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        development = "\n".join(tomllib.load(handle)["dependency-groups"]["dev"])
+    packages = (
+        "fastembed",
+        "langchain-core",
+        "langchain-openai",
+        "langgraph",
+        "qdrant-client",
+    )
+    for package in packages:
+        assert package in development
 
 
 def test_cli_and_api_import_without_remote_stack() -> None:
