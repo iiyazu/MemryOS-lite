@@ -63,6 +63,7 @@ from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
     ArchivalVectorIndex,
+    LocalArchivalVectorStore,
 )
 from memoryos_lite.retrieval.evidence_representer import EvidenceCandidate, EvidenceRepresenter
 from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher
@@ -962,6 +963,25 @@ class MemoryOSService:
                 archival_qdrant_store = None
                 archival_vector_index = None
                 llm_init_error = str(exc)
+        archival_embedding_dim = getattr(embedding_client_for_archival, "dim", None)
+        if (
+            self.settings.memoryos_archival_vector_enabled
+            and embedding_client_for_archival is not None
+            and isinstance(archival_embedding_dim, int)
+            and archival_embedding_dim > 0
+            and archival_vector_index is None
+        ):
+            archival_vector_index = ArchivalVectorIndex(
+                embedding_client=embedding_client_for_archival,
+                vector_store=LocalArchivalVectorStore(
+                    dim=archival_embedding_dim,
+                ),
+                config=ArchivalEmbeddingConfig(
+                    provider=self.settings.memoryos_embedding_provider,
+                    model=self.settings.memoryos_embedding_model,
+                    dim=archival_embedding_dim,
+                ),
+            )
         self.archival_qdrant_store = archival_qdrant_store
         self.archival_searcher = ArchivalPassageSearcher(
             vector_index=archival_vector_index,
