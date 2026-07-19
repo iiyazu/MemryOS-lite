@@ -31,13 +31,35 @@ build_context(task)
 ## 快速开始
 
 ```bash
-uv sync --frozen --all-groups
-uv run memoryos demo run
-uv run memoryos demo agent
-uv run memoryos api --reload
+# Local API, SQLite/BM25 and offline FastEmbed Hybrid retrieval.
+uv sync --frozen --no-dev --extra full-local
+uv run --no-sync memoryos api --reload
 ```
 
-`demo agent` 使用确定性 scripted 路径，不需要 API key。默认路径可离线运行；真实 LLM、embedding、Redis 或 Qdrant 需要显式配置。
+`full-local` 保留 SQLite、BM25、FastEmbed、RRF、paging 和 external-governance，且不安装
+远程 provider/graph stack。需要 LangGraph demo、远程 LLM/Qdrant 或公开 benchmark 时显式安装：
+
+```bash
+uv sync --frozen --no-dev --extra remote
+uv run --no-sync memoryos demo run
+uv run --no-sync memoryos demo agent
+```
+
+`demo agent` 使用确定性 scripted 路径，不需要 API key，但仍依赖可选的 LangGraph runtime。
+缺少可选依赖时命令返回稳定 capability error；不会改变 SQLite authority 或离线 API 行为。
+
+### 分发边界
+
+`memoryos-lite` 核心包只包含 API、SQLite/BM25 和基础存储。`full-local` 是 xmuse
+companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 external-governance；
+模型缓存由 companion 单独证明，不混入 Python 依赖包。`remote` 与 `benchmark` 则显式
+安装 LangChain、LangGraph、Qdrant 和远程 provider 相关依赖。
+
+在 Linux CPython 3.11 的冻结依赖测量中，移除 remote/benchmark 栈后（不含模型）Python
+依赖 payload 从 286,143,166 B 降至 243,892,461 B，减少 42,250,705 B（14.76%）。该结果
+没有达到 25% 的目标；保留的 ONNX/FastEmbed 是 full-local hybrid 检索的必要下限，因此
+没有通过关闭 semantic retrieval 来换取更小资产。后续发行应继续报告组成与实测值，而非
+把这个例外表述成达标。
 
 主要 HTTP 接口：
 

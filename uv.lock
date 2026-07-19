@@ -1430,21 +1430,16 @@ wheels = [
 
 [[package]]
 name = "memoryos-lite"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "fastapi" },
-    { name = "fastembed" },
     { name = "httpx" },
-    { name = "langchain-core" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
     { name = "prometheus-client" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
-    { name = "qdrant-client" },
     { name = "rank-bm25" },
     { name = "rich" },
     { name = "sqlalchemy" },
@@ -1454,19 +1449,40 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+benchmark = [
+    { name = "fastembed" },
+    { name = "langchain-core" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "qdrant-client" },
+]
+full-local = [
+    { name = "fastembed" },
+]
 ray = [
     { name = "ray", extra = ["default"] },
 ]
 redis = [
     { name = "redis" },
 ]
+remote = [
+    { name = "langchain-core" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "qdrant-client" },
+]
 
 [package.dev-dependencies]
 dev = [
+    { name = "fastembed" },
     { name = "httpx" },
+    { name = "langchain-core" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "qdrant-client" },
     { name = "ruff" },
 ]
 
@@ -1474,16 +1490,17 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.18.4" },
     { name = "fastapi", specifier = ">=0.136.1" },
-    { name = "fastembed", specifier = ">=0.8.0" },
+    { name = "fastembed", marker = "extra == 'full-local'", specifier = ">=0.8.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "langchain-core", specifier = ">=1.3.3" },
-    { name = "langchain-openai", specifier = ">=1.2.1" },
-    { name = "langgraph", specifier = ">=1.2.1" },
+    { name = "langchain-core", marker = "extra == 'remote'", specifier = ">=1.3.3" },
+    { name = "langchain-openai", marker = "extra == 'remote'", specifier = ">=1.2.1" },
+    { name = "langgraph", marker = "extra == 'remote'", specifier = ">=1.2.1" },
+    { name = "memoryos-lite", extras = ["full-local", "remote"], marker = "extra == 'benchmark'" },
     { name = "prometheus-client", specifier = ">=0.25.0" },
     { name = "pydantic", specifier = ">=2.13.3" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "qdrant-client", specifier = ">=1.14.0" },
+    { name = "qdrant-client", marker = "extra == 'remote'", specifier = ">=1.14.0" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "ray", extras = ["default"], marker = "extra == 'ray'", specifier = ">=2.55.1" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0.0" },
@@ -1493,14 +1510,19 @@ requires-dist = [
     { name = "typer", specifier = ">=0.25.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.46.0" },
 ]
-provides-extras = ["redis", "ray"]
+provides-extras = ["full-local", "remote", "benchmark", "redis", "ray"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fastembed", specifier = ">=0.8.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "langchain-core", specifier = ">=1.3.3" },
+    { name = "langchain-openai", specifier = ">=1.2.1" },
+    { name = "langgraph", specifier = ">=1.2.1" },
     { name = "mypy", specifier = ">=1.20.2" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "qdrant-client", specifier = ">=1.14.0" },
     { name = "ruff", specifier = ">=0.15.12" },
 ]
 

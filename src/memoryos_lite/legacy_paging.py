@@ -11,10 +11,6 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-from pydantic import SecretStr
-
 from memoryos_lite.config import Settings
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.schemas import (
@@ -40,6 +36,12 @@ class PageDraftClient(Protocol):
 
 class OpenAIPageDraftClient:
     def __init__(self, settings: Settings) -> None:
+        # The full-local sidecar deliberately does not install the remote LLM
+        # stack.  Keep that stack behind the explicit llm paging capability so
+        # importing the API never makes it a runtime requirement.
+        from langchain_openai import ChatOpenAI
+        from pydantic import SecretStr
+
         api_key = settings.chat_api_key
         if not api_key:
             raise ValueError(f"{settings.chat_api_key_name} is required for llm paging mode")
@@ -92,6 +94,8 @@ class OpenAIPageDraftClient:
             f"Existing pages (do not duplicate):\n{pages_block}"
             f"{json_instruction}"
         )
+        from langchain_core.messages import HumanMessage, SystemMessage
+
         result = self.model.invoke(
             [
                 SystemMessage(content=system_content),
@@ -625,6 +629,7 @@ class ItemExtractor:
         return items
 
     def _extract_llm(self, page: MemoryPage, messages: list[Message]) -> list[MemoryItem]:
+        from langchain_core.messages import HumanMessage, SystemMessage
         from pydantic import BaseModel as _BaseModel
 
         llm_client = self._llm_client

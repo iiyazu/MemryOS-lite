@@ -1,13 +1,13 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import re
 import time
 from functools import wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langchain_openai import ChatOpenAI
-from pydantic import SecretStr
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 from sqlalchemy.exc import IntegrityError
 
@@ -67,11 +67,6 @@ from memoryos_lite.retrieval.archival_vector import (
 from memoryos_lite.retrieval.evidence_representer import EvidenceCandidate, EvidenceRepresenter
 from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.retrieval.providers import (
-    OpenAIEmbeddingClient,
-    QdrantArchivalPassageStore,
-    QdrantEmbeddingStore,
-)
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
@@ -174,6 +169,10 @@ from memoryos_lite.legacy_paging import (  # noqa: E402
     PagingAgent,
     _RankedMessageEvidence,
 )
+
+if TYPE_CHECKING:
+    from memoryos_lite.retrieval.providers.qdrant import QdrantEmbeddingStore
+    from memoryos_lite.retrieval.providers.qdrant_archival import QdrantArchivalPassageStore
 
 
 class PatchVerifier:
@@ -900,6 +899,8 @@ class MemoryOSService:
         embedding_client_for_pages = self.embedding_client
         if qdrant_url and embedding_client_for_pages is not None:
             try:
+                from memoryos_lite.retrieval.providers.qdrant import QdrantEmbeddingStore
+
                 qdrant_store = self.recovery.execute(
                     "engine.qdrant_pages",
                     "connect",
@@ -931,6 +932,10 @@ class MemoryOSService:
             and embedding_client_for_archival is not None
         ):
             try:
+                from memoryos_lite.retrieval.providers.qdrant_archival import (
+                    QdrantArchivalPassageStore,
+                )
+
                 archival_qdrant_store = self.recovery.execute(
                     "engine.qdrant_archival",
                     "connect",
@@ -1047,6 +1052,9 @@ class MemoryOSService:
             and paging_mode_normalized == "llm"
         ):
             try:
+                from langchain_openai import ChatOpenAI
+                from pydantic import SecretStr
+
                 if _use_structured:
                     from pydantic import BaseModel as _BaseModel
 
@@ -1319,6 +1327,8 @@ class MemoryOSService:
             return None
         if provider == "openai" and self.settings.openai_api_key:
             try:
+                from memoryos_lite.retrieval.providers.openai import OpenAIEmbeddingClient
+
                 return OpenAIEmbeddingClient(self.settings)
             except Exception:
                 pass
