@@ -32,17 +32,17 @@ build_context(task)
 
 ```bash
 # Local API, SQLite/BM25 and offline FastEmbed Hybrid retrieval.
-uv sync --frozen --all-groups --extra full-local
-uv run memoryos api --reload
+uv sync --frozen --no-dev --extra full-local
+uv run --no-sync memoryos api --reload
 ```
 
 `full-local` 保留 SQLite、BM25、FastEmbed、RRF、paging 和 external-governance，且不安装
 远程 provider/graph stack。需要 LangGraph demo、远程 LLM/Qdrant 或公开 benchmark 时显式安装：
 
 ```bash
-uv sync --frozen --all-groups --extra remote
-uv run memoryos demo run
-uv run memoryos demo agent
+uv sync --frozen --no-dev --extra remote
+uv run --no-sync memoryos demo run
+uv run --no-sync memoryos demo agent
 ```
 
 `demo agent` 使用确定性 scripted 路径，不需要 API key，但仍依赖可选的 LangGraph runtime。

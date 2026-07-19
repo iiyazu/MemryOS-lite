@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from typer import Argument, Option, Typer
 
-from memoryos_lite.capabilities import require_remote_capability
+from memoryos_lite.capabilities import require_benchmark_capability, require_remote_capability
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
@@ -538,7 +538,7 @@ def eval_public(
     isolated: bool = True,
 ) -> None:
     """Run LongMemEval or LoCoMo JSON through the local benchmark adapter."""
-    require_remote_capability("eval.public")
+    require_benchmark_capability("eval.public")
     from memoryos_lite.public_benchmarks import run_public_benchmark
 
     settings = get_settings()

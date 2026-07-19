@@ -11,7 +11,11 @@ import pytest
 
 from memoryos_lite import __version__
 from memoryos_lite.api.app import app
-from memoryos_lite.capabilities import MissingOptionalCapabilityError, require_remote_capability
+from memoryos_lite.capabilities import (
+    MissingOptionalCapabilityError,
+    require_remote_capability,
+)
+from memoryos_lite.cli import eval_public
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -96,4 +100,22 @@ def test_remote_capability_error_is_stable(monkeypatch: pytest.MonkeyPatch) -> N
         "memoryos capability 'eval.public' is unavailable; "
         "install memoryos-lite[remote] "
         "(missing: langchain_core, langchain_openai, langgraph, qdrant_client)"
+    )
+
+
+def test_public_benchmark_requires_fastembed_and_remote_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed = {"langchain_core", "langchain_openai", "langgraph", "qdrant_client"}
+    monkeypatch.setattr(
+        "memoryos_lite.capabilities.find_spec",
+        lambda name: object() if name in installed else None,
+    )
+
+    with pytest.raises(MissingOptionalCapabilityError) as raised:
+        eval_public(benchmark="locomo", data_path="unused.json")
+
+    assert str(raised.value) == (
+        "memoryos capability 'eval.public' is unavailable; "
+        "install memoryos-lite[benchmark] (missing: fastembed)"
     )

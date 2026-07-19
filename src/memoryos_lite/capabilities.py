@@ -26,3 +26,21 @@ def require_remote_capability(capability: str) -> None:
     ]
     if missing:
         raise MissingOptionalCapabilityError(capability, "remote", missing)
+
+
+def require_benchmark_capability(capability: str) -> None:
+    """Prove both Hybrid retrieval and remote benchmark dependencies."""
+
+    missing = [
+        package
+        for package in (
+            "fastembed",
+            "langchain_core",
+            "langchain_openai",
+            "langgraph",
+            "qdrant_client",
+        )
+        if find_spec(package) is None
+    ]
+    if missing:
+        raise MissingOptionalCapabilityError(capability, "benchmark", missing)
