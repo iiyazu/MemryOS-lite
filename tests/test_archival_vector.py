@@ -2,7 +2,9 @@ import pytest
 
 from memoryos_lite.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
+    ArchivalVectorHit,
     ArchivalVectorIndex,
+    LocalArchivalVectorStore,
 )
 from memoryos_lite.retrieval.providers.qdrant_archival import (
     QdrantArchivalPassageStore,
@@ -44,6 +46,15 @@ class TinyEmbeddingClient:
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return [self.embed(text) for text in texts]
+
+
+class CountingEmbeddingClient(TinyEmbeddingClient):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def embed(self, text: str) -> list[float]:
+        self.calls += 1
+        return super().embed(text)
 
 
 def test_archival_qdrant_points_use_passage_namespace_and_config_payload():
@@ -160,3 +171,96 @@ def test_archival_vector_index_can_index_passages_before_query():
 
     assert diagnostics == []
     assert [hit.passage_id for hit in hits] == ["apsg_indexed"]
+
+
+def test_local_archival_vector_finds_semantic_match_without_lexical_overlap():
+    vector_store = LocalArchivalVectorStore(dim=3)
+    vector_index = ArchivalVectorIndex(
+        embedding_client=TinyEmbeddingClient(),
+        vector_store=vector_store,
+        config=_config(),
+    )
+
+    result = vector_index.search(
+        [
+            _passage("apsg_target", "needle source"),
+            _passage("apsg_distractor", "unrelated source"),
+        ],
+        "needle paraphrase",
+        top_k=1,
+    )
+
+    assert [hit.passage_id for hit in result.hits] == ["apsg_target"]
+    assert result.hits[0].payload["backend"] == "local"
+
+
+def test_local_archival_vector_is_bounded_and_filters_out_of_scope_passages():
+    vector_store = LocalArchivalVectorStore(dim=3, max_vectors=1)
+    config = _config()
+    first = _passage("apsg_first", "needle first")
+    second = _passage("apsg_second", "needle second")
+    vector_store.upsert_passage(first, [1.0, 0.0, 0.0], config)
+    vector_store.upsert_passage(second, [1.0, 0.0, 0.0], config)
+
+    assert vector_store.query(
+        [1.0, 0.0, 0.0],
+        top_k=2,
+        passage_ids=[first.id, second.id],
+        config=config,
+    ) == [
+        ArchivalVectorHit(
+            passage_id=second.id,
+            score=1.0,
+            payload={
+                "backend": "local",
+                "embedding_config_hash": config.config_hash,
+            },
+        )
+    ]
+
+    assert (
+        vector_store.query(
+            [1.0, 0.0, 0.0],
+            top_k=1,
+            passage_ids=[],
+            config=config,
+        )
+        == []
+    )
+
+
+def test_local_archival_vector_isolates_embedding_configurations():
+    vector_store = LocalArchivalVectorStore(dim=3)
+    old_config = _config(model="old")
+    vector_store.upsert_passage(
+        _passage("apsg_old_model", "needle"),
+        [1.0, 0.0, 0.0],
+        old_config,
+    )
+
+    assert (
+        vector_store.query(
+            [1.0, 0.0, 0.0],
+            top_k=1,
+            passage_ids=["apsg_old_model"],
+            config=_config(model="new"),
+        )
+        == []
+    )
+
+
+def test_local_archival_vector_reuses_unchanged_passages_and_reindexes_edits():
+    client = CountingEmbeddingClient()
+    vector_index = ArchivalVectorIndex(
+        embedding_client=client,
+        vector_store=LocalArchivalVectorStore(dim=3),
+        config=_config(),
+    )
+    original = _passage("apsg_cached", "needle original")
+
+    vector_index.index_passages([original])
+    vector_index.index_passages([original])
+    assert client.calls == 1
+
+    vector_index.index_passages([_passage("apsg_cached", "edited content")])
+    assert client.calls == 2
