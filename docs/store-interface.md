@@ -150,7 +150,7 @@ add/update/delete audit history.
 ## Initialization And Migrations
 
 `create_store()` initializes tables with SQLAlchemy metadata and stamps
-`alembic_version` to `0006_add_archival_memory` for fresh local databases.
+`alembic_version` to `0009_add_context_policy_candidates` for fresh local databases.
 
 Current migration head:
 
@@ -162,6 +162,9 @@ Current migration head:
 | `0004` | Add episodes |
 | `0005` | Add core memory |
 | `0006` | Add archival memory |
+| `0007` | Add `read_only` and `tags_json` to core memory blocks |
+| `0008` | Add promotion candidates |
+| `0009` | Add context policy candidates |
 
 Use Alembic for existing database upgrades:
 
