@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import logging
 import time
 from uuid import uuid4
@@ -34,7 +35,7 @@ class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in ("/health", "/metrics"):
             return await call_next(request)
         key = request.headers.get("X-API-Key")
-        if key != self._api_key:
+        if key is None or not hmac.compare_digest(key.encode(), self._api_key.encode()):
             return JSONResponse(status_code=401, content={"detail": "invalid_api_key"})
         return await call_next(request)
 

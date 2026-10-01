@@ -41,3 +41,43 @@ def test_no_api_key_configured_allows_all():
     client = TestClient(_get_app())
     resp = client.get("/health")
     assert resp.status_code == 200
+
+
+def _keyed_client(api_key: str) -> TestClient:
+    from fastapi import FastAPI
+
+    from memoryos_lite.middleware import ApiKeyAuthMiddleware
+
+    app = FastAPI()
+    app.add_middleware(ApiKeyAuthMiddleware, api_key=api_key)
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/sessions")
+    def sessions() -> dict[str, str]:
+        return {"status": "ok"}
+
+    return TestClient(app)
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({"X-API-Key": "secret-key"}, 200),
+        ({"X-API-Key": "secret-kez"}, 401),
+        ({"X-API-Key": "secret-key-longer"}, 401),
+        ({"X-API-Key": "Ü-not-ascii".encode("latin-1")}, 401),
+        ({}, 401),
+    ],
+)
+def test_api_key_guards_protected_routes(headers, expected):
+    resp = _keyed_client("secret-key").get("/sessions", headers=headers)
+    assert resp.status_code == expected
+    if expected == 401:
+        assert resp.json() == {"detail": "invalid_api_key"}
+
+
+def test_api_key_leaves_health_open():
+    assert _keyed_client("secret-key").get("/health").status_code == 200
