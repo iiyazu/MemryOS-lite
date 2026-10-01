@@ -4,7 +4,7 @@
 
 MemoryOS Lite is an eval-driven, source-attributed Agent/RAG memory prototype. Do not describe it as production-ready. Implementation and fresh tests are authoritative; documentation is descriptive.
 
-Current defaults are `MEMORYOS_MEMORY_ARCH=v3`, `MEMORYOS_RECALL_PIPELINE=v2`, `MEMORYOS_PAGING_MODE=off`, and `MEMORYOS_AGENT_KERNEL=off`. The collected test suite currently contains 789 tests; do not freeze passing counts or timings in docs.
+Current defaults are `MEMORYOS_MEMORY_ARCH=v3`, `MEMORYOS_RECALL_PIPELINE=v2`, `MEMORYOS_PAGING_MODE=off`, and `MEMORYOS_AGENT_KERNEL=off`. Do not freeze test counts, passing counts, or timings in docs.
 
 ## Runtime boundaries
 
