@@ -68,10 +68,24 @@ ROOMMEM_WRITE_COLUMNS = [
     "matched",
     "precision",
     "recall",
+    "unmatched",
     "noise",
     "supersede",
+    "stale_active",
     "duplicate",
-    "unmatched legit/noise",
+    "kind_agree",
+    "scope_agree",
+    "legit/noise",
+]
+ROOMMEM_CURATOR_COLUMNS = [
+    "room",
+    "windows",
+    "added",
+    "superseded",
+    "noop",
+    "rej_grounding",
+    "rej_schema",
+    "llm_errors",
 ]
 PUBLIC_TABLE_COLUMNS = [
     "benchmark",
@@ -427,6 +441,10 @@ def eval_roommem(
         str | None,
         Option("--rooms", help="Comma-separated room ids (default: all rooms)"),
     ] = None,
+    split: Annotated[
+        str | None,
+        Option("--split", help="Dataset preset: dev=rm01-rm06, test=rm07-rm12"),
+    ] = None,
     repeats: Annotated[
         int,
         Option("--repeats", help="Repeat each probe N times (LLM cache bypassed per repeat)"),
@@ -450,16 +468,28 @@ def eval_roommem(
         str,
         Option("--curated-source", help="Registered curated memory source name for --arm curated"),
     ] = "default",
+    curator_window: Annotated[
+        int,
+        Option("--curator-window", help="Curator window size in messages for --arm curated"),
+    ] = 12,
     out: Annotated[
         str,
         Option("--out", help="Output directory for results and reports"),
     ] = "artifacts/roommem",
 ) -> None:
     """Run the RoomMem multi-room memory evaluation."""
-    from memoryos_lite.roommem import RoomMemError, load_rooms, run_roommem
+    from memoryos_lite.roommem import RoomMemError, load_rooms, resolve_split, run_roommem
 
-    room_ids = [value.strip() for value in rooms.split(",") if value.strip()] if rooms else None
+    if split is not None and rooms is not None:
+        console.print("[red]RoomMem error:[/red] --split and --rooms are mutually exclusive")
+        raise Exit(1)
     try:
+        if split is not None:
+            room_ids: list[str] | None = resolve_split(split)
+        elif rooms:
+            room_ids = [value.strip() for value in rooms.split(",") if value.strip()]
+        else:
+            room_ids = None
         selected = load_rooms(Path(data), room_ids=room_ids)
         summary = run_roommem(
             rooms=selected,
@@ -469,6 +499,7 @@ def eval_roommem(
             embedding=embedding,
             heuristic_advisories=heuristic_advisories,
             curated_source_name=curated_source,
+            curator_window=curator_window,
             fake_llm=fake_llm,
         )
     except RoomMemError as exc:
@@ -614,6 +645,20 @@ def _print_roommem_summary(summary: dict[str, object]) -> None:
             write_table.add_row(*_roommem_write_row(arm, payload))
         console.print(write_table)
 
+        curated = write_side.get("curated")
+        rooms = curated.get("curator_rooms") if isinstance(curated, dict) else None
+        if isinstance(rooms, dict) and rooms:
+            curator_table = Table(*ROOMMEM_CURATOR_COLUMNS)
+            for room_id in sorted(rooms):
+                counters = rooms[room_id]
+                if not isinstance(counters, dict):
+                    counters = {}
+                curator_table.add_row(
+                    room_id,
+                    *[str(counters.get(key, 0)) for key in ROOMMEM_CURATOR_COLUMNS[1:]],
+                )
+            console.print(curator_table)
+
 
 def _roommem_read_row(arm: str, asked_in: str, metrics: dict[str, object]) -> list[str]:
     labels = metrics.get("judge_labels")
@@ -645,14 +690,25 @@ def _roommem_write_row(arm: str, payload: dict[str, object]) -> list[str]:
     if not isinstance(rates, dict):
         rates = {}
     if arm == "raw":
-        advisories = payload.get("advisories")
+        heuristic = payload.get("heuristic")
+        if not isinstance(heuristic, dict):
+            heuristic = {}
+        heuristic_rates = heuristic.get("rates")
+        if not isinstance(heuristic_rates, dict):
+            heuristic_rates = {}
+        advisories = heuristic.get("advisories")
+        matched_advisories = heuristic.get("matched")
         return [
             f"{arm} (heuristic)",
             str(advisories if isinstance(advisories, int) else 0),
+            str(matched_advisories if isinstance(matched_advisories, int) else "-"),
             "-",
-            _roommem_number(rates.get("gold_match_rate")),
+            _roommem_number(heuristic_rates.get("gold_match_rate")),
             "-",
-            _roommem_number(rates.get("noise_rate")),
+            _roommem_number(heuristic_rates.get("noise_rate")),
+            "-",
+            "-",
+            "-",
             "-",
             "-",
             "-",
@@ -671,9 +727,13 @@ def _roommem_write_row(arm: str, payload: dict[str, object]) -> list[str]:
         matched_text,
         _roommem_number(rates.get("precision")),
         _roommem_number(rates.get("recall")),
+        _roommem_number(rates.get("unmatched_rate")),
         _roommem_number(rates.get("noise_rate")),
         _roommem_number(rates.get("supersede_rate")),
+        _roommem_number(rates.get("stale_active_rate")),
         _roommem_number(rates.get("duplicate_rate")),
+        _roommem_number(rates.get("kind_agreement")),
+        _roommem_number(rates.get("scope_agreement")),
         f"{unmatched_judged.get('legit_unannotated', 0)}/{unmatched_judged.get('noise', 0)}",
     ]
 

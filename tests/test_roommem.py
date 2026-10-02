@@ -16,18 +16,25 @@ from typer.testing import CliRunner
 from memoryos_lite.cli import app
 from memoryos_lite.roommem import (
     LIMITATIONS_ZH,
+    SPLIT_PRESETS,
     XMUSE_MEMORY_DOC_PREFIX,
     ChatAnswerer,
     ChatJudge,
     CuratedMemoryView,
     DiskCachedChatClient,
+    DiskCachedCuratorLLM,
     EvidenceItem,
+    FakeAnswerer,
+    FakeCuratorLLM,
     FakeJudge,
     GoldMemorySource,
+    RoomMemConfigError,
     RoomMemDataError,
     load_rooms,
+    match_curated_to_gold,
     oracle_curated_memories,
     register_curated_source,
+    resolve_split,
     run_roommem,
     score_write_side,
     unregister_curated_source,
@@ -417,9 +424,14 @@ def test_oracle_arm_current_answer_excludes_superseded(tmp_path, rooms_dir):
     assert write_side["superseded_gold"] >= 1
     assert write_side["supersede_correct"] == write_side["superseded_gold"]
     assert write_side["rates"]["supersede_rate"] == 1.0
+    assert write_side["rates"]["stale_active_rate"] == 0.0
     assert write_side["rates"]["precision"] == 1.0
     assert write_side["rates"]["recall"] == 1.0
+    assert write_side["rates"]["unmatched_rate"] == 0.0
+    assert write_side["rates"]["noise_rate"] == 0.0
     assert write_side["rates"]["duplicate_rate"] == 0.0
+    assert write_side["rates"]["kind_agreement"] == 1.0
+    assert write_side["rates"]["scope_agreement"] == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -490,8 +502,12 @@ def test_score_write_side_hand_made_curated_list(rooms_dir):
     assert metrics["rates"]["supersede_rate"] == 1.0
     assert metrics["rates"]["duplicate_rate"] == pytest.approx(1 / 2)
     assert metrics["unmatched_judged"] == {"legit_unannotated": 2, "noise": 1}
-    assert metrics["rates"]["noise_rate"] == pytest.approx(3 / 5)
-    assert metrics["rates"]["primary_noise_rate"] == pytest.approx(2 / 5)
+    # Noise is only what the judge labels noise among unmatched memories.
+    assert metrics["rates"]["noise_rate"] == pytest.approx(1 / 5)
+    assert metrics["rates"]["unmatched_rate"] == pytest.approx(3 / 5)
+    # Both matched pairs are decision-vs-decision on room scope.
+    assert metrics["rates"]["kind_agreement"] == 1.0
+    assert metrics["rates"]["scope_agreement"] == 1.0
     restatement = metrics["noise_types"]["restatement"]
     assert restatement["messages"] == 1
     assert restatement["cited_as_source"] == 1
@@ -500,6 +516,59 @@ def test_score_write_side_hand_made_curated_list(rooms_dir):
     assert instruction["messages"] == 1
     assert instruction["cited_as_source"] == 1
     assert instruction["in_unmatched_memory"] == 1
+
+
+def test_match_by_source_overlap_only_with_statement_tiebreak(rooms_dir):
+    room = load_rooms(rooms_dir, room_ids=["rm90"])[0]
+    gold = room.gold_memories
+    curated = [
+        CuratedMemoryView(
+            id="v-kind",
+            kind="preference",
+            statement="曾计划用 SQLite 作为开发阶段存储。",
+            sources=[GoldMemorySource(message_id="m01", quote="决定用 SQLite 作为开发阶段的存储")],
+        ),
+        CuratedMemoryView(
+            id="v-other",
+            kind="fact",
+            statement="无关的一句话。",
+            sources=[GoldMemorySource(message_id="m01", quote="决定用 SQLite 作为开发阶段的存储")],
+        ),
+    ]
+
+    matches = match_curated_to_gold(curated, gold)
+
+    # Kind is not a matching gate: the preference-shaped view still matches
+    # the decision gold; the tie on source overlap is broken by the statement
+    # token overlap, so the statement-equal view wins.
+    assert [match.curated_id for match in matches] == ["v-kind"]
+    assert matches[0].gold_id == "g2"
+    assert matches[0].statement_overlap > 0
+
+
+def test_match_stale_active_view_counts_only_when_matched(rooms_dir):
+    room = load_rooms(rooms_dir, room_ids=["rm90"])[0]
+    curated = [
+        CuratedMemoryView(
+            id="c1",
+            kind="decision",
+            statement="开发阶段最终使用 Postgres 作为主要存储。",
+            sources=[GoldMemorySource(message_id="m03", quote="改用 Postgres 作为主要存储")],
+        ),
+        CuratedMemoryView(
+            id="c2",
+            kind="decision",
+            statement="曾计划用 SQLite 作为开发阶段存储。",
+            sources=[GoldMemorySource(message_id="m01", quote="决定用 SQLite 作为开发阶段的存储")],
+        ),
+    ]
+
+    metrics, _ = score_write_side(room, curated, FakeJudge())
+
+    # g2 is superseded in the dataset; its matched view is still active, which
+    # fails the supersede rate and shows up in the stale-active rate.
+    assert metrics["rates"]["supersede_rate"] == 0.0
+    assert metrics["rates"]["stale_active_rate"] == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -625,6 +694,70 @@ def test_disk_cache_reuses_responses_and_separates_repeats(tmp_path):
     assert len(list(cache_dir.glob("*.json"))) == 3
 
 
+def test_fake_curator_llm_adds_one_grounded_memory_per_human_message():
+    fake = FakeCuratorLLM()
+    user = (
+        'Active memories (reconcile against these; "supersedes" must use an id from '
+        "this list):\n(none)\n\n"
+        "Earlier context (read-only; you may quote these messages):\n(none)\n\n"
+        "Messages to curate:\n"
+        "[msg_1] Lin (human): 我们决定用 SQLite 作为开发阶段的存储。\n"
+        "[msg_2] Atlas (agent): 收到。\n"
+        "[msg_3] Mo (human): Hi\n"
+    )
+
+    payload = fake.complete_json(system="sys", user=user)
+
+    operations = payload["operations"]
+    assert len(operations) == 1
+    operation = operations[0]
+    assert operation["op"] == "add"
+    assert operation["kind"] == "fact"
+    assert operation["topic_key"] == "roommem.msg_1"
+    assert operation["statement"] == "我们决定用 SQLite 作为开发阶段的存储。"
+    assert operation["sources"] == [
+        {"message_id": "msg_1", "quote": "我们决定用 SQLite 作为开发阶段的存储。"}
+    ]
+    assert operation["supersedes"] is None
+    assert fake.complete_json(system="sys", user=user) == payload
+
+
+class _CountingCuratorLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete_json(self, system, user):
+        self.calls += 1
+        return {"operations": []}
+
+
+def test_curator_llm_cache_reuses_and_separates_repeats(tmp_path):
+    inner = _CountingCuratorLLM()
+    cache_dir = tmp_path / "cache"
+
+    first = DiskCachedCuratorLLM(inner, model="curator-model", cache_dir=cache_dir, repeat=0)
+    assert first.complete_json(system="s", user="u") == {"operations": []}
+    assert first.complete_json(system="s", user="u") == {"operations": []}
+    assert inner.calls == 1
+
+    second_inner = _CountingCuratorLLM()
+    fresh = DiskCachedCuratorLLM(second_inner, model="curator-model", cache_dir=cache_dir, repeat=0)
+    assert fresh.complete_json(system="s", user="u") == {"operations": []}
+    assert second_inner.calls == 0  # a new run with the same key reuses the entry
+
+    repeat_one = DiskCachedCuratorLLM(inner, model="curator-model", cache_dir=cache_dir, repeat=1)
+    assert repeat_one.complete_json(system="s", user="u") == {"operations": []}
+    assert inner.calls == 2
+
+    other_model = DiskCachedCuratorLLM(inner, model="other-model", cache_dir=cache_dir, repeat=0)
+    assert other_model.complete_json(system="s", user="u") == {"operations": []}
+    assert inner.calls == 3
+    assert repeat_one.cache_key(system="s", user="u") != first.cache_key(system="s", user="u")
+
+    cached = json.loads(next(cache_dir.glob("*.json")).read_text(encoding="utf-8"))
+    assert cached["role"] == "curator"
+
+
 # ---------------------------------------------------------------------------
 # Curated arm and CLI
 # ---------------------------------------------------------------------------
@@ -633,7 +766,15 @@ def test_disk_cache_reuses_responses_and_separates_repeats(tmp_path):
 def test_curated_arm_with_registered_source_cross_scope(tmp_path, rooms_dir):
     room = load_rooms(rooms_dir, room_ids=["rm91"])[0]
     views = oracle_curated_memories(room)
-    counts = {"grounding_rejects": 1, "schema_failures": 2}
+    counts = {
+        "windows": 1,
+        "added": 3,
+        "superseded": 0,
+        "noop": 0,
+        "rejected_grounding": 1,
+        "rejected_schema": 2,
+        "llm_errors": 0,
+    }
     source = _FakeSource(views, counts=counts)
     register_curated_source("inline-source", lambda: source)
     try:
@@ -658,6 +799,7 @@ def test_curated_arm_with_registered_source_cross_scope(tmp_path, rooms_dir):
     assert write_side["rates"]["precision"] == 1.0
     assert write_side["rates"]["recall"] == 1.0
     assert write_side["curator_counts"] == counts
+    assert write_side["curator_rooms"] == {"rm91": counts}
     assert write_side["notes"]
 
 
@@ -684,6 +826,108 @@ def test_curated_arm_rejects_ungrounded_view(tmp_path, rooms_dir):
         unregister_curated_source("inline-bad")
 
 
+def test_default_curated_source_runs_real_curator_with_fake_llm(tmp_path, rooms_dir):
+    rooms = load_rooms(rooms_dir)
+    out_dir = tmp_path / "out"
+    summary = run_roommem(
+        rooms,
+        out_dir=out_dir,
+        arms=["curated"],
+        fake_llm=True,
+        scratch_root=tmp_path / "scratch",
+    )
+
+    rows = _by_probe(_read_results(out_dir))
+    assert set(rows) == {("rm90", "p1"), ("rm91", "p1"), ("rm91", "p2"), ("rm91", "p3")}
+    assert rows[("rm90", "p1")]["hit"] is True
+    assert rows[("rm91", "p1")]["hit"] is True
+    # Fake curator facts map to xmuse scope "room", so new-room probes stay empty.
+    assert rows[("rm91", "p2")]["asked_in"] == "new_room_same_project"
+    assert rows[("rm91", "p2")]["hit"] is False
+
+    write_side = summary["write_side"]["curated"]
+    assert write_side["memories"] == 5
+    assert write_side["matched"] == 5
+    assert write_side["rates"]["precision"] == 1.0
+    assert write_side["rates"]["recall"] == 1.0
+    assert write_side["rates"]["unmatched_rate"] == 0.0
+    assert write_side["rates"]["noise_rate"] == 0.0
+    assert write_side["rates"]["supersede_rate"] == 0.0
+    assert write_side["rates"]["stale_active_rate"] == 1.0
+    assert write_side["rates"]["kind_agreement"] == pytest.approx(1 / 5)
+    assert write_side["rates"]["scope_agreement"] == pytest.approx(3 / 5)
+
+    counters = write_side["curator_counts"]
+    assert counters == {
+        "windows": 2,
+        "added": 5,
+        "superseded": 0,
+        "noop": 0,
+        "rejected_grounding": 0,
+        "rejected_schema": 0,
+        "llm_errors": 0,
+    }
+    assert write_side["curator_rooms"]["rm90"]["added"] == 2
+    assert write_side["curator_rooms"]["rm91"]["added"] == 3
+
+    on_disk = json.loads((out_dir / "write_side.json").read_text(encoding="utf-8"))
+    assert on_disk["curated"]["curator_rooms"]["rm91"]["windows"] == 1
+    summary_md = (out_dir / "summary.md").read_text(encoding="utf-8")
+    assert "### Curator counters" in summary_md
+
+
+def test_curator_window_controls_curator_windowing(tmp_path, rooms_dir):
+    rooms = load_rooms(rooms_dir)
+    summary = run_roommem(
+        rooms,
+        out_dir=tmp_path / "out",
+        arms=["curated"],
+        fake_llm=True,
+        curator_window=2,
+        scratch_root=tmp_path / "scratch",
+    )
+
+    counters = summary["write_side"]["curated"]["curator_counts"]
+    assert counters["windows"] == 5  # rm90: 4 messages -> 2 windows; rm91: 6 -> 3
+    assert counters["added"] == 5
+    assert summary["run"]["curator_window"] == 2
+
+
+def test_curated_arm_llm_calls_go_through_disk_cache(tmp_path, rooms_dir):
+    rooms = load_rooms(rooms_dir)
+    inner = _CountingCuratorLLM()
+    out_dir = tmp_path / "out"
+    shared_answerer = _answerer_factory(FakeAnswerer)
+
+    def run(scratch, repeats=1):
+        return run_roommem(
+            rooms,
+            out_dir=out_dir,
+            arms=["curated"],
+            llm_factory=shared_answerer,
+            curated_llm_factory=lambda settings: inner,
+            repeats=repeats,
+            scratch_root=scratch,
+        )
+
+    run(tmp_path / "scratch-1")
+    assert inner.calls == 2  # one window per inline room
+    cache_files = sorted((out_dir / "llm_cache").glob("*.json"))
+    assert len(cache_files) == 2
+    roles = {json.loads(path.read_text(encoding="utf-8"))["role"] for path in cache_files}
+    assert roles == {"curator"}
+
+    # Curator prompts render freshly minted store message ids, so a replay that
+    # re-ingests the dataset mints new cache keys instead of hitting old ones.
+    run(tmp_path / "scratch-2")
+    assert inner.calls == 4
+    assert len(list((out_dir / "llm_cache").glob("*.json"))) == 4
+
+    run(tmp_path / "scratch-3", repeats=2)
+    assert inner.calls == 8  # repeat 1 curates in its own cache namespace
+    assert len(list((out_dir / "llm_cache").glob("*.json"))) == 8
+
+
 def test_cli_roommem_fake_llm_writes_reports(tmp_path, rooms_dir):
     out_dir = tmp_path / "cli-out"
     runner = CliRunner()
@@ -699,7 +943,11 @@ def test_cli_roommem_fake_llm_writes_reports(tmp_path, rooms_dir):
             "raw",
             "--arm",
             "oracle",
+            "--arm",
+            "curated",
             "--fake-llm",
+            "--curator-window",
+            "2",
             "--out",
             str(out_dir),
         ],
@@ -711,13 +959,18 @@ def test_cli_roommem_fake_llm_writes_reports(tmp_path, rooms_dir):
     assert (out_dir / "summary.json").exists()
     summary_md = (out_dir / "summary.md").read_text(encoding="utf-8")
     assert "## Read side" in summary_md
+    assert "### Curator counters" in summary_md
     assert LIMITATIONS_ZH in summary_md
     rows = _read_results(out_dir)
-    assert len(rows) == 8
-    assert {row["arm"] for row in rows} == {"raw", "oracle"}
+    assert len(rows) == 12
+    assert {row["arm"] for row in rows} == {"raw", "oracle", "curated"}
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    counters = summary["write_side"]["curated"]["curator_counts"]
+    assert counters["windows"] == 5
+    assert counters["added"] == 5
 
 
-def test_cli_roommem_curated_without_registered_source_fails(tmp_path, rooms_dir):
+def test_cli_roommem_unknown_curated_source_fails(tmp_path, rooms_dir):
     runner = CliRunner()
     result = runner.invoke(
         app,
@@ -728,6 +981,8 @@ def test_cli_roommem_curated_without_registered_source_fails(tmp_path, rooms_dir
             str(rooms_dir),
             "--arm",
             "curated",
+            "--curated-source",
+            "nope",
             "--fake-llm",
             "--out",
             str(tmp_path / "cli-out"),
@@ -736,3 +991,30 @@ def test_cli_roommem_curated_without_registered_source_fails(tmp_path, rooms_dir
 
     assert result.exit_code == 1
     assert "no curated memory source is registered" in result.output
+
+
+def test_split_presets_resolve_to_room_ids():
+    assert SPLIT_PRESETS["dev"] == ("rm01", "rm02", "rm03", "rm04", "rm05", "rm06")
+    assert SPLIT_PRESETS["test"] == ("rm07", "rm08", "rm09", "rm10", "rm11", "rm12")
+    assert resolve_split("dev") == list(SPLIT_PRESETS["dev"])
+    assert resolve_split(" Test ") == list(SPLIT_PRESETS["test"])
+    with pytest.raises(RoomMemConfigError, match="unknown split"):
+        resolve_split("bogus")
+
+
+def test_cli_roommem_split_errors(tmp_path, rooms_dir):
+    runner = CliRunner()
+
+    both = runner.invoke(
+        app,
+        ["eval", "roommem", "--data", str(rooms_dir), "--split", "dev", "--rooms", "rm01"],
+    )
+    assert both.exit_code == 1
+    assert "mutually exclusive" in both.output
+
+    unknown = runner.invoke(
+        app,
+        ["eval", "roommem", "--data", str(rooms_dir), "--split", "bogus"],
+    )
+    assert unknown.exit_code == 1
+    assert "unknown split" in unknown.output

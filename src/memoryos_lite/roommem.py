@@ -21,10 +21,16 @@ Arms
     Upper bound used by tests and CI: the curated memories ARE the room's gold
     memories, mapped onto the ingested MemoryOS message ids.
 ``curated``
-    Uses a :class:`CuratedMemorySource` registered by name through
-    :func:`register_curated_source`.  The real Curator adapter is not part of
-    this module; the CLI fails with a clear message when ``curated`` is
-    requested but no source has been registered.
+    Runs a :class:`CuratedMemorySource` registered by name through
+    :func:`register_curated_source`.  The built-in ``default`` source runs the
+    real :class:`memoryos_lite.curator.Curator` on the room session (opt-in
+    ``memoryos_curator_enabled``, one window of ``--curator-window`` messages,
+    ``force=True`` for the tail) and maps its rows to
+    :class:`CuratedMemoryView`.  With ``--fake-llm`` it uses a deterministic
+    fake curator LLM; otherwise it requires ``MEMORYOS_LLM_PROVIDER=deepseek``
+    and routes every call through the same on-disk cache as the answerer and
+    judge.  The CLI fails with a clear message when an unregistered name is
+    requested.
 
 Known limitations (fixed paragraph, repeated in every report): the dataset is
 LLM-authored with a single reviewer; the curated arm's cross-room delivery
@@ -34,6 +40,7 @@ and the curator share the DeepSeek model family.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import shutil
@@ -47,6 +54,8 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from memoryos_lite.config import Settings, get_settings
+from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
+from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
@@ -59,7 +68,6 @@ from memoryos_lite.schemas import (
 from memoryos_lite.source_evidence import build_source_evidence
 
 ROOM_KINDS: tuple[str, ...] = ("fact", "decision", "rule", "preference", "lesson")
-FACT_FAMILY = frozenset({"fact", "lesson"})
 ROOM_SCOPES: tuple[str, ...] = ("room", "project", "user")
 FIXED_SCOPE_BY_KIND: dict[str, str] = {"rule": "project", "preference": "user"}
 NOISE_TYPES: tuple[str, ...] = (
@@ -75,6 +83,22 @@ NOISE_TYPES: tuple[str, ...] = (
 ASKED_IN_VALUES: tuple[str, ...] = ("same_room", "new_room_same_project")
 ARM_VALUES: tuple[str, ...] = ("raw", "oracle", "curated")
 EMBEDDING_VALUES: tuple[str, ...] = ("none", "fastembed")
+
+SPLIT_PRESETS: dict[str, tuple[str, ...]] = {
+    "dev": tuple(f"rm{index:02d}" for index in range(1, 7)),
+    "test": tuple(f"rm{index:02d}" for index in range(7, 13)),
+}
+
+#: Curator run counters recorded per room for the curated arm.
+CURATOR_COUNTER_KEYS: tuple[str, ...] = (
+    "windows",
+    "added",
+    "superseded",
+    "noop",
+    "rejected_grounding",
+    "rejected_schema",
+    "llm_errors",
+)
 
 #: Task text and retrieval parameters xmuse sends to ``/build-context``.
 XMUSE_TASK = "Recall prior source-backed Room evidence relevant to this observation."
@@ -397,6 +421,16 @@ def load_rooms(
     return rooms
 
 
+def resolve_split(name: str) -> list[str]:
+    """Expand a dataset split preset (``dev``/``test``) into room ids."""
+
+    preset = SPLIT_PRESETS.get(name.strip().lower())
+    if preset is None:
+        valid = ", ".join(sorted(SPLIT_PRESETS))
+        raise RoomMemConfigError(f"unknown split {name!r}; valid splits: {valid}")
+    return list(preset)
+
+
 # ---------------------------------------------------------------------------
 # Curated memories: protocol, registry, oracle
 # ---------------------------------------------------------------------------
@@ -421,14 +455,32 @@ class CuratedMemoryView(BaseModel):
     supersedes_id: str | None = None
 
 
+@dataclass(frozen=True)
+class CuratedSourceContext:
+    """Run-scoped configuration for sources that declare a factory argument.
+
+    The default factory accepts one positional argument of this type so it can
+    honour ``--curator-window``, the fake-LLM switch, the per-repeat disk cache
+    and an injected curator LLM.  Registered factories with a zero-argument
+    signature are called without it.
+    """
+
+    window: int
+    fake_llm: bool
+    repeat: int
+    cache_dir: Path | None = None
+    llm_factory: Callable[[Settings], CuratorLLM] | None = None
+
+
 class CuratedMemorySource(Protocol):
-    """Adapter boundary for a real Curator (added outside this module).
+    """Adapter boundary for a real Curator.
 
     The harness calls :meth:`curate` once per room session, after the room
     transcript has been ingested, and treats the returned views as the
     curator's full memory output for that room.  An optional ``last_counts``
-    attribute (mapping or zero-argument callable) may report
-    ``grounding_rejects`` and ``schema_failures`` for the run.
+    attribute (mapping or zero-argument callable) may report the curator run
+    counters: ``windows``, ``added``, ``superseded``, ``noop``,
+    ``rejected_grounding``, ``rejected_schema`` and ``llm_errors``.
     """
 
     def curate(
@@ -438,14 +490,15 @@ class CuratedMemorySource(Protocol):
     ) -> list[CuratedMemoryView]: ...
 
 
-_curated_sources: dict[str, Callable[[], CuratedMemorySource]] = {}
+_curated_sources: dict[str, Callable[..., CuratedMemorySource]] = {}
 
 
-def register_curated_source(name: str, factory: Callable[[], CuratedMemorySource]) -> None:
+def register_curated_source(name: str, factory: Callable[..., CuratedMemorySource]) -> None:
     """Register a curated-memory source factory under ``name``.
 
     This is the hook a Curator adapter uses; ``factory()`` must return a fresh
-    :class:`CuratedMemorySource` per run.
+    :class:`CuratedMemorySource` per run.  A factory may declare one positional
+    parameter to receive a :class:`CuratedSourceContext`.
     """
 
     if not name:
@@ -461,7 +514,20 @@ def registered_curated_sources() -> list[str]:
     return sorted(_curated_sources)
 
 
-def build_curated_source(name: str) -> CuratedMemorySource:
+def _factory_accepts_context(factory: Callable[..., CuratedMemorySource]) -> bool:
+    try:
+        parameters = inspect.signature(factory).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    return any(parameter.kind in positional for parameter in parameters)
+
+
+def build_curated_source(
+    name: str,
+    *,
+    context: CuratedSourceContext | None = None,
+) -> CuratedMemorySource:
     factory = _curated_sources.get(name)
     if factory is None:
         available = ", ".join(registered_curated_sources()) or "(none registered)"
@@ -472,6 +538,8 @@ def build_curated_source(name: str) -> CuratedMemorySource:
             "memoryos_lite.roommem.register_curated_source(name, factory) "
             "before running --arm curated."
         )
+    if context is not None and _factory_accepts_context(factory):
+        return factory(context)
     return factory()
 
 
@@ -530,7 +598,7 @@ def _curator_counts(source: object) -> dict[str, int]:
     if not isinstance(raw, Mapping):
         return {}
     counts: dict[str, int] = {}
-    for key in ("grounding_rejects", "schema_failures"):
+    for key in CURATOR_COUNTER_KEYS:
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             counts[key] = value
@@ -539,6 +607,246 @@ def _curator_counts(source: object) -> dict[str, int]:
 
 def _scope_for_kind(kind: str) -> str:
     return FIXED_SCOPE_BY_KIND.get(kind, "room")
+
+
+# ---------------------------------------------------------------------------
+# Built-in curated source: the real Curator on the room session
+# ---------------------------------------------------------------------------
+
+_SENTENCE_END_CHARS = ".!?;。！？；\n"
+
+
+def _first_sentence(text: str) -> str:
+    stripped = text.strip()
+    for index, char in enumerate(stripped):
+        if char in _SENTENCE_END_CHARS:
+            return stripped[: index + 1]
+    return stripped
+
+
+class FakeCuratorLLM:
+    """Deterministic curator LLM for ``--fake-llm``: one add per human message.
+
+    Each operation quotes the first sentence of a human message (skipping
+    messages whose first sentence is shorter than the curator's minimum quote
+    length), so CI exercises the full Curator run without a provider.
+    """
+
+    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        window = user.split("Messages to curate:\n", 1)[-1]
+        operations: list[dict[str, Any]] = []
+        for line in window.splitlines():
+            match = re.match(r"\[([^\]]+)\] (.+?) \((human|agent)\): (.*)$", line)
+            if match is None or match.group(3) != "human":
+                continue
+            message_id = match.group(1)
+            quote = _first_sentence(match.group(4))
+            if len(quote) < MIN_QUOTE_CHARS:
+                continue
+            operations.append(
+                {
+                    "op": "add",
+                    "kind": "fact",
+                    "topic_key": f"roommem.{message_id}",
+                    "statement": quote,
+                    "sources": [{"message_id": message_id, "quote": quote}],
+                    "supersedes": None,
+                }
+            )
+        return {"operations": operations}
+
+
+class DiskCachedCuratorLLM:
+    """Disk cache for curator JSON calls keyed by role/model/prompt/repeat.
+
+    Mirrors :class:`DiskCachedChatClient` and shares its cache directory; the
+    ``role`` field keeps curator entries distinct from answerer/judge entries.
+    """
+
+    def __init__(
+        self,
+        inner: CuratorLLM,
+        *,
+        model: str,
+        cache_dir: Path,
+        repeat: int = 0,
+    ) -> None:
+        if repeat < 0:
+            raise ValueError("repeat index must be non-negative")
+        self._inner = inner
+        self._model = model
+        self._cache_dir = Path(cache_dir)
+        self._repeat = repeat
+
+    def cache_key(self, *, system: str, user: str) -> str:
+        payload = json.dumps(
+            {
+                "role": "curator",
+                "model": self._model,
+                "system": system,
+                "user": user,
+                "repeat": self._repeat,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return sha256(payload.encode("utf-8")).hexdigest()
+
+    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        key = self.cache_key(system=system, user=user)
+        path = self._cache_dir / f"{key}.json"
+        if path.exists():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                response = payload.get("response")
+                if isinstance(response, dict):
+                    return response
+            except (OSError, ValueError):
+                pass
+        response = self._inner.complete_json(system=system, user=user)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {"role": "curator", "model": self._model, "response": response},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return response
+
+
+def _session_dataset_message_ids(service: MemoryOSService, session_id: str) -> dict[str, str]:
+    """Map ingested MemoryOS message ids back to dataset message ids."""
+
+    total = service.store.count_session_messages(session_id)
+    messages = service.store.list_messages_for_curation(
+        session_id, after_seq=0, limit=max(1, total)
+    )
+    mapping: dict[str, str] = {}
+    for message in messages:
+        external_id = message.external_id or ""
+        if external_id.startswith(XMUSE_MESSAGE_ID_PREFIX):
+            mapping[message.id] = external_id[len(XMUSE_MESSAGE_ID_PREFIX) :]
+    return mapping
+
+
+class CuratorMemorySource:
+    """The built-in ``default`` curated source: the real Curator, per room.
+
+    Constructed through :class:`CuratedSourceContext` (one instance per repeat
+    so the disk cache sees the right repeat index).  Curator LLM calls go
+    through :class:`DiskCachedCuratorLLM`; with ``fake_llm`` a deterministic
+    :class:`FakeCuratorLLM` runs uncached.
+    """
+
+    def __init__(
+        self,
+        *,
+        window: int,
+        fake_llm: bool,
+        repeat: int = 0,
+        cache_dir: Path | None = None,
+        llm_factory: Callable[[Settings], CuratorLLM] | None = None,
+    ) -> None:
+        self._window = window
+        self._fake_llm = fake_llm
+        self._repeat = repeat
+        self._cache_dir = Path(cache_dir) if cache_dir is not None else None
+        self._llm_factory = llm_factory
+        self._last_counts: dict[str, int] = {}
+
+    @property
+    def last_counts(self) -> dict[str, int]:
+        return dict(self._last_counts)
+
+    def _curator_settings(self, base: Settings) -> Settings:
+        overrides: dict[str, Any] = {
+            "data_dir": base.data_dir,
+            "memoryos_curator_enabled": True,
+            "memoryos_curator_window_messages": self._window,
+        }
+        if not self._fake_llm:
+            overrides["memoryos_llm_provider"] = "deepseek"
+        return Settings(**overrides)
+
+    def _build_llm(self, settings: Settings) -> CuratorLLM:
+        inner: CuratorLLM
+        if self._llm_factory is not None:
+            inner = self._llm_factory(settings)
+        elif self._fake_llm:
+            return FakeCuratorLLM()
+        else:
+            built = build_curator_llm(settings)
+            if built is None:
+                raise RoomMemConfigError(
+                    "the curated arm needs DEEPSEEK_API_KEY (or run with --fake-llm)"
+                )
+            inner = built
+        if self._cache_dir is None:
+            return inner
+        return DiskCachedCuratorLLM(
+            inner,
+            model=settings.chat_model,
+            cache_dir=self._cache_dir,
+            repeat=self._repeat,
+        )
+
+    def curate(self, service: MemoryOSService, session_id: str) -> list[CuratedMemoryView]:
+        settings = self._curator_settings(service.settings)
+        curator = Curator(store=service.store, settings=settings, llm=self._build_llm(settings))
+        result = curator.run_session(session_id, force=True)
+        self._last_counts = {
+            "windows": result.windows,
+            "added": result.added,
+            "superseded": result.superseded,
+            "noop": result.noop,
+            "rejected_grounding": result.rejected_grounding,
+            "rejected_schema": result.rejected_schema,
+            "llm_errors": result.llm_errors,
+        }
+        dataset_ids = _session_dataset_message_ids(service, session_id)
+        views: list[CuratedMemoryView] = []
+        for row in service.store.list_curated_memories(session_id, limit=64):
+            sources: list[GoldMemorySource] = []
+            for source in row.sources:
+                memoryos_id = source.get("message_id", "")
+                dataset_id = dataset_ids.get(memoryos_id)
+                if dataset_id is None:
+                    raise RoomMemDataError(
+                        f"curated memory {row.id} cites unknown message {memoryos_id!r}"
+                    )
+                sources.append(
+                    GoldMemorySource(message_id=dataset_id, quote=str(source.get("quote", "")))
+                )
+            views.append(
+                CuratedMemoryView(
+                    id=row.id,
+                    kind=row.kind,
+                    topic_key=row.topic_key,
+                    statement=row.statement,
+                    sources=sources,
+                    status="superseded" if row.status == "superseded" else "active",
+                    supersedes_id=row.supersedes_id,
+                )
+            )
+        return views
+
+
+def _default_curated_source(
+    context: CuratedSourceContext | None = None,
+) -> CuratedMemorySource:
+    if context is None:
+        return CuratorMemorySource(window=12, fake_llm=False)
+    return CuratorMemorySource(
+        window=context.window,
+        fake_llm=context.fake_llm,
+        repeat=context.repeat,
+        cache_dir=context.cache_dir,
+        llm_factory=context.llm_factory,
+    )
+
+
+register_curated_source("default", _default_curated_source)
 
 
 # ---------------------------------------------------------------------------
@@ -925,29 +1233,35 @@ class CuratedGoldMatch:
     curated_id: str
     gold_id: str
     overlap: int
+    statement_overlap: int = 0
 
 
-def _kind_compatible(curated_kind: str, gold_kind: str) -> bool:
-    if curated_kind == gold_kind:
-        return True
-    return curated_kind in FACT_FAMILY and gold_kind in FACT_FAMILY
+def _statement_token_overlap(left: str, right: str) -> int:
+    left_tokens = set(_normalize_match_text(left).split())
+    right_tokens = set(_normalize_match_text(right).split())
+    return len(left_tokens & right_tokens)
 
 
 def curated_candidate_pairs(
     curated: Sequence[CuratedMemoryView],
     gold: Sequence[GoldMemory],
 ) -> list[CuratedGoldMatch]:
-    """All compatible curated/gold pairs with non-empty source overlap."""
+    """All curated/gold pairs with non-empty source-message overlap."""
 
     pairs: list[CuratedGoldMatch] = []
     for view in curated:
         view_messages = {source.message_id for source in view.sources}
         for memory in gold:
-            if not _kind_compatible(view.kind, memory.kind):
-                continue
             overlap = len(view_messages & {source.message_id for source in memory.sources})
             if overlap:
-                pairs.append(CuratedGoldMatch(view.id, memory.id, overlap))
+                pairs.append(
+                    CuratedGoldMatch(
+                        view.id,
+                        memory.id,
+                        overlap,
+                        _statement_token_overlap(view.statement, memory.statement),
+                    )
+                )
     return pairs
 
 
@@ -955,10 +1269,13 @@ def match_curated_to_gold(
     curated: Sequence[CuratedMemoryView],
     gold: Sequence[GoldMemory],
 ) -> list[CuratedGoldMatch]:
-    """One-to-one greedy matching by overlap size (deterministic tie-break)."""
+    """One-to-one greedy matching by source overlap, then statement tokens."""
 
     pairs = curated_candidate_pairs(curated, gold)
-    ordered = sorted(pairs, key=lambda pair: (-pair.overlap, pair.curated_id, pair.gold_id))
+    ordered = sorted(
+        pairs,
+        key=lambda pair: (-pair.overlap, -pair.statement_overlap, pair.curated_id, pair.gold_id),
+    )
     used_curated: set[str] = set()
     used_gold: set[str] = set()
     matches: list[CuratedGoldMatch] = []
@@ -978,12 +1295,15 @@ def score_write_side(
 ) -> tuple[dict[str, Any], dict[str, CuratedMemoryView]]:
     """Compute curated-arm write-side metrics.
 
-    Returns the metrics payload and the gold-id -> curated view map used by the
-    read side for evidence-hit checks.
+    Curated memories match gold memories by source-message overlap only; kind
+    and xmuse-scope agreement are reported as separate metrics.  Returns the
+    metrics payload and the gold-id -> curated view map used by the read side
+    for evidence-hit checks.
     """
 
     gold = room.gold_memories
     view_by_id = {view.id: view for view in curated}
+    gold_by_id = {memory.id: memory for memory in gold}
     matches = match_curated_to_gold(curated, gold)
     matched_view_ids = {match.curated_id for match in matches}
     matched_by_gold: dict[str, CuratedMemoryView] = {}
@@ -994,7 +1314,6 @@ def score_write_side(
     for pair in curated_candidate_pairs(curated, gold):
         candidates_by_gold.setdefault(pair.gold_id, []).append(pair.curated_id)
 
-    noise_ids = room.noise_message_ids()
     unmatched = [view for view in curated if view.id not in matched_view_ids]
 
     judged = {label: 0 for label in UNMATCHED_LABELS}
@@ -1021,21 +1340,28 @@ def score_write_side(
                 stats["in_unmatched_memory"] += 1
             break
 
-    primary_noise = sum(
-        1 for view in curated if view.sources and view.sources[0].message_id in noise_ids
-    )
-    noise_flag = sum(
+    kind_matches = sum(
         1
-        for view in curated
-        if view.id not in matched_view_ids
-        or (view.sources and view.sources[0].message_id in noise_ids)
+        for match in matches
+        if view_by_id[match.curated_id].kind == gold_by_id[match.gold_id].kind
+    )
+    scope_matches = sum(
+        1
+        for match in matches
+        if _scope_for_kind(view_by_id[match.curated_id].kind)
+        == _scope_for_kind(gold_by_id[match.gold_id].kind)
     )
     superseded_gold = [memory for memory in gold if memory.superseded_by is not None]
     supersede_correct = 0
+    stale_active = 0
     for memory in superseded_gold:
         matched_view = matched_by_gold.get(memory.id)
-        if matched_view is not None and matched_view.status == "superseded":
+        if matched_view is None:
+            continue
+        if matched_view.status == "superseded":
             supersede_correct += 1
+        else:
+            stale_active += 1
     duplicate_golds = sum(
         1
         for view_ids in candidates_by_gold.values()
@@ -1051,23 +1377,29 @@ def score_write_side(
         "matched": matched,
         "gold": gold_total,
         "unmatched": len(unmatched),
-        "primary_noise": primary_noise,
-        "noise_flag": noise_flag,
         "unmatched_judged": dict(judged),
         "noise_types": {name: dict(stats) for name, stats in sorted(noise_type_stats.items())},
+        "kind_matches": kind_matches,
+        "scope_matches": scope_matches,
         "superseded_gold": len(superseded_gold),
         "supersede_correct": supersede_correct,
+        "stale_active": stale_active,
         "golds_with_matches": with_matches,
         "duplicate_golds": duplicate_golds,
         "rates": {
             "precision": (matched / memories) if memories else None,
             "recall": matched / gold_total,
-            "noise_rate": (noise_flag / memories) if memories else None,
-            "primary_noise_rate": (primary_noise / memories) if memories else None,
+            "unmatched_rate": (len(unmatched) / memories) if memories else None,
+            "noise_rate": (judged["noise"] / memories) if memories else None,
             "supersede_rate": (
                 supersede_correct / len(superseded_gold) if superseded_gold else None
             ),
+            "stale_active_rate": (
+                (stale_active / len(superseded_gold)) if superseded_gold else None
+            ),
             "duplicate_rate": (duplicate_golds / with_matches) if with_matches else None,
+            "kind_agreement": (kind_matches / matched) if matched else None,
+            "scope_agreement": (scope_matches / matched) if matched else None,
         },
     }
     return metrics, matched_by_gold
@@ -1083,10 +1415,11 @@ def pool_write_side(per_room: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "matched": 0,
         "gold": 0,
         "unmatched": 0,
-        "primary_noise": 0,
-        "noise_flag": 0,
+        "kind_matches": 0,
+        "scope_matches": 0,
         "superseded_gold": 0,
         "supersede_correct": 0,
+        "stale_active": 0,
         "golds_with_matches": 0,
         "duplicate_golds": 0,
     }
@@ -1123,12 +1456,17 @@ def pool_write_side(per_room: Sequence[dict[str, Any]]) -> dict[str, Any]:
     pooled["rates"] = {
         "precision": (totals["matched"] / totals["memories"]) if totals["memories"] else None,
         "recall": totals["matched"] / totals["gold"] if totals["gold"] else None,
-        "noise_rate": (totals["noise_flag"] / totals["memories"]) if totals["memories"] else None,
-        "primary_noise_rate": (
-            (totals["primary_noise"] / totals["memories"]) if totals["memories"] else None
+        "unmatched_rate": (
+            (totals["unmatched"] / totals["memories"]) if totals["memories"] else None
         ),
+        "noise_rate": (judged["noise"] / totals["memories"]) if totals["memories"] else None,
         "supersede_rate": (
             (totals["supersede_correct"] / totals["superseded_gold"])
+            if totals["superseded_gold"]
+            else None
+        ),
+        "stale_active_rate": (
+            (totals["stale_active"] / totals["superseded_gold"])
             if totals["superseded_gold"]
             else None
         ),
@@ -1137,8 +1475,29 @@ def pool_write_side(per_room: Sequence[dict[str, Any]]) -> dict[str, Any]:
             if totals["golds_with_matches"]
             else None
         ),
+        "kind_agreement": (
+            (totals["kind_matches"] / totals["matched"]) if totals["matched"] else None
+        ),
+        "scope_agreement": (
+            (totals["scope_matches"] / totals["matched"]) if totals["matched"] else None
+        ),
     }
     return pooled
+
+
+def _curator_counters_by_room(per_room: Sequence[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Sum curator run counters per room id across repeats."""
+
+    by_room: dict[str, dict[str, int]] = {}
+    for payload in per_room:
+        room_id = payload.get("room")
+        if not isinstance(room_id, str):
+            continue
+        target = by_room.setdefault(room_id, {})
+        for key, value in (payload.get("curator_counts") or {}).items():
+            if isinstance(value, int) and not isinstance(value, bool):
+                target[key] = target.get(key, 0) + value
+    return by_room
 
 
 # ---------------------------------------------------------------------------
@@ -1495,7 +1854,6 @@ def _run_room_arm(
     curator_counts: dict[str, int] = {}
     if arm == "oracle":
         views = oracle_curated_memories(room)
-        curator_counts = {"grounding_rejects": 0, "schema_failures": 0}
     elif arm == "curated":
         if curated_source is None:
             raise RoomMemConfigError("curated arm requires a registered curated memory source")
@@ -1548,6 +1906,7 @@ def _run_room_arm(
     write_side: dict[str, Any] = {}
     if arm in {"oracle", "curated"}:
         write_side, matched_by_gold = score_write_side(room, views, judge)
+        write_side["room"] = room.room_id
         if curator_counts:
             write_side["curator_counts"] = curator_counts
     advisories: dict[str, Mapping[str, Any]] = {}
@@ -1808,13 +2167,14 @@ def render_summary_md(summary: Mapping[str, Any]) -> str:
     lines: list[str] = ["# RoomMem evaluation summary", ""]
     lines.append(
         "Run: arms={arms}; rooms={rooms}; repeats={repeats}; embedding={embedding}; "
-        "llm={llm}; heuristic_advisories={heuristic}.".format(
+        "llm={llm}; heuristic_advisories={heuristic}; curator_window={curator_window}.".format(
             arms=",".join(run.get("arms", [])),
             rooms=",".join(run.get("rooms", [])),
             repeats=run.get("repeats"),
             embedding=run.get("embedding"),
             llm=run.get("llm"),
             heuristic=str(bool(run.get("heuristic_advisories"))).lower(),
+            curator_window=run.get("curator_window", "-"),
         )
     )
     lines.append("")
@@ -1862,10 +2222,11 @@ def render_summary_md(summary: Mapping[str, Any]) -> str:
     lines.append("## Write side")
     lines.append("")
     lines.append(
-        "| arm | memories | matched gold | precision | recall | noise rate | "
-        "supersede rate | duplicate rate | unmatched legit/noise |"
+        "| arm | memories | matched gold | precision | recall | unmatched rate | noise rate | "
+        "supersede rate | stale active rate | duplicate rate | kind agreement | "
+        "scope agreement | unmatched legit/noise |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     write_side = summary.get("write_side") or {}
     for arm in sorted(write_side):
         payload = write_side[arm]
@@ -1873,8 +2234,8 @@ def render_summary_md(summary: Mapping[str, Any]) -> str:
             heuristic = payload.get("heuristic") or {}
             rates = heuristic.get("rates") or {}
             lines.append(
-                "| raw (heuristic advisories) | {advisories} | {matched} | "
-                "gold match rate: {gold_rate} | noise rate: {noise_rate} | - | - | - | - |".format(
+                "| raw (heuristic advisories) | {advisories} | {matched} | - | {gold_rate} | "
+                "- | {noise_rate} | - | - | - | - | - | - |".format(
                     advisories=heuristic.get("advisories", 0),
                     matched=heuristic.get("matched", 0),
                     gold_rate=_format_number(rates.get("gold_match_rate")),
@@ -1886,23 +2247,54 @@ def render_summary_md(summary: Mapping[str, Any]) -> str:
         judged = payload.get("unmatched_judged") or {}
         lines.append(
             "| {arm} | {memories} | {matched}/{gold} | {precision} | {recall} | "
-            "{noise} | {supersede} | {duplicate} | {legit}/{noise_n} |".format(
+            "{unmatched} | {noise} | {supersede} | {stale_active} | {duplicate} | "
+            "{kind_agree} | {scope_agree} | {legit}/{noise_n} |".format(
                 arm=arm,
                 memories=payload.get("memories", 0),
                 matched=payload.get("matched", 0),
                 gold=payload.get("gold", 0),
                 precision=_format_number(rates.get("precision")),
                 recall=_format_number(rates.get("recall")),
+                unmatched=_format_number(rates.get("unmatched_rate")),
                 noise=_format_number(rates.get("noise_rate")),
                 supersede=_format_number(rates.get("supersede_rate")),
+                stale_active=_format_number(rates.get("stale_active_rate")),
                 duplicate=_format_number(rates.get("duplicate_rate")),
+                kind_agree=_format_number(rates.get("kind_agreement")),
+                scope_agree=_format_number(rates.get("scope_agreement")),
                 legit=judged.get("legit_unannotated", 0),
                 noise_n=judged.get("noise", 0),
             )
         )
     lines.append("")
-    if "curated" in write_side and write_side["curated"].get("notes"):
-        for note in write_side["curated"]["notes"]:
+    curated = write_side.get("curated")
+    curator_rooms = curated.get("curator_rooms") if isinstance(curated, dict) else None
+    if isinstance(curator_rooms, dict) and curator_rooms:
+        lines.append("### Curator counters")
+        lines.append("")
+        lines.append(
+            "| room | windows | added | superseded | noop | rejected grounding | "
+            "rejected schema | llm errors |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for room_id in sorted(curator_rooms):
+            counters = curator_rooms[room_id] or {}
+            lines.append(
+                "| {room} | {windows} | {added} | {superseded} | {noop} | "
+                "{grounding} | {schema} | {llm_errors} |".format(
+                    room=room_id,
+                    windows=counters.get("windows", 0),
+                    added=counters.get("added", 0),
+                    superseded=counters.get("superseded", 0),
+                    noop=counters.get("noop", 0),
+                    grounding=counters.get("rejected_grounding", 0),
+                    schema=counters.get("rejected_schema", 0),
+                    llm_errors=counters.get("llm_errors", 0),
+                )
+            )
+        lines.append("")
+    if isinstance(curated, dict) and curated.get("notes"):
+        for note in curated["notes"]:
             lines.append(f"- {note}")
         lines.append("")
 
@@ -1965,6 +2357,8 @@ def run_roommem(
     embedding: str = "none",
     heuristic_advisories: bool = False,
     curated_source_name: str = "default",
+    curator_window: int = 12,
+    curated_llm_factory: Callable[[Settings], CuratorLLM] | None = None,
     llm_factory: LLMFactory | None = None,
     fake_llm: bool = False,
     llm_label: str | None = None,
@@ -1986,6 +2380,8 @@ def run_roommem(
             raise RoomMemConfigError(f"unknown arm {arm!r}; valid arms: {', '.join(ARM_VALUES)}")
     if repeats < 1:
         raise RoomMemConfigError("repeats must be at least 1")
+    if curator_window < 1:
+        raise RoomMemConfigError("curator window must be at least 1 message")
     if embedding not in EMBEDDING_VALUES:
         raise RoomMemConfigError(
             f"unknown embedding mode {embedding!r}; valid: {', '.join(EMBEDDING_VALUES)}"
@@ -1995,9 +2391,6 @@ def run_roommem(
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-    curated_source = (
-        build_curated_source(curated_source_name) if "curated" in selected_arms else None
-    )
     factory = llm_factory or build_llm_factory(
         out_dir=out_path, fake_llm=fake_llm, settings=settings
     )
@@ -2015,6 +2408,18 @@ def run_roommem(
         for arm in selected_arms:
             for repeat in range(repeats):
                 answerer, judge = factory(repeat)
+                curated_source: CuratedMemorySource | None = None
+                if arm == "curated":
+                    curated_source = build_curated_source(
+                        curated_source_name,
+                        context=CuratedSourceContext(
+                            window=curator_window,
+                            fake_llm=fake_llm,
+                            repeat=repeat,
+                            cache_dir=out_path / "llm_cache",
+                            llm_factory=curated_llm_factory,
+                        ),
+                    )
                 for room in rooms:
                     room_result = _run_room_arm(
                         arm=arm,
@@ -2052,12 +2457,15 @@ def run_roommem(
         elif payloads:
             pooled = pool_write_side(payloads)
             if arm == "curated":
+                pooled["curator_rooms"] = _curator_counters_by_room(payloads)
                 pooled["notes"] = [
                     "Cross-scope delivery (rule -> project, preference -> user) is simulated "
                     "as operator-approved and attached to the room session and the "
                     "new-room probe session.",
-                    "Unmatched curated memories are not counted as noise directly; the judge "
-                    "splits them into legit_unannotated vs noise.",
+                    "Curated memories match gold by source-message overlap only; kind and "
+                    "scope agreement are reported as separate metrics.",
+                    "Unmatched memories are judged into legit_unannotated vs noise; "
+                    "noise_rate counts judged noise over all memories.",
                 ]
             write_side[arm] = pooled
 
@@ -2069,6 +2477,7 @@ def run_roommem(
         "heuristic_advisories": heuristic_advisories,
         "llm": llm_label or ("fake" if fake_llm else "custom"),
         "curated_source": curated_source_name if "curated" in selected_arms else None,
+        "curator_window": curator_window if "curated" in selected_arms else None,
     }
     summary = build_summary(results=results, write_side=write_side, run_meta=run_meta)
     write_reports(out_path, results=results, write_side=write_side, summary=summary)
@@ -2078,14 +2487,20 @@ def run_roommem(
 __all__ = [
     "ARM_VALUES",
     "ANSWERER_SYSTEM_PROMPT",
+    "CURATOR_COUNTER_KEYS",
+    "SPLIT_PRESETS",
     "ChatAnswerer",
     "ChatJudge",
     "CuratedMemorySource",
     "CuratedMemoryView",
+    "CuratedSourceContext",
+    "CuratorMemorySource",
     "DeepSeekChatClient",
     "DiskCachedChatClient",
+    "DiskCachedCuratorLLM",
     "EvidenceItem",
     "FakeAnswerer",
+    "FakeCuratorLLM",
     "FakeJudge",
     "GoldMemory",
     "GoldMemorySource",
@@ -2111,6 +2526,7 @@ __all__ = [
     "register_curated_source",
     "registered_curated_sources",
     "render_summary_md",
+    "resolve_split",
     "run_roommem",
     "score_write_side",
     "unregister_curated_source",
