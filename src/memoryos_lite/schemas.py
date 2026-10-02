@@ -266,6 +266,7 @@ class BuildContextResponseProfile(StrEnum):
     FULL = "full"
     SOURCE_EVIDENCE_V1 = "source_evidence/v1"
     SOURCE_EVIDENCE_V2 = "source_evidence/v2"
+    MODULE_PACK_V1 = "module_pack/v1"
 
 
 class BuildContextRequest(BaseModel):

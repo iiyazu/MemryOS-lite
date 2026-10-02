@@ -22,6 +22,7 @@ from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
 from memoryos_lite.context_composer import V3ContextComposer
 from memoryos_lite.curator import Curator, build_advisory_v2_items, build_curator_llm
 from memoryos_lite.kernel_analyzer import KernelMaintenanceAnalyzer
+from memoryos_lite.module_pack import build_module_pack
 from memoryos_lite.observability import (
     CONTEXT_BUDGET_USED_RATIO,
     CONTEXT_BUILD_SECONDS,
@@ -96,6 +97,7 @@ from memoryos_lite.v3_contracts import (
     AgentStepRequest,
     ArchivalPassage,
     ArchiveAttachment,
+    ArchiveEligibilityScope,
     ContextComposerRequest,
     ContextLayerItem,
     ContextPackageV3,
@@ -1370,6 +1372,40 @@ class MemoryOSService:
         superseded_ids = sorted({row.supersedes_id for row in rows if row.supersedes_id})
         superseded_rows = self.store.get_curated_memories_by_ids(superseded_ids)
         return build_advisory_v2_items(rows, superseded_rows)
+
+    def build_module_pack(self, session_id: str, budget: int | None = None) -> dict[str, Any]:
+        """Compose ``module_pack/v1`` for a module session (see ``module_pack``)."""
+
+        session = self._require_session(session_id)
+        archive_ids = self.store.resolve_attached_archive_ids(
+            ArchiveEligibilityScope(session_id=session_id)
+        )
+        documents = self.store.list_archival_documents_for_archives(archive_ids)
+        embed_batch = None
+        if (
+            self.settings.memoryos_embedding_provider.strip().lower() == "fastembed"
+            and self.embedding_client is not None
+        ):
+            embed_batch = self.embedding_client.embed_batch
+        pack = build_module_pack(
+            scope=session.scope,
+            documents=documents,
+            budget=budget,
+            embed_batch=embed_batch,
+            conflict_threshold=self.settings.memoryos_module_pack_conflict_threshold,
+        )
+        self.trace(
+            session_id,
+            "module_pack_built",
+            {
+                "diagnostics_digest": pack["diagnostics_digest"],
+                "estimated_tokens": pack["estimated_tokens"],
+                "budget": pack["budget"],
+                "items": {name: len(items) for name, items in pack["sections"].items()},
+                "omitted": pack["omitted"],
+            },
+        )
+        return pack
 
     def curator_status(self) -> dict[str, object]:
         """Report curator state without ever exposing provider secrets."""

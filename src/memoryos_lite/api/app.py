@@ -13,6 +13,7 @@ from memoryos_lite.middleware import (
     RequestIdMiddleware,
     StructuredLoggingMiddleware,
 )
+from memoryos_lite.module_pack import ModulePackError
 from memoryos_lite.schemas import (
     ActivityMetadataError,
     ArchiveAttachmentRequest,
@@ -95,6 +96,7 @@ def health(service: ServiceDep) -> dict[str, object]:
                 BuildContextResponseProfile.FULL.value,
                 BuildContextResponseProfile.SOURCE_EVIDENCE_V1.value,
                 BuildContextResponseProfile.SOURCE_EVIDENCE_V2.value,
+                BuildContextResponseProfile.MODULE_PACK_V1.value,
             ],
             "hybrid": {
                 "lexical": True,
@@ -149,6 +151,13 @@ def build_context(
     request: BuildContextRequest,
     service: ServiceDep,
 ):
+    if request.response_profile is BuildContextResponseProfile.MODULE_PACK_V1:
+        try:
+            return service.build_module_pack(session_id, budget=request.budget)
+        except ModulePackError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
         package = service.build_context(
             session_id=session_id,

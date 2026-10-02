@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     # keeps the newest version per topic.  "llm": the earlier pipeline in which
     # the LLM chooses which active memory an update supersedes.
     memoryos_curator_consolidation: str = "deterministic"
+    # module_pack/v1 marks included memories with different topic keys whose
+    # FastEmbed cosine is at least this as possible conflicts.
+    memoryos_module_pack_conflict_threshold: float = 0.85
 
     # Middleware
     memoryos_api_key: str | None = None
