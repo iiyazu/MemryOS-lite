@@ -32,7 +32,8 @@ class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if not self._api_key:
             return await call_next(request)
-        if request.url.path in ("/health", "/metrics"):
+        # The mounted metrics app redirects /metrics to /metrics/; both stay open.
+        if request.url.path in ("/health", "/metrics", "/metrics/"):
             return await call_next(request)
         key = request.headers.get("X-API-Key")
         if key is None or not hmac.compare_digest(key.encode(), self._api_key.encode()):
