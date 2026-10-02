@@ -147,10 +147,24 @@ to the v3 composer.
 These tables store source-backed long-term facts/preferences/events and their
 add/update/delete audit history.
 
+### `curated_memories`
+
+One row per LLM-curated memory (fact/decision/rule/preference/lesson) with
+`kind`, `topic_key`, `statement`, per-row `source_refs_json` (message ids and
+verbatim quotes), `status` (`active`/`superseded`), the `supersedes_id` /
+`superseded_by_id` link pair, and the producing `run_id`/`model`. Rows are only
+written by the opt-in memory curator.
+
+### `curator_state`
+
+Per-session curator watermark and counters: `last_message_seq` (count of
+consumed messages in `(created_at, id)` order), `last_run_at`, `last_error_code`,
+and total `runs`/`proposals`/`rejected_grounding`/`rejected_schema`/`llm_errors`.
+
 ## Initialization And Migrations
 
 `create_store()` initializes tables with SQLAlchemy metadata and stamps
-`alembic_version` to `0009_add_context_policy_candidates` for fresh local databases.
+`alembic_version` to `0010_add_curator_tables` for fresh local databases.
 
 Current migration head:
 
@@ -165,6 +179,7 @@ Current migration head:
 | `0007` | Add `read_only` and `tags_json` to core memory blocks |
 | `0008` | Add promotion candidates |
 | `0009` | Add context policy candidates |
+| `0010` | Add curator tables (`curated_memories`, `curator_state`) |
 
 Use Alembic for existing database upgrades:
 

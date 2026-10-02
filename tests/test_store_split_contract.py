@@ -53,7 +53,7 @@ def test_promotion_maintenance_store_contract_preserves_schema_and_rolls_back(tm
     with store.engine.connect() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "0009_add_context_policy_candidates"
+            == "0010_add_curator_tables"
         )
 
 

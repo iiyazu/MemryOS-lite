@@ -13,7 +13,8 @@ ownership model.
 
 Defaults are `memory_arch=v3` and `recall_pipeline=v2`. Legacy `v1` memory and
 recall paths may be selected explicitly. The agent kernel is off by default;
-`external` mode only emits source-attributed advisories for a host process.
+`external` mode only emits source-attributed advisories for a host process. The
+memory curator is likewise off by default.
 
 ## HTTP surface
 
@@ -29,6 +30,7 @@ All request and response bodies are JSON except `/metrics`.
 | `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context. |
 | `GET` | `/sessions/{id}/summary` | Return safe session summary data. |
 | `GET` | `/sessions/{id}/trace` | Return diagnostic trace events. |
+| `GET` | `/sessions/{id}/advisories` | Host-facing advisories; `?version=2` selects curated-memory advisories. |
 | `POST` | `/archives/ingest` | Idempotently ingest a source document. |
 | `POST` | `/archives/attachments` | Attach an archive document to a session. |
 | `GET` | `/archives/passages` | List bounded archive passages. |
@@ -39,6 +41,66 @@ All request and response bodies are JSON except `/metrics`.
 The exact request and response fields are defined by
 `src/memoryos_lite/api/app.py`, `src/memoryos_lite/api/schemas.py`, and the
 Pydantic models they reference.
+
+## Advisories and the memory curator
+
+`GET /sessions/{id}/advisories` without a `version` parameter (or with
+`version=1`) keeps the original `memoryos_external_advisories/v1` response
+unchanged. `version=2` serves curated-memory advisories:
+
+```json
+{
+  "schema": "memoryos_external_advisories/v2",
+  "items": [
+    {
+      "advisory_id": "advisory_<40 hex chars>",
+      "fingerprint": "<64 hex chars: sha256 over kind, content, and sources>",
+      "proposal_type": "curated_memory",
+      "kind": "room_fact | room_decision | project_rule | user_preference",
+      "topic_key": "project.launch_city",
+      "content": "Helios launches in Lisbon.",
+      "source_refs": [
+        {
+          "source_type": "message",
+          "source_id": "msg_...",
+          "session_id": "sess_...",
+          "quote": "<verbatim substring of the cited message>"
+        }
+      ],
+      "supersedes_advisory_id": null
+    }
+  ]
+}
+```
+
+Items are bounded to the 32 newest, `advisory_id` is stable for identical
+(kind, content, sources), and `supersedes_advisory_id` links a memory to the
+advisory it replaced. Any other `version` value is rejected with HTTP 400.
+
+The curator is opt-in via `MEMORYOS_CURATOR_ENABLED=true`; only then does the
+app lifespan start the background worker that extracts memories from new
+session messages. `/health` always reports a `curator` block:
+
+```json
+{
+  "enabled": true,
+  "state": "ready | degraded | disabled",
+  "reason_code": "curator_disabled | curator_llm_key_missing | curator_llm_init_error | curator_llm_error | curator_schema_error | null",
+  "model": "gpt-4o-mini",
+  "counters": {
+    "sessions": 0,
+    "runs": 0,
+    "proposals": 0,
+    "rejected_grounding": 0,
+    "rejected_schema": 0,
+    "llm_errors": 0
+  }
+}
+```
+
+The block never contains provider keys or provider error text. While the curator
+is enabled, the heuristic agent-kernel maintenance advisories are suppressed so
+the two advisory producers do not compete.
 
 ## Behavioral guarantees
 

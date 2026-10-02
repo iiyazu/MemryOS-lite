@@ -99,15 +99,12 @@ class StoreRuntimeMixin:
                 conn.execute(
                     text(
                         "INSERT INTO alembic_version (version_num)"
-                        " VALUES ('0009_add_context_policy_candidates')"
+                        " VALUES ('0010_add_curator_tables')"
                     )
                 )
-            elif row[0] != "0009_add_context_policy_candidates":
+            elif row[0] != "0010_add_curator_tables":
                 conn.execute(
-                    text(
-                        "UPDATE alembic_version "
-                        "SET version_num = '0009_add_context_policy_candidates'"
-                    )
+                    text("UPDATE alembic_version SET version_num = '0010_add_curator_tables'")
                 )
 
     @contextmanager

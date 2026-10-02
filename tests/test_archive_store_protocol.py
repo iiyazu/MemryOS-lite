@@ -95,5 +95,5 @@ def test_protocol_keeps_store_base_and_alembic_head_compatible(tmp_path) -> None
     with store.engine.connect() as connection:
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "0009_add_context_policy_candidates"
+            == "0010_add_curator_tables"
         )

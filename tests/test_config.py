@@ -60,3 +60,24 @@ def test_derived_cache_scope_ttls_must_be_positive() -> None:
 def test_redis_cache_namespace_must_not_be_empty() -> None:
     with pytest.raises(ValidationError):
         Settings(memoryos_cache_namespace=":")
+
+
+def test_curator_defaults_to_disabled_with_bounded_windows() -> None:
+    settings = Settings()
+
+    assert settings.memoryos_curator_enabled is False
+    assert settings.memoryos_curator_window_messages == 12
+    assert settings.memoryos_curator_idle_flush_s == 20.0
+    assert settings.memoryos_curator_poll_s == 2.0
+    assert settings.memoryos_curator_max_active_in_prompt == 40
+
+
+def test_curator_positive_settings_are_validated() -> None:
+    with pytest.raises(ValidationError):
+        Settings(memoryos_curator_window_messages=0)
+    with pytest.raises(ValidationError):
+        Settings(memoryos_curator_max_active_in_prompt=0)
+    with pytest.raises(ValidationError):
+        Settings(memoryos_curator_idle_flush_s=-1.0)
+    with pytest.raises(ValidationError):
+        Settings(memoryos_curator_poll_s=0.0)
