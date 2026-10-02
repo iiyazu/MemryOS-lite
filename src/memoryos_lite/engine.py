@@ -11,15 +11,6 @@ from typing import TYPE_CHECKING, Any
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 from sqlalchemy.exc import IntegrityError
 
-from memoryos_lite.agent_kernel import (
-    SimpleAgentStepRunner,
-    SimpleToolExecutionManager,
-    SimpleToolPolicyEngine,
-)
-from memoryos_lite.agent_tool_registry import (
-    executable_kernel_tool_names,
-    get_kernel_tool_spec,
-)
 from memoryos_lite.archive_rag import (
     ArchiveRAGDiagnostic,
     ArchiveRAGIngestRequest,
@@ -29,10 +20,7 @@ from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
 from memoryos_lite.context_composer import V3ContextComposer
-from memoryos_lite.kernel_maintenance import (
-    KernelMaintenanceAnalyzer,
-    KernelMaintenanceProposalExecutor,
-)
+from memoryos_lite.kernel_analyzer import KernelMaintenanceAnalyzer
 from memoryos_lite.observability import (
     CONTEXT_BUDGET_USED_RATIO,
     CONTEXT_BUILD_SECONDS,
@@ -110,7 +98,6 @@ from memoryos_lite.v3_contracts import (
     ContextPackageV3,
     IdentityScope,
     SourceRef,
-    ToolPolicyRule,
     message_to_log_entry,
 )
 
@@ -879,7 +866,7 @@ class MemoryOSService:
         self.rot_guard = ContextRotGuard(self.settings, self.tokenizer)
         llm_client: PageDraftClient | None = None
         llm_init_error: str | None = None
-        paging_mode_normalized = self.settings.memoryos_paging_mode.strip().lower()
+        paging_mode_normalized = self.settings.resolved_paging_mode
         if self.settings.chat_api_key and paging_mode_normalized == "llm":
             try:
                 llm_client = OpenAIPageDraftClient(self.settings)
@@ -1032,36 +1019,9 @@ class MemoryOSService:
             recall_pipeline=self.recall_pipeline,
             archival_searcher=self.archival_searcher,
         )
-        self.agent_kernel = (
-            SimpleAgentStepRunner(
-                store=self.store,
-                tool_policy_engine=SimpleToolPolicyEngine(
-                    rules=[
-                        ToolPolicyRule(
-                            id=f"kernel_{tool_name}_requires_approval",
-                            tool_name=tool_name,
-                            effect="require_approval",
-                            reason=f"{tool_name} requires explicit approval",
-                        )
-                        for tool_name in self._kernel_tool_names_requiring_approval()
-                    ]
-                ),
-                tool_execution_manager=SimpleToolExecutionManager(store=self.store),
-            )
-            if self.settings.resolved_agent_kernel == "v1"
-            else None
-        )
         self.kernel_maintenance_analyzer = (
             KernelMaintenanceAnalyzer(self.store)
-            if self.settings.resolved_agent_kernel in {"v1", "external"}
-            else None
-        )
-        self.kernel_maintenance_executor = (
-            KernelMaintenanceProposalExecutor(
-                self.store,
-                runner=self.agent_kernel,
-            )
-            if self.agent_kernel is not None
+            if self.settings.resolved_agent_kernel == "external"
             else None
         )
         self.conflict_detector = ConflictDetector(lexical)
@@ -1354,15 +1314,6 @@ class MemoryOSService:
                 pass
         return None
 
-    @staticmethod
-    def _kernel_tool_names_requiring_approval() -> list[str]:
-        tool_names: list[str] = []
-        for tool_name in sorted(executable_kernel_tool_names()):
-            spec = get_kernel_tool_spec(tool_name)
-            if spec is not None and spec.requires_approval_by_default:
-                tool_names.append(tool_name)
-        return tool_names
-
     def create_session(self, title: str) -> Any:
         with timed_core_operation(
             component="engine",
@@ -1524,6 +1475,9 @@ class MemoryOSService:
     @_instrument_engine_operation("page")
     def page(self, session_id: str) -> MemoryPage | None:
         self._require_session(session_id)
+        if self.settings.resolved_paging_mode == "off":
+            self.trace(session_id, "page_skipped", {"reason": "paging_off"})
+            return None
         messages = self.store.list_messages(session_id)
         all_pages = self.store.list_pages(session_id)
         existing_pages = [p for p in all_pages if p.superseded_by is None]
@@ -2186,63 +2140,43 @@ class MemoryOSService:
         )
         try:
             analysis = self.kernel_maintenance_analyzer.analyze(step_request)
-            if self.settings.resolved_agent_kernel == "external":
-                # External governance is advisory-only.  The host receives
-                # source-backed proposals and decides whether to create an
-                # xmuse candidate; MemoryOS never mutates its authority here.
-                for proposal in analysis.memory_proposals:
-                    source_refs = [
-                        {
-                            "source_type": ref.source_type.value,
-                            "source_id": ref.source_id,
-                            **(
-                                {"session_id": ref.session_id} if ref.session_id is not None else {}
-                            ),
-                        }
-                        for ref in proposal.tool_request.source_refs
-                        if ref.source_type.value in {"message", "document"}
-                        and isinstance(ref.source_id, str)
-                        and ref.source_id
-                    ]
-                    arguments = proposal.tool_request.arguments
-                    content = arguments.get("content")
-                    if (
-                        isinstance(content, str)
-                        and content.strip()
-                        and len(content.encode("utf-8")) <= 4096
-                        and source_refs
-                    ):
-                        self.store.add_maintenance_advisory(
-                            session_id=session_id,
-                            proposal_type=proposal.proposal_type,
-                            content=content.strip(),
-                            source_refs=source_refs,
-                        )
-                    self.trace(
-                        session_id,
-                        "maintenance_advisory_proposal",
-                        {
-                            "proposal_type": proposal.proposal_type,
-                            "source_ref_count": len(source_refs),
-                        },
+            # External governance is advisory-only.  The host receives
+            # source-backed proposals and decides whether to create an
+            # xmuse candidate; MemoryOS never mutates its authority here.
+            for proposal in analysis.memory_proposals:
+                source_refs = [
+                    {
+                        "source_type": ref.source_type.value,
+                        "source_id": ref.source_id,
+                        **({"session_id": ref.session_id} if ref.session_id is not None else {}),
+                    }
+                    for ref in proposal.tool_request.source_refs
+                    if ref.source_type.value in {"message", "document"}
+                    and isinstance(ref.source_id, str)
+                    and ref.source_id
+                ]
+                arguments = proposal.tool_request.arguments
+                content = arguments.get("content")
+                if (
+                    isinstance(content, str)
+                    and content.strip()
+                    and len(content.encode("utf-8")) <= 4096
+                    and source_refs
+                ):
+                    self.store.add_maintenance_advisory(
+                        session_id=session_id,
+                        proposal_type=proposal.proposal_type,
+                        content=content.strip(),
+                        source_refs=source_refs,
                     )
                 self.trace(
                     session_id,
-                    "maintenance_kernel_ran",
+                    "maintenance_advisory_proposal",
                     {
-                        "task": task,
-                        "signal_count": len(analysis.signals),
-                        "decision_count": len(analysis.decisions),
-                        "memory_proposal_count": len(analysis.memory_proposals),
-                        "context_feedback_count": len(analysis.context_feedback),
-                        "submitted": False,
-                        "governance": "external",
+                        "proposal_type": proposal.proposal_type,
+                        "source_ref_count": len(source_refs),
                     },
                 )
-                return
-            if self.kernel_maintenance_executor is None:
-                return
-            execution = self.kernel_maintenance_executor.execute(step_request, analysis)
         except Exception as exc:
             self.trace(
                 session_id,
@@ -2262,11 +2196,8 @@ class MemoryOSService:
                 "decision_count": len(analysis.decisions),
                 "memory_proposal_count": len(analysis.memory_proposals),
                 "context_feedback_count": len(analysis.context_feedback),
-                "submitted": execution.agent_step is not None,
-                "skipped_duplicate_proposal_count": (execution.skipped_duplicate_proposal_count),
-                "agent_continuation": (
-                    execution.agent_step.continuation if execution.agent_step is not None else None
-                ),
+                "submitted": False,
+                "governance": "external",
             },
         )
 

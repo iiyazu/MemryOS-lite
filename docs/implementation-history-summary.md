@@ -10,8 +10,8 @@ The live implementation has since converged on these durable decisions:
 - v3 layered composition and v2 episode-first recall are the defaults.
 - v1 composer and recall paths remain explicit compatibility choices.
 - Core and archival memory require source-backed contracts.
-- Agent kernel, LangGraph, external LLMs, Redis, and Qdrant remain optional experiments.
-- Retrieval/source diagnostics and answer-quality diagnostics are reported separately.
+- The agent kernel stays advisory-only (`external`); the LangGraph demo, external LLMs, Redis, and Qdrant remain optional experiments.
+- Retrieval/source diagnostics are reported separately from final answer/source projection.
 
 Earlier benchmarks, xmuse integration designs, control-plane experiments, and
 implementation plans are historical evidence, not present product contracts.

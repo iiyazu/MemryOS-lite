@@ -79,7 +79,11 @@ class TestCrossSessionCore:
         assert {page.id for page in cores} == {"global_core_1", "global_core_2"}
 
     def test_build_context_with_global_core(self, tmp_path):
-        settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
+        settings = Settings(
+            data_dir=tmp_path / ".memoryos",
+            memoryos_memory_arch="v1",
+            memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        )
         store = MemoryStore(settings=settings)
         store.init_db()
         service = MemoryOSService(settings=settings, store=store)
@@ -98,7 +102,12 @@ class TestCrossSessionCore:
         assert ctx.pinned_core == [summary]
 
     def test_memoryos_cross_session_eval_uses_global_core_sources(self, tmp_path):
-        settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
+        settings = Settings(
+            data_dir=tmp_path / ".memoryos",
+            memoryos_memory_arch="v1",
+            memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+            memoryos_paging_mode="heuristic",  # cross-session core profile pages
+        )
         store = MemoryStore(settings=settings)
         store.init_db()
         service = MemoryOSService(settings=settings, store=store)

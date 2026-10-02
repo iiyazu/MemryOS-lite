@@ -63,6 +63,6 @@ pagination is a later scale-up task, not part of this prototype integration.
 
 ## Non-Claims
 
-This feature does not change default v3 routing, v1 fallback, kernel opt-in
-behavior, or benchmark scores. Public benchmark movement must be evaluated by a
+This feature does not change default v3 routing, v1 fallback, external
+advisory behavior, or benchmark scores. Public benchmark movement must be evaluated by a
 separate held-out or milestone process.

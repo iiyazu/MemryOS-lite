@@ -4,10 +4,6 @@ from memoryos_lite.config import Settings
 from memoryos_lite.context_composer import V3ContextComposer
 from memoryos_lite.core_memory import CoreMemoryService
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.memory_lifecycle import (
-    MemoryLifecycleService,
-    archival_to_core_candidate,
-)
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
@@ -26,6 +22,7 @@ from memoryos_lite.v3_contracts import (
     ContextComposerRequest,
     ContextPolicyCandidate,
     IdentityScope,
+    PromotionCandidate,
     SourceRef,
 )
 
@@ -86,15 +83,19 @@ def test_settings_resolve_v3_composer_and_kernel_flags(tmp_path):
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
         memoryos_memory_arch="v3",
-        memoryos_agent_kernel="v1",
+        memoryos_agent_kernel="external",
     )
 
     assert settings.resolved_memory_arch == "v3"
-    assert settings.resolved_agent_kernel == "v1"
+    assert settings.resolved_agent_kernel == "external"
 
     with pytest.raises(ValueError):
         bad_memory_arch = Settings(memoryos_memory_arch="bad")
         _ = bad_memory_arch.resolved_memory_arch
+
+    with pytest.raises(ValueError):
+        removed_kernel = Settings(memoryos_agent_kernel="v1")
+        _ = removed_kernel.resolved_agent_kernel
 
     with pytest.raises(ValueError):
         bad_agent_kernel = Settings(memoryos_agent_kernel="bad")
@@ -997,25 +998,20 @@ def test_v3_composer_renders_approved_core_promotion_with_provenance(tmp_path):
     store.reset()
     ref = _ref()
     core = CoreMemoryService(store, TokenEstimator())
-    lifecycle = MemoryLifecycleService(store, core)
 
-    core.create_block(
-        label="human",
-        description="stable user facts",
-        value="Alice prefers trains.",
-        limit_tokens=40,
-        source_refs=[ref],
-        actor="user",
-        reason="seed human profile",
-    )
-
-    candidate = archival_to_core_candidate(
-        "Alice prefers rail travel.",
-        source_refs=[ref],
-        reason="promote stable preference",
-        confidence=0.95,
-        label="human",
-        limit_tokens=40,
+    candidate = store.create_promotion_candidate(
+        PromotionCandidate(
+            id="pcand_promotion",
+            source_layer="archival",
+            target_layer="core",
+            operation="promote",
+            content="Alice prefers rail travel.",
+            source_refs=[ref],
+            reason="promote stable preference",
+            confidence=0.95,
+            write_source="sleep_consolidation",
+            metadata={"label": "human", "limit_tokens": 40},
+        )
     )
     approved = ApprovalState(
         id="appr_1",
@@ -1027,7 +1023,26 @@ def test_v3_composer_renders_approved_core_promotion_with_provenance(tmp_path):
         approved_by="user",
         resolved_at=candidate.created_at,
     )
-    lifecycle.apply_candidate(candidate, actor="agent", approval_state=approved)
+    core.create_block(
+        label="human",
+        description=candidate.reason,
+        value=candidate.content,
+        limit_tokens=40,
+        source_refs=list(candidate.source_refs),
+        actor="agent",
+        reason=candidate.reason,
+        approval_state=approved,
+        metadata={
+            **candidate.metadata,
+            "promotion_candidate_id": candidate.id,
+            "approval_id": approved.id,
+        },
+    )
+    store.update_promotion_candidate_status(
+        candidate.id,
+        status="applied",
+        metadata={**candidate.metadata, "applied_by": "agent"},
+    )
 
     package = V3ContextComposer(
         store=store,

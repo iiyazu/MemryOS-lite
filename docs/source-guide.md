@@ -17,7 +17,7 @@ MemoryOSService
     -> v3 ContextComposer by default
     -> v1 ContextBuilder when MEMORYOS_MEMORY_ARCH=v1
     -> v2 RecallPipeline by default
-    -> agent kernel remains opt-in
+    -> agent kernel off by default (external = advisory-only)
 ```
 
 ## Important Modules
@@ -35,12 +35,12 @@ MemoryOSService
 | `engine.py` | Application facade and v1 context/paging orchestration. |
 | `retrieval/` | Search primitives and v2 recall helpers. |
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |
-| `agent_kernel.py` | Opt-in v3 kernel step runner, policy decisions, approval pause traces. |
+| `kernel_analyzer.py` / `kernel_contracts.py` | External-mode source-attributed maintenance advisories. |
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package, kernel contracts. |
 | `core_memory.py` | Source-backed core memory block service. |
 | `public_benchmarks.py` | LongMemEval/LoCoMo loading, baseline execution, report fields. |
 | `evals.py` | Built-in deterministic evals and baseline output structure. |
-| `agent_graph.py` | Experimental LangGraph demo nodes. |
+| `graphs.py` | Experimental LangGraph demo graph (`demo run`). |
 | `cli.py` | Typer CLI entrypoint. |
 | `api/app.py` | FastAPI REST API. |
 
@@ -89,7 +89,8 @@ MEMORYOS_MEMORY_ARCH=v1
 ```
 
 `MEMORYOS_RECALL_PIPELINE=v2` still enables the separate episode-first recall
-path. `MEMORYOS_AGENT_KERNEL=v1` remains a separate experimental opt-in.
+path. `MEMORYOS_AGENT_KERNEL=external` enables advisory-only maintenance
+analysis; the in-process kernel execution stack is removed.
 
 ## Storage Model
 

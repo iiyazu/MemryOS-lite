@@ -20,6 +20,8 @@ def contextual_service(tmp_path: Path) -> MemoryOSService:
         memoryos_evidence_representation="deterministic_context",
         memoryos_evidence_candidate_top_k=10,
         memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store = create_store(settings)
     store.reset()
@@ -35,6 +37,8 @@ def legacy_service(tmp_path: Path) -> MemoryOSService:
         recent_message_limit=1,
         memoryos_evidence_representation="legacy",
         memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store = create_store(settings)
     store.reset()
@@ -105,6 +109,8 @@ def test_contextual_fallback_to_legacy_when_no_candidates(tmp_path):
         memoryos_evidence_representation="deterministic_context",
         memoryos_evidence_direct_raw_fallback=True,
         memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store = create_store(settings)
     store.reset()
@@ -158,6 +164,9 @@ def test_dual_path_legacy_hit_preserved_when_contextual_misses(tmp_path):
         recent_message_limit=1,
         memoryos_evidence_representation="deterministic_context",
         memoryos_evidence_candidate_top_k=5,
+        memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store = create_store(settings)
     store.reset()
@@ -202,6 +211,9 @@ def test_page_context_plus_raw_strategy(tmp_path):
         recent_message_limit=1,
         memoryos_evidence_representation="page_context_plus_raw",
         memoryos_evidence_candidate_top_k=10,
+        memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store = create_store(settings)
     store.reset()

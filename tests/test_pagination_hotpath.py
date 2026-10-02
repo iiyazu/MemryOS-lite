@@ -18,6 +18,7 @@ def perf_service(tmp_path):
         data_dir=tmp_path / ".memoryos",
         rot_safe_budget=10**9,
         recent_message_limit=2,
+        memoryos_paging_mode="heuristic",  # TestListPagesLimit needs real paging
     )
     store = create_store(settings)
     store.reset()
