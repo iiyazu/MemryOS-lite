@@ -40,6 +40,9 @@ class SessionRecord(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Optional consumer scope (e.g. an xmuse module); MemoryOS stores and echoes it.
+    scope_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scope_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class MessageRecord(Base):
@@ -372,6 +375,12 @@ class CuratedMemoryRecord(Base):
     run_id: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Deterministic consolidation: the newest version per topic_key stays active.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Lessons accumulate repeat occurrences instead of being replaced.
+    occurrences: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    scope_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scope_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     __table_args__ = (
         Index("ix_curated_memories_session_status", "session_id", "status"),
