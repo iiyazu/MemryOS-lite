@@ -1,0 +1,72 @@
+{
+  "room_id": "rm16",
+  "title": "lumen 数据管道（陷阱）",
+  "language": "zh",
+  "project": "lumen",
+  "participants": [
+    {"id": "human", "kind": "human", "name": "林"},
+    {"id": "lead", "kind": "agent", "name": "Lead", "vendor": "claude"},
+    {"id": "verifier", "kind": "agent", "name": "Verifier", "vendor": "opencode"}
+  ],
+  "messages": [
+    {"id": "m01", "speaker": "human", "text": "数据管道这周要定下来。@lead 批处理多久跑一次？"},
+    {"id": "m02", "speaker": "lead", "text": "批处理每天 UTC 02:00 跑一次。"},
+    {"id": "m03", "speaker": "human", "text": "改成每小时整点跑一次批处理，运营那边要更新鲜的数据。"},
+    {"id": "m04", "speaker": "verifier", "text": "旧的每天 02:00 的任务已经停用，只是留在仓库里做参考。"},
+    {"id": "m05", "speaker": "lead", "text": "值班负责人先由 Dana 担任。"},
+    {"id": "m06", "speaker": "human", "text": "从下周一起数据管道的值班负责人换成 Lee。"},
+    {"id": "m07", "speaker": "verifier", "text": "Dana 上周五已经把值班交接给 Lee 了。"},
+    {"id": "m08", "speaker": "lead", "text": "输出格式统一用 Parquet，存在 S3 的 lumen-lake 桶里。"},
+    {"id": "m09", "speaker": "verifier", "text": "教训：回填数据必须先加 --dry-run 跑一遍；上次没加就覆盖了两天的数据。"},
+    {"id": "m10", "speaker": "human", "text": "那条教训记下来，以后都照做。"},
+    {"id": "m11", "speaker": "lead", "text": "有人提议高峰期退回每天一次，被否了，继续每小时一次。"},
+    {"id": "m12", "speaker": "human", "text": "好，今天就到这。"}
+  ],
+  "gold_memories": [
+    {"id": "g1", "kind": "decision", "scope": "room", "topic_key": "pipeline.batch_schedule",
+     "statement": "批处理每天 UTC 02:00 跑一次。",
+     "sources": [{"message_id": "m02", "quote": "批处理每天 UTC 02:00 跑一次"}],
+     "superseded_by": "g2"},
+    {"id": "g2", "kind": "decision", "scope": "room", "topic_key": "pipeline.batch_schedule",
+     "statement": "批处理每小时整点跑一次（高峰期也不退回每天一次）。",
+     "sources": [
+       {"message_id": "m03", "quote": "改成每小时整点跑一次批处理"},
+       {"message_id": "m11", "quote": "继续每小时一次"}
+     ],
+     "superseded_by": null},
+    {"id": "g3", "kind": "fact", "scope": "room", "topic_key": "pipeline.oncall_owner",
+     "statement": "数据管道值班负责人是 Dana。",
+     "sources": [{"message_id": "m05", "quote": "值班负责人先由 Dana 担任"}],
+     "superseded_by": "g4"},
+    {"id": "g4", "kind": "fact", "scope": "room", "topic_key": "pipeline.oncall_owner",
+     "statement": "数据管道值班负责人是 Lee。",
+     "sources": [
+       {"message_id": "m06", "quote": "值班负责人换成 Lee"},
+       {"message_id": "m07", "quote": "把值班交接给 Lee 了"}
+     ],
+     "superseded_by": null},
+    {"id": "g5", "kind": "decision", "scope": "room", "topic_key": "pipeline.output_format",
+     "statement": "输出统一用 Parquet，存放在 S3 的 lumen-lake 桶。",
+     "sources": [{"message_id": "m08", "quote": "输出格式统一用 Parquet，存在 S3 的 lumen-lake 桶里"}],
+     "superseded_by": null},
+    {"id": "g6", "kind": "lesson", "scope": "room", "topic_key": "pipeline.backfill_dry_run",
+     "statement": "回填数据必须先加 --dry-run 跑一遍，否则可能覆盖已有数据。",
+     "sources": [{"message_id": "m09", "quote": "回填数据必须先加 --dry-run 跑一遍"}],
+     "superseded_by": null}
+  ],
+  "noise": [
+    {"message_id": "m04", "type": "restatement", "note": "陷阱：提到旧的 02:00 任务，但已停用"},
+    {"message_id": "m10", "type": "restatement", "note": "确认 g6"},
+    {"message_id": "m12", "type": "chitchat", "note": "收尾"}
+  ],
+  "probes": [
+    {"id": "p1", "question": "批处理多久跑一次？", "asked_in": "same_room",
+     "answer_memory_ids": ["g2"], "must_contain": ["每小时"], "must_not_contain": ["02:00"]},
+    {"id": "p2", "question": "数据管道现在的值班负责人是谁？", "asked_in": "same_room",
+     "answer_memory_ids": ["g4"], "must_contain": ["Lee"], "must_not_contain": ["负责人是 Dana"]},
+    {"id": "p3", "question": "回填数据之前要做什么？", "asked_in": "same_room",
+     "answer_memory_ids": ["g6"], "must_contain": ["dry-run"], "must_not_contain": []},
+    {"id": "p4", "question": "管道输出用什么格式、存在哪里？", "asked_in": "same_room",
+     "answer_memory_ids": ["g5"], "must_contain": ["Parquet"], "must_not_contain": []}
+  ]
+}

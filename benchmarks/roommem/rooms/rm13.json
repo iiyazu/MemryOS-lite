@@ -1,0 +1,74 @@
+{
+  "room_id": "rm13",
+  "title": "orbit billing service (trap)",
+  "language": "en",
+  "project": "orbit",
+  "participants": [
+    {"id": "human", "kind": "human", "name": "Priya"},
+    {"id": "lead", "kind": "agent", "name": "Lead", "vendor": "claude"},
+    {"id": "builder", "kind": "agent", "name": "Builder", "vendor": "opencode"}
+  ],
+  "messages": [
+    {"id": "m01", "speaker": "human", "text": "Kicking off the billing service this week. @lead which database are we starting on?"},
+    {"id": "m02", "speaker": "lead", "text": "We'll start the billing service on MySQL 8 since the team already knows it."},
+    {"id": "m03", "speaker": "builder", "text": "I'll scaffold the schema migrations this afternoon."},
+    {"id": "m04", "speaker": "human", "text": "Decision: we're switching the billing database from MySQL to PostgreSQL 16, because we need JSONB columns for invoice line items."},
+    {"id": "m05", "speaker": "lead", "text": "Understood, PostgreSQL 16 it is."},
+    {"id": "m06", "speaker": "builder", "text": "Housekeeping note: the old MySQL dump scripts under tools/ are obsolete now and can be deleted."},
+    {"id": "m07", "speaker": "human", "text": "Invoices are generated on the 1st of each month, in the customer's billing timezone."},
+    {"id": "m08", "speaker": "lead", "text": "Retry policy: failed charges are retried 3 times, 24 hours apart."},
+    {"id": "m09", "speaker": "human", "text": "Change of plan on retries: retry failed charges 5 times, 12 hours apart. The old 3-times-every-24-hours policy lost us customers."},
+    {"id": "m10", "speaker": "builder", "text": "Updating the retry job to 5 attempts at 12-hour spacing."},
+    {"id": "m11", "speaker": "human", "text": "Project rule: every money amount is stored as integer cents, never as a float."},
+    {"id": "m12", "speaker": "lead", "text": "Remember when we prototyped on MySQL? The collation problems alone justified moving off it."},
+    {"id": "m13", "speaker": "builder", "text": "Someone asked whether the free tier could go back to 3 retries every 24 hours. No: 5 retries 12 hours apart applies to every tier."},
+    {"id": "m14", "speaker": "human", "text": "Thanks both, good progress today."}
+  ],
+  "gold_memories": [
+    {"id": "g1", "kind": "decision", "scope": "room", "topic_key": "billing.database",
+     "statement": "The billing service runs on MySQL 8.",
+     "sources": [{"message_id": "m02", "quote": "start the billing service on MySQL 8"}],
+     "superseded_by": "g2"},
+    {"id": "g2", "kind": "decision", "scope": "room", "topic_key": "billing.database",
+     "statement": "The billing service database is PostgreSQL 16 (needed for JSONB invoice line items).",
+     "sources": [{"message_id": "m04", "quote": "switching the billing database from MySQL to PostgreSQL 16"}],
+     "superseded_by": null},
+    {"id": "g3", "kind": "decision", "scope": "room", "topic_key": "billing.invoice_day",
+     "statement": "Invoices are generated on the 1st of each month in the customer's billing timezone.",
+     "sources": [{"message_id": "m07", "quote": "Invoices are generated on the 1st of each month"}],
+     "superseded_by": null},
+    {"id": "g4", "kind": "decision", "scope": "room", "topic_key": "billing.retry_policy",
+     "statement": "Failed charges are retried 3 times, 24 hours apart.",
+     "sources": [{"message_id": "m08", "quote": "failed charges are retried 3 times, 24 hours apart"}],
+     "superseded_by": "g5"},
+    {"id": "g5", "kind": "decision", "scope": "room", "topic_key": "billing.retry_policy",
+     "statement": "Failed charges are retried 5 times, 12 hours apart, on every tier.",
+     "sources": [
+       {"message_id": "m09", "quote": "retry failed charges 5 times, 12 hours apart"},
+       {"message_id": "m13", "quote": "5 retries 12 hours apart applies to every tier"}
+     ],
+     "superseded_by": null},
+    {"id": "g6", "kind": "rule", "scope": "project", "topic_key": "rule.money_storage",
+     "statement": "Every money amount is stored as integer cents, never as a float.",
+     "sources": [{"message_id": "m11", "quote": "every money amount is stored as integer cents, never as a float"}],
+     "superseded_by": null}
+  ],
+  "noise": [
+    {"message_id": "m03", "type": "plan_step", "note": "A work plan, not a durable memory"},
+    {"message_id": "m05", "type": "restatement", "note": "Acknowledges g2"},
+    {"message_id": "m06", "type": "restatement", "note": "Trap: mentions the old MySQL value as obsolete; must not revive MySQL"},
+    {"message_id": "m10", "type": "plan_step", "note": "Implements g5"},
+    {"message_id": "m12", "type": "chitchat", "note": "Trap: past-tense reminiscence about the old MySQL value"},
+    {"message_id": "m14", "type": "chitchat", "note": "Thanks"}
+  ],
+  "probes": [
+    {"id": "p1", "question": "Which database does the billing service use?", "asked_in": "same_room",
+     "answer_memory_ids": ["g2"], "must_contain": ["PostgreSQL"], "must_not_contain": ["MySQL"]},
+    {"id": "p2", "question": "How are failed charges retried?", "asked_in": "same_room",
+     "answer_memory_ids": ["g5"], "must_contain": ["12"], "must_not_contain": ["24 hours"]},
+    {"id": "p3", "question": "When are invoices generated?", "asked_in": "same_room",
+     "answer_memory_ids": ["g3"], "must_contain": ["1st"], "must_not_contain": []},
+    {"id": "p4", "question": "How must money amounts be stored in this project?", "asked_in": "new_room_same_project",
+     "answer_memory_ids": ["g6"], "must_contain": ["cents"], "must_not_contain": []}
+  ]
+}
