@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,6 +16,20 @@ from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.v3_contracts import ArchivalPassage, SourceRef, SourceSpan
 
 SearchMode = Literal["text", "vector", "hybrid"]
+
+
+class _PositiveIdfBM25(BM25Okapi):  # type: ignore[misc]
+    """BM25 with Lucene's always-positive IDF, ``log(1 + (N - n + 0.5) / (n + 0.5))``.
+
+    Okapi IDF turns negative for terms in more than half of a tiny corpus.  Archives
+    are often tiny (a fresh Room), and negative scores used to collapse ranking to a
+    single best-overlap tier, so a passage that merely repeats the query could hide
+    the passage that answers it.
+    """
+
+    def _calc_idf(self, nd: dict[str, int]) -> None:
+        for word, freq in nd.items():
+            self.idf[word] = math.log1p((self.corpus_size - freq + 0.5) / (freq + 0.5))
 
 
 @dataclass(frozen=True)
@@ -381,7 +396,7 @@ class ArchivalPassageSearcher:
         matching_indices = [i for i, tokens in enumerate(corpus) if query_set.intersection(tokens)]
         if not matching_indices:
             return []
-        bm25 = BM25Okapi(corpus)
+        bm25 = _PositiveIdfBM25(corpus)
         scores = bm25.get_scores(query_tokens)
         scored = [
             (
@@ -391,12 +406,6 @@ class ArchivalPassageSearcher:
             )
             for i in matching_indices
         ]
-        # BM25's IDF can be zero/negative for tiny corpora.  Keep the best
-        # lexical overlap in that case instead of returning common-word
-        # fillers for every eligible passage.
-        if scored and max(score for score, _overlap, _passage in scored) <= 0:
-            best_overlap = max(overlap for _score, overlap, _passage in scored)
-            scored = [item for item in scored if item[1] == best_overlap]
         ranked = sorted(
             scored,
             key=lambda pair: (pair[0], pair[1], pair[2].created_at, pair[2].id),

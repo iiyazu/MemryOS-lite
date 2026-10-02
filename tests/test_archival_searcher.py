@@ -59,6 +59,29 @@ def test_archival_search_returns_passage_level_evidence_with_metadata():
     assert hits[0].metadata["archive_id"] == "archive_1"
 
 
+def test_tiny_archive_keeps_answer_when_another_passage_repeats_the_query():
+    # A fresh Room archives the current question before recall runs.  With two
+    # passages Okapi IDF is negative for shared terms; the echo must not hide the
+    # passage that actually answers the question.
+    query = (
+        "what JSON envelope must HTTP error responses use in this repository, "
+        "and what is the release codename?"
+    )
+    passages = [
+        _passage("apsg_echo", query),
+        _passage(
+            "apsg_rule",
+            "Every HTTP error response must use the JSON envelope "
+            "{code, message, trace_id}. Release codename is Halcyon-7.",
+        ),
+    ]
+
+    hits = ArchivalPassageSearcher().search(passages, query, top_k=5, mode="text")
+
+    assert [hit.passage.id for hit in hits] == ["apsg_echo", "apsg_rule"]
+    assert all(hit.score > 0 for hit in hits)
+
+
 def test_archival_search_accepts_vector_and_hybrid_modes_without_ann_backend():
     searcher = ArchivalPassageSearcher()
     passages = [_passage("apsg_1", "Alice moved to Shanghai and likes rail.")]
