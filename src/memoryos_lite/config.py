@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     opencode_model: str = OPENCODE_DEFAULT_MODEL
     # "responses" for Muse Spark/GPT models, "chat" for chat-completions models.
     opencode_wire_api: str = "responses"
+    # Sent as x-opencode-session; unset means one generated id per client.
+    opencode_session_id: str | None = None
     memoryos_rewrite_enabled: bool = False
     memoryos_rerank_enabled: bool = False
     memoryos_llm_timeout_s: float = 60.0

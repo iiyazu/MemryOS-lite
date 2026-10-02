@@ -80,6 +80,30 @@ def test_build_chat_openai_uses_responses_api_and_json_mode(
     assert kwargs["api_key"].get_secret_value() == "oc-test-key"
 
 
+def test_opencode_requests_carry_a_session_id_and_own_user_agent(
+    fake_chat_openai: type[_RecordingChatOpenAI],
+) -> None:
+    build_chat_openai(_opencode_settings(opencode_session_id="room-42"))
+    pinned = fake_chat_openai.instances[-1].kwargs["default_headers"]
+    build_chat_openai(_opencode_settings())
+    build_chat_openai(_opencode_settings())
+    generated = [
+        i.kwargs["default_headers"]["x-opencode-session"] for i in fake_chat_openai.instances[-2:]
+    ]
+
+    assert pinned["x-opencode-session"] == "room-42"
+    assert pinned["User-Agent"].startswith("memoryos-lite/")
+    assert generated[0] != generated[1]
+
+
+def test_deepseek_requests_carry_no_opencode_headers(
+    fake_chat_openai: type[_RecordingChatOpenAI],
+) -> None:
+    build_chat_openai(Settings(memoryos_llm_provider="deepseek", deepseek_api_key="sk-test"))
+
+    assert "default_headers" not in fake_chat_openai.instances[-1].kwargs
+
+
 def test_build_chat_openai_chat_wire_omits_responses_flag(
     fake_chat_openai: type[_RecordingChatOpenAI],
 ) -> None:

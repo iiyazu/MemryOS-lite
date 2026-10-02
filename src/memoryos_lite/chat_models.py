@@ -9,6 +9,8 @@ stays inside the LangChain client; it is never logged or returned.
 
 from __future__ import annotations
 
+import importlib.metadata
+import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -35,6 +37,8 @@ def build_chat_openai(settings: Settings, *, json_mode: bool = False) -> ChatOpe
         kwargs["base_url"] = settings.chat_base_url
     if settings.chat_wire_api == "responses":
         kwargs["use_responses_api"] = True
+    if settings.resolved_llm_provider == "opencode":
+        kwargs["default_headers"] = opencode_headers(settings)
     if json_mode:
         kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
     return ChatOpenAI(
@@ -44,6 +48,23 @@ def build_chat_openai(settings: Settings, *, json_mode: bool = False) -> ChatOpe
         timeout=settings.memoryos_llm_timeout_s,
         **kwargs,
     )
+
+
+def opencode_headers(settings: Settings) -> dict[str, str]:
+    """Client identification OpenCode Go requires from third-party clients.
+
+    Go rejects requests without ``x-opencode-session`` (``MissingSessionID``)
+    and asks clients to send their own user agent instead of an SDK default
+    (https://opencode.ai/docs/go/#where-can-i-use-it).  The session id is
+    ``OPENCODE_SESSION_ID`` when set, otherwise one id per built client.
+    """
+
+    try:
+        version = importlib.metadata.version("memoryos-lite")
+    except importlib.metadata.PackageNotFoundError:
+        version = "dev"
+    session = settings.opencode_session_id or f"memoryos-{uuid.uuid4()}"
+    return {"User-Agent": f"memoryos-lite/{version}", "x-opencode-session": session}
 
 
 def message_text(message: object) -> str:
