@@ -11,7 +11,11 @@ Default behavior now uses `v3`.
   `MEMORYOS_RECALL_PIPELINE=v2`; `v1` remains an explicit compatibility path.
 - The v3 layered composer is the default memory architecture.
 - `MEMORYOS_MEMORY_ARCH=v1` remains available as an explicit fallback.
-- The v3 kernel is enabled only when `MEMORYOS_AGENT_KERNEL=v1`.
+- The kernel is `off` by default. `MEMORYOS_AGENT_KERNEL=v1` enables the
+  experimental v3 kernel; `external` runs maintenance analysis in advisory-only
+  mode, exposing source-backed proposals through `/sessions/{id}/advisories`
+  for a host (such as xmuse) to accept or ignore without MemoryOS mutating its
+  own authority.
 
 Why this is acceptable:
 
@@ -92,8 +96,10 @@ Current constraints:
 
 - Scripted/fake paths are used for deterministic demos and tests.
 - Real LLM usage is optional and requires explicit API keys.
-- The API has no auth, rate limiting, multi-tenant ownership, or production
-  error model.
+- The API supports only an optional single shared key (`MEMORYOS_API_KEY`,
+  sent as `X-API-Key`; `/health` and `/metrics` stay open). Without the key it
+  is unauthenticated. There is no per-user identity, rate limiting,
+  multi-tenant ownership, or production error model.
 
 Future direction:
 

@@ -11,9 +11,9 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 
 - 默认 `MEMORYOS_MEMORY_ARCH=v3`，使用 layered context composer；`v1` 仅作为显式兼容路径。
 - 默认 `MEMORYOS_RECALL_PIPELINE=v2`，使用 episode-first evidence recall；可显式选择 `v1`。
-- Agent kernel 默认关闭，仅通过 `MEMORYOS_AGENT_KERNEL=v1` 启用实验路径。
+- Agent kernel 默认关闭；`MEMORYOS_AGENT_KERNEL=v1` 启用实验路径，`external` 只产出带来源的维护建议（`/sessions/{id}/advisories`），由宿主决定是否采纳。
 - SQLite 是权威存储；page/trace 文件和可选 Redis/Qdrant 都是派生或实验能力。
-- 当前测试集合为 789 项；以新鲜命令结果而不是文档中的历史通过数判断状态。
+- 以新鲜命令结果而不是文档中的历史通过数判断状态。
 
 ```text
 ingest(message)
