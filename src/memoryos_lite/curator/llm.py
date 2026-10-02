@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Protocol
 
+from memoryos_lite.chat_models import build_chat_openai, message_text
+
 if TYPE_CHECKING:
     from memoryos_lite.config import Settings
 
@@ -82,32 +84,19 @@ def _usage_from_result(result: object) -> dict[str, int | None] | None:
 class ChatCuratorLLM:
     """ChatOpenAI-backed curator client with JSON output mode.
 
-    The API key is held by the LangChain client only; it is never logged,
-    traced, or returned by ``complete_json`` errors.  After each provider
-    call, ``last_usage`` holds the normalized token usage
+    Works over Chat Completions or the Responses API, whichever the configured
+    provider serves.  The API key is held by the LangChain client only; it is
+    never logged, traced, or returned by ``complete_json`` errors.  After each
+    provider call, ``last_usage`` holds the normalized token usage
     (``prompt_tokens``/``completion_tokens``/``total_tokens``, any of which
     may be ``None``) or ``None`` when the provider reported none.
     """
 
     def __init__(self, settings: Settings) -> None:
         self.last_usage: dict[str, int | None] | None = None
-        from langchain_openai import ChatOpenAI
-        from pydantic import SecretStr
-
-        api_key = settings.chat_api_key
-        if not api_key:
+        if not settings.chat_api_key:
             raise ValueError(f"{settings.chat_api_key_name} is required for the curator")
-        kwargs: dict[str, Any] = {}
-        if settings.chat_base_url:
-            kwargs["base_url"] = settings.chat_base_url
-        self._model = ChatOpenAI(
-            model=settings.chat_model,
-            api_key=SecretStr(api_key),
-            temperature=0,
-            timeout=settings.memoryos_llm_timeout_s,
-            model_kwargs={"response_format": {"type": "json_object"}},
-            **kwargs,
-        )
+        self._model = build_chat_openai(settings, json_mode=True)
 
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
         try:
@@ -122,9 +111,10 @@ class ChatCuratorLLM:
             # metadata, and nothing here needs more than the failure class.
             raise CuratorLLMError(f"provider call failed: {type(exc).__name__}") from exc
         self.last_usage = _usage_from_result(result)
-        content = result.content if hasattr(result, "content") else result
-        if not isinstance(content, str):
-            raise CuratorSchemaError("curator response content was not text")
+        try:
+            content = message_text(result)
+        except TypeError as exc:
+            raise CuratorSchemaError("curator response content was not text") from exc
         return extract_json_object(content)
 
 

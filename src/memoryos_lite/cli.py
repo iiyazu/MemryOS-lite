@@ -462,7 +462,10 @@ def eval_roommem(
     ] = False,
     fake_llm: Annotated[
         bool,
-        Option("--fake-llm", help="Use the deterministic fake answerer/judge instead of DeepSeek"),
+        Option(
+            "--fake-llm",
+            help="Use the deterministic fake answerer/judge instead of the configured provider",
+        ),
     ] = False,
     curated_source: Annotated[
         str,

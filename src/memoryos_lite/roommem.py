@@ -34,10 +34,10 @@ Arms
     ``memoryos_curator_enabled``, one window of ``--curator-window`` messages,
     ``force=True`` for the tail) and maps its rows to
     :class:`CuratedMemoryView`.  With ``--fake-llm`` it uses a deterministic
-    fake curator LLM; otherwise it requires ``MEMORYOS_LLM_PROVIDER=deepseek``
-    and routes every call through the same on-disk cache as the answerer and
-    judge.  The CLI fails with a clear message when an unregistered name is
-    requested.
+    fake curator LLM; otherwise it requires ``MEMORYOS_LLM_PROVIDER`` set to
+    ``deepseek`` or ``opencode`` and routes every call through the same
+    on-disk cache as the answerer and judge.  The CLI fails with a clear
+    message when an unregistered name is requested.
 
 Reports written by :func:`run_roommem`: ``results.jsonl`` (one row per probe,
 carrying the full, untruncated evidence texts and the exact answerer output),
@@ -51,7 +51,7 @@ estimated cost (prices are never guessed in code).
 Known limitations (fixed paragraph, repeated in every report): the dataset is
 LLM-authored with a single reviewer; the curated arm's cross-room delivery
 (rule -> project, preference -> user) assumes operator approval; the answerer
-and the curator share the DeepSeek model family.
+and the curator share one model family (the configured provider's model).
 """
 
 from __future__ import annotations
@@ -71,6 +71,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from memoryos_lite.chat_models import build_chat_openai, message_text
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
 from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
@@ -139,13 +140,15 @@ UNMATCHED_LABELS: tuple[str, ...] = ("legit_unannotated", "noise")
 
 LIMITATIONS_ZH = (
     "数据由 LLM 起草，只有单一审阅者；curated arm 的跨 Room 部分假设操作员批准；"
-    "answerer 与 curator 同属 DeepSeek 家族。"
+    "answerer、judge 与 curator 使用同一模型家族（见 summary 中的 llm）。"
 )
 LIMITATIONS_EN = (
     "The dataset is LLM-authored with a single reviewer; the curated arm's "
-    "cross-room delivery assumes operator approval; the answerer and the "
-    "curator share the DeepSeek model family."
+    "cross-room delivery assumes operator approval; the answerer, judge and "
+    "curator share one model family (see the summary's llm)."
 )
+#: Providers the non-fake LLM roles can use.
+REMOTE_LLM_PROVIDERS: tuple[str, ...] = ("deepseek", "opencode")
 
 
 class RoomMemError(ValueError):
@@ -802,7 +805,7 @@ class CuratorMemorySource:
             "memoryos_curator_window_messages": self._window,
         }
         if not self._fake_llm:
-            overrides["memoryos_llm_provider"] = "deepseek"
+            overrides["memoryos_llm_provider"] = base.memoryos_llm_provider
         return Settings(**overrides)
 
     def _build_llm(self, settings: Settings) -> CuratorLLM:
@@ -815,7 +818,7 @@ class CuratorMemorySource:
             built = build_curator_llm(settings)
             if built is None:
                 raise RoomMemConfigError(
-                    "the curated arm needs DEEPSEEK_API_KEY (or run with --fake-llm)"
+                    f"the curated arm needs {settings.chat_api_key_name} (or run with --fake-llm)"
                 )
             inner = built
         if self._cache_dir is None:
@@ -1245,43 +1248,39 @@ class FakeJudge:
         return "legit_unannotated"
 
 
-class DeepSeekChatClient:
-    """Chat client built like the repo's existing DeepSeek/OpenAI wiring."""
+class RemoteChatClient:
+    """Chat client for the configured remote provider (DeepSeek or OpenCode Go)."""
 
     def __init__(self, settings: Settings) -> None:
-        if settings.resolved_llm_provider != "deepseek":
+        if settings.resolved_llm_provider not in REMOTE_LLM_PROVIDERS:
             raise RoomMemConfigError(
-                "RoomMem LLM roles require MEMORYOS_LLM_PROVIDER=deepseek (or run with --fake-llm)"
+                "RoomMem LLM roles require MEMORYOS_LLM_PROVIDER="
+                + " or ".join(REMOTE_LLM_PROVIDERS)
+                + " (or run with --fake-llm)"
             )
-        api_key = settings.chat_api_key
-        if not api_key:
+        if not settings.chat_api_key:
             raise RoomMemConfigError(
                 f"{settings.chat_api_key_name} is required for non-fake RoomMem runs "
                 "(or run with --fake-llm)"
             )
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
-            from langchain_openai import ChatOpenAI
-            from pydantic import SecretStr
         except ImportError as exc:
             raise RoomMemConfigError(
                 "RoomMem LLM roles require the remote extra: "
                 "install memoryos-lite[remote] (or run with --fake-llm)"
             ) from exc
-        kwargs: dict[str, Any] = {}
-        if settings.chat_base_url:
-            kwargs["base_url"] = settings.chat_base_url
         self._model = settings.chat_model
         self._system_message = SystemMessage
         self._human_message = HumanMessage
         self.last_usage: LLMUsage | None = None
-        self._llm = ChatOpenAI(
-            model=self._model,
-            api_key=SecretStr(api_key),
-            temperature=0.0,
-            timeout=settings.memoryos_llm_timeout_s,
-            **kwargs,
-        )
+        try:
+            self._llm = build_chat_openai(settings)
+        except ImportError as exc:
+            raise RoomMemConfigError(
+                "RoomMem LLM roles require the remote extra: "
+                "install memoryos-lite[remote] (or run with --fake-llm)"
+            ) from exc
 
     @property
     def model(self) -> str:
@@ -1295,8 +1294,7 @@ class DeepSeekChatClient:
             ]
         )
         self.last_usage = _response_usage(response)
-        content = response.content
-        return content if isinstance(content, str) else str(content)
+        return message_text(response)
 
 
 class DiskCachedChatClient:
@@ -1391,7 +1389,7 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 class ChatAnswerer:
-    """Chat-backed answerer; wired to DeepSeek by the CLI."""
+    """Chat-backed answerer; wired to the configured provider by the CLI."""
 
     def __init__(self, chat: ChatCompletionClient) -> None:
         self._chat = chat
@@ -1406,7 +1404,7 @@ class ChatAnswerer:
 
 
 class ChatJudge:
-    """Chat-backed judge; wired to DeepSeek by the CLI."""
+    """Chat-backed judge; wired to the configured provider by the CLI."""
 
     def __init__(self, chat: ChatCompletionClient) -> None:
         self._chat = chat
@@ -1472,7 +1470,7 @@ def build_llm_factory(
 ) -> LLMFactory:
     """Create the per-repeat answerer/judge factory.
 
-    Non-fake runs use one DeepSeek chat client behind per-role, per-repeat disk
+    Non-fake runs use one remote chat client behind per-role, per-repeat disk
     caches under ``out_dir/llm_cache``.  The client is built eagerly so missing
     credentials fail before any room is ingested.  When ``usage`` is given,
     every provider call and cache hit is recorded per role.
@@ -1481,7 +1479,7 @@ def build_llm_factory(
     if fake_llm:
         return lambda repeat: (FakeAnswerer(), FakeJudge())
     resolved = settings or get_settings()
-    base = DeepSeekChatClient(resolved)
+    base = RemoteChatClient(resolved)
     cache_dir = out_dir / "llm_cache"
 
     def factory(repeat: int) -> tuple[RoomMemAnswerer, RoomMemJudge]:
@@ -2942,6 +2940,9 @@ def run_roommem(
     factory = llm_factory or build_llm_factory(
         out_dir=out_path, fake_llm=fake_llm, settings=settings, usage=tracker
     )
+    if llm_label is None and llm_factory is None and not fake_llm:
+        resolved = settings or get_settings()
+        llm_label = f"{resolved.resolved_llm_provider}:{resolved.chat_model}"
 
     created_scratch = scratch_root is None
     scratch_dir = (
@@ -3082,7 +3083,7 @@ __all__ = [
     "CuratedMemoryView",
     "CuratedSourceContext",
     "CuratorMemorySource",
-    "DeepSeekChatClient",
+    "RemoteChatClient",
     "DiskCachedChatClient",
     "DiskCachedCuratorLLM",
     "EvidenceItem",
