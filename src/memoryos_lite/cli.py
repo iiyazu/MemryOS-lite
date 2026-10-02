@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, cast
 import uvicorn
 from rich.console import Console
 from rich.table import Table
-from typer import Option, Typer
+from typer import Exit, Option, Typer
 
 from memoryos_lite.capabilities import require_benchmark_capability, require_remote_capability
 from memoryos_lite.config import get_settings
@@ -47,6 +47,32 @@ EVAL_TABLE_COLUMNS = [
     "supporting",
 ]
 LLM_JUDGE_TABLE_COLUMNS = ["baseline", "cases", "pass_rate", "failed", "errors"]
+ROOMMEM_READ_COLUMNS = [
+    "arm",
+    "asked_in",
+    "probes",
+    "repeats",
+    "hit@8",
+    "source@8",
+    "stale@8",
+    "tokens",
+    "correct",
+    "stale",
+    "missing",
+    "wrong",
+    "substring",
+]
+ROOMMEM_WRITE_COLUMNS = [
+    "arm",
+    "memories",
+    "matched",
+    "precision",
+    "recall",
+    "noise",
+    "supersede",
+    "duplicate",
+    "unmatched legit/noise",
+]
 PUBLIC_TABLE_COLUMNS = [
     "benchmark",
     "baseline",
@@ -387,6 +413,71 @@ def eval_manifest(
     console.print(f"[green]Manifest created:[/green] {output_path} ({n} cases, seed={seed})")
 
 
+@eval_app.command("roommem")
+def eval_roommem(
+    data: Annotated[
+        str,
+        Option("--data", help="Directory containing rm*.json RoomMem rooms"),
+    ] = "benchmarks/roommem/rooms",
+    arm: Annotated[
+        list[str] | None,
+        Option("--arm", help="raw | oracle | curated; repeat for multiple arms"),
+    ] = None,
+    rooms: Annotated[
+        str | None,
+        Option("--rooms", help="Comma-separated room ids (default: all rooms)"),
+    ] = None,
+    repeats: Annotated[
+        int,
+        Option("--repeats", help="Repeat each probe N times (LLM cache bypassed per repeat)"),
+    ] = 1,
+    embedding: Annotated[
+        str,
+        Option("--embedding", help="none | fastembed"),
+    ] = "none",
+    heuristic_advisories: Annotated[
+        bool,
+        Option(
+            "--heuristic-advisories",
+            help="Raw arm: collect kernel external advisories as a write-side heuristic baseline",
+        ),
+    ] = False,
+    fake_llm: Annotated[
+        bool,
+        Option("--fake-llm", help="Use the deterministic fake answerer/judge instead of DeepSeek"),
+    ] = False,
+    curated_source: Annotated[
+        str,
+        Option("--curated-source", help="Registered curated memory source name for --arm curated"),
+    ] = "default",
+    out: Annotated[
+        str,
+        Option("--out", help="Output directory for results and reports"),
+    ] = "artifacts/roommem",
+) -> None:
+    """Run the RoomMem multi-room memory evaluation."""
+    from memoryos_lite.roommem import RoomMemError, load_rooms, run_roommem
+
+    room_ids = [value.strip() for value in rooms.split(",") if value.strip()] if rooms else None
+    try:
+        selected = load_rooms(Path(data), room_ids=room_ids)
+        summary = run_roommem(
+            rooms=selected,
+            arms=arm or ["raw", "oracle"],
+            out_dir=Path(out),
+            repeats=repeats,
+            embedding=embedding,
+            heuristic_advisories=heuristic_advisories,
+            curated_source_name=curated_source,
+            fake_llm=fake_llm,
+        )
+    except RoomMemError as exc:
+        console.print(f"[red]RoomMem error:[/red] {exc}")
+        raise Exit(1) from exc
+    _print_roommem_summary(summary)
+    console.print(f"[bold]Reports:[/bold] {Path(out) / 'summary.md'}")
+
+
 def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
     grouped: dict[str, list[JudgeVerdict]] = {}
     for result in results:
@@ -496,6 +587,126 @@ def _eval_table_rows(results: list[EvalResult]) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def _print_roommem_summary(summary: dict[str, object]) -> None:
+    read_side = summary.get("read_side")
+    if isinstance(read_side, dict) and read_side:
+        read_table = Table(*ROOMMEM_READ_COLUMNS)
+        for arm in sorted(read_side):
+            asked_groups = read_side[arm]
+            if not isinstance(asked_groups, dict):
+                continue
+            for asked_in in sorted(asked_groups):
+                metrics = asked_groups[asked_in]
+                if not isinstance(metrics, dict):
+                    continue
+                read_table.add_row(*_roommem_read_row(arm, asked_in, metrics))
+        console.print(read_table)
+
+    write_side = summary.get("write_side")
+    if isinstance(write_side, dict) and write_side:
+        write_table = Table(*ROOMMEM_WRITE_COLUMNS)
+        for arm in sorted(write_side):
+            payload = write_side[arm]
+            if not isinstance(payload, dict):
+                continue
+            write_table.add_row(*_roommem_write_row(arm, payload))
+        console.print(write_table)
+
+
+def _roommem_read_row(arm: str, asked_in: str, metrics: dict[str, object]) -> list[str]:
+    labels = metrics.get("judge_labels")
+    if not isinstance(labels, dict):
+        labels = {}
+    probes = metrics.get("probes")
+    repeats = metrics.get("repeats")
+    probe_count = probes if isinstance(probes, int) else 0
+    repeat_count = repeats if isinstance(repeats, int) else 0
+    return [
+        arm,
+        asked_in,
+        str(probe_count),
+        str(repeat_count),
+        _roommem_stat(metrics.get("hit_at_8")),
+        _roommem_stat(metrics.get("source_hit_at_8")),
+        _roommem_stat(metrics.get("stale_at_8")),
+        _roommem_stat(metrics.get("evidence_tokens"), digits=1),
+        _roommem_label_rate(labels.get("correct"), probe_count, repeat_count),
+        _roommem_label_rate(labels.get("stale"), probe_count, repeat_count),
+        _roommem_label_rate(labels.get("missing"), probe_count, repeat_count),
+        _roommem_label_rate(labels.get("wrong"), probe_count, repeat_count),
+        _roommem_stat(metrics.get("substring_pass")),
+    ]
+
+
+def _roommem_write_row(arm: str, payload: dict[str, object]) -> list[str]:
+    rates = payload.get("rates")
+    if not isinstance(rates, dict):
+        rates = {}
+    if arm == "raw":
+        advisories = payload.get("advisories")
+        return [
+            f"{arm} (heuristic)",
+            str(advisories if isinstance(advisories, int) else 0),
+            "-",
+            _roommem_number(rates.get("gold_match_rate")),
+            "-",
+            _roommem_number(rates.get("noise_rate")),
+            "-",
+            "-",
+            "-",
+        ]
+    unmatched_judged = payload.get("unmatched_judged")
+    if not isinstance(unmatched_judged, dict):
+        unmatched_judged = {}
+    gold = payload.get("gold")
+    matched = payload.get("matched")
+    matched_text = (
+        f"{matched}/{gold}" if isinstance(matched, int) and isinstance(gold, int) else "-"
+    )
+    return [
+        arm,
+        str(payload.get("memories", 0)),
+        matched_text,
+        _roommem_number(rates.get("precision")),
+        _roommem_number(rates.get("recall")),
+        _roommem_number(rates.get("noise_rate")),
+        _roommem_number(rates.get("supersede_rate")),
+        _roommem_number(rates.get("duplicate_rate")),
+        f"{unmatched_judged.get('legit_unannotated', 0)}/{unmatched_judged.get('noise', 0)}",
+    ]
+
+
+def _roommem_stat(value: object, *, digits: int = 2) -> str:
+    if not isinstance(value, dict):
+        return "-"
+    mean = value.get("mean")
+    if not isinstance(mean, (int, float)):
+        return "-"
+    text = f"{float(mean):.{digits}f}"
+    low = value.get("min")
+    high = value.get("max")
+    if (
+        isinstance(low, (int, float))
+        and isinstance(high, (int, float))
+        and float(low) != float(mean)
+    ):
+        text += f" [{float(low):.{digits}f}, {float(high):.{digits}f}]"
+    return text
+
+
+def _roommem_label_rate(count: object, probes: int, repeats: int) -> str:
+    denominator = probes * repeats
+    if not isinstance(count, int) or denominator <= 0:
+        return "-"
+    return f"{count / denominator:.2f}"
+
+
+def _roommem_number(value: object) -> str:
+    if not isinstance(value, (int, float)):
+        return "-"
+    return f"{float(value):.3f}"
 
 
 if __name__ == "__main__":
