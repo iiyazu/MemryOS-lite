@@ -84,6 +84,7 @@ from memoryos_lite.schemas import (
     ArchiveSourceRefPayload,
     MessageCreate,
     Role,
+    deterministic_ids,
 )
 from memoryos_lite.source_evidence import build_source_evidence
 
@@ -101,10 +102,12 @@ NOISE_TYPES: tuple[str, ...] = (
     "plan_step",
 )
 ASKED_IN_VALUES: tuple[str, ...] = ("same_room", "new_room_same_project")
-ARM_VALUES: tuple[str, ...] = ("raw", "raw_project", "oracle", "curated")
+ARM_VALUES: tuple[str, ...] = ("raw", "raw_project", "oracle", "curated", "full_context")
 #: Arms that carry raw per-message activity documents instead of curated
 #: memory documents (no curated memory id can ever appear in their evidence).
-RAW_LIKE_ARMS: tuple[str, ...] = ("raw", "raw_project")
+RAW_LIKE_ARMS: tuple[str, ...] = ("raw", "raw_project", "full_context")
+#: Arms whose evidence is the whole project transcript, not a retrieval result.
+FULL_CONTEXT_LAYER = "full_history"
 EMBEDDING_VALUES: tuple[str, ...] = ("none", "fastembed")
 
 SPLIT_PRESETS: dict[str, tuple[str, ...]] = {
@@ -137,7 +140,7 @@ XMUSE_MESSAGE_ID_PREFIX = "xmuse-room-message-"
 XMUSE_ACTIVITY_DOC_PREFIX = "xmuse-room-activity-"
 XMUSE_MEMORY_DOC_PREFIX = "xmuse-room-memory-candidate-"
 
-CITATION_RE = re.compile(r"\[(\d{1,2})\]")
+CITATION_RE = re.compile(r"\[(\d{1,4})\]")
 _TOPIC_KEY_RE = re.compile(r"^[a-z0-9_]+(\.[a-z0-9_]+)*$")
 _MESSAGE_ID_RE = re.compile(r"^m(\d{2,4})$")
 
@@ -2464,6 +2467,159 @@ def _build_raw_project_context(
     )
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 ASCII characters or 1 non-ASCII character per token."""
+
+    ascii_chars = sum(1 for char in text if ord(char) < 128)
+    return max(1, ascii_chars // 4 + (len(text) - ascii_chars))
+
+
+def full_context_evidence(project_rooms: Sequence[Room]) -> list[EvidenceItem]:
+    """The whole project transcript as numbered evidence (the ``full_context`` arm).
+
+    Rooms keep their dataset order and every message is one item whose
+    document id is the room-qualified activity id used by ``raw_project``, so
+    presence and citation scoring work unchanged.  No retrieval is involved:
+    this is the "just put all history in the context window" baseline.
+    """
+
+    items: list[EvidenceItem] = []
+    for room in project_rooms:
+        for message in room.messages:
+            participant = room.participant(message.speaker)
+            speaker = participant.name if participant is not None else message.speaker
+            text = f"({room.room_id}: {room.title or room.room_id}) {speaker}: {message.text}"
+            items.append(
+                EvidenceItem(
+                    rank=len(items) + 1,
+                    item_id=f"{room.room_id}.{message.id}",
+                    layer=FULL_CONTEXT_LAYER,
+                    text=text,
+                    estimated_tokens=_estimate_tokens(text),
+                    document_id=_raw_project_document_id(room, message),
+                    source_refs=(),
+                )
+            )
+    return items
+
+
+@dataclass(frozen=True)
+class _SharedMemoryProject:
+    """Shared curated/oracle state for one project (``--shared-project``).
+
+    Mirrors xmuse delivery: every room of the project lives in one service
+    with its own session; room-scope memories attach to their own room, while
+    project/user-scope memories of every room attach to every room session
+    and every new-room session of the project.
+    """
+
+    service: MemoryOSService
+    sessions: Mapping[str, str]
+    message_maps: Mapping[str, Mapping[str, str]]
+    new_room_sessions: Mapping[str, str]
+    views: Mapping[str, list[CuratedMemoryView]]
+    curator_counts: Mapping[str, dict[str, int]]
+
+
+def _qualified_oracle_views(room: Room) -> list[CuratedMemoryView]:
+    """Oracle views with room-qualified ids so rooms never collide in one service."""
+
+    return [
+        view.model_copy(
+            update={
+                "id": f"{room.room_id}.{view.id}",
+                "supersedes_id": (
+                    f"{room.room_id}.{view.supersedes_id}" if view.supersedes_id else None
+                ),
+            }
+        )
+        for view in oracle_curated_memories(room)
+    ]
+
+
+def _build_shared_memory_project(
+    *,
+    arm: str,
+    project: str,
+    rooms: Sequence[Room],
+    repeat: int,
+    scratch_dir: Path,
+    embedding: str,
+    curated_source: CuratedMemorySource | None,
+) -> _SharedMemoryProject:
+    service = MemoryOSService(
+        settings=_room_settings(
+            scratch_dir / f"{arm}_shared" / f"{project or 'default'}-r{repeat}",
+            embedding=embedding,
+            kernel_external=False,
+        )
+    )
+    sessions: dict[str, str] = {}
+    message_maps: dict[str, dict[str, str]] = {}
+    views: dict[str, list[CuratedMemoryView]] = {}
+    counts: dict[str, dict[str, int]] = {}
+    shared_docs: list[str] = []
+    for room in rooms:
+        session_id = service.create_session(f"roommem {room.room_id} ({arm}, shared)").id
+        sessions[room.room_id] = session_id
+        message_maps[room.room_id] = _ingest_room(
+            service, room, session_id, document_id_for=_raw_project_id_selector(room)
+        )
+        if arm == "oracle":
+            room_views = _qualified_oracle_views(room)
+        else:
+            if curated_source is None:
+                raise RoomMemConfigError("curated arm requires a registered curated memory source")
+            room_views = list(curated_source.curate(service, session_id))
+            _validate_curated_views(room_views, room=room)
+            counts[room.room_id] = _curator_counts(curated_source)
+        views[room.room_id] = room_views
+        for view in room_views:
+            if view.status != "active":
+                continue
+            scope = _scope_for_kind(view.kind)
+            document_id = f"{XMUSE_MEMORY_DOC_PREFIX}{view.id}"
+            _ingest_and_attach(
+                service,
+                session_id,
+                document_id=document_id,
+                title=f"{room.room_id} memory {view.id}",
+                content=view.statement,
+                metadata={
+                    "kind": view.kind,
+                    "scope": scope,
+                    "topic_key": view.topic_key,
+                    "supersedes_id": view.supersedes_id or "",
+                    "room_id": room.room_id,
+                },
+                tags=["roommem", f"kind:{view.kind}", f"scope:{scope}"],
+            )
+            if scope in {"project", "user"}:
+                shared_docs.append(document_id)
+    new_room_sessions: dict[str, str] = {}
+    for room in rooms:
+        if room.has_new_room_probes():
+            new_room_sessions[room.room_id] = service.create_session(
+                f"roommem {room.room_id} (new room, same project, shared)"
+            ).id
+    for room in rooms:
+        # A room's own memory documents were attached when they were ingested.
+        own = {f"{XMUSE_MEMORY_DOC_PREFIX}{view.id}" for view in views[room.room_id]}
+        for document_id in shared_docs:
+            if document_id not in own:
+                _attach_document(service, sessions[room.room_id], document_id)
+            if room.room_id in new_room_sessions:
+                _attach_document(service, new_room_sessions[room.room_id], document_id)
+    return _SharedMemoryProject(
+        service=service,
+        sessions=sessions,
+        message_maps=message_maps,
+        new_room_sessions=new_room_sessions,
+        views=views,
+        curator_counts=counts,
+    )
+
+
 @dataclass
 class _RoomArmResult:
     results: list[dict[str, Any]]
@@ -2483,16 +2639,33 @@ def _run_room_arm(
     heuristic_advisories: bool,
     curated_source: CuratedMemorySource | None,
     raw_project: _RawProject | None = None,
+    shared_memory: _SharedMemoryProject | None = None,
+    project_rooms: Sequence[Room] | None = None,
 ) -> _RoomArmResult:
     kernel_external = heuristic_advisories and arm == "raw"
     views: list[CuratedMemoryView] = []
     curator_counts: dict[str, int] = {}
     cross_scope_docs: dict[str, str] = {}
-    if raw_project is not None:
+    service: MemoryOSService | None
+    full_evidence: list[EvidenceItem] | None = None
+    if arm == "full_context":
+        service = None
+        session_id = ""
+        message_id_map: dict[str, str] = {}
+        new_session_id: str | None = None
+        full_evidence = full_context_evidence(project_rooms or [room])
+    elif raw_project is not None:
         service = raw_project.service
         session_id = raw_project.sessions[room.room_id]
         message_id_map = dict(raw_project.message_maps[room.room_id])
-        new_session_id: str | None = raw_project.new_room_sessions.get(room.room_id)
+        new_session_id = raw_project.new_room_sessions.get(room.room_id)
+    elif shared_memory is not None:
+        service = shared_memory.service
+        session_id = shared_memory.sessions[room.room_id]
+        message_id_map = dict(shared_memory.message_maps[room.room_id])
+        new_session_id = shared_memory.new_room_sessions.get(room.room_id)
+        views = list(shared_memory.views[room.room_id])
+        curator_counts = dict(shared_memory.curator_counts.get(room.room_id, {}))
     else:
         service = MemoryOSService(
             settings=_room_settings(
@@ -2554,7 +2727,7 @@ def _run_room_arm(
         write_side["room"] = room.room_id
         if curator_counts:
             write_side["curator_counts"] = curator_counts
-        embedder = getattr(service, "embedding_client", None)
+        embedder = getattr(service, "embedding_client", None) if service is not None else None
         if arm == "curated" and embedding == "fastembed" and embedder is not None:
             write_side["conflicts"] = conflict_flag_stats(
                 room, views, matched_by_gold, embedder.embed_batch
@@ -2574,16 +2747,23 @@ def _run_room_arm(
         target_session = new_session_id
         if probe.asked_in != "new_room_same_project" or target_session is None:
             target_session = session_id
-        package = service.build_context(
-            session_id=target_session,
-            task=XMUSE_TASK,
-            budget=XMUSE_EVIDENCE_BUDGET,
-            retrieval_query=probe.question,
-            include_global_core=False,
-        )
-        envelope = build_source_evidence(package, schema_version="v2")
-        evidence = _evidence_items(envelope)
-        if kernel_external:
+        if full_evidence is not None:
+            evidence = full_evidence
+            envelope: dict[str, Any] = {
+                "estimated_tokens": sum(item.estimated_tokens for item in evidence)
+            }
+        else:
+            assert service is not None
+            package = service.build_context(
+                session_id=target_session,
+                task=XMUSE_TASK,
+                budget=XMUSE_EVIDENCE_BUDGET,
+                retrieval_query=probe.question,
+                include_global_core=False,
+            )
+            envelope = build_source_evidence(package, schema_version="v2")
+            evidence = _evidence_items(envelope)
+        if kernel_external and service is not None:
             for advisory in service.list_external_advisories(target_session):
                 advisory_id = str(advisory.get("advisory_id", ""))
                 advisories.setdefault(advisory_id, advisory)
@@ -3135,6 +3315,8 @@ def run_roommem(
     judge_llm: str | None = None,
     curator_llm: str | None = None,
     curator_consolidation: str | None = None,
+    merge_project: str | None = None,
+    shared_project: bool = False,
 ) -> dict[str, Any]:
     """Run the RoomMem harness and write results/summary reports.
 
@@ -3142,11 +3324,19 @@ def run_roommem(
     ``provider:model[@wire]`` role specs (see :func:`settings_for_llm_spec`)
     so one variable can change while the others stay fixed.
     ``curator_consolidation`` selects ``deterministic`` or ``llm``.
+    ``merge_project`` puts every selected room into one project (the scale
+    experiment); ``shared_project`` makes the curated and oracle arms deliver
+    project/user-scope memories of every room to every room of the project,
+    as xmuse does, instead of only within the room that produced them.
     Returns the summary payload that was written to ``summary.json``.
     """
 
     if not rooms:
         raise RoomMemDataError("RoomMem run needs at least one room")
+    if merge_project is not None:
+        if not merge_project.strip():
+            raise RoomMemConfigError("merge project name must not be empty")
+        rooms = [room.model_copy(update={"project": merge_project.strip()}) for room in rooms]
     selected_arms = list(arms)
     if not selected_arms:
         raise RoomMemConfigError("at least one arm is required")
@@ -3224,28 +3414,48 @@ def run_roommem(
                         ),
                     )
                 raw_project_contexts: dict[str, _RawProject] = {}
+                shared_contexts: dict[str, _SharedMemoryProject] = {}
+                rooms_by_project = _rooms_by_project(rooms)
+                # Reproducible ids per (arm, repeat, room/project): reruns render the
+                # same curator prompts, so the disk cache resumes interrupted runs.
                 if arm == "raw_project":
-                    for project, project_rooms in _rooms_by_project(rooms).items():
-                        raw_project_contexts[project] = _build_raw_project_context(
-                            project=project,
-                            rooms=project_rooms,
+                    for project, project_rooms in rooms_by_project.items():
+                        with deterministic_ids(f"{arm}:r{repeat}:project:{project}"):
+                            raw_project_contexts[project] = _build_raw_project_context(
+                                project=project,
+                                rooms=project_rooms,
+                                repeat=repeat,
+                                scratch_dir=scratch_dir,
+                                embedding=embedding,
+                            )
+                if shared_project and arm in {"curated", "oracle"}:
+                    for project, project_rooms in rooms_by_project.items():
+                        with deterministic_ids(f"{arm}:r{repeat}:project:{project}"):
+                            shared_contexts[project] = _build_shared_memory_project(
+                                arm=arm,
+                                project=project,
+                                rooms=project_rooms,
+                                repeat=repeat,
+                                scratch_dir=scratch_dir,
+                                embedding=embedding,
+                                curated_source=curated_source,
+                            )
+                for room in rooms:
+                    with deterministic_ids(f"{arm}:r{repeat}:room:{room.room_id}"):
+                        room_result = _run_room_arm(
+                            arm=arm,
+                            room=room,
                             repeat=repeat,
+                            answerer=answerer,
+                            judge=judge,
                             scratch_dir=scratch_dir,
                             embedding=embedding,
+                            heuristic_advisories=heuristic_advisories,
+                            curated_source=curated_source,
+                            raw_project=raw_project_contexts.get(room.project),
+                            shared_memory=shared_contexts.get(room.project),
+                            project_rooms=rooms_by_project.get(room.project),
                         )
-                for room in rooms:
-                    room_result = _run_room_arm(
-                        arm=arm,
-                        room=room,
-                        repeat=repeat,
-                        answerer=answerer,
-                        judge=judge,
-                        scratch_dir=scratch_dir,
-                        embedding=embedding,
-                        heuristic_advisories=heuristic_advisories,
-                        curated_source=curated_source,
-                        raw_project=raw_project_contexts.get(room.project),
-                    )
                     results.extend(room_result.results)
                     memories.extend(room_result.memories)
                     if room_result.write_side:
@@ -3296,6 +3506,8 @@ def run_roommem(
         "curator_consolidation": (
             (curator_consolidation or "deterministic") if "curated" in selected_arms else None
         ),
+        "merge_project": merge_project,
+        "shared_project": shared_project,
     }
     usage_payload = tracker.aggregate()
     curator_usage = _curator_usage_extras(
