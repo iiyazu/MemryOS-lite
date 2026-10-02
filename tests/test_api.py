@@ -311,6 +311,7 @@ def test_health_advertises_build_context_profiles():
         "full",
         "source_evidence/v1",
         "source_evidence/v2",
+        "module_pack/v1",
     ]
     assert payload["capabilities"]["hybrid"]["lexical"] is True
     assert payload["capabilities"]["hybrid"]["rrf"] is payload["capabilities"]["hybrid"]["semantic"]
