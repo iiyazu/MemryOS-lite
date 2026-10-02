@@ -1387,9 +1387,11 @@ class MemoryOSService:
             ArchiveEligibilityScope(session_id=session_id)
         )
         documents = self.store.list_archival_documents_for_archives(archive_ids)
+        threshold = self.settings.memoryos_module_pack_conflict_threshold
         embed_batch = None
         if (
-            self.settings.memoryos_embedding_provider.strip().lower() == "fastembed"
+            threshold is not None
+            and self.settings.memoryos_embedding_provider.strip().lower() == "fastembed"
             and self.embedding_client is not None
         ):
             embed_batch = self.embedding_client.embed_batch
@@ -1398,7 +1400,7 @@ class MemoryOSService:
             documents=documents,
             budget=budget,
             embed_batch=embed_batch,
-            conflict_threshold=self.settings.memoryos_module_pack_conflict_threshold,
+            conflict_threshold=threshold if threshold is not None else 1.0,
         )
         self.trace(
             session_id,
