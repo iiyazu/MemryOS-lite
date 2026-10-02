@@ -1,9 +1,9 @@
 {
   "items": [
     {
-      "advisory_id": "advisory_12047b303dbedf87d7c3506698a0ffa65f580f8e",
+      "advisory_id": "advisory_dc2b30d35463477c9920e9f7d0876426f2ecc575",
       "content": "Concurrent refresh without the lock writes the token twice; always take the per-user lock before refreshing.",
-      "fingerprint": "12047b303dbedf87d7c3506698a0ffa65f580f8ea2cd8a985cb14b5eb1104cf3",
+      "fingerprint": "dc2b30d35463477c9920e9f7d0876426f2ecc5755118d904bdc6971758c9b470",
       "kind": "module_lesson",
       "memory_kind": "lesson",
       "occurrences": 2,
@@ -19,6 +19,14 @@
           "quote": "FAILED tests/test_refresh.py::test_concurrent_refresh - token written twice",
           "session_id": "ses_auth_example01",
           "source_id": "msg_gate_001",
+          "source_type": "message"
+        },
+        {
+          "activity_type": "review_objection",
+          "external_id": "review-2026-10-01-004",
+          "quote": "refresh again ran without taking the per-user lock",
+          "session_id": "ses_auth_example01",
+          "source_id": "msg_review_004",
           "source_type": "message"
         }
       ],
