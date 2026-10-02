@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
-from memoryos_lite.schemas import Episode, Message, Role, Session
+from memoryos_lite.schemas import Episode, Message, Role, Session, SessionScope
 from memoryos_lite.store_models import (
     ArchivalChunkRecord,
     ArchivalDocumentRecord,
@@ -38,31 +38,42 @@ class SessionStoreMixin:
         @staticmethod
         def _item_watermark_part(db: DbSession, session_id: str) -> str: ...
 
-    def create_session(self, title: str) -> Session:
-        session_model = Session(title=title)
+    def create_session(self, title: str, scope: SessionScope | None = None) -> Session:
+        session_model = Session(title=title, scope=scope)
         with self.db() as db:
             db.add(
                 SessionRecord(
                     id=session_model.id,
                     title=session_model.title,
                     created_at=session_model.created_at,
+                    scope_type=scope.type if scope is not None else None,
+                    scope_id=scope.id if scope is not None else None,
                 )
             )
         return session_model
+
+    @staticmethod
+    def _session_model(record: SessionRecord) -> Session:
+        scope = (
+            SessionScope.model_validate({"type": record.scope_type, "id": record.scope_id})
+            if record.scope_type is not None and record.scope_id is not None
+            else None
+        )
+        return Session(id=record.id, title=record.title, created_at=record.created_at, scope=scope)
 
     def get_session(self, session_id: str) -> Session | None:
         with self.db() as db:
             record = db.get(SessionRecord, session_id)
             if record is None:
                 return None
-            return Session(id=record.id, title=record.title, created_at=record.created_at)
+            return self._session_model(record)
 
     def get_session_by_title(self, title: str) -> Session | None:
         with self.db() as db:
             record = db.scalar(select(SessionRecord).where(SessionRecord.title == title))
             if record is None:
                 return None
-            return Session(id=record.id, title=record.title, created_at=record.created_at)
+            return self._session_model(record)
 
     def add_message(self, message: Message) -> Message:
         with self.db() as db:

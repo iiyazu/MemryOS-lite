@@ -14,6 +14,7 @@ from memoryos_lite.middleware import (
     StructuredLoggingMiddleware,
 )
 from memoryos_lite.schemas import (
+    ActivityMetadataError,
     ArchiveAttachmentRequest,
     ArchiveAttachmentResponse,
     ArchiveDocumentIngestRequest,
@@ -113,7 +114,7 @@ def create_session(
     request: CreateSessionRequest,
     service: ServiceDep,
 ) -> Session:
-    return service.create_session(request.title)
+    return service.create_session(request.title, scope=request.scope)
 
 
 @app.post("/sessions/{session_id}/ingest", response_model=IngestResponse)
@@ -124,6 +125,8 @@ def ingest(
 ) -> IngestResponse:
     try:
         return service.ingest(session_id, request)
+    except ActivityMetadataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         detail = str(exc)
         raise HTTPException(

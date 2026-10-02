@@ -83,9 +83,11 @@ from memoryos_lite.schemas import (
     PatchOperation,
     Role,
     Session,
+    SessionScope,
     TraceEvent,
     new_id,
     utc_now,
+    validate_activity_metadata,
 )
 from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
@@ -1329,15 +1331,23 @@ class MemoryOSService:
                 pass
         return None
 
-    def create_session(self, title: str) -> Any:
+    def create_session(self, title: str, scope: SessionScope | None = None) -> Any:
         with timed_core_operation(
             component="engine",
             operation="create_session",
             logger=logger,
             log_success=True,
         ):
-            session = self.store.create_session(title)
-            self.trace(session.id, "session_created", {"title": title})
+            session = (
+                self.store.create_session(title, scope=scope)
+                if scope is not None
+                else self.store.create_session(title)
+            )
+            self.trace(
+                session.id,
+                "session_created",
+                {"title": title, **({"scope": scope.model_dump()} if scope is not None else {})},
+            )
             log_event(
                 logger,
                 logging.INFO,
@@ -1405,7 +1415,8 @@ class MemoryOSService:
                 session_id=session_id,
             ),
         ):
-            self._require_session(session_id)
+            session = self._require_session(session_id)
+            validate_activity_metadata(request.metadata, session.scope)
             INGEST_TOTAL.inc()
             if request.external_id is not None:
                 existing = self.store.get_message_by_external_id(
