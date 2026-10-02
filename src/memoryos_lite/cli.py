@@ -435,7 +435,7 @@ def eval_roommem(
     ] = "benchmarks/roommem/rooms",
     arm: Annotated[
         list[str] | None,
-        Option("--arm", help="raw | oracle | curated; repeat for multiple arms"),
+        Option("--arm", help="raw | raw_project | oracle | curated; repeat for multiple arms"),
     ] = None,
     rooms: Annotated[
         str | None,
@@ -472,6 +472,20 @@ def eval_roommem(
         int,
         Option("--curator-window", help="Curator window size in messages for --arm curated"),
     ] = 12,
+    price_in_per_mtok: Annotated[
+        float | None,
+        Option(
+            "--price-in-per-mtok",
+            help="Optional input price per million tokens for the estimated-cost line",
+        ),
+    ] = None,
+    price_out_per_mtok: Annotated[
+        float | None,
+        Option(
+            "--price-out-per-mtok",
+            help="Optional output price per million tokens for the estimated-cost line",
+        ),
+    ] = None,
     out: Annotated[
         str,
         Option("--out", help="Output directory for results and reports"),
@@ -501,11 +515,14 @@ def eval_roommem(
             curated_source_name=curated_source,
             curator_window=curator_window,
             fake_llm=fake_llm,
+            price_in_per_mtok=price_in_per_mtok,
+            price_out_per_mtok=price_out_per_mtok,
         )
     except RoomMemError as exc:
         console.print(f"[red]RoomMem error:[/red] {exc}")
         raise Exit(1) from exc
     _print_roommem_summary(summary)
+    _print_roommem_usage(summary)
     console.print(f"[bold]Reports:[/bold] {Path(out) / 'summary.md'}")
 
 
@@ -658,6 +675,59 @@ def _print_roommem_summary(summary: dict[str, object]) -> None:
                     *[str(counters.get(key, 0)) for key in ROOMMEM_CURATOR_COLUMNS[1:]],
                 )
             console.print(curator_table)
+
+
+def _print_roommem_usage(summary: dict[str, object]) -> None:
+    usage = summary.get("usage")
+    if not isinstance(usage, dict) or not usage:
+        return
+    roles = usage.get("roles")
+    if isinstance(roles, dict) and roles:
+        usage_table = Table(
+            "role", "calls", "cached", "tokens in", "tokens out", "mean s", "p50 s", "p95 s"
+        )
+        for role in sorted(roles):
+            payload = roles[role] if isinstance(roles[role], dict) else {}
+            latency = payload.get("latency_s")
+            if not isinstance(latency, dict):
+                latency = {}
+            usage_table.add_row(
+                role,
+                str(payload.get("calls", 0)),
+                str(payload.get("cached", 0)),
+                _roommem_count(payload.get("tokens_in")),
+                _roommem_count(payload.get("tokens_out")),
+                _roommem_latency(latency.get("mean")),
+                _roommem_latency(latency.get("p50")),
+                _roommem_latency(latency.get("p95")),
+            )
+        console.print(usage_table)
+    curator = usage.get("curator")
+    if isinstance(curator, dict):
+        tokens = curator.get("tokens_per_100_messages")
+        seconds = curator.get("seconds_per_window")
+        console.print(
+            "Curator: {messages} messages in {windows} windows; {tokens} tokens/100 msgs; "
+            "{seconds} s/window".format(
+                messages=curator.get("messages", 0),
+                windows=curator.get("windows", 0),
+                tokens=f"{float(tokens):.1f}" if isinstance(tokens, (int, float)) else "-",
+                seconds=f"{float(seconds):.3f}" if isinstance(seconds, (int, float)) else "-",
+            )
+        )
+    cost = usage.get("estimated_cost")
+    if isinstance(cost, dict) and isinstance(cost.get("cost"), (int, float)):
+        console.print(
+            f"[bold]Estimated cost:[/bold] ${float(cost['cost']):.4f} (provider tokens only)"
+        )
+
+
+def _roommem_count(value: object) -> str:
+    return str(value) if isinstance(value, int) else "-"
+
+
+def _roommem_latency(value: object) -> str:
+    return f"{float(value):.3f}" if isinstance(value, (int, float)) else "-"
 
 
 def _roommem_read_row(arm: str, asked_in: str, metrics: dict[str, object]) -> list[str]:

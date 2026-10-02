@@ -17,6 +17,13 @@ Arms
     document per message (the document outbox), archive-only retrieval, and
     optionally ``MEMORYOS_AGENT_KERNEL=external`` advisories as the write-side
     heuristic baseline (``--heuristic-advisories``).
+``raw_project``
+    Like ``raw``, but every probe session also gets the per-message archive
+    documents of all rooms in the same project attached (own-room documents
+    for new-room sessions included).  Documents are ingested once per project
+    per repeat in a shared per-project service; other projects are never
+    visible.  ``stale@8`` and the judge's ``stale`` label use the same
+    superseded-source-without-successor rule as every other arm.
 ``oracle``
     Upper bound used by tests and CI: the curated memories ARE the room's gold
     memories, mapped onto the ingested MemoryOS message ids.
@@ -32,6 +39,15 @@ Arms
     judge.  The CLI fails with a clear message when an unregistered name is
     requested.
 
+Reports written by :func:`run_roommem`: ``results.jsonl`` (one row per probe,
+carrying the full, untruncated evidence texts and the exact answerer output),
+``memories.jsonl`` (one row per oracle/curated memory with dataset-mapped
+sources, the matched gold id and the judge label for unmatched memories),
+``write_side.json``, ``summary.json`` and ``summary.md``.  When provider
+clients are used, per-role token usage and latency are aggregated into the
+summary; ``--price-in-per-mtok``/``--price-out-per-mtok`` turn them into an
+estimated cost (prices are never guessed in code).
+
 Known limitations (fixed paragraph, repeated in every report): the dataset is
 LLM-authored with a single reviewer; the curated arm's cross-room delivery
 (rule -> project, preference -> user) assumes operator approval; the answerer
@@ -42,11 +58,13 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import re
 import shutil
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -81,7 +99,10 @@ NOISE_TYPES: tuple[str, ...] = (
     "plan_step",
 )
 ASKED_IN_VALUES: tuple[str, ...] = ("same_room", "new_room_same_project")
-ARM_VALUES: tuple[str, ...] = ("raw", "oracle", "curated")
+ARM_VALUES: tuple[str, ...] = ("raw", "raw_project", "oracle", "curated")
+#: Arms that carry raw per-message activity documents instead of curated
+#: memory documents (no curated memory id can ever appear in their evidence).
+RAW_LIKE_ARMS: tuple[str, ...] = ("raw", "raw_project")
 EMBEDDING_VALUES: tuple[str, ...] = ("none", "fastembed")
 
 SPLIT_PRESETS: dict[str, tuple[str, ...]] = {
@@ -109,7 +130,6 @@ XMUSE_MESSAGE_ID_PREFIX = "xmuse-room-message-"
 XMUSE_ACTIVITY_DOC_PREFIX = "xmuse-room-activity-"
 XMUSE_MEMORY_DOC_PREFIX = "xmuse-room-memory-candidate-"
 
-EVIDENCE_TEXT_LIMIT = 200
 CITATION_RE = re.compile(r"\[(\d{1,2})\]")
 _TOPIC_KEY_RE = re.compile(r"^[a-z0-9_]+(\.[a-z0-9_]+)*$")
 _MESSAGE_ID_RE = re.compile(r"^m(\d{2,4})$")
@@ -470,6 +490,7 @@ class CuratedSourceContext:
     repeat: int
     cache_dir: Path | None = None
     llm_factory: Callable[[Settings], CuratorLLM] | None = None
+    usage: LLMUsageTracker | None = None
 
 
 class CuratedMemorySource(Protocol):
@@ -670,6 +691,7 @@ class DiskCachedCuratorLLM:
         model: str,
         cache_dir: Path,
         repeat: int = 0,
+        usage: LLMUsageTracker | None = None,
     ) -> None:
         if repeat < 0:
             raise ValueError("repeat index must be non-negative")
@@ -677,6 +699,7 @@ class DiskCachedCuratorLLM:
         self._model = model
         self._cache_dir = Path(cache_dir)
         self._repeat = repeat
+        self._usage = usage
 
     def cache_key(self, *, system: str, user: str) -> str:
         payload = json.dumps(
@@ -696,14 +719,18 @@ class DiskCachedCuratorLLM:
         key = self.cache_key(system=system, user=user)
         path = self._cache_dir / f"{key}.json"
         if path.exists():
+            started = time.perf_counter()
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 response = payload.get("response")
                 if isinstance(response, dict):
+                    self._record(cached=True, started=started)
                     return response
             except (OSError, ValueError):
                 pass
+        started = time.perf_counter()
         response = self._inner.complete_json(system=system, user=user)
+        self._record(cached=False, started=started)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(
@@ -713,6 +740,13 @@ class DiskCachedCuratorLLM:
             encoding="utf-8",
         )
         return response
+
+    def _record(self, *, cached: bool, started: float) -> None:
+        if self._usage is None:
+            return
+        latency = time.perf_counter() - started
+        usage = None if cached else _extract_usage(getattr(self._inner, "last_usage", None))
+        self._usage.record("curator", cached=cached, latency_s=latency, usage=usage)
 
 
 def _session_dataset_message_ids(service: MemoryOSService, session_id: str) -> dict[str, str]:
@@ -747,12 +781,14 @@ class CuratorMemorySource:
         repeat: int = 0,
         cache_dir: Path | None = None,
         llm_factory: Callable[[Settings], CuratorLLM] | None = None,
+        usage: LLMUsageTracker | None = None,
     ) -> None:
         self._window = window
         self._fake_llm = fake_llm
         self._repeat = repeat
         self._cache_dir = Path(cache_dir) if cache_dir is not None else None
         self._llm_factory = llm_factory
+        self._usage = usage
         self._last_counts: dict[str, int] = {}
 
     @property
@@ -789,6 +825,7 @@ class CuratorMemorySource:
             model=settings.chat_model,
             cache_dir=self._cache_dir,
             repeat=self._repeat,
+            usage=self._usage,
         )
 
     def curate(self, service: MemoryOSService, session_id: str) -> list[CuratedMemoryView]:
@@ -843,6 +880,7 @@ def _default_curated_source(
         repeat=context.repeat,
         cache_dir=context.cache_dir,
         llm_factory=context.llm_factory,
+        usage=context.usage,
     )
 
 
@@ -896,6 +934,222 @@ class ChatCompletionClient(Protocol):
     def model(self) -> str: ...
 
     def complete(self, *, system: str, user: str) -> str: ...
+
+
+@dataclass(frozen=True)
+class LLMUsage:
+    """Normalized provider token usage for one LLM call (fields may be None)."""
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+def _extract_usage(payload: Any) -> LLMUsage | None:
+    """Normalize a usage payload (LangChain keys or OpenAI token_usage keys)."""
+
+    if isinstance(payload, LLMUsage):
+        return payload
+    if not isinstance(payload, Mapping):
+        return None
+
+    def as_int(*keys: str) -> int | None:
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+        return None
+
+    usage = LLMUsage(
+        prompt_tokens=as_int("prompt_tokens", "input_tokens"),
+        completion_tokens=as_int("completion_tokens", "output_tokens"),
+        total_tokens=as_int("total_tokens"),
+    )
+    if (
+        usage.prompt_tokens is None
+        and usage.completion_tokens is None
+        and usage.total_tokens is None
+    ):
+        return None
+    return usage
+
+
+def _response_usage(response: object) -> LLMUsage | None:
+    """Read usage off a LangChain response (usage_metadata or token_usage)."""
+
+    usage = _extract_usage(getattr(response, "usage_metadata", None))
+    if usage is not None:
+        return usage
+    response_metadata = getattr(response, "response_metadata", None)
+    if isinstance(response_metadata, Mapping):
+        return _extract_usage(response_metadata.get("token_usage"))
+    return None
+
+
+@dataclass(frozen=True)
+class _UsageCall:
+    role: str
+    cached: bool
+    latency_s: float
+    usage: LLMUsage | None = None
+
+
+def _percentile(sorted_values: Sequence[float], fraction: float) -> float:
+    """Nearest-rank percentile over an already-sorted, non-empty sequence."""
+
+    index = max(0, math.ceil(fraction * len(sorted_values)) - 1)
+    return sorted_values[min(index, len(sorted_values) - 1)]
+
+
+class LLMUsageTracker:
+    """Per-role provider-call accounting: tokens, cache hits and latency.
+
+    Provider calls record their wall-clock latency and token usage; cache-hit
+    calls are recorded with ``cached=True`` and count separately so cached
+    responses never dilute provider token or latency statistics.
+    """
+
+    def __init__(self) -> None:
+        self._calls: list[_UsageCall] = []
+
+    def record(
+        self,
+        role: str,
+        *,
+        cached: bool,
+        latency_s: float,
+        usage: LLMUsage | None = None,
+    ) -> None:
+        self._calls.append(_UsageCall(role=role, cached=cached, latency_s=latency_s, usage=usage))
+
+    def aggregate(self) -> dict[str, Any]:
+        by_role: dict[str, list[_UsageCall]] = {}
+        for call in self._calls:
+            by_role.setdefault(call.role, []).append(call)
+        roles: dict[str, dict[str, Any]] = {}
+        for role in sorted(by_role):
+            calls = by_role[role]
+            provider = [call for call in calls if not call.cached]
+            tokens_in = _sum_tokens(provider, "prompt_tokens")
+            tokens_out = _sum_tokens(provider, "completion_tokens")
+            latencies = sorted(call.latency_s for call in provider)
+            latency: dict[str, float] | None = None
+            if latencies:
+                latency = {
+                    "mean": sum(latencies) / len(latencies),
+                    "p50": _percentile(latencies, 0.50),
+                    "p95": _percentile(latencies, 0.95),
+                    "total": sum(latencies),
+                }
+            roles[role] = {
+                "calls": len(calls),
+                "cached": len(calls) - len(provider),
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "latency_s": latency,
+            }
+        return {"roles": roles}
+
+
+def _sum_tokens(calls: Sequence[_UsageCall], field: str) -> int | None:
+    values = [
+        getattr(call.usage, field)
+        for call in calls
+        if call.usage is not None and getattr(call.usage, field) is not None
+    ]
+    if not values:
+        return None
+    return sum(values)
+
+
+def _curator_usage_extras(
+    usage_payload: Mapping[str, Any],
+    *,
+    rooms: Sequence[Room],
+    repeats: int,
+    write_side: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Curator-specific usage rates: tokens per 100 messages, seconds per window."""
+
+    roles = usage_payload.get("roles")
+    curator_role = roles.get("curator") if isinstance(roles, Mapping) else None
+    if not isinstance(curator_role, Mapping):
+        return None
+    messages = sum(len(room.messages) for room in rooms) * repeats
+    windows = 0
+    curated = write_side.get("curated")
+    if isinstance(curated, Mapping):
+        counts = curated.get("curator_counts")
+        if isinstance(counts, Mapping) and isinstance(counts.get("windows"), int):
+            windows = counts["windows"]
+    tokens_in = curator_role.get("tokens_in")
+    tokens_out = curator_role.get("tokens_out")
+    tokens_total: int | None = None
+    if isinstance(tokens_in, int) or isinstance(tokens_out, int):
+        tokens_total = (tokens_in if isinstance(tokens_in, int) else 0) + (
+            tokens_out if isinstance(tokens_out, int) else 0
+        )
+    seconds_per_window: float | None = None
+    latency = curator_role.get("latency_s")
+    if isinstance(latency, Mapping) and windows > 0:
+        total = latency.get("total")
+        if isinstance(total, (int, float)):
+            seconds_per_window = float(total) / windows
+    return {
+        "messages": messages,
+        "windows": windows,
+        "tokens_per_100_messages": (
+            (tokens_total * 100 / messages) if tokens_total is not None and messages else None
+        ),
+        "seconds_per_window": seconds_per_window,
+    }
+
+
+def _estimated_cost(
+    usage_payload: Mapping[str, Any],
+    *,
+    price_in_per_mtok: float | None,
+    price_out_per_mtok: float | None,
+) -> dict[str, Any] | None:
+    """Estimated provider cost from reported tokens and caller-supplied prices.
+
+    Prices are never guessed: the result is only produced when the caller
+    supplies at least one price and at least one role reported tokens.  Cache
+    hits are not billed and an unpriced side counts as zero.
+    """
+
+    if price_in_per_mtok is None and price_out_per_mtok is None:
+        return None
+    tokens_in = 0
+    tokens_out = 0
+    have_tokens = False
+    roles = usage_payload.get("roles")
+    if isinstance(roles, Mapping):
+        for payload in roles.values():
+            if not isinstance(payload, Mapping):
+                continue
+            if isinstance(payload.get("tokens_in"), int):
+                tokens_in += payload["tokens_in"]
+                have_tokens = True
+            if isinstance(payload.get("tokens_out"), int):
+                tokens_out += payload["tokens_out"]
+                have_tokens = True
+    if not have_tokens:
+        return None
+    cost = (
+        tokens_in * (price_in_per_mtok or 0.0) + tokens_out * (price_out_per_mtok or 0.0)
+    ) / 1_000_000
+    return {
+        "price_in_per_mtok": price_in_per_mtok,
+        "price_out_per_mtok": price_out_per_mtok,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "cost": cost,
+        "note": (
+            "Estimated from provider-reported tokens of non-cached calls only; "
+            "sides without a price count as 0."
+        ),
+    }
 
 
 ANSWERER_SYSTEM_PROMPT = """\
@@ -1020,6 +1274,7 @@ class DeepSeekChatClient:
         self._model = settings.chat_model
         self._system_message = SystemMessage
         self._human_message = HumanMessage
+        self.last_usage: LLMUsage | None = None
         self._llm = ChatOpenAI(
             model=self._model,
             api_key=SecretStr(api_key),
@@ -1039,6 +1294,7 @@ class DeepSeekChatClient:
                 self._human_message(content=user),
             ]
         )
+        self.last_usage = _response_usage(response)
         content = response.content
         return content if isinstance(content, str) else str(content)
 
@@ -1058,6 +1314,7 @@ class DiskCachedChatClient:
         role: str,
         cache_dir: Path,
         repeat: int = 0,
+        usage: LLMUsageTracker | None = None,
     ) -> None:
         if repeat < 0:
             raise ValueError("repeat index must be non-negative")
@@ -1065,6 +1322,7 @@ class DiskCachedChatClient:
         self._role = role
         self._cache_dir = Path(cache_dir)
         self._repeat = repeat
+        self._usage = usage
 
     @property
     def model(self) -> str:
@@ -1088,14 +1346,18 @@ class DiskCachedChatClient:
         key = self.cache_key(system=system, user=user)
         path = self._cache_dir / f"{key}.json"
         if path.exists():
+            started = time.perf_counter()
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 response = payload["response"]
                 if isinstance(response, str):
+                    self._record(cached=True, started=started)
                     return response
             except (OSError, ValueError, KeyError):
                 pass
+        started = time.perf_counter()
         response = self._inner.complete(system=system, user=user)
+        self._record(cached=False, started=started)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(
@@ -1105,6 +1367,13 @@ class DiskCachedChatClient:
             encoding="utf-8",
         )
         return response
+
+    def _record(self, *, cached: bool, started: float) -> None:
+        if self._usage is None:
+            return
+        latency = time.perf_counter() - started
+        usage = None if cached else _extract_usage(getattr(self._inner, "last_usage", None))
+        self._usage.record(self._role, cached=cached, latency_s=latency, usage=usage)
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
@@ -1199,12 +1468,14 @@ def build_llm_factory(
     out_dir: Path,
     fake_llm: bool,
     settings: Settings | None = None,
+    usage: LLMUsageTracker | None = None,
 ) -> LLMFactory:
     """Create the per-repeat answerer/judge factory.
 
     Non-fake runs use one DeepSeek chat client behind per-role, per-repeat disk
     caches under ``out_dir/llm_cache``.  The client is built eagerly so missing
-    credentials fail before any room is ingested.
+    credentials fail before any room is ingested.  When ``usage`` is given,
+    every provider call and cache hit is recorded per role.
     """
 
     if fake_llm:
@@ -1215,9 +1486,11 @@ def build_llm_factory(
 
     def factory(repeat: int) -> tuple[RoomMemAnswerer, RoomMemJudge]:
         answerer_chat = DiskCachedChatClient(
-            base, role="answerer", cache_dir=cache_dir, repeat=repeat
+            base, role="answerer", cache_dir=cache_dir, repeat=repeat, usage=usage
         )
-        judge_chat = DiskCachedChatClient(base, role="judge", cache_dir=cache_dir, repeat=repeat)
+        judge_chat = DiskCachedChatClient(
+            base, role="judge", cache_dir=cache_dir, repeat=repeat, usage=usage
+        )
         return ChatAnswerer(answerer_chat), ChatJudge(judge_chat)
 
     return factory
@@ -1317,13 +1590,17 @@ def score_write_side(
     unmatched = [view for view in curated if view.id not in matched_view_ids]
 
     judged = {label: 0 for label in UNMATCHED_LABELS}
+    unmatched_labels: dict[str, str] = {}
     for view in unmatched:
         message_texts = {
             source.message_id: room.message(source.message_id).text  # type: ignore[union-attr]
             for source in view.sources
         }
         label = judge.judge_unmatched_memory(memory=view, message_texts=message_texts)
-        judged[label if label in UNMATCHED_LABELS else "noise"] += 1
+        if label not in UNMATCHED_LABELS:
+            label = "noise"
+        judged[label] += 1
+        unmatched_labels[view.id] = label
 
     noise_type_stats: dict[str, dict[str, int]] = {}
     for entry in room.noise:
@@ -1378,6 +1655,7 @@ def score_write_side(
         "gold": gold_total,
         "unmatched": len(unmatched),
         "unmatched_judged": dict(judged),
+        "unmatched_labels": dict(unmatched_labels),
         "noise_types": {name: dict(stats) for name, stats in sorted(noise_type_stats.items())},
         "kind_matches": kind_matches,
         "scope_matches": scope_matches,
@@ -1403,6 +1681,52 @@ def score_write_side(
         },
     }
     return metrics, matched_by_gold
+
+
+def _memory_dump_rows(
+    *,
+    arm: str,
+    room: Room,
+    repeat: int,
+    views: Sequence[CuratedMemoryView],
+    matched_by_gold: Mapping[str, CuratedMemoryView],
+    write_side: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """One audit row per curated/oracle memory for ``memories.jsonl``.
+
+    Sources are dataset message ids; ``matched_gold`` is the matched gold
+    memory id or ``None``, and unmatched memories carry the judge label so an
+    external re-judge can compare labels without re-running the harness.
+    """
+
+    gold_by_view = {view.id: gold_id for gold_id, view in matched_by_gold.items()}
+    unmatched_labels = write_side.get("unmatched_labels")
+    if not isinstance(unmatched_labels, Mapping):
+        unmatched_labels = {}
+    rows: list[dict[str, Any]] = []
+    for view in views:
+        gold_id = gold_by_view.get(view.id)
+        label = unmatched_labels.get(view.id)
+        rows.append(
+            {
+                "arm": arm,
+                "room": room.room_id,
+                "repeat": repeat,
+                "id": view.id,
+                "kind": view.kind,
+                "topic_key": view.topic_key,
+                "statement": view.statement,
+                "status": view.status,
+                "supersedes_id": view.supersedes_id,
+                "sources": [
+                    {"message_id": source.message_id, "quote": source.quote}
+                    for source in view.sources
+                ],
+                "matched_gold": gold_id,
+                "judge": label if gold_id is None and isinstance(label, str) else None,
+            }
+        )
+    return rows
 
 
 def pool_write_side(per_room: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -1552,9 +1876,28 @@ def _item_document_ids(item: EvidenceItem) -> list[str]:
     return ids
 
 
+def _activity_dataset_message_id(suffix: str, room_id: str) -> str | None:
+    """Map an activity document id suffix to a dataset message id of ``room_id``.
+
+    The ``raw`` arm names documents with the bare dataset id (``mNN``); the
+    ``raw_project`` arm qualifies them as ``<room_id>.mNN`` because its archive
+    is shared across a whole project.  Qualified ids of other rooms return
+    ``None`` so cross-attached documents never count as this room's messages.
+    """
+
+    prefix = f"{room_id}."
+    if suffix.startswith(prefix):
+        return suffix[len(prefix) :]
+    if "." not in suffix:
+        return suffix
+    return None
+
+
 def _evidence_presence(
     evidence: Sequence[EvidenceItem],
     message_id_map: Mapping[str, str],
+    *,
+    room_id: str,
 ) -> tuple[set[str], set[str]]:
     """Return (dataset message ids, curated memory ids) visible in evidence."""
 
@@ -1568,7 +1911,11 @@ def _evidence_presence(
                 message_ids.add(reverse[source_id])
         for candidate in _item_document_ids(item):
             if candidate.startswith(XMUSE_ACTIVITY_DOC_PREFIX):
-                message_ids.add(candidate[len(XMUSE_ACTIVITY_DOC_PREFIX) :])
+                dataset_id = _activity_dataset_message_id(
+                    candidate[len(XMUSE_ACTIVITY_DOC_PREFIX) :], room_id
+                )
+                if dataset_id is not None:
+                    message_ids.add(dataset_id)
             elif candidate.startswith(XMUSE_MEMORY_DOC_PREFIX):
                 memory_ids.add(candidate[len(XMUSE_MEMORY_DOC_PREFIX) :])
     return message_ids, memory_ids
@@ -1586,6 +1933,7 @@ def _citation_correctness(
     evidence: Sequence[EvidenceItem],
     *,
     arm: str,
+    room_id: str,
     message_id_map: Mapping[str, str],
     answer_source_messages: set[str],
     answer_view_ids: set[str],
@@ -1604,10 +1952,16 @@ def _citation_correctness(
         correct = False
         for candidate in _item_document_ids(item):
             if candidate.startswith(XMUSE_ACTIVITY_DOC_PREFIX):
-                if candidate[len(XMUSE_ACTIVITY_DOC_PREFIX) :] in answer_source_messages:
+                dataset_id = _activity_dataset_message_id(
+                    candidate[len(XMUSE_ACTIVITY_DOC_PREFIX) :], room_id
+                )
+                if dataset_id is not None and dataset_id in answer_source_messages:
                     correct = True
             elif candidate.startswith(XMUSE_MEMORY_DOC_PREFIX):
-                if arm != "raw" and candidate[len(XMUSE_MEMORY_DOC_PREFIX) :] in answer_view_ids:
+                if (
+                    arm not in RAW_LIKE_ARMS
+                    and candidate[len(XMUSE_MEMORY_DOC_PREFIX) :] in answer_view_ids
+                ):
                     correct = True
             elif candidate in message_reverse:
                 if message_reverse[candidate] in answer_source_messages:
@@ -1656,6 +2010,18 @@ def _require_fastembed() -> None:
         )
 
 
+def _attach_document(service: MemoryOSService, session_id: str, document_id: str) -> None:
+    ref = ArchiveSourceRefPayload(source_type="document", source_id=document_id)
+    service.attach_archive(
+        ArchiveAttachmentRequest(
+            archive_id=document_id,
+            scope_type="session",
+            scope_id=session_id,
+            source_refs=[ref],
+        )
+    )
+
+
 def _ingest_and_attach(
     service: MemoryOSService,
     session_id: str,
@@ -1678,20 +2044,22 @@ def _ingest_and_attach(
             metadata=dict(metadata or {}),
         )
     )
-    service.attach_archive(
-        ArchiveAttachmentRequest(
-            archive_id=document_id,
-            scope_type="session",
-            scope_id=session_id,
-            source_refs=[ref],
-        )
-    )
+    _attach_document(service, session_id, document_id)
 
 
-def _ingest_room(service: MemoryOSService, room: Room, session_id: str) -> dict[str, str]:
+def _ingest_room(
+    service: MemoryOSService,
+    room: Room,
+    session_id: str,
+    *,
+    document_id_for: Callable[[RoomMessage], str] | None = None,
+) -> dict[str, str]:
     """Ingest the transcript and the per-message document outbox.
 
-    Returns the dataset-message-id -> MemoryOS-message-id map.
+    Returns the dataset-message-id -> MemoryOS-message-id map.  The
+    ``document_id_for`` override names the per-message activity documents; the
+    ``raw_project`` arm qualifies them by room so a shared project service
+    never collides two rooms' ``mNN`` documents.
     """
 
     message_id_map: dict[str, str] = {}
@@ -1715,15 +2083,30 @@ def _ingest_room(service: MemoryOSService, room: Room, session_id: str) -> dict[
         )
         message_id_map[message.id] = response.message.id
     for message in room.messages:
+        document_id = (
+            document_id_for(message)
+            if document_id_for is not None
+            else f"{XMUSE_ACTIVITY_DOC_PREFIX}{message.id}"
+        )
         _ingest_and_attach(
             service,
             session_id,
-            document_id=f"{XMUSE_ACTIVITY_DOC_PREFIX}{message.id}",
+            document_id=document_id,
             title=f"{room.room_id} message {message.id}",
             content=message.text,
             metadata={"participant_id": message.speaker},
         )
     return message_id_map
+
+
+def _raw_project_document_id(room: Room, message: RoomMessage) -> str:
+    """Room-qualified activity document id for the shared project service."""
+
+    return f"{XMUSE_ACTIVITY_DOC_PREFIX}{room.room_id}.{message.id}"
+
+
+def _raw_project_id_selector(room: Room) -> Callable[[RoomMessage], str]:
+    return lambda message: _raw_project_document_id(room, message)
 
 
 def _advisory_message_ids(
@@ -1821,10 +2204,95 @@ def _pool_heuristic(per_room: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class _RawProject:
+    """Shared raw-archive state for one project, built once per repeat.
+
+    One :class:`MemoryOSService` holds every selected room of the project (each
+    with its own session and room-qualified activity documents); probe sessions
+    only see other rooms through explicit document attachments.
+    """
+
+    service: MemoryOSService
+    sessions: Mapping[str, str]
+    message_maps: Mapping[str, Mapping[str, str]]
+    new_room_sessions: Mapping[str, str]
+
+
+def _rooms_by_project(rooms: Sequence[Room]) -> dict[str, list[Room]]:
+    grouped: dict[str, list[Room]] = {}
+    for room in rooms:
+        grouped.setdefault(room.project, []).append(room)
+    return grouped
+
+
+def _raw_project_document_ids(room: Room) -> list[str]:
+    return [_raw_project_document_id(room, message) for message in room.messages]
+
+
+def _build_raw_project_context(
+    *,
+    project: str,
+    rooms: Sequence[Room],
+    repeat: int,
+    scratch_dir: Path,
+    embedding: str,
+) -> _RawProject:
+    """Ingest all rooms of one project once per repeat into a shared service.
+
+    Every probe session of a room gets the project's raw per-message documents
+    attached: same-room sessions receive the other rooms' documents (the own
+    room is attached during ingest) and new-room sessions receive all rooms of
+    the project.  Other projects live in separate services and data dirs, so
+    they can never leak into evidence.
+    """
+
+    service = MemoryOSService(
+        settings=_room_settings(
+            scratch_dir / "raw_project" / f"{project or 'default'}-r{repeat}",
+            embedding=embedding,
+            kernel_external=False,
+        )
+    )
+    sessions: dict[str, str] = {}
+    message_maps: dict[str, dict[str, str]] = {}
+    for room in rooms:
+        session_id = service.create_session(f"roommem {room.room_id} (raw_project)").id
+        sessions[room.room_id] = session_id
+        message_maps[room.room_id] = _ingest_room(
+            service,
+            room,
+            session_id,
+            document_id_for=_raw_project_id_selector(room),
+        )
+    for room in rooms:
+        for other in rooms:
+            if other.room_id == room.room_id:
+                continue
+            for document_id in _raw_project_document_ids(other):
+                _attach_document(service, sessions[room.room_id], document_id)
+    new_room_sessions: dict[str, str] = {}
+    for room in rooms:
+        if not room.has_new_room_probes():
+            continue
+        session_id = service.create_session(f"roommem {room.room_id} (new room, same project)").id
+        new_room_sessions[room.room_id] = session_id
+        for other in rooms:
+            for document_id in _raw_project_document_ids(other):
+                _attach_document(service, session_id, document_id)
+    return _RawProject(
+        service=service,
+        sessions=sessions,
+        message_maps=message_maps,
+        new_room_sessions=new_room_sessions,
+    )
+
+
 @dataclass
 class _RoomArmResult:
     results: list[dict[str, Any]]
     write_side: dict[str, Any]
+    memories: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _run_room_arm(
@@ -1838,84 +2306,93 @@ def _run_room_arm(
     embedding: str,
     heuristic_advisories: bool,
     curated_source: CuratedMemorySource | None,
+    raw_project: _RawProject | None = None,
 ) -> _RoomArmResult:
     kernel_external = heuristic_advisories and arm == "raw"
-    service = MemoryOSService(
-        settings=_room_settings(
-            scratch_dir / arm / f"{room.room_id}-r{repeat}",
-            embedding=embedding,
-            kernel_external=kernel_external,
-        )
-    )
-    session = service.create_session(f"roommem {room.room_id} ({arm})")
-    message_id_map = _ingest_room(service, room, session.id)
-
     views: list[CuratedMemoryView] = []
     curator_counts: dict[str, int] = {}
-    if arm == "oracle":
-        views = oracle_curated_memories(room)
-    elif arm == "curated":
-        if curated_source is None:
-            raise RoomMemConfigError("curated arm requires a registered curated memory source")
-        views = list(curated_source.curate(service, session.id))
-        _validate_curated_views(views, room=room)
-        curator_counts = _curator_counts(curated_source)
-
-    new_session_id: str | None = None
-    if room.has_new_room_probes():
-        new_session_id = service.create_session(
-            f"roommem {room.room_id} (new room, same project)"
-        ).id
-
     cross_scope_docs: dict[str, str] = {}
-    for view in views:
-        if view.status != "active":
-            continue
-        scope = _scope_for_kind(view.kind)
-        document_id = f"{XMUSE_MEMORY_DOC_PREFIX}{view.id}"
-        _ingest_and_attach(
-            service,
-            session.id,
-            document_id=document_id,
-            title=f"{room.room_id} memory {view.id}",
-            content=view.statement,
-            metadata={
-                "kind": view.kind,
-                "scope": scope,
-                "topic_key": view.topic_key,
-                "supersedes_id": view.supersedes_id or "",
-                "room_id": room.room_id,
-            },
-            tags=["roommem", f"kind:{view.kind}", f"scope:{scope}"],
-        )
-        if scope in {"project", "user"}:
-            cross_scope_docs[view.id] = document_id
-    if new_session_id is not None:
-        for document_id in cross_scope_docs.values():
-            ref = ArchiveSourceRefPayload(source_type="document", source_id=document_id)
-            service.attach_archive(
-                ArchiveAttachmentRequest(
-                    archive_id=document_id,
-                    scope_type="session",
-                    scope_id=new_session_id,
-                    source_refs=[ref],
-                )
+    if raw_project is not None:
+        service = raw_project.service
+        session_id = raw_project.sessions[room.room_id]
+        message_id_map = dict(raw_project.message_maps[room.room_id])
+        new_session_id: str | None = raw_project.new_room_sessions.get(room.room_id)
+    else:
+        service = MemoryOSService(
+            settings=_room_settings(
+                scratch_dir / arm / f"{room.room_id}-r{repeat}",
+                embedding=embedding,
+                kernel_external=kernel_external,
             )
+        )
+        session = service.create_session(f"roommem {room.room_id} ({arm})")
+        session_id = session.id
+        message_id_map = _ingest_room(service, room, session_id)
+
+        if arm == "oracle":
+            views = oracle_curated_memories(room)
+        elif arm == "curated":
+            if curated_source is None:
+                raise RoomMemConfigError("curated arm requires a registered curated memory source")
+            views = list(curated_source.curate(service, session_id))
+            _validate_curated_views(views, room=room)
+            curator_counts = _curator_counts(curated_source)
+
+        new_session_id = None
+        if room.has_new_room_probes():
+            new_session_id = service.create_session(
+                f"roommem {room.room_id} (new room, same project)"
+            ).id
+
+        for view in views:
+            if view.status != "active":
+                continue
+            scope = _scope_for_kind(view.kind)
+            document_id = f"{XMUSE_MEMORY_DOC_PREFIX}{view.id}"
+            _ingest_and_attach(
+                service,
+                session_id,
+                document_id=document_id,
+                title=f"{room.room_id} memory {view.id}",
+                content=view.statement,
+                metadata={
+                    "kind": view.kind,
+                    "scope": scope,
+                    "topic_key": view.topic_key,
+                    "supersedes_id": view.supersedes_id or "",
+                    "room_id": room.room_id,
+                },
+                tags=["roommem", f"kind:{view.kind}", f"scope:{scope}"],
+            )
+            if scope in {"project", "user"}:
+                cross_scope_docs[view.id] = document_id
+        if new_session_id is not None:
+            for document_id in cross_scope_docs.values():
+                _attach_document(service, new_session_id, document_id)
 
     matched_by_gold: dict[str, CuratedMemoryView] = {}
     write_side: dict[str, Any] = {}
+    memories: list[dict[str, Any]] = []
     if arm in {"oracle", "curated"}:
         write_side, matched_by_gold = score_write_side(room, views, judge)
         write_side["room"] = room.room_id
         if curator_counts:
             write_side["curator_counts"] = curator_counts
+        memories = _memory_dump_rows(
+            arm=arm,
+            room=room,
+            repeat=repeat,
+            views=views,
+            matched_by_gold=matched_by_gold,
+            write_side=write_side,
+        )
     advisories: dict[str, Mapping[str, Any]] = {}
 
     results: list[dict[str, Any]] = []
     for probe in room.probes:
         target_session = new_session_id
         if probe.asked_in != "new_room_same_project" or target_session is None:
-            target_session = session.id
+            target_session = session_id
         package = service.build_context(
             session_id=target_session,
             task=XMUSE_TASK,
@@ -1950,7 +2427,9 @@ def _run_room_arm(
             answer=answer,
         )
 
-        message_presence, memory_presence = _evidence_presence(evidence, message_id_map)
+        message_presence, memory_presence = _evidence_presence(
+            evidence, message_id_map, room_id=room.room_id
+        )
         answer_source_messages = {
             source.message_id for memory in answer_golds for source in memory.sources
         }
@@ -1960,7 +2439,7 @@ def _run_room_arm(
             for memory in answer_golds
             if (matched_view := matched_by_gold.get(memory.id)) is not None
         }
-        if arm == "raw":
+        if arm in RAW_LIKE_ARMS:
             hit = source_hit
         else:
             hit = bool(answer_view_ids & memory_presence)
@@ -1977,7 +2456,7 @@ def _run_room_arm(
             successor_present = bool(
                 {source.message_id for source in successor.sources} & message_presence
             )
-            if arm != "raw":
+            if arm not in RAW_LIKE_ARMS:
                 successor_view = matched_by_gold.get(successor.id)
                 if successor_view is not None and successor_view.id in memory_presence:
                     successor_present = True
@@ -1987,6 +2466,7 @@ def _run_room_arm(
             answer,
             evidence,
             arm=arm,
+            room_id=room.room_id,
             message_id_map=message_id_map,
             answer_source_messages=answer_source_messages,
             answer_view_ids=answer_view_ids,
@@ -2008,7 +2488,7 @@ def _run_room_arm(
                         "item_id": item.item_id,
                         "layer": item.layer,
                         "document_id": item.document_id,
-                        "text": item.text[:EVIDENCE_TEXT_LIMIT],
+                        "text": item.text,
                     }
                     for item in evidence
                 ],
@@ -2029,7 +2509,7 @@ def _run_room_arm(
             list(advisories.values()),
             message_id_map,
         )
-    return _RoomArmResult(results=results, write_side=write_side)
+    return _RoomArmResult(results=results, write_side=write_side, memories=memories)
 
 
 # ---------------------------------------------------------------------------
@@ -2088,13 +2568,13 @@ def aggregate_read_side(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
         for repeat in sorted(repeats):
             rows = grouped[(arm, asked_in, repeat)]
             probes = len(rows)
-            for key, field in (
+            for key, row_key in (
                 ("hit_at_8", "hit"),
                 ("source_hit_at_8", "source_hit"),
                 ("stale_at_8", "stale"),
                 ("substring_pass", "substring"),
             ):
-                rate = _rate(rows, field)
+                rate = _rate(rows, row_key)
                 if rate is not None:
                     per_repeat[key].append(rate)
             tokens = _mean_optional(rows, "evidence_tokens")
@@ -2135,13 +2615,17 @@ def build_summary(
     results: Sequence[dict[str, Any]],
     write_side: dict[str, Any],
     run_meta: Mapping[str, Any],
+    usage: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    summary: dict[str, Any] = {
         "run": dict(run_meta),
         "read_side": aggregate_read_side(results),
         "write_side": write_side,
-        "limitations": [LIMITATIONS_EN, LIMITATIONS_ZH],
     }
+    if usage is not None:
+        summary["usage"] = dict(usage)
+    summary["limitations"] = [LIMITATIONS_EN, LIMITATIONS_ZH]
+    return summary
 
 
 def _format_stat(stat: Mapping[str, float] | None, *, digits: int = 2) -> str:
@@ -2298,6 +2782,60 @@ def render_summary_md(summary: Mapping[str, Any]) -> str:
             lines.append(f"- {note}")
         lines.append("")
 
+    usage = summary.get("usage")
+    if isinstance(usage, Mapping) and usage:
+        lines.append("## LLM usage")
+        lines.append("")
+        roles = usage.get("roles") or {}
+        if isinstance(roles, Mapping) and roles:
+            lines.append(
+                "| role | calls | cached | tokens in | tokens out | mean latency s | "
+                "p50 latency s | p95 latency s |"
+            )
+            lines.append("|---|---|---|---|---|---|---|---|")
+            for role in sorted(roles):
+                payload = roles[role] if isinstance(roles[role], Mapping) else {}
+                latency = payload.get("latency_s")
+                if not isinstance(latency, Mapping):
+                    latency = {}
+                lines.append(
+                    "| {role} | {calls} | {cached} | {tokens_in} | {tokens_out} | "
+                    "{mean} | {p50} | {p95} |".format(
+                        role=role,
+                        calls=payload.get("calls", 0),
+                        cached=payload.get("cached", 0),
+                        tokens_in=_format_number(payload.get("tokens_in"), digits=0),
+                        tokens_out=_format_number(payload.get("tokens_out"), digits=0),
+                        mean=_format_number(latency.get("mean"), digits=3),
+                        p50=_format_number(latency.get("p50"), digits=3),
+                        p95=_format_number(latency.get("p95"), digits=3),
+                    )
+                )
+            lines.append("")
+        curator_usage = usage.get("curator")
+        if isinstance(curator_usage, Mapping):
+            lines.append(
+                "Curator: {messages} messages in {windows} windows; "
+                "{tokens} tokens per 100 messages; {seconds} s per window.".format(
+                    messages=curator_usage.get("messages", 0),
+                    windows=curator_usage.get("windows", 0),
+                    tokens=_format_number(curator_usage.get("tokens_per_100_messages"), digits=1),
+                    seconds=_format_number(curator_usage.get("seconds_per_window"), digits=3),
+                )
+            )
+            lines.append("")
+        cost = usage.get("estimated_cost")
+        if isinstance(cost, Mapping) and isinstance(cost.get("cost"), (int, float)):
+            lines.append(
+                "Estimated cost (provider tokens only): ${cost:.4f} at ${price_in} /Mtok in, "
+                "${price_out} /Mtok out.".format(
+                    cost=float(cost["cost"]),
+                    price_in=_format_number(cost.get("price_in_per_mtok")),
+                    price_out=_format_number(cost.get("price_out_per_mtok")),
+                )
+            )
+            lines.append("")
+
     lines.append("## Limitations")
     lines.append("")
     limitations = summary.get("limitations") or []
@@ -2319,11 +2857,16 @@ def write_reports(
     results: Sequence[dict[str, Any]],
     write_side: dict[str, Any],
     summary: dict[str, Any],
+    memories: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     results_path = out_dir / "results.jsonl"
     with results_path.open("w", encoding="utf-8") as handle:
         for row in results:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    memories_path = out_dir / "memories.jsonl"
+    with memories_path.open("w", encoding="utf-8") as handle:
+        for row in memories:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     write_side_path = out_dir / "write_side.json"
     write_side_path.write_text(
@@ -2337,6 +2880,7 @@ def write_reports(
     summary_md_path.write_text(render_summary_md(summary), encoding="utf-8")
     return {
         "results": results_path,
+        "memories": memories_path,
         "write_side": write_side_path,
         "summary": summary_path,
         "summary_md": summary_md_path,
@@ -2364,6 +2908,9 @@ def run_roommem(
     llm_label: str | None = None,
     settings: Settings | None = None,
     scratch_root: str | Path | None = None,
+    usage: LLMUsageTracker | None = None,
+    price_in_per_mtok: float | None = None,
+    price_out_per_mtok: float | None = None,
 ) -> dict[str, Any]:
     """Run the RoomMem harness and write results/summary reports.
 
@@ -2391,8 +2938,9 @@ def run_roommem(
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
+    tracker = usage if usage is not None else LLMUsageTracker()
     factory = llm_factory or build_llm_factory(
-        out_dir=out_path, fake_llm=fake_llm, settings=settings
+        out_dir=out_path, fake_llm=fake_llm, settings=settings, usage=tracker
     )
 
     created_scratch = scratch_root is None
@@ -2403,6 +2951,7 @@ def run_roommem(
     )
     scratch_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
+    memories: list[dict[str, Any]] = []
     write_side_per_room: dict[str, list[dict[str, Any]]] = {arm: [] for arm in selected_arms}
     try:
         for arm in selected_arms:
@@ -2418,8 +2967,19 @@ def run_roommem(
                             repeat=repeat,
                             cache_dir=out_path / "llm_cache",
                             llm_factory=curated_llm_factory,
+                            usage=tracker,
                         ),
                     )
+                raw_project_contexts: dict[str, _RawProject] = {}
+                if arm == "raw_project":
+                    for project, project_rooms in _rooms_by_project(rooms).items():
+                        raw_project_contexts[project] = _build_raw_project_context(
+                            project=project,
+                            rooms=project_rooms,
+                            repeat=repeat,
+                            scratch_dir=scratch_dir,
+                            embedding=embedding,
+                        )
                 for room in rooms:
                     room_result = _run_room_arm(
                         arm=arm,
@@ -2431,8 +2991,10 @@ def run_roommem(
                         embedding=embedding,
                         heuristic_advisories=heuristic_advisories,
                         curated_source=curated_source,
+                        raw_project=raw_project_contexts.get(room.project),
                     )
                     results.extend(room_result.results)
+                    memories.extend(room_result.memories)
                     if room_result.write_side:
                         write_side_per_room[arm].append(room_result.write_side)
     finally:
@@ -2479,8 +3041,32 @@ def run_roommem(
         "curated_source": curated_source_name if "curated" in selected_arms else None,
         "curator_window": curator_window if "curated" in selected_arms else None,
     }
-    summary = build_summary(results=results, write_side=write_side, run_meta=run_meta)
-    write_reports(out_path, results=results, write_side=write_side, summary=summary)
+    usage_payload = tracker.aggregate()
+    curator_usage = _curator_usage_extras(
+        usage_payload, rooms=rooms, repeats=repeats, write_side=write_side
+    )
+    if curator_usage is not None:
+        usage_payload["curator"] = curator_usage
+    estimated_cost = _estimated_cost(
+        usage_payload,
+        price_in_per_mtok=price_in_per_mtok,
+        price_out_per_mtok=price_out_per_mtok,
+    )
+    if estimated_cost is not None:
+        usage_payload["estimated_cost"] = estimated_cost
+    summary_usage = (
+        usage_payload
+        if usage_payload.get("roles")
+        or usage_payload.get("curator")
+        or usage_payload.get("estimated_cost")
+        else None
+    )
+    summary = build_summary(
+        results=results, write_side=write_side, run_meta=run_meta, usage=summary_usage
+    )
+    write_reports(
+        out_path, results=results, write_side=write_side, summary=summary, memories=memories
+    )
     return summary
 
 
@@ -2488,6 +3074,7 @@ __all__ = [
     "ARM_VALUES",
     "ANSWERER_SYSTEM_PROMPT",
     "CURATOR_COUNTER_KEYS",
+    "RAW_LIKE_ARMS",
     "SPLIT_PRESETS",
     "ChatAnswerer",
     "ChatJudge",
@@ -2506,6 +3093,8 @@ __all__ = [
     "GoldMemorySource",
     "LIMITATIONS_EN",
     "LIMITATIONS_ZH",
+    "LLMUsage",
+    "LLMUsageTracker",
     "Room",
     "RoomMemAnswerer",
     "RoomMemConfigError",

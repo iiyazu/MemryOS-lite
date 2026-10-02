@@ -1,8 +1,9 @@
 """Behavioural tests for the RoomMem evaluation harness.
 
-Two tiny inline rooms plus deterministic fakes keep these tests offline:
-``rm90`` carries a supersession, ``rm91`` carries new-room probes and the
-project/user-scope memories that must be delivered across rooms.
+Small inline rooms plus deterministic fakes keep these tests offline: ``rm90``
+(atlas) carries a supersession, ``rm91``/``rm92`` (beacon) carry new-room
+probes and the project/user-scope memories that must be delivered across
+rooms, and ``rm93`` (cobalt) carries a long message for the evidence dump.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from memoryos_lite.cli import app
 from memoryos_lite.roommem import (
     LIMITATIONS_ZH,
     SPLIT_PRESETS,
+    XMUSE_ACTIVITY_DOC_PREFIX,
     XMUSE_MEMORY_DOC_PREFIX,
     ChatAnswerer,
     ChatJudge,
@@ -28,8 +30,11 @@ from memoryos_lite.roommem import (
     FakeCuratorLLM,
     FakeJudge,
     GoldMemorySource,
+    LLMUsageTracker,
     RoomMemConfigError,
     RoomMemDataError,
+    _activity_dataset_message_id,
+    _evidence_presence,
     load_rooms,
     match_curated_to_gold,
     oracle_curated_memories,
@@ -167,6 +172,144 @@ RM91 = {
 }
 
 
+RM92 = {
+    "room_id": "rm92",
+    "title": "inline second beacon room",
+    "language": "zh",
+    "project": "beacon",
+    "participants": [
+        {"id": "u1", "kind": "human", "name": "Qiu"},
+        {"id": "a1", "kind": "agent", "name": "Beacon"},
+    ],
+    "messages": [
+        {
+            "id": "m01",
+            "speaker": "u1",
+            "text": "补充约定：依赖管理使用 uv 和锁文件，不引入 poetry。",
+        },
+        {
+            "id": "m02",
+            "speaker": "a1",
+            "text": "评审时间改为周五下午四点，使用 code-review checklist。",
+        },
+        {"id": "m03", "speaker": "u1", "text": "缓存层最初计划换取 Memcached，方案代号 m-cache。"},
+        {
+            "id": "m04",
+            "speaker": "a1",
+            "text": "后来团队推翻了上面那个方案，决定继续沿用既有的键值服务。",
+        },
+        {"id": "m05", "speaker": "u1", "text": "灯塔二号房间已记录以上约定。"},
+        {"id": "m06", "speaker": "a1", "text": "以上记录同步给项目组。"},
+    ],
+    "gold_memories": [
+        {
+            "id": "g1",
+            "kind": "rule",
+            "scope": "project",
+            "topic_key": "tooling.lockfiles",
+            "statement": "项目依赖管理使用 uv 和锁文件。",
+            "sources": [{"message_id": "m01", "quote": "依赖管理使用 uv 和锁文件"}],
+        },
+        {
+            "id": "g2",
+            "kind": "preference",
+            "scope": "user",
+            "topic_key": "workflow.review_time",
+            "statement": "代码评审时间改为周五下午四点。",
+            "sources": [{"message_id": "m02", "quote": "评审时间改为周五下午四点"}],
+        },
+        {
+            "id": "g4",
+            "kind": "decision",
+            "scope": "room",
+            "topic_key": "cache.layer",
+            "statement": "缓存层继续沿用既有的键值服务。",
+            "sources": [{"message_id": "m04", "quote": "继续沿用既有的键值服务"}],
+        },
+        {
+            "id": "g3",
+            "kind": "decision",
+            "scope": "room",
+            "topic_key": "cache.layer",
+            "statement": "缓存层最初计划换取 Memcached。",
+            "sources": [{"message_id": "m03", "quote": "最初计划换取 Memcached"}],
+            "superseded_by": "g4",
+        },
+    ],
+    "probes": [
+        {
+            "id": "p1",
+            "question": "缓存层最初计划换取什么？",
+            "asked_in": "same_room",
+            "answer_memory_ids": ["g4"],
+            "must_contain": ["Memcached"],
+            "must_not_contain": ["Redis"],
+        },
+        {
+            "id": "p2",
+            "question": "依赖管理有什么约定？",
+            "asked_in": "same_room",
+            "answer_memory_ids": ["g1"],
+            "must_contain": ["uv"],
+            "must_not_contain": ["npm"],
+        },
+        {
+            "id": "p3",
+            "question": "评审时间有什么约定？",
+            "asked_in": "new_room_same_project",
+            "answer_memory_ids": ["g2"],
+            "must_contain": ["周五"],
+            "must_not_contain": ["周一"],
+        },
+    ],
+}
+
+RM93_MESSAGE = (
+    "钴蓝计划的风险登记表记录着当前所有已知风险：供应链延迟、第三方接口不稳定、"
+    "评审排期冲突、跨团队依赖未对齐、数据迁移窗口过窄，以及发布回滚演练尚未完成。"
+    "登记表每次评审后更新一次，由项目负责人确认新增条目并标注负责人和缓解措施。"
+    "登记表同时保留历史条目，任何关闭的风险都必须写明关闭原因，并在下一次周会上"
+    "向项目组说明处理结果与遗留监控项。未按期更新的条目会在周会上被指出，负责人"
+    "需要当场补充进度或者说明阻塞原因。登记表的维护状态会直接影响发布评审是否"
+    "允许进入下一阶段，周会纪要会链接到对应条目。"
+)
+
+RM93 = {
+    "room_id": "rm93",
+    "title": "inline cobalt room with a long message",
+    "language": "zh",
+    "project": "cobalt",
+    "participants": [
+        {"id": "u1", "kind": "human", "name": "He"},
+        {"id": "a1", "kind": "agent", "name": "Cobalt"},
+    ],
+    "messages": [
+        {"id": "m01", "speaker": "u1", "text": RM93_MESSAGE},
+        {"id": "m02", "speaker": "a1", "text": "以上风险条目已同步到周会纪要。"},
+    ],
+    "gold_memories": [
+        {
+            "id": "g1",
+            "kind": "fact",
+            "scope": "room",
+            "topic_key": "risk.register",
+            "statement": "钴蓝计划的风险登记表记录了所有已知风险。",
+            "sources": [{"message_id": "m01", "quote": "风险登记表记录着当前所有已知风险"}],
+        }
+    ],
+    "probes": [
+        {
+            "id": "p1",
+            "question": "钴蓝计划的风险登记表记录了什么？",
+            "asked_in": "same_room",
+            "answer_memory_ids": ["g1"],
+            "must_contain": ["风险"],
+            "must_not_contain": ["Zebra"],
+        }
+    ],
+}
+
+
 def _write_room(directory, payload):
     path = directory / f"{payload['room_id']}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -179,6 +322,17 @@ def rooms_dir(tmp_path):
     directory.mkdir()
     _write_room(directory, RM90)
     _write_room(directory, RM91)
+    return directory
+
+
+@pytest.fixture()
+def project_rooms_dir(tmp_path):
+    """rm90 (atlas), rm91+rm92 (beacon) and rm93 (cobalt) for cross-project checks."""
+
+    directory = tmp_path / "project-rooms"
+    directory.mkdir()
+    for payload in (RM90, RM91, RM92, RM93):
+        _write_room(directory, payload)
     return directory
 
 
@@ -928,6 +1082,373 @@ def test_curated_arm_llm_calls_go_through_disk_cache(tmp_path, rooms_dir):
     assert len(list((out_dir / "llm_cache").glob("*.json"))) == 8
 
 
+# ---------------------------------------------------------------------------
+# raw_project arm, audit artifacts and usage accounting
+# ---------------------------------------------------------------------------
+
+
+class _UsageStubClient:
+    """Chat stub that reports provider usage on every call."""
+
+    def __init__(self, usage=None):
+        self.last_usage = dict(
+            usage or {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
+        )
+
+    @property
+    def model(self):
+        return "usage-stub"
+
+    def complete(self, *, system, user):
+        return "ok"
+
+
+class _UsageCuratorLLM:
+    def __init__(self):
+        self.last_usage = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+
+    def complete_json(self, system, user):
+        return {"operations": []}
+
+
+def _doc_ids(row):
+    return {item["document_id"] for item in row["evidence"] if item["document_id"]}
+
+
+def test_activity_dataset_message_id_is_room_aware():
+    assert _activity_dataset_message_id("m01", "rm91") == "m01"
+    assert _activity_dataset_message_id("rm91.m01", "rm91") == "m01"
+    assert _activity_dataset_message_id("rm92.m01", "rm91") is None
+    assert _activity_dataset_message_id("rm9.m01", "rm91") is None
+
+
+def test_evidence_presence_ignores_other_room_documents():
+    def item(document_id):
+        return EvidenceItem(
+            rank=1,
+            item_id=document_id,
+            layer="archival",
+            text="t",
+            estimated_tokens=1,
+            document_id=document_id,
+            source_refs=(),
+        )
+
+    presence, memory_ids = _evidence_presence(
+        [
+            item(f"{XMUSE_ACTIVITY_DOC_PREFIX}rm91.m01"),
+            item(f"{XMUSE_ACTIVITY_DOC_PREFIX}rm92.m02"),
+        ],
+        {"m01": "memoryos-1"},
+        room_id="rm91",
+    )
+    assert presence == {"m01"}
+    assert memory_ids == set()
+
+    bare_presence, _ = _evidence_presence(
+        [item(f"{XMUSE_ACTIVITY_DOC_PREFIX}m03")],
+        {"m03": "memoryos-3"},
+        room_id="rm91",
+    )
+    assert bare_presence == {"m03"}
+
+
+def test_raw_project_visibility_and_isolation(tmp_path, project_rooms_dir):
+    rooms = load_rooms(project_rooms_dir)
+    out_dir = tmp_path / "out"
+    summary = run_roommem(
+        rooms,
+        out_dir=out_dir,
+        arms=["raw_project"],
+        fake_llm=True,
+        scratch_root=tmp_path / "scratch",
+    )
+    by_probe = _by_probe(_read_results(out_dir))
+
+    # same_room: own room plus the other beacon room.
+    p2 = by_probe[("rm92", "p2")]
+    assert f"{XMUSE_ACTIVITY_DOC_PREFIX}rm92.m01" in _doc_ids(p2)
+    assert f"{XMUSE_ACTIVITY_DOC_PREFIX}rm91.m01" in _doc_ids(p2)
+    assert p2["source_hit"] is True
+
+    # new_room: all rooms of the project, including the room's own archive.
+    p3 = by_probe[("rm92", "p3")]
+    assert f"{XMUSE_ACTIVITY_DOC_PREFIX}rm92.m02" in _doc_ids(p3)
+    assert f"{XMUSE_ACTIVITY_DOC_PREFIX}rm91.m03" in _doc_ids(p3)
+    assert p3["source_hit"] is True
+
+    # rm91's new-room probe sees the other beacon room's raw messages.
+    rm91_new = by_probe[("rm91", "p2")]
+    assert f"{XMUSE_ACTIVITY_DOC_PREFIX}rm92.m01" in _doc_ids(rm91_new)
+    assert rm91_new["source_hit"] is True
+
+    # Stale/source-hit follow the shared rule on whatever evidence was retrieved:
+    # stale = superseded source (m03) present without its successor (m04).
+    _assert_stale_rule(by_probe[("rm92", "p1")], room_id="rm92")
+
+    # Never another project's rooms.
+    beacon_probes = [
+        ("rm91", "p1"),
+        ("rm91", "p2"),
+        ("rm91", "p3"),
+        ("rm92", "p1"),
+        ("rm92", "p2"),
+        ("rm92", "p3"),
+    ]
+    beacon_evidence = []
+    for key in beacon_probes:
+        row = by_probe[key]
+        ids = _doc_ids(row)
+        assert not any(doc.startswith(f"{XMUSE_ACTIVITY_DOC_PREFIX}rm90.") for doc in ids)
+        assert not any(doc.startswith(f"{XMUSE_ACTIVITY_DOC_PREFIX}rm93.") for doc in ids)
+        beacon_evidence.append(row["evidence"])
+    dumped = json.dumps(beacon_evidence, ensure_ascii=False)
+    assert "SQLite" not in dumped
+    assert "钴蓝计划" not in dumped
+
+    rm90_docs = _doc_ids(by_probe[("rm90", "p1")])
+    assert rm90_docs
+    assert all(doc.startswith(f"{XMUSE_ACTIVITY_DOC_PREFIX}rm90.") for doc in rm90_docs)
+    rm93_docs = _doc_ids(by_probe[("rm93", "p1")])
+    assert rm93_docs
+    assert all(doc.startswith(f"{XMUSE_ACTIVITY_DOC_PREFIX}rm93.") for doc in rm93_docs)
+
+    new_room = summary["read_side"]["raw_project"]["new_room_same_project"]
+    assert new_room["source_hit_at_8"]["mean"] == 1.0
+    assert new_room["hit_at_8"]["mean"] == 1.0
+
+
+def test_raw_project_stale_parity_with_raw_arm(tmp_path, project_rooms_dir):
+    rooms = load_rooms(project_rooms_dir, room_ids=["rm92"])
+    out_dir = tmp_path / "out"
+    run_roommem(
+        rooms,
+        out_dir=out_dir,
+        arms=["raw", "raw_project"],
+        fake_llm=True,
+        scratch_root=tmp_path / "scratch",
+    )
+    rows = _read_results(out_dir)
+
+    def row_for(arm):
+        return next(row for row in rows if row["arm"] == arm and row["probe"] == "p1")
+
+    # Both arms apply the same stale/source-hit rule to their own evidence.
+    for arm in ("raw", "raw_project"):
+        _assert_stale_rule(row_for(arm), room_id="rm92")
+
+
+def _assert_stale_rule(row, *, room_id):
+    # A message is visible either as its archive document or, through the recall
+    # layer, as the session message itself (item text equals the message text).
+    texts = {message["id"]: message["text"] for message in {"rm92": RM92}[room_id]["messages"]}
+
+    def present(message_id):
+        doc_ids = _doc_ids(row)
+        return (
+            f"{XMUSE_ACTIVITY_DOC_PREFIX}{room_id}.{message_id}" in doc_ids
+            or f"{XMUSE_ACTIVITY_DOC_PREFIX}{message_id}" in doc_ids
+            or any(item["text"] == texts[message_id] for item in row["evidence"])
+        )
+
+    old_present, new_present = present("m03"), present("m04")
+    assert old_present or new_present
+    assert row["stale"] is (old_present and not new_present)
+    assert row["source_hit"] is new_present
+
+
+def test_results_jsonl_keeps_full_evidence_and_exact_answer(tmp_path, project_rooms_dir):
+    rooms = load_rooms(project_rooms_dir, room_ids=["rm93"])
+    out_dir = tmp_path / "out"
+    run_roommem(
+        rooms,
+        out_dir=out_dir,
+        arms=["raw"],
+        fake_llm=True,
+        scratch_root=tmp_path / "scratch",
+    )
+    row = _by_probe(_read_results(out_dir))[("rm93", "p1")]
+
+    assert len(RM93_MESSAGE) > 200
+    assert any(item["text"] == RM93_MESSAGE for item in row["evidence"])
+    assert row["answer"] == row["evidence"][0]["text"]
+
+
+def test_memories_jsonl_dump_maps_sources_and_labels(tmp_path, rooms_dir):
+    room = load_rooms(rooms_dir, room_ids=["rm91"])[0]
+    extra = CuratedMemoryView(
+        id="c-extra",
+        kind="fact",
+        topic_key="roommem.extra",
+        statement="项目组每周同步一次进展。",
+        sources=[GoldMemorySource(message_id="m02", quote="好的，依赖管理确定用 uv。")],
+    )
+    register_curated_source(
+        "inline-audit", lambda: _FakeSource(oracle_curated_memories(room) + [extra])
+    )
+    out_dir = tmp_path / "out"
+    try:
+        run_roommem(
+            [room],
+            out_dir=out_dir,
+            arms=["curated"],
+            fake_llm=True,
+            curated_source_name="inline-audit",
+            scratch_root=tmp_path / "scratch",
+        )
+    finally:
+        unregister_curated_source("inline-audit")
+
+    memories_path = out_dir / "memories.jsonl"
+    rows = [
+        json.loads(line)
+        for line in memories_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {row["arm"] for row in rows} == {"curated"}
+    by_id = {row["id"]: row for row in rows}
+    assert set(by_id) == {"g1", "g2", "g3", "c-extra"}
+
+    g1 = by_id["g1"]
+    assert g1["room"] == "rm91"
+    assert g1["repeat"] == 0
+    assert g1["kind"] == "rule"
+    assert g1["topic_key"] == "tooling.dependencies"
+    assert g1["statement"] == "项目统一使用 uv 管理依赖。"
+    assert g1["status"] == "active"
+    assert g1["supersedes_id"] is None
+    assert g1["sources"] == [{"message_id": "m01", "quote": "统一用 uv 管理依赖"}]
+    assert g1["matched_gold"] == "g1"
+    assert g1["judge"] is None
+
+    extra_row = by_id["c-extra"]
+    assert extra_row["matched_gold"] is None
+    assert extra_row["judge"] == "legit_unannotated"
+    assert extra_row["sources"] == [{"message_id": "m02", "quote": "好的，依赖管理确定用 uv。"}]
+
+
+def test_usage_tracker_records_provider_calls_and_cache_hits(tmp_path):
+    tracker = LLMUsageTracker()
+    client = DiskCachedChatClient(
+        _UsageStubClient(), role="answerer", cache_dir=tmp_path / "cache", repeat=0, usage=tracker
+    )
+    assert client.complete(system="s", user="u") == "ok"
+    assert client.complete(system="s", user="u") == "ok"
+
+    role = tracker.aggregate()["roles"]["answerer"]
+    assert role["calls"] == 2
+    assert role["cached"] == 1
+    assert role["tokens_in"] == 7
+    assert role["tokens_out"] == 3
+    assert set(role["latency_s"]) == {"mean", "p50", "p95", "total"}
+    assert role["latency_s"]["mean"] == role["latency_s"]["p50"] == role["latency_s"]["p95"]
+
+    openai_tracker = LLMUsageTracker()
+    openai_client = DiskCachedChatClient(
+        _UsageStubClient({"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}),
+        role="judge",
+        cache_dir=tmp_path / "cache",
+        repeat=0,
+        usage=openai_tracker,
+    )
+    openai_client.complete(system="s", user="u")
+    judge = openai_tracker.aggregate()["roles"]["judge"]
+    assert judge["tokens_in"] == 2
+    assert judge["tokens_out"] == 1
+    assert judge["cached"] == 0
+
+
+def test_run_roommem_reports_usage_and_estimated_cost(tmp_path, rooms_dir):
+    rooms = load_rooms(rooms_dir)
+    tracker = LLMUsageTracker()
+    out_dir = tmp_path / "out"
+
+    def factory(repeat):
+        usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        answerer = ChatAnswerer(
+            DiskCachedChatClient(
+                _UsageStubClient(usage),
+                role="answerer",
+                cache_dir=out_dir / "llm_cache",
+                repeat=repeat,
+                usage=tracker,
+            )
+        )
+        judge = ChatJudge(
+            DiskCachedChatClient(
+                _UsageStubClient(usage),
+                role="judge",
+                cache_dir=out_dir / "llm_cache",
+                repeat=repeat,
+                usage=tracker,
+            )
+        )
+        return answerer, judge
+
+    summary = run_roommem(
+        rooms,
+        out_dir=out_dir,
+        arms=["oracle"],
+        llm_factory=factory,
+        usage=tracker,
+        price_in_per_mtok=1.0,
+        price_out_per_mtok=2.0,
+        scratch_root=tmp_path / "scratch",
+    )
+
+    usage = summary["usage"]
+    assert usage["roles"]["answerer"]["calls"] == 4
+    assert usage["roles"]["answerer"]["tokens_in"] == 40
+    assert usage["roles"]["judge"]["calls"] == 4
+    cost = usage["estimated_cost"]
+    assert cost["price_in_per_mtok"] == 1.0
+    assert cost["price_out_per_mtok"] == 2.0
+    assert cost["tokens_in"] == 80
+    assert cost["tokens_out"] == 40
+    assert cost["cost"] == pytest.approx((80 * 1.0 + 40 * 2.0) / 1_000_000)
+
+    summary_md = (out_dir / "summary.md").read_text(encoding="utf-8")
+    assert "## LLM usage" in summary_md
+    assert "Estimated cost" in summary_md
+
+    plain = run_roommem(
+        rooms,
+        out_dir=tmp_path / "plain",
+        arms=["oracle"],
+        fake_llm=True,
+        scratch_root=tmp_path / "scratch-plain",
+    )
+    assert "usage" not in plain
+
+
+def test_curated_usage_reports_tokens_per_100_messages(tmp_path, rooms_dir):
+    rooms = load_rooms(rooms_dir)
+    tracker = LLMUsageTracker()
+    out_dir = tmp_path / "out"
+    summary = run_roommem(
+        rooms,
+        out_dir=out_dir,
+        arms=["curated"],
+        llm_factory=_answerer_factory(FakeAnswerer),
+        curated_llm_factory=lambda settings: _UsageCuratorLLM(),
+        usage=tracker,
+        scratch_root=tmp_path / "scratch",
+    )
+
+    usage = summary["usage"]
+    assert usage["roles"]["curator"]["calls"] == 2
+    assert usage["roles"]["curator"]["cached"] == 0
+    curator = usage["curator"]
+    assert curator["messages"] == 10
+    assert curator["windows"] == 2
+    assert curator["tokens_per_100_messages"] == pytest.approx(2400.0)
+    assert curator["seconds_per_window"] is not None
+    assert curator["seconds_per_window"] > 0
+
+    summary_md = (out_dir / "summary.md").read_text(encoding="utf-8")
+    assert "Curator:" in summary_md
+
+
 def test_cli_roommem_fake_llm_writes_reports(tmp_path, rooms_dir):
     out_dir = tmp_path / "cli-out"
     runner = CliRunner()
@@ -942,12 +1463,18 @@ def test_cli_roommem_fake_llm_writes_reports(tmp_path, rooms_dir):
             "--arm",
             "raw",
             "--arm",
+            "raw_project",
+            "--arm",
             "oracle",
             "--arm",
             "curated",
             "--fake-llm",
             "--curator-window",
             "2",
+            "--price-in-per-mtok",
+            "1.0",
+            "--price-out-per-mtok",
+            "2.0",
             "--out",
             str(out_dir),
         ],
@@ -955,6 +1482,7 @@ def test_cli_roommem_fake_llm_writes_reports(tmp_path, rooms_dir):
 
     assert result.exit_code == 0, result.output
     assert (out_dir / "results.jsonl").exists()
+    assert (out_dir / "memories.jsonl").exists()
     assert (out_dir / "write_side.json").exists()
     assert (out_dir / "summary.json").exists()
     summary_md = (out_dir / "summary.md").read_text(encoding="utf-8")
@@ -962,8 +1490,8 @@ def test_cli_roommem_fake_llm_writes_reports(tmp_path, rooms_dir):
     assert "### Curator counters" in summary_md
     assert LIMITATIONS_ZH in summary_md
     rows = _read_results(out_dir)
-    assert len(rows) == 12
-    assert {row["arm"] for row in rows} == {"raw", "oracle", "curated"}
+    assert len(rows) == 16
+    assert {row["arm"] for row in rows} == {"raw", "raw_project", "oracle", "curated"}
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     counters = summary["write_side"]["curated"]["curator_counts"]
     assert counters["windows"] == 5
