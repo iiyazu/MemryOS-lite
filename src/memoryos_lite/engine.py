@@ -20,7 +20,13 @@ from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
 from memoryos_lite.context_composer import V3ContextComposer
-from memoryos_lite.curator import Curator, build_advisory_v2_items, build_curator_llm
+from memoryos_lite.curator import (
+    ADVISORY_SCHEMA_V3,
+    Curator,
+    build_advisory_v2_items,
+    build_advisory_v3_items,
+    build_curator_llm,
+)
 from memoryos_lite.kernel_analyzer import KernelMaintenanceAnalyzer
 from memoryos_lite.module_pack import build_module_pack
 from memoryos_lite.observability import (
@@ -1406,6 +1412,36 @@ class MemoryOSService:
             },
         )
         return pack
+
+    def list_curated_advisories_v3(self, session_id: str) -> dict[str, object]:
+        """Project curated memories into an advisory v3 payload for the host."""
+
+        session = self._require_session(session_id)
+        rows = self.store.list_curated_memories(session_id, limit=32)
+        superseded_ids = sorted({row.supersedes_id for row in rows if row.supersedes_id})
+        superseded_rows = self.store.get_curated_memories_by_ids(superseded_ids)
+        message_ids: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            for source in row.sources:
+                message_id = source.get("message_id")
+                if isinstance(message_id, str) and message_id not in seen:
+                    seen.add(message_id)
+                    message_ids.append(message_id)
+        message_info = self.store.get_message_source_info(message_ids)
+        items = build_advisory_v3_items(
+            rows,
+            superseded_rows,
+            session_scope=session.scope,
+            message_info=message_info,
+        )
+        return {
+            "schema": ADVISORY_SCHEMA_V3,
+            "session_scope": session.scope.model_dump(mode="json")
+            if session.scope is not None
+            else None,
+            "items": items,
+        }
 
     def curator_status(self) -> dict[str, object]:
         """Report curator state without ever exposing provider secrets."""

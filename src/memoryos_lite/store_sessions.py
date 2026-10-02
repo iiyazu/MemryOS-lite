@@ -102,6 +102,29 @@ class SessionStoreMixin:
             )
         return self._message_from_record(record) if record is not None else None
 
+    def get_message_source_info(
+        self, message_ids: list[str]
+    ) -> dict[str, tuple[str | None, str | None]]:
+        """Map message ids to ``(external_id, activity_type)`` for advisories."""
+        if not message_ids:
+            return {}
+        with self.db() as db:
+            records = list(
+                db.scalars(select(MessageRecord).where(MessageRecord.id.in_(message_ids)))
+            )
+        info: dict[str, tuple[str | None, str | None]] = {}
+        for record in records:
+            try:
+                metadata = json.loads(record.metadata_json)
+            except ValueError:
+                metadata = {}
+            activity_type = metadata.get("activity_type") if isinstance(metadata, dict) else None
+            info[record.id] = (
+                record.external_id,
+                activity_type if isinstance(activity_type, str) else None,
+            )
+        return info
+
     @staticmethod
     def _message_from_record(record: MessageRecord) -> Message:
         return Message(

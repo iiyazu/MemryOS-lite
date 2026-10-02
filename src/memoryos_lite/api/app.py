@@ -269,7 +269,8 @@ def advisories(
     """Expose only bounded external-governance candidates to the Room host.
 
     ``version`` omitted or ``1`` keeps the original deterministic v1 response;
-    ``version=2`` serves curated-memory advisories.
+    ``version=2`` serves curated-memory advisories; ``version=3`` serves the
+    scoped curated-memory payload.
     """
 
     try:
@@ -278,6 +279,8 @@ def advisories(
                 "schema": ADVISORY_SCHEMA_V2,
                 "items": service.list_curated_advisories(session_id),
             }
+        if version == 3:
+            return service.list_curated_advisories_v3(session_id)
         if version not in (None, 1):
             raise HTTPException(
                 status_code=400,
