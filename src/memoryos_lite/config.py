@@ -55,7 +55,6 @@ class Settings(BaseSettings):
     memoryos_cache_query_analysis_ttl_s: int = 3600
     memoryos_cache_recall_candidates_ttl_s: int = 300
     memoryos_cache_context_package_ttl_s: int = 300
-    agent_max_tool_turns: int = 10
     qdrant_url: str | None = None
     qdrant_collection: str = "memoryos_pages"
     memoryos_archival_vector_enabled: bool = True
@@ -138,8 +137,15 @@ class Settings(BaseSettings):
     @property
     def resolved_agent_kernel(self) -> str:
         val = self.memoryos_agent_kernel.strip().lower()
-        if val not in {"off", "v1", "external"}:
-            raise ValueError("MEMORYOS_AGENT_KERNEL must be 'off', 'v1', or 'external'")
+        if val not in {"off", "external"}:
+            raise ValueError("MEMORYOS_AGENT_KERNEL must be 'off' or 'external'")
+        return val
+
+    @property
+    def resolved_paging_mode(self) -> str:
+        val = self.memoryos_paging_mode.strip().lower()
+        if val not in {"off", "heuristic", "llm"}:
+            raise ValueError("MEMORYOS_PAGING_MODE must be 'off', 'heuristic', or 'llm'")
         return val
 
     @property

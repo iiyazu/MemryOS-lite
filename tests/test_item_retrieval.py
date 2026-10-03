@@ -30,6 +30,8 @@ def item_service(tmp_path: Path) -> MemoryOSService:
         recent_message_limit=2,
         memoryos_item_extraction=True,
         memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store = create_store(settings)
     store.reset()
@@ -45,6 +47,8 @@ def no_item_service(tmp_path: Path) -> MemoryOSService:
         recent_message_limit=2,
         memoryos_item_extraction=False,
         memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store = create_store(settings)
     store.reset()
@@ -361,6 +365,8 @@ def test_without_items_target_source_not_in_evidence(tmp_path):
         recent_message_limit=2,
         memoryos_item_extraction=False,
         memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store_a = create_store(settings_no_items)
     store_a.reset()
@@ -397,6 +403,8 @@ def test_without_items_target_source_not_in_evidence(tmp_path):
         recent_message_limit=2,
         memoryos_item_extraction=True,
         memoryos_memory_arch="v1",
+        memoryos_recall_pipeline="v1",  # legacy ContextBuilder opt-in
+        memoryos_paging_mode="heuristic",
     )
     store_b = create_store(settings_items)
     store_b.reset()

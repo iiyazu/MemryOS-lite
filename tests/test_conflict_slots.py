@@ -149,10 +149,12 @@ class TestConflictDetectorDoesNotRegress:
 
 @pytest.fixture()
 def supersede_service(tmp_path):
+    # Paging supersede semantics require the heuristic pager.
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
         rot_safe_budget=6,
         recent_message_limit=1,
+        memoryos_paging_mode="heuristic",
     )
     store = create_store(settings)
     store.reset()

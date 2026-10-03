@@ -11,7 +11,7 @@ Current defaults are `MEMORYOS_MEMORY_ARCH=v3`, `MEMORYOS_RECALL_PIPELINE=v2`, `
 - SQLite is authoritative. Page mirrors, trace JSONL, Redis cache, Qdrant indexes, and benchmark reports are derived or experimental.
 - v3 composes core, recall, archival, and recent layers. Source references and bounded context are part of the contract.
 - v2 recall uses episode-first evidence retrieval. `v1` memory and recall paths remain explicit compatibility choices, not defaults.
-- The Agent kernel and LangGraph graph are opt-in experiments, not a production agent runtime.
+- The agent kernel is `off` by default; `external` mode only emits source-attributed maintenance advisories for a host agent. The LangGraph demo graph is an opt-in experiment, not a production agent runtime.
 - The HTTP API is a local prototype surface without complete remote authentication, tenancy, rate limiting, or ownership controls.
 - Optional consumers such as xmuse must use the public loopback HTTP contract; do not couple this package to a consumer repository.
 
@@ -52,7 +52,6 @@ uv run memoryos eval run --case-set hard --baseline memoryos_lite
 - `docs/archive-rag-boundary.md`
 - `docs/known-issues.md`
 - `docs/public-benchmark-diagnosis.md`
-- `docs/agent-answer-diagnostics.md`
 - `docs/agentic-memory-roadmap-zh.md`
 - `docs/implementation-history-summary.md`
 

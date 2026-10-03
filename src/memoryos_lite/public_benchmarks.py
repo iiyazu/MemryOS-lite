@@ -15,29 +15,9 @@ from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.evals import BaselineOutput, _expand_baselines, _run_baseline
 from memoryos_lite.llm_judge import LLMJudge
-from memoryos_lite.public_case_diagnostics import build_case_diagnostics
-from memoryos_lite.public_case_movement import (
-    build_public_case_movement_summary,
-    load_public_case_movement,
-)
-from memoryos_lite.public_maintenance_planner import (
-    EvalGoldSidecar,
-    ModelVisiblePlannerInput,
-    build_maintenance_artifact,
-)
-from memoryos_lite.public_repair_smoke import (
-    archive_artifacts_from_kernel_trace,
-    build_executable_repair_proposal,
-    build_repair_smoke_comparison_summary,
-)
 from memoryos_lite.schemas import EvalCase, Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import (
-    AgentStepRequest,
-    ContextPackageV3,
-    message_to_log_entry,
-)
 
 _REFUSAL_MARKERS = (
     "insufficient retrieved evidence",
@@ -160,17 +140,7 @@ class PublicBenchmarkResult:
     v3_component_token_totals: dict[str, int] = field(default_factory=dict)
     v3_component_drop_counts: dict[str, int] = field(default_factory=dict)
     locomo_neighbor_diagnostics: list[dict[str, Any]] = field(default_factory=list)
-    kernel_trace_events: list[dict[str, Any]] = field(default_factory=list)
-    case_diagnostics: dict[str, Any] = field(default_factory=dict)
     answer_evidence: list[dict[str, Any]] = field(default_factory=list)
-    failure_class: str = "unknown"
-    movement_status: str = "new_case_no_baseline"
-    answer_support_status: str = "unknown"
-    judge_status: str = "unknown"
-    model_visible_planner_input: dict[str, Any] = field(default_factory=dict)
-    eval_gold_sidecar: dict[str, Any] = field(default_factory=dict)
-    maintenance_proposal: dict[str, Any] = field(default_factory=dict)
-    repair_smoke: dict[str, Any] = field(default_factory=dict)
 
     def to_report(self) -> dict[str, object]:
         data = asdict(self)
@@ -204,20 +174,9 @@ def run_public_benchmark(
     llm_answer: bool = False,
     llm_judge: bool = False,
     isolated: bool = True,
-    comparison_report_paths: list[Path] | None = None,
-    repair_smoke_baseline_report_path: Path | None = None,
 ) -> list[PublicBenchmarkResult]:
     expanded_baselines = _expand_baselines(baselines)
-    _validate_repair_smoke_request(
-        settings=settings,
-        benchmark=benchmark,
-        baselines=expanded_baselines,
-        repair_smoke_baseline_report_path=repair_smoke_baseline_report_path,
-    )
     public_cases = load_public_benchmark_cases(benchmark, data_path, limit=limit)
-    comparison = load_public_case_movement(comparison_report_paths or [])
-    repair_smoke_report_rows = _load_repair_smoke_report_rows(repair_smoke_baseline_report_path)
-    repair_smoke_rows = _index_repair_smoke_rows(repair_smoke_report_rows)
     provider_errors: list[dict[str, str]] = []
     answerer = None
     if llm_answer:
@@ -288,21 +247,13 @@ def run_public_benchmark(
     for public_case in public_cases:
         for baseline in expanded_baselines:
             start = time.perf_counter()
-            pre_context_hook = _repair_smoke_pre_context_hook(
-                repair_smoke_rows.get((public_case.benchmark, baseline, public_case.case.case_id))
-            )
-            baseline_kwargs: dict[str, Any] = {
-                "budget_override": run_settings.rot_safe_budget,
-            }
-            if pre_context_hook is not None:
-                baseline_kwargs["pre_context_hook"] = pre_context_hook
             output = _run_baseline(
                 baseline,
                 public_case.case,
                 public_case.messages,
                 service,
                 run_settings,
-                **baseline_kwargs,
+                budget_override=run_settings.rot_safe_budget,
             )
             answer_evidence = _answer_evidence_from_output(output)
             answer = _public_projected_answer_with_citations(output.answer, output.sources)
@@ -362,8 +313,6 @@ def run_public_benchmark(
             item_metrics = _extract_item_metrics(
                 store, actual_session_id, public_case.expected_source_ids
             )
-            comparison_key = (public_case.benchmark, baseline, public_case.case.case_id)
-            baseline_case = comparison.get(comparison_key)
             results.append(
                 _to_public_result(
                     public_case,
@@ -379,13 +328,6 @@ def run_public_benchmark(
                     latency_ms,
                     item_metrics,
                     answer_evidence=answer_evidence,
-                    baseline_verdict=(baseline_case.verdict if baseline_case is not None else None),
-                    movement_baseline_source=(
-                        baseline_case.source if baseline_case is not None else None
-                    ),
-                    baseline_source_metrics=(
-                        baseline_case.source_metrics() if baseline_case is not None else None
-                    ),
                 )
             )
         # Collect source mapping before store resets for next case
@@ -408,34 +350,6 @@ def run_public_benchmark(
         json.dumps(report_rows, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    if comparison_report_paths:
-        movement_summary_path = report_dir / f"{run_id}_{benchmark.lower()}_movement_summary.json"
-        movement_summary = build_public_case_movement_summary(report_rows)
-        movement_summary.update(
-            {
-                "comparison_report_paths": [str(path) for path in comparison_report_paths],
-                "llm_answer_requested": llm_answer,
-                "llm_judge_requested": llm_judge,
-                "provider_errors": provider_errors,
-            }
-        )
-        movement_summary_path.write_text(
-            json.dumps(movement_summary, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    if repair_smoke_baseline_report_path is not None:
-        summary_path = report_dir / f"{run_id}_{benchmark.lower()}_repair_smoke_summary.json"
-        summary = build_repair_smoke_comparison_summary(
-            repair_smoke_report_rows,
-            [result.to_report() for result in results],
-            llm_answer=llm_answer,
-            llm_judge=llm_judge,
-            provider_errors=provider_errors,
-        )
-        summary_path.write_text(
-            json.dumps(summary, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
     return results
 
 
@@ -444,33 +358,6 @@ def _public_embedding_provider(settings: Settings) -> str:
     if provider == "auto":
         return "fastembed"
     return settings.memoryos_embedding_provider
-
-
-def _validate_repair_smoke_request(
-    *,
-    settings: Settings,
-    benchmark: str,
-    baselines: list[str],
-    repair_smoke_baseline_report_path: Path | None,
-) -> None:
-    if repair_smoke_baseline_report_path is None:
-        return
-    if settings.resolved_agent_kernel != "v1":
-        raise ValueError("repair smoke requires MEMORYOS_AGENT_KERNEL=v1")
-    if benchmark.strip().lower() != "locomo":
-        raise ValueError("repair smoke requires benchmark locomo")
-    if settings.resolved_memory_arch != "v3":
-        raise ValueError("repair smoke requires MEMORYOS_MEMORY_ARCH=v3")
-    if baselines != ["memoryos_lite"]:
-        raise ValueError("repair smoke requires expanded baseline memoryos_lite")
-
-
-def _load_repair_smoke_report_rows(
-    report_path: Path | None,
-) -> list[dict[str, Any]]:
-    if report_path is None:
-        return []
-    return _load_partial_report_rows(report_path)
 
 
 def _load_partial_report_rows(report_path: Path) -> list[dict[str, Any]]:
@@ -496,143 +383,6 @@ def _public_result_from_report_row(row: dict[str, Any]) -> PublicBenchmarkResult
     payload = dict(row)
     payload.pop("pass", None)
     return PublicBenchmarkResult(**payload)
-
-
-def _index_repair_smoke_rows(
-    rows: list[dict[str, Any]],
-) -> dict[tuple[str, str, str], dict[str, Any]]:
-    keyed_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for row in rows:
-        benchmark = row.get("benchmark")
-        baseline = row.get("baseline")
-        case_id = row.get("case_id")
-        if isinstance(benchmark, str) and isinstance(baseline, str) and isinstance(case_id, str):
-            keyed_rows[(benchmark, baseline, case_id)] = row
-    return keyed_rows
-
-
-def _repair_smoke_pre_context_hook(row: dict[str, Any] | None):
-    if row is None:
-        return None
-
-    def hook(
-        service: MemoryOSService,
-        case: EvalCase,
-        messages: list[Message],
-        source_session: Any,
-        context_session: Any,
-    ) -> dict[str, object]:
-        aliases = _repair_source_aliases(row)
-        proposal = build_executable_repair_proposal(row, source_id_aliases=aliases)
-        metadata: dict[str, object] = {
-            "enabled": True,
-            "executable": proposal.executable,
-            "denial_reason": proposal.denial_reason,
-            "data_dir": str(service.settings.data_dir),
-            "aliased_source_ids": list(aliases.values()),
-            "archive_artifacts": [],
-            "executed_tool_names": [],
-            "kernel_trace_events": [],
-        }
-        if not proposal.executable or proposal.tool_request is None:
-            return metadata
-        if service.agent_kernel is None:
-            metadata["denial_reason"] = "agent kernel is not enabled"
-            return metadata
-
-        tool_request = proposal.tool_request.model_copy(update={"session_id": context_session.id})
-        step_request = AgentStepRequest(
-            session_id=context_session.id,
-            input_messages=[
-                message_to_log_entry(message)
-                for message in service.store.list_messages(source_session.id)
-            ],
-            context=ContextPackageV3(
-                session_id=context_session.id,
-                task=case.question,
-                metadata={"repair_smoke": True},
-            ),
-        )
-        step = service.agent_kernel.run_step(step_request, tool_requests=[tool_request])
-        trace_events = [event.model_dump(mode="json") for event in step.trace]
-        pending_event = next(
-            (
-                event
-                for event in step.trace
-                if event.event_type == "approval_pending" and event.approval_id
-            ),
-            None,
-        )
-        if step.continuation == "pause" and pending_event is not None:
-            resumed = service.agent_kernel.run_step(
-                step_request,
-                tool_requests=[
-                    tool_request.model_copy(
-                        update={
-                            "approval_id": pending_event.approval_id,
-                            "tool_call_id": pending_event.payload["metadata"]["tool_call_id"],
-                        }
-                    )
-                ],
-            )
-            trace_events.extend(event.model_dump(mode="json") for event in resumed.trace)
-
-        metadata["kernel_trace_events"] = trace_events
-        metadata["archive_artifacts"] = archive_artifacts_from_kernel_trace(trace_events)
-        metadata["executed_tool_names"] = [
-            str(event["payload"]["tool_name"])
-            for event in trace_events
-            if event.get("event_type") == "tool_executed"
-            and isinstance(event.get("payload"), dict)
-            and event["payload"].get("ok") is True
-        ]
-        return metadata
-
-    return hook
-
-
-def _repair_source_aliases(row: dict[str, Any]) -> dict[str, str]:
-    source_ids: list[str] = []
-    model_visible = row.get("model_visible_planner_input")
-    if isinstance(model_visible, dict):
-        for key in (
-            "selected_context_ids",
-            "final_context_trace_source_ids",
-            "rendered_evidence_ids",
-            "cited_source_ids",
-            "unsupported_citation_ids",
-        ):
-            values = model_visible.get(key)
-            if isinstance(values, list):
-                source_ids.extend(value for value in values if isinstance(value, str))
-        answer_evidence = model_visible.get("answer_evidence")
-        if isinstance(answer_evidence, list):
-            for item in answer_evidence:
-                if not isinstance(item, dict):
-                    continue
-                evidence_id = item.get("id") or item.get("evidence_id")
-                if isinstance(evidence_id, str):
-                    source_ids.append(evidence_id)
-                nested_source_ids = item.get("source_ids")
-                if isinstance(nested_source_ids, str):
-                    source_ids.append(nested_source_ids)
-                elif isinstance(nested_source_ids, list):
-                    source_ids.extend(
-                        value for value in nested_source_ids if isinstance(value, str)
-                    )
-    proposal = row.get("maintenance_proposal")
-    if isinstance(proposal, dict):
-        source_refs = proposal.get("source_refs")
-        if isinstance(source_refs, list):
-            for source_ref in source_refs:
-                if isinstance(source_ref, dict) and isinstance(source_ref.get("source_id"), str):
-                    source_ids.append(source_ref["source_id"])
-
-    aliases: dict[str, str] = {}
-    for source_id in source_ids:
-        if source_id not in aliases:
-            aliases[source_id] = f"repair_msg_{len(aliases) + 1:03d}"
-    return aliases
 
 
 def _load_longmemeval(data: Any) -> list[PublicBenchmarkCase]:
@@ -899,9 +649,6 @@ def _to_public_result(
     latency_ms: int,
     item_metrics: dict[str, Any] | None = None,
     answer_evidence: list[AnswerEvidence] | None = None,
-    baseline_verdict: str | None = None,
-    movement_baseline_source: str | None = None,
-    baseline_source_metrics: dict[str, bool | None] | None = None,
 ) -> PublicBenchmarkResult:
     source_set = set(source_ids)
     expected_source_set = set(public_case.expected_source_ids)
@@ -948,57 +695,6 @@ def _to_public_result(
         if set(page_source_ids) & expected_source_set
     )
     answer_evidence_payload = _answer_evidence_payload(answer_evidence or [])
-    answer_evidence_ids = _dedupe(
-        [
-            source_id
-            for item in answer_evidence_payload
-            for source_id in _source_ids_from_answer_evidence_payload(item)
-        ]
-    )
-    case_diagnostics = build_case_diagnostics(
-        benchmark=public_case.benchmark,
-        baseline=baseline,
-        case_id=public_case.case.case_id,
-        memory_arch=output.memory_arch,
-        answer=answer,
-        answer_mode=answer_mode,
-        verdict=verdict,
-        reasoning=reasoning,
-        expected_source_ids=public_case.expected_source_ids,
-        retrieval_candidate_source_ids=output.retrieval_candidate_source_ids,
-        episode_candidate_message_ids=output.episode_candidate_message_ids,
-        planned_evidence_message_ids=output.planned_evidence_message_ids,
-        source_ids=source_ids,
-        v3_context=output.v3_context,
-        v3_diagnostics=output.v3_diagnostics,
-        kernel_trace_events=output.kernel_trace_events,
-        answer_evidence_ids=answer_evidence_ids,
-        answer_evidence=answer_evidence_payload,
-        baseline_verdict=baseline_verdict,
-        movement_baseline_source=movement_baseline_source,
-        baseline_source_metrics=baseline_source_metrics,
-    )
-    planner_input = _model_visible_planner_input(
-        question=public_case.case.question,
-        answer=answer,
-        case_diagnostics=case_diagnostics,
-        answer_evidence=answer_evidence_payload,
-        component_drop_counts=output.v3_component_drop_counts,
-        kernel_trace_events=output.kernel_trace_events,
-    )
-    eval_sidecar = EvalGoldSidecar(
-        case_id=public_case.case.case_id,
-        expected_answer=public_case.expected_answer,
-        expected_source_ids=public_case.expected_source_ids,
-        verdict=verdict,
-        judge_status=str(case_diagnostics["judge_status"]),
-        failure_class=str(case_diagnostics["failure_class"]),
-        movement_status=str(case_diagnostics["movement_status"]),
-    )
-    maintenance_artifact = build_maintenance_artifact(
-        model_visible=planner_input,
-        eval_sidecar=eval_sidecar,
-    )
     return PublicBenchmarkResult(
         benchmark=public_case.benchmark,
         baseline=baseline,
@@ -1099,84 +795,8 @@ def _to_public_result(
         v3_component_token_totals=output.v3_component_token_totals,
         v3_component_drop_counts=output.v3_component_drop_counts,
         locomo_neighbor_diagnostics=output.locomo_neighbor_diagnostics,
-        kernel_trace_events=output.kernel_trace_events,
-        case_diagnostics=case_diagnostics,
         answer_evidence=answer_evidence_payload,
-        failure_class=str(case_diagnostics["failure_class"]),
-        movement_status=str(case_diagnostics["movement_status"]),
-        answer_support_status=str(case_diagnostics["answer_support_status"]),
-        judge_status=str(case_diagnostics["judge_status"]),
-        model_visible_planner_input=planner_input.model_dump(mode="json"),
-        eval_gold_sidecar=eval_sidecar.model_dump(mode="json"),
-        maintenance_proposal=maintenance_artifact.proposal.model_dump(mode="json"),
-        repair_smoke=_repair_smoke_report(output.repair_smoke),
     )
-
-
-def _repair_smoke_report(repair_smoke: dict[str, object]) -> dict[str, object]:
-    if repair_smoke:
-        return repair_smoke
-    return {
-        "enabled": False,
-        "executable": False,
-        "denial_reason": "repair smoke baseline report not provided",
-        "aliased_source_ids": [],
-        "archive_artifacts": [],
-        "executed_tool_names": [],
-        "kernel_trace_events": [],
-    }
-
-
-def _model_visible_planner_input(
-    *,
-    question: str,
-    answer: str,
-    case_diagnostics: dict[str, Any],
-    answer_evidence: list[dict[str, Any]],
-    component_drop_counts: dict[str, int],
-    kernel_trace_events: list[dict[str, Any]],
-) -> ModelVisiblePlannerInput:
-    safe_drop_counts = _int_mapping(
-        component_drop_counts or case_diagnostics.get("component_drop_counts")
-    )
-    return ModelVisiblePlannerInput(
-        question=question,
-        rendered_answer=answer,
-        selected_context_ids=_string_list(case_diagnostics.get("selected_context_ids")),
-        final_context_trace_source_ids=_string_list(
-            case_diagnostics.get("final_context_trace_source_ids")
-        ),
-        rendered_evidence_ids=_string_list(case_diagnostics.get("rendered_evidence_ids")),
-        answer_evidence=answer_evidence,
-        cited_source_ids=_string_list(case_diagnostics.get("cited_source_ids")),
-        unsupported_citation_ids=_string_list(case_diagnostics.get("unsupported_citation_ids")),
-        citation_contract_status=str(case_diagnostics.get("citation_contract_status") or "unknown"),
-        archival_eligibility=_dict_value(case_diagnostics.get("archival_eligibility")),
-        component_drop_counts=safe_drop_counts,
-        kernel_trace_events=kernel_trace_events,
-    )
-
-
-def _string_list(value: Any) -> list[str]:
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, str)]
-    if isinstance(value, str):
-        return [value]
-    return []
-
-
-def _dict_value(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _int_mapping(value: Any) -> dict[str, int]:
-    if not isinstance(value, dict):
-        return {}
-    return {
-        str(key): item
-        for key, item in value.items()
-        if isinstance(item, int) and not isinstance(item, bool)
-    }
 
 
 def _role_from_text(value: str) -> Role:
@@ -1266,19 +886,6 @@ def _answer_evidence_payload(items: list[AnswerEvidence]) -> list[dict[str, Any]
         }
         for item in items
     ]
-
-
-def _source_ids_from_answer_evidence_payload(item: dict[str, Any]) -> list[str]:
-    ids: list[str] = []
-    evidence_id = item.get("evidence_id")
-    if isinstance(evidence_id, str):
-        ids.append(evidence_id)
-    source_ids = item.get("source_ids")
-    if isinstance(source_ids, str):
-        ids.append(source_ids)
-    elif isinstance(source_ids, list):
-        ids.extend(source_id for source_id in source_ids if isinstance(source_id, str))
-    return ids
 
 
 def _public_projected_answer_with_citations(answer: str, sources: dict[str, str]) -> str:

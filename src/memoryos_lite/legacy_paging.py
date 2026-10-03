@@ -1,8 +1,8 @@
 """Legacy paging system (v1/v2).
 
 This module contains the page/item architecture that is being superseded by
-the v3 core-recall-archive + kernel agent system. Preserved as optional
-fallback when memoryos_paging_mode != "off".
+the v3 core-recall-archive system. Preserved as optional fallback when
+memoryos_paging_mode is "heuristic" or "llm"; "off" disables paging entirely.
 """
 
 from __future__ import annotations
@@ -247,9 +247,9 @@ class PagingAgent:
         )
         if not page_messages:
             return [], "none", None
-        mode = self.settings.memoryos_paging_mode.strip().lower()
-        if mode not in ("heuristic", "llm"):
-            mode = "heuristic"
+        mode = self.settings.resolved_paging_mode
+        if mode == "off":
+            return [], "off", None
         if self.llm_client is not None and mode == "llm":
             drafts, had_fallback, fallback_error = self._agentic_drafts(
                 session_id, page_messages, existing_pages or []

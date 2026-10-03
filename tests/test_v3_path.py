@@ -18,9 +18,7 @@ from memoryos_lite.store import create_store
 
 
 @pytest.fixture()
-def v3_service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MemoryOSService:
-    monkeypatch.delenv("MEMORYOS_PAGING_MODE", raising=False)
-    monkeypatch.delenv("MEMORYOS_RECALL_PIPELINE", raising=False)
+def v3_service(tmp_path: Path) -> MemoryOSService:
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
         rot_safe_budget=12,
@@ -44,6 +42,18 @@ def test_ingest_does_not_auto_page(v3_service):
 
     pages = v3_service.store.list_pages(session.id)
     assert pages == []
+
+
+def test_page_returns_none_and_traces_skip_when_paging_off(v3_service):
+    session = v3_service.create_session("test")
+    for i in range(10):
+        v3_service.ingest(session.id, MessageCreate(role=Role.USER, content=f"msg {i}"))
+
+    assert v3_service.page(session.id) is None
+    assert v3_service.store.list_pages(session.id) == []
+    skips = [t for t in v3_service.store.list_traces(session.id) if t.event_type == "page_skipped"]
+    assert skips
+    assert skips[-1].payload["reason"] == "paging_off"
 
 
 def test_ingest_creates_episodes(v3_service):

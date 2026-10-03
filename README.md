@@ -11,7 +11,7 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 
 - 默认 `MEMORYOS_MEMORY_ARCH=v3`，使用 layered context composer；`v1` 仅作为显式兼容路径。
 - 默认 `MEMORYOS_RECALL_PIPELINE=v2`，使用 episode-first evidence recall；可显式选择 `v1`。
-- Agent kernel 默认关闭；`MEMORYOS_AGENT_KERNEL=v1` 启用实验路径，`external` 只产出带来源的维护建议（`/sessions/{id}/advisories`），由宿主决定是否采纳。
+- Agent kernel 默认关闭；`MEMORYOS_AGENT_KERNEL=external` 时本服务只产出带来源的维护建议（`/sessions/{id}/advisories`），由宿主 agent 决定是否采纳。
 - SQLite 是权威存储；page/trace 文件和可选 Redis/Qdrant 都是派生或实验能力。
 - 以新鲜命令结果而不是文档中的历史通过数判断状态。
 
@@ -42,11 +42,10 @@ uv run --no-sync memoryos api --reload
 ```bash
 uv sync --frozen --no-dev --extra remote
 uv run --no-sync memoryos demo run
-uv run --no-sync memoryos demo agent
 ```
 
-`demo agent` 使用确定性 scripted 路径，不需要 API key，但仍依赖可选的 LangGraph runtime。
-缺少可选依赖时命令返回稳定 capability error；不会改变 SQLite authority 或离线 API 行为。
+`demo run` 依赖可选的 LangGraph runtime；缺少可选依赖时命令返回稳定 capability
+error，不会改变 SQLite authority 或离线 API 行为。
 
 ### 分发边界
 
@@ -82,7 +81,7 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 | `DATA_DIR` | `.memoryos` | SQLite 与派生调试文件目录 |
 | `MEMORYOS_MEMORY_ARCH` | `v3` | `v3` 或兼容 `v1` composer |
 | `MEMORYOS_RECALL_PIPELINE` | `v2` | `v2` 或兼容 `v1` recall |
-| `MEMORYOS_AGENT_KERNEL` | `off` | `off` 或实验 `v1` kernel |
+| `MEMORYOS_AGENT_KERNEL` | `off` | `off`，或 `external` 维护建议模式 |
 | `MEMORYOS_PAGING_MODE` | `off` | 显式启用分页策略 |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | unset | 可选真实模型提供方 |
 | `QDRANT_URL` | unset | 可选向量检索后端 |
@@ -108,7 +107,6 @@ uv run memoryos eval run --case-set hard --baseline memoryos_lite
 - `docs/archive-rag-boundary.md`：archive/source-proof 边界。
 - `docs/known-issues.md`：当前限制。
 - `docs/public-benchmark-diagnosis.md`：评估口径。
-- `docs/agent-answer-diagnostics.md`：确定性回答诊断。
 - `docs/agentic-memory-roadmap-zh.md`：当前研究路线。
 - `docs/implementation-history-summary.md`：已收束的历史决策。
 

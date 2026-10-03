@@ -37,7 +37,8 @@ def test_context_builder_first_multi_evidence_matching_is_narrow(service):
     assert service.context_builder._needs_multi_evidence("What did I think at first?") is False
 
 
-def test_context_builder_retrieves_relevant_page(service):
+def test_context_builder_retrieves_relevant_page(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("test")
     service.settings.rot_safe_budget = 1
     for content in [
@@ -275,7 +276,8 @@ def test_explicit_v1_build_context_excludes_v3_component_accounting(tmp_path):
     assert "locomo_neighbor_diagnostics" not in context.metadata
 
 
-def test_context_builder_deduplicates_pinned_core_pages_by_id(service):
+def test_context_builder_deduplicates_pinned_core_pages_by_id(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("test")
     summary = "用户长期稳定方案是 MemoryOS Lite，并且关注 source attribution。"
     core_page = MemoryPage(
@@ -314,7 +316,8 @@ def test_context_builder_deduplicates_pinned_core_pages_by_id(service):
     assert retrieved["estimated_tokens"] == page_tokens
 
 
-def test_context_builder_audits_core_profile_dropped_over_budget(service):
+def test_context_builder_audits_core_profile_dropped_over_budget(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("test")
     summary = "用户长期稳定方案是 MemoryOS Lite。" * 80
     core_page = MemoryPage(
@@ -349,7 +352,8 @@ def test_context_builder_audits_core_profile_dropped_over_budget(service):
     assert context_built.payload["dropped_pages"] == [dropped.model_dump()]
 
 
-def test_context_builder_uses_raw_evidence_when_page_is_over_budget(service):
+def test_context_builder_uses_raw_evidence_when_page_is_over_budget(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("test")
     evidence_message = service.ingest(
         session.id,
@@ -388,7 +392,8 @@ def test_context_builder_uses_raw_evidence_when_page_is_over_budget(service):
     assert context_built.payload["retrieved_evidence"][0]["message_id"] == evidence_message.id
 
 
-def test_context_builder_can_recover_raw_evidence_from_superseded_page(service):
+def test_context_builder_can_recover_raw_evidence_from_superseded_page(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("superseded evidence")
     evidence_message = service.ingest(
         session.id,
@@ -436,7 +441,8 @@ def test_context_builder_can_recover_raw_evidence_from_superseded_page(service):
     assert context_built.payload["retrieved_evidence"][0]["superseded"] is True
 
 
-def test_context_builder_reserves_budget_for_raw_evidence_before_core_pages(service):
+def test_context_builder_reserves_budget_for_raw_evidence_before_core_pages(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("evidence reserve")
     service.settings.memoryos_evidence_reserve_ratio = 0.5
     service.settings.memoryos_evidence_reserve_tokens = 64
@@ -488,7 +494,8 @@ def test_context_builder_reserves_budget_for_raw_evidence_before_core_pages(serv
     assert any(item.reason == "core_profile_exceeds_budget" for item in context.dropped_pages)
 
 
-def test_context_builder_compacts_long_raw_evidence_to_fit_budget(service):
+def test_context_builder_compacts_long_raw_evidence_to_fit_budget(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("test")
     service.settings.memoryos_evidence_max_tokens = 32
     evidence_message = service.ingest(
@@ -525,7 +532,8 @@ def test_context_builder_compacts_long_raw_evidence_to_fit_budget(service):
     assert evidence.estimated_tokens < evidence_message.token_count
 
 
-def test_context_builder_loads_relevant_smaller_page_under_fixed_budget(service):
+def test_context_builder_loads_relevant_smaller_page_under_fixed_budget(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("small page budget")
     service.settings.recent_message_limit = 1
     service.settings.memoryos_page_window_max_messages = 2
@@ -566,7 +574,8 @@ def test_context_builder_loads_relevant_smaller_page_under_fixed_budget(service)
     assert relevant_page.id not in {item.page_id for item in context.dropped_pages}
 
 
-def test_context_builder_drops_recent_messages_over_budget(service):
+def test_context_builder_drops_recent_messages_over_budget(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("test")
     for index in range(5):
         service.ingest(
@@ -582,7 +591,8 @@ def test_context_builder_drops_recent_messages_over_budget(service):
     assert context_built.payload["dropped_recent_messages"] == context.dropped_recent_messages
 
 
-def test_context_builder_counts_over_budget_task_truthfully(service):
+def test_context_builder_counts_over_budget_task_truthfully(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("test")
     service.ingest(session.id, MessageCreate(role=Role.USER, content="应该被预算丢弃的消息"))
     task = "超长任务 " * 200
@@ -601,7 +611,8 @@ def test_context_builder_counts_over_budget_task_truthfully(service):
     assert context_built.payload["task_truncated"] is True
 
 
-def test_patch_verifier_rejects_missing_old_text(service):
+def test_patch_verifier_rejects_missing_old_text(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     session = service.create_session("test")
     service.ingest(session.id, MessageCreate(role=Role.USER, content="用户想做 MemoryOS Lite。"))
     service.ingest(session.id, MessageCreate(role=Role.USER, content="技术栈选择 LangGraph。"))

@@ -1,9 +1,8 @@
 import json
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
-from typing import Any
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
@@ -15,19 +14,8 @@ from memoryos_lite.schemas import EvalCase, MemoryPage, Message, MessageCreate, 
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
-from memoryos_lite.v3_contracts import (
-    AgentStepRequest,
-    ContextPackageV3,
-    ToolExecutionRequest,
-    message_to_log_entry,
-)
 
 CASE_COUNT = 8
-
-PreContextHook = Callable[
-    [MemoryOSService, EvalCase, list[Message], Any, Any],
-    dict[str, object],
-]
 
 
 @dataclass
@@ -121,8 +109,6 @@ class BaselineOutput:
     v3_component_token_totals: dict[str, int] = field(default_factory=dict)
     v3_component_drop_counts: dict[str, int] = field(default_factory=dict)
     locomo_neighbor_diagnostics: list[dict[str, object]] = field(default_factory=list)
-    kernel_trace_events: list[dict[str, object]] = field(default_factory=list)
-    repair_smoke: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -446,10 +432,6 @@ def run_eval(
     return results
 
 
-def run_demo_eval(settings: Settings) -> list[EvalResult]:
-    return run_eval(settings, run_id="demo_report", baselines=["all"], isolated=True)
-
-
 def run_eval_llm(
     settings: Settings,
     run_id: str,
@@ -518,7 +500,6 @@ def _run_baseline(
     service: MemoryOSService,
     settings: Settings,
     budget_override: int | None = None,
-    pre_context_hook: PreContextHook | None = None,
 ) -> BaselineOutput:
     tokenizer = TokenEstimator()
     budget = budget_override if budget_override is not None else 90
@@ -588,17 +569,6 @@ def _run_baseline(
                     message.model_copy(update={"session_id": source_session.id})
                 )
             service.page(source_session.id)
-            repair_smoke = (
-                pre_context_hook(
-                    service,
-                    case,
-                    messages,
-                    source_session,
-                    context_session,
-                )
-                if pre_context_hook is not None
-                else {}
-            )
             all_pages = service.store.list_pages(source_session.id)
             candidate_pages = [page for page in all_pages if page.superseded_by is None]
             candidate_top_k = 5
@@ -757,64 +727,6 @@ def _run_baseline(
         v3_component_token_totals = context.metadata.get("v3_component_token_totals")
         v3_component_drop_counts = context.metadata.get("v3_component_drop_counts")
         locomo_neighbor_diagnostics = context.metadata.get("locomo_neighbor_diagnostics")
-        kernel_trace_events: list[dict[str, object]] = []
-        v3_context_raw = context.metadata.get("v3_context")
-        if (
-            service.agent_kernel is not None
-            and isinstance(v3_context_raw, dict)
-            and settings.resolved_memory_arch == "v3"
-        ):
-            v3_context_package = ContextPackageV3.model_validate(v3_context_raw)
-            tool_request = ToolExecutionRequest(
-                session_id=context_session.id,
-                tool_name="archive_write",
-                arguments={
-                    "content": f"Benchmark question reviewed: {case.question}",
-                    "memory_type": "fact",
-                    "reason": "public benchmark kernel probe",
-                    "source": "public_benchmark_kernel_probe",
-                },
-            )
-            step = service.agent_kernel.run_step(
-                AgentStepRequest(
-                    session_id=context_session.id,
-                    input_messages=[
-                        message_to_log_entry(message) for message in context.recent_messages
-                    ],
-                    context=v3_context_package,
-                ),
-                tool_requests=[tool_request],
-            )
-            kernel_trace_events = [event.model_dump(mode="json") for event in step.trace]
-            pending_event = next(
-                (
-                    event
-                    for event in step.trace
-                    if event.event_type == "approval_pending" and event.approval_id
-                ),
-                None,
-            )
-            if step.continuation == "pause" and pending_event is not None:
-                approval_id = pending_event.approval_id
-                tool_call_id = pending_event.payload["metadata"]["tool_call_id"]
-                resumed = service.agent_kernel.run_step(
-                    AgentStepRequest(
-                        session_id=context_session.id,
-                        input_messages=[
-                            message_to_log_entry(message) for message in context.recent_messages
-                        ],
-                        context=v3_context_package,
-                    ),
-                    tool_requests=[
-                        tool_request.model_copy(
-                            update={
-                                "approval_id": approval_id,
-                                "tool_call_id": tool_call_id,
-                            }
-                        )
-                    ],
-                )
-                kernel_trace_events.extend(event.model_dump(mode="json") for event in resumed.trace)
         return _baseline_from_evidence(
             case.question,
             memory_evidence,
@@ -906,8 +818,6 @@ def _run_baseline(
                 if isinstance(locomo_neighbor_diagnostics, list)
                 else None
             ),
-            kernel_trace_events=kernel_trace_events,
-            repair_smoke=repair_smoke,
         )
     raise ValueError(f"unknown baseline: {baseline}")
 
@@ -1030,8 +940,6 @@ def _baseline_from_evidence(
     v3_component_token_totals: dict[str, int] | None = None,
     v3_component_drop_counts: dict[str, int] | None = None,
     locomo_neighbor_diagnostics: list[dict[str, object]] | None = None,
-    kernel_trace_events: list[dict[str, object]] | None = None,
-    repair_smoke: dict[str, object] | None = None,
 ) -> BaselineOutput:
     selected = _select_evidence(question, evidence)
     sources: dict[str, str] = {}
@@ -1086,8 +994,6 @@ def _baseline_from_evidence(
         v3_component_token_totals=v3_component_token_totals or {},
         v3_component_drop_counts=v3_component_drop_counts or {},
         locomo_neighbor_diagnostics=locomo_neighbor_diagnostics or [],
-        kernel_trace_events=kernel_trace_events or [],
-        repair_smoke=repair_smoke or {},
     )
 
 

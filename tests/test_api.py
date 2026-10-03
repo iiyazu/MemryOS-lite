@@ -42,7 +42,30 @@ def test_api_smoke(service):
         app.dependency_overrides.clear()
 
 
-def test_api_build_context_passes_include_global_core(service):
+def test_api_page_returns_null_when_paging_off(service):
+    app.dependency_overrides[get_service] = lambda: service
+    client = TestClient(app)
+    try:
+        response = client.post("/sessions", json={"title": "paging-off"})
+        session_id = response.json()["id"]
+        for content in ("first fact", "second fact", "third fact"):
+            response = client.post(
+                f"/sessions/{session_id}/ingest",
+                json={"role": Role.USER.value, "content": content},
+            )
+            assert response.status_code == 200
+
+        response = client.post(f"/sessions/{session_id}/page")
+
+        assert response.status_code == 200
+        assert response.json() is None
+        assert service.store.list_pages(session_id) == []
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_build_context_passes_include_global_core(legacy_service):
+    service = legacy_service  # legacy ContextBuilder opt-in
     source = service.create_session("profile-source")
     summary = "用户职业背景是后端工程师，专注分布式系统。"
     service.store.save_page(

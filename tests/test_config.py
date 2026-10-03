@@ -21,9 +21,10 @@ def test_redis_cache_config_preserves_memory_defaults() -> None:
 
     assert settings.resolved_memory_arch == "v3"
     assert Settings(memoryos_memory_arch="v1").resolved_memory_arch == "v1"
-    assert settings.resolved_recall_pipeline == "v1"
-    assert Settings(memoryos_recall_pipeline="v2").resolved_recall_pipeline == "v2"
+    assert settings.resolved_recall_pipeline == "v2"
+    assert Settings(memoryos_recall_pipeline="v1").resolved_recall_pipeline == "v1"
     assert settings.resolved_agent_kernel == "off"
+    assert settings.resolved_paging_mode == "off"
 
 
 def test_redis_dependency_is_optional_extra() -> None:

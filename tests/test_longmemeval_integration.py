@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from memoryos_lite.config import Settings
-from memoryos_lite.diagnostic_report import FAILURE_MODES, generate_report
 from memoryos_lite.longmemeval_manifest import create_manifest, load_manifest
 from memoryos_lite.public_benchmarks import run_public_benchmark
 
@@ -98,10 +97,14 @@ def test_full_pipeline(synthetic_longmemeval: Path, tmp_path: Path) -> None:
     mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
     assert len(mapping) > 0, "source_mapping.json must not be empty"
 
-    # 5. Generate report and verify structure
-    report = generate_report(results)
-    assert report["total_cases"] == 5
-    assert 0.0 <= report["source_hit_rate"] <= 1.0
-    assert "failure_breakdown" in report
-    for mode in report["failure_breakdown"]:
-        assert mode in FAILURE_MODES, f"Unknown failure mode: {mode!r}"
+    # 5. Verify the persisted report rows are well-formed
+    report_path = tmp_path / ".memoryos" / "evals" / "integration_test_longmemeval.json"
+    assert report_path.exists(), "benchmark report was not written"
+    report_rows = json.loads(report_path.read_text(encoding="utf-8"))
+    assert len(report_rows) == 5
+    for row in report_rows:
+        assert row["benchmark"] == "longmemeval"
+        assert row["baseline"] == "memoryos_lite"
+        assert row["verdict"] in {"pass", "fail", "error"}
+        assert isinstance(row["pass"], bool)
+        assert row["source_hit"] is not None
