@@ -105,9 +105,32 @@ def speaker_label(message: Message) -> tuple[str, str]:
     return message.role.value, speaker_kind
 
 
+#: A gate failure log is shown to the LLM as head + tail; quotes are still
+#: grounded against the full stored text.
+GATE_LOG_HEAD_CHARS = 1_500
+GATE_LOG_TAIL_CHARS = 2_500
+
+
+def _bounded_gate_log(content: str) -> str:
+    if len(content) <= GATE_LOG_HEAD_CHARS + GATE_LOG_TAIL_CHARS:
+        return content
+    omitted = len(content) - GATE_LOG_HEAD_CHARS - GATE_LOG_TAIL_CHARS
+    return (
+        f"{content[:GATE_LOG_HEAD_CHARS]}\n[... {omitted} characters of the log omitted ...]\n"
+        f"{content[-GATE_LOG_TAIL_CHARS:]}"
+    )
+
+
 def render_message(message: Message) -> str:
     label, speaker_kind = speaker_label(message)
-    return f"[{message.id}] {label} ({speaker_kind}): {message.content}"
+    activity_type = message.metadata.get("activity_type")
+    if not isinstance(activity_type, str):
+        # Untyped messages render exactly as before (prompt caches stay valid).
+        return f"[{message.id}] {label} ({speaker_kind}): {message.content}"
+    content = (
+        _bounded_gate_log(message.content) if activity_type == "gate_failure" else message.content
+    )
+    return f"[{message.id}] {label} ({speaker_kind}, {activity_type}): {content}"
 
 
 def render_active_memories(memories: list[CuratedMemoryRow]) -> str:
@@ -122,6 +145,13 @@ def render_active_memories(memories: list[CuratedMemoryRow]) -> str:
 ACTIVE_HEADER_LLM_SUPERSEDE = (
     'Active memories (reconcile against these; "supersedes" must use an id from this list):'
 )
+MODULE_NOTICE = (
+    "This session is the long-term memory of module {module_id}, kept for the agent that "
+    "owns it. Messages are tagged with their activity type. Record decisions still in force "
+    "for this module, and lessons: a lesson is a concrete mistake to avoid and must quote at "
+    "least one review_objection or gate_failure message. Contract revisions are tracked "
+    "separately; do not restate contract text as memories."
+)
 ACTIVE_HEADER_DETERMINISTIC = (
     "Active memories (reuse a topic_key from this list for the same subject):"
 )
@@ -133,6 +163,7 @@ def build_user_prompt(
     window_messages: list[Message],
     active_memories: list[CuratedMemoryRow],
     active_header: str = ACTIVE_HEADER_LLM_SUPERSEDE,
+    module_id: str | None = None,
 ) -> str:
     context_block = (
         "\n".join(render_message(message) for message in context_messages)
@@ -140,8 +171,11 @@ def build_user_prompt(
         else "(none)"
     )
     window_block = "\n".join(render_message(message) for message in window_messages)
+    module_block = (
+        MODULE_NOTICE.format(module_id=module_id) + "\n\n" if module_id is not None else ""
+    )
     return (
-        f"{active_header}\n"
+        f"{module_block}{active_header}\n"
         f"{render_active_memories(active_memories)}\n\n"
         "Earlier context (read-only; you may quote these messages):\n"
         f"{context_block}\n\n"

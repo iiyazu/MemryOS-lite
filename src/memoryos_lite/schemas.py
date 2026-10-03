@@ -95,10 +95,69 @@ class Episode(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+#: Activity types a consumer may tag on ingested messages (``memoryos_activity/v1``).
+ACTIVITY_TYPES: tuple[str, ...] = (
+    "message",
+    "review_objection",
+    "gate_failure",
+    "contract_revision",
+)
+#: Activity types a lesson in a module session must quote.
+LESSON_SOURCE_ACTIVITY_TYPES: tuple[str, ...] = ("review_objection", "gate_failure")
+
+
+class SessionScope(BaseModel):
+    """Consumer-owned scope of a session; MemoryOS stores and echoes it only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["module"]
+    id: str = Field(min_length=1, max_length=255)
+
+
 class Session(BaseModel):
     id: str = Field(default_factory=lambda: new_id("ses"))
     title: str = "Untitled session"
     created_at: datetime = Field(default_factory=utc_now)
+    scope: SessionScope | None = None
+
+
+class ActivityMetadataError(ValueError):
+    """Ingested message metadata violates the ``memoryos_activity/v1`` contract."""
+
+
+def validate_activity_metadata(metadata: dict[str, Any], scope: SessionScope | None) -> None:
+    """Check ``memoryos_activity/v1`` fields.
+
+    Any session rejects an unknown ``activity_type``.  A module session also
+    requires ``activity_type``, ``module_id`` equal to the session scope id, a
+    non-negative integer ``activity_seq``, and for ``contract_revision`` a
+    ``contract_id`` and a positive integer ``contract_version``.
+    """
+
+    activity_type = metadata.get("activity_type")
+    if activity_type is not None and activity_type not in ACTIVITY_TYPES:
+        raise ActivityMetadataError(
+            f"activity_type {activity_type!r} is not one of {ACTIVITY_TYPES}"
+        )
+    if scope is None:
+        return
+    if activity_type is None:
+        raise ActivityMetadataError("module sessions require metadata.activity_type")
+    if metadata.get("module_id") != scope.id:
+        raise ActivityMetadataError("metadata.module_id must equal the session scope id")
+    seq = metadata.get("activity_seq")
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+        raise ActivityMetadataError("module sessions require a non-negative integer activity_seq")
+    if activity_type == "contract_revision":
+        contract_id = metadata.get("contract_id")
+        version = metadata.get("contract_version")
+        if not isinstance(contract_id, str) or not contract_id.strip():
+            raise ActivityMetadataError("contract_revision requires metadata.contract_id")
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise ActivityMetadataError(
+                "contract_revision requires a positive integer metadata.contract_version"
+            )
 
 
 class MemoryPageDraft(BaseModel):
@@ -207,6 +266,7 @@ class BuildContextResponseProfile(StrEnum):
     FULL = "full"
     SOURCE_EVIDENCE_V1 = "source_evidence/v1"
     SOURCE_EVIDENCE_V2 = "source_evidence/v2"
+    MODULE_PACK_V1 = "module_pack/v1"
 
 
 class BuildContextRequest(BaseModel):
@@ -376,6 +436,7 @@ class ArchivePassageListResponse(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     title: str = "Untitled session"
+    scope: SessionScope | None = None
 
 
 class IngestResponse(BaseModel):

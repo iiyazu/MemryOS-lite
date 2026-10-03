@@ -311,6 +311,7 @@ def test_health_advertises_build_context_profiles():
         "full",
         "source_evidence/v1",
         "source_evidence/v2",
+        "module_pack/v1",
     ]
     assert payload["capabilities"]["hybrid"]["lexical"] is True
     assert payload["capabilities"]["hybrid"]["rrf"] is payload["capabilities"]["hybrid"]["semantic"]
@@ -526,7 +527,7 @@ def test_api_advisories_routes_v1_default_and_v2_schema(service):
         ]
         assert len(item["fingerprint"]) == 64
 
-        unsupported = client.get(f"/sessions/{session.id}/advisories", params={"version": 3})
+        unsupported = client.get(f"/sessions/{session.id}/advisories", params={"version": 4})
         assert unsupported.status_code == 400
         assert "unsupported advisories version" in unsupported.json()["detail"]
 

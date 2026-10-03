@@ -13,7 +13,9 @@ from memoryos_lite.middleware import (
     RequestIdMiddleware,
     StructuredLoggingMiddleware,
 )
+from memoryos_lite.module_pack import ModulePackError
 from memoryos_lite.schemas import (
+    ActivityMetadataError,
     ArchiveAttachmentRequest,
     ArchiveAttachmentResponse,
     ArchiveDocumentIngestRequest,
@@ -94,6 +96,7 @@ def health(service: ServiceDep) -> dict[str, object]:
                 BuildContextResponseProfile.FULL.value,
                 BuildContextResponseProfile.SOURCE_EVIDENCE_V1.value,
                 BuildContextResponseProfile.SOURCE_EVIDENCE_V2.value,
+                BuildContextResponseProfile.MODULE_PACK_V1.value,
             ],
             "hybrid": {
                 "lexical": True,
@@ -113,7 +116,7 @@ def create_session(
     request: CreateSessionRequest,
     service: ServiceDep,
 ) -> Session:
-    return service.create_session(request.title)
+    return service.create_session(request.title, scope=request.scope)
 
 
 @app.post("/sessions/{session_id}/ingest", response_model=IngestResponse)
@@ -124,6 +127,8 @@ def ingest(
 ) -> IngestResponse:
     try:
         return service.ingest(session_id, request)
+    except ActivityMetadataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         detail = str(exc)
         raise HTTPException(
@@ -146,6 +151,13 @@ def build_context(
     request: BuildContextRequest,
     service: ServiceDep,
 ):
+    if request.response_profile is BuildContextResponseProfile.MODULE_PACK_V1:
+        try:
+            return service.build_module_pack(session_id, budget=request.budget)
+        except ModulePackError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
         package = service.build_context(
             session_id=session_id,
@@ -257,7 +269,8 @@ def advisories(
     """Expose only bounded external-governance candidates to the Room host.
 
     ``version`` omitted or ``1`` keeps the original deterministic v1 response;
-    ``version=2`` serves curated-memory advisories.
+    ``version=2`` serves curated-memory advisories; ``version=3`` serves the
+    scoped curated-memory payload.
     """
 
     try:
@@ -266,6 +279,8 @@ def advisories(
                 "schema": ADVISORY_SCHEMA_V2,
                 "items": service.list_curated_advisories(session_id),
             }
+        if version == 3:
+            return service.list_curated_advisories_v3(session_id)
         if version not in (None, 1):
             raise HTTPException(
                 status_code=400,

@@ -1,0 +1,86 @@
+{
+  "module_id": "payments",
+  "project": "atlas",
+  "language": "en",
+  "title": "atlas payments frontend module",
+  "participants": [
+    {"id": "human", "kind": "human", "name": "Maya"},
+    {"id": "owner", "kind": "agent", "name": "Payments owner"},
+    {"id": "reviewer", "kind": "agent", "name": "Reviewer"},
+    {"id": "gate", "kind": "infra", "name": "CI gate"}
+  ],
+  "activities": [
+    {"id": "a01", "type": "message", "speaker": "human", "text": "Maya: project atlas needs a payments frontend. React checkout form for cart payment, posts to checkout-api. You own the payments module, please drive it."},
+    {"id": "a02", "type": "message", "speaker": "owner", "text": "Plan: build CheckoutForm.tsx with Stripe Elements, client validation, POST to /checkout on submit. Then add e2e tests for success, decline, and double-submit."},
+    {"id": "a03", "type": "message", "speaker": "human", "text": "Sounds good. Grabbed an oat latte, by the way the office rooftop is open again."},
+    {"id": "a04", "type": "message", "speaker": "owner", "text": "Decision: to keep submit simple I will POST to /checkout directly on every button click with no idempotency key. Double-clicks just send two POSTs."},
+    {"id": "a05", "type": "contract_revision", "speaker": "human", "contract_id": "checkout-api", "contract_version": 1, "text": "checkout-api v1:\nPOST /checkout accepts {cart_id, card_token, amount_cents}.\nOn success returns 200 {order_id, status}.\nstatus is one of {created, failed}.\ncard_token is a single-use Elements token, amount_cents is integer.\nServer recomputes cart total but trusts client amount on tie.\nErrors use 400 for validation, 402 for decline.\nRetry behaviour: client may retry POST on network error with no key."},
+    {"id": "a06", "type": "message", "speaker": "reviewer", "text": "Nit: CheckoutForm looks fine, just rename `btn` to `submitButton` for readability. No functional issue."},
+    {"id": "a07", "type": "review_objection", "speaker": "reviewer", "text": "Objection: CheckoutForm logs the full card PAN and card_token at info level on submit. Do not log raw card PAN anywhere; log only last4 for debugging."},
+    {"id": "a08", "type": "message", "speaker": "owner", "text": "Agreed, fixed logging: redacted PAN and card_token fields, now logs last4 only. Grepped frontend, no other raw card prints."},
+    {"id": "a09", "type": "message", "speaker": "human", "text": "Quick question: should amounts display as $19.99 or 1999 cents in the form? Which format do we show?"},
+    {"id": "a10", "type": "message", "speaker": "owner", "text": "Decision: validate card with Stripe Elements client-side and block submit until elements are complete. Never handle raw PAN in our state, use Elements token only."},
+    {"id": "a11", "type": "message", "speaker": "human", "text": "Hypothetical: what if we skipped React and used a hosted redirect checkout page? Just thinking out loud, not asking to change anything now."},
+    {"id": "a12", "type": "message", "speaker": "owner", "text": "Implemented CheckoutForm submit: onSubmit POSTs {cart_id, card_token, amount_cents} immediately. No Idempotency-Key header yet, no button disable during flight."},
+    {"id": "a13", "type": "gate_failure", "speaker": "gate", "gate_id": "e2e", "text": "$ npx playwright test e2e/checkout.spec.ts --project=chromium\nRunning 8 tests using 2 workers\n  ✓ checkout.spec.ts:12 renders empty cart (1.2s)\n  ✓ checkout.spec.ts:24 validates card number (0.9s)\n  ✓ checkout.spec.ts:31 submits valid payment (2.1s)\n  ✓ checkout.spec.ts:45 shows decline error (1.4s)\n  ✘ checkout.spec.ts:58 double-submit creates single order (3.0s)\nlocators: page.getByRole('button', { name: 'Pay' })\naction: await button.click() x2 with 50ms gap\nrequest: POST /checkout {cart_id: c_8891, amount_cents: 1999}\nrequest headers: Content-Type: application/json\nresponse: 200 {order_id: o_1001, status: created}\nsecond request: POST /checkout {cart_id: c_8891, amount_cents: 1999}\nsecond response: 200 {order_id: o_1002, status: created}\nError: Missing Idempotency-Key header: duplicate order created for cart c_8891\n  at e2e/checkout.spec.ts:72:11 (expect single order)\n  4 passed, 1 failed, 3 skipped in 9.8s\nBuild 5210 finished: e2e exit 1."},
+    {"id": "a14", "type": "review_objection", "speaker": "reviewer", "text": "Objection: submit handler sends POST /checkout with no Idempotency-Key header. Double-click or retry creates two orders for the same cart. Attach a stable Idempotency-Key per checkout session."},
+    {"id": "a15", "type": "message", "speaker": "owner", "text": "Tried fix: generate a new UUID for Idempotency-Key inside render on every submit click. Added header but key changes each time, should dedupe fast clicks maybe."},
+    {"id": "a16", "type": "message", "speaker": "owner", "text": "Added per-session checkoutAttemptId in React state, but onRetry still generates a fresh UUID. Retry path does not reuse the same Idempotency-Key yet."},
+    {"id": "a17", "type": "message", "speaker": "human", "text": "Standup note: payments frontend is on track, demo is Friday. No action needed."},
+    {"id": "a18", "type": "message", "speaker": "reviewer", "text": "Weekend plans aside, I clicked through the form locally and styles look clean. Nice work on validation."},
+    {"id": "a19", "type": "message", "speaker": "human", "text": "New requirement: checkout backend now dedupes by header. Please add Idempotency-Key to the contract so double-submit is safe for atlas carts."},
+    {"id": "a20", "type": "message", "speaker": "owner", "text": "Proposal: v2 requires Idempotency-Key header, server dedupes for 24h and returns duplicate_suppressed on replay. Frontend generates one UUID per checkout session and reuses it on retry."},
+    {"id": "a21", "type": "review_objection", "speaker": "reviewer", "text": "Objection: retry path regenerates the Idempotency-Key on every retry, so server cannot dedupe. Retry must reuse the same Idempotency-Key for the same cart, store it in state until success."},
+    {"id": "a22", "type": "contract_revision", "speaker": "human", "contract_id": "checkout-api", "contract_version": 2, "text": "checkout-api v2:\nPOST /checkout accepts {cart_id, card_token, amount_cents}.\nRequires header Idempotency-Key: <uuid v4 per checkout session>.\nOn success returns 200 {order_id, status, idempotency_key}.\nServer dedupes by Idempotency-Key for 24h, replay returns original order.\nstatus is one of {created, duplicate_suppressed, failed}.\ncard_token is single-use Elements token, never log raw PAN.\namount_cents is integer, server recomputes total and rejects mismatch.\nErrors use 400 validation, 402 decline, 409 conflict, 422 amount mismatch.\nRetry must reuse the same Idempotency-Key for the same cart.\nGET /orders/{order_id} returns {order_id, status, amount_cents}."},
+    {"id": "a23", "type": "message", "speaker": "owner", "text": "Implemented v2: CheckoutForm generates a stable Idempotency-Key per checkout session and sends it on every submit and retry. Button disables during flight to block double-click."},
+    {"id": "a24", "type": "message", "speaker": "human", "text": "Rollout plan: 1) merge v2 form, 2) update e2e, 3) update atlas docs. Tracking in issue ATL-318."},
+    {"id": "a25", "type": "message", "speaker": "owner", "text": "Note for newcomers: we used to submit checkout POSTs with no Idempotency-Key before the v2 switch, do not copy that pattern. Always send the stable key now."},
+    {"id": "a26", "type": "message", "speaker": "owner", "text": "Added fast-path submit for v2 returning customers. It bypasses the Idempotency-Key header for speed, single POST without key. Should be fine, tests pass locally."},
+    {"id": "a27", "type": "gate_failure", "speaker": "gate", "gate_id": "e2e", "text": "$ npx playwright test e2e/checkout.spec.ts --project=chromium\nRunning 8 tests using 2 workers\n  ✓ checkout.spec.ts:12 renders empty cart (1.1s)\n  ✓ checkout.spec.ts:24 validates card number (0.8s)\n  ✓ checkout.spec.ts:31 submits valid payment v2 (2.0s)\n  ✓ checkout.spec.ts:45 shows decline error v2 (1.3s)\n  ✘ checkout.spec.ts:58 double-submit creates single order v2 (2.9s)\nlocators: page.getByRole('button', { name: 'Pay' })\nmode: fast-path enabled for returning customer fixture\nrequest: POST /checkout {cart_id: c_8891, amount_cents: 1999}\nrequest headers: Content-Type: application/json (no Idempotency-Key)\nresponse: 200 {order_id: o_2011, status: created}\nsecond request: POST /checkout {cart_id: c_8891, amount_cents: 1999}\nsecond response: 200 {order_id: o_2012, status: created}\nError: Missing Idempotency-Key header: duplicate order created for cart c_8891\n  at e2e/checkout.spec.ts:72:11 (expect single order)\n  4 passed, 1 failed, 3 skipped in 9.4s\nBuild 5277 finished: e2e exit 1."},
+    {"id": "a28", "type": "message", "speaker": "reviewer", "text": "Reminder for the docs: checkout-api v1 returned only {order_id, status} with no Idempotency-Key. That is obsolete, current v2 always requires Idempotency-Key header."},
+    {"id": "a29", "type": "message", "speaker": "human", "text": "Heads up: some v1 clients still send checkout POSTs with no Idempotency-Key, ignore them. Server must not trust keyless submits, always use v2 Idempotency-Key flow."},
+    {"id": "a30", "type": "message", "speaker": "owner", "text": "Proposal: drop the Idempotency-Key and go back to checkout-api v1 for simplicity. One POST with no header is easier to debug. Requesting approval to revert."},
+    {"id": "a31", "type": "message", "speaker": "human", "text": "Rejected: keep v2 with Idempotency-Key. Atlas carts need duplicate suppression. Do not revert to v1."},
+    {"id": "a32", "type": "message", "speaker": "reviewer", "text": "Coffee break: anyone tried the new place downstairs? Back in 10."},
+    {"id": "a33", "type": "message", "speaker": "owner", "text": "Fixed fast-path: restored stable Idempotency-Key on every checkout submit including retries. All submit paths reuse the same Idempotency-Key per cart until success, button stays disabled in flight."},
+    {"id": "a34", "type": "message", "speaker": "owner", "text": "Confirming: server recomputes cart total and rejects mismatch; client amount_cents is display only. Never trust client amount, always use server total."},
+    {"id": "a35", "type": "message", "speaker": "owner", "text": "Confirming lifetimes: Idempotency-Key scope is 24h per cart, duplicate replay returns duplicate_suppressed with original order_id. Double-submit is now safe."},
+    {"id": "a36", "type": "message", "speaker": "owner", "text": "Final state: v2 checkout sends stable Idempotency-Key, reuses same key on retry, disables button in flight, validates via Elements, logs last4 only, server is amount authority."}
+  ],
+  "gold": {
+    "contracts": [
+      {"contract_id": "checkout-api", "version": 2, "activity_id": "a22"}
+    ],
+    "decisions": [
+      {"id": "d1", "topic_key": "payments.submit_dedupe", "statement": "Submit checkout POST directly with no idempotency key on every click.", "sources": [{"activity_id": "a04", "quote": "POST to /checkout directly on every button click with no idempotency key"}], "superseded_by": "d2"},
+      {"id": "d2", "topic_key": "payments.submit_dedupe", "statement": "Send a stable Idempotency-Key per checkout session on every submit and reuse the same key on retry; disable button in flight.", "sources": [{"activity_id": "a23", "quote": "stable Idempotency-Key per checkout session"}, {"activity_id": "a33", "quote": "reuse the same Idempotency-Key per cart until success"}]},
+      {"id": "d3", "topic_key": "payments.client_validation", "statement": "Validate card with Stripe Elements, block submit until complete, never handle raw PAN.", "sources": [{"activity_id": "a10", "quote": "Never handle raw PAN in our state, use Elements token only"}]},
+      {"id": "d4", "topic_key": "payments.amount_authority", "statement": "Server recomputes cart total and rejects mismatch; client amount is display only.", "sources": [{"activity_id": "a34", "quote": "server recomputes cart total and rejects mismatch"}]}
+    ],
+    "lessons": [
+      {"id": "l1", "topic_key": "payments.idempotency_key", "statement": "Always send a stable Idempotency-Key and reuse the same key on retry; missing or regenerated keys create duplicate orders.", "sources": [{"activity_id": "a13", "quote": "Missing Idempotency-Key header: duplicate order created for cart c_8891"}, {"activity_id": "a27", "quote": "Missing Idempotency-Key header: duplicate order created for cart c_8891"}], "occurrences": 2},
+      {"id": "l2", "topic_key": "payments.card_logging", "statement": "Never log raw card PAN; log only last4.", "sources": [{"activity_id": "a07", "quote": "Do not log raw card PAN anywhere"}], "occurrences": 1},
+      {"id": "l3", "topic_key": "payments.retry_key_reuse", "statement": "Retry must reuse the same Idempotency-Key for the same cart, not regenerate a fresh key.", "sources": [{"activity_id": "a21", "quote": "Retry must reuse the same Idempotency-Key for the same cart"}], "occurrences": 1}
+    ]
+  },
+  "noise": [
+    {"activity_id": "a03", "type": "chitchat", "note": "chitchat about rooftop, no technical content"},
+    {"activity_id": "a06", "type": "status", "note": "nit on variable naming, not a durable decision"},
+    {"activity_id": "a09", "type": "question", "note": "question about amount display, answered later by d4"},
+    {"activity_id": "a11", "type": "hypothetical", "note": "hypothetical hosted redirect idea, never adopted"},
+    {"activity_id": "a17", "type": "status", "note": "standup status update, no technical content"},
+    {"activity_id": "a18", "type": "chitchat", "note": "chitchat about weekend, not memory"},
+    {"activity_id": "a24", "type": "plan", "note": "plan steps for rollout tracking, not module behavior"},
+    {"activity_id": "a32", "type": "chitchat", "note": "chitchat about coffee, not memory"}
+  ],
+  "probes": [
+    {"id": "p1", "question": "What does POST /checkout require in the current contract?", "answer_ids": ["contract:checkout-api"], "must_contain": ["Idempotency-Key"], "must_not_contain": ["with no key"]},
+    {"id": "p2", "question": "How does the checkout form prevent duplicate orders on double-click?", "answer_ids": ["d2"], "must_contain": ["Idempotency-Key"], "must_not_contain": ["no idempotency key"]},
+    {"id": "p3", "question": "What must you do before submitting or retrying checkout?", "answer_ids": ["l1"], "must_contain": ["Idempotency-Key"]},
+    {"id": "p4", "question": "Which mistake failed the e2e double-submit test twice?", "answer_ids": ["l1"], "must_contain": ["Idempotency-Key"]},
+    {"id": "p5", "question": "What must you never log on checkout submit?", "answer_ids": ["l2"], "must_contain": ["raw card PAN"]},
+    {"id": "p6", "question": "Who is authoritative for the cart total?", "answer_ids": ["d4"], "must_contain": ["Server recomputes"], "must_not_contain": ["trusts client amount"]},
+    {"id": "p7", "question": "How does the server handle a replay with the same Idempotency-Key?", "answer_ids": ["contract:checkout-api"], "must_contain": ["duplicate_suppressed"], "must_not_contain": ["send two POSTs"]},
+    {"id": "p8", "question": "How is card input validated in the checkout form?", "answer_ids": ["d3"], "must_contain": ["Elements"]}
+  ]
+}

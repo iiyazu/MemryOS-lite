@@ -20,8 +20,15 @@ from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
 from memoryos_lite.context_composer import V3ContextComposer
-from memoryos_lite.curator import Curator, build_advisory_v2_items, build_curator_llm
+from memoryos_lite.curator import (
+    ADVISORY_SCHEMA_V3,
+    Curator,
+    build_advisory_v2_items,
+    build_advisory_v3_items,
+    build_curator_llm,
+)
 from memoryos_lite.kernel_analyzer import KernelMaintenanceAnalyzer
+from memoryos_lite.module_pack import build_module_pack
 from memoryos_lite.observability import (
     CONTEXT_BUDGET_USED_RATIO,
     CONTEXT_BUILD_SECONDS,
@@ -83,9 +90,11 @@ from memoryos_lite.schemas import (
     PatchOperation,
     Role,
     Session,
+    SessionScope,
     TraceEvent,
     new_id,
     utc_now,
+    validate_activity_metadata,
 )
 from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
@@ -94,6 +103,7 @@ from memoryos_lite.v3_contracts import (
     AgentStepRequest,
     ArchivalPassage,
     ArchiveAttachment,
+    ArchiveEligibilityScope,
     ContextComposerRequest,
     ContextLayerItem,
     ContextPackageV3,
@@ -1329,15 +1339,23 @@ class MemoryOSService:
                 pass
         return None
 
-    def create_session(self, title: str) -> Any:
+    def create_session(self, title: str, scope: SessionScope | None = None) -> Any:
         with timed_core_operation(
             component="engine",
             operation="create_session",
             logger=logger,
             log_success=True,
         ):
-            session = self.store.create_session(title)
-            self.trace(session.id, "session_created", {"title": title})
+            session = (
+                self.store.create_session(title, scope=scope)
+                if scope is not None
+                else self.store.create_session(title)
+            )
+            self.trace(
+                session.id,
+                "session_created",
+                {"title": title, **({"scope": scope.model_dump()} if scope is not None else {})},
+            )
             log_event(
                 logger,
                 logging.INFO,
@@ -1360,6 +1378,72 @@ class MemoryOSService:
         superseded_ids = sorted({row.supersedes_id for row in rows if row.supersedes_id})
         superseded_rows = self.store.get_curated_memories_by_ids(superseded_ids)
         return build_advisory_v2_items(rows, superseded_rows)
+
+    def build_module_pack(self, session_id: str, budget: int | None = None) -> dict[str, Any]:
+        """Compose ``module_pack/v1`` for a module session (see ``module_pack``)."""
+
+        session = self._require_session(session_id)
+        archive_ids = self.store.resolve_attached_archive_ids(
+            ArchiveEligibilityScope(session_id=session_id)
+        )
+        documents = self.store.list_archival_documents_for_archives(archive_ids)
+        threshold = self.settings.memoryos_module_pack_conflict_threshold
+        embed_batch = None
+        if (
+            threshold is not None
+            and self.settings.memoryos_embedding_provider.strip().lower() == "fastembed"
+            and self.embedding_client is not None
+        ):
+            embed_batch = self.embedding_client.embed_batch
+        pack = build_module_pack(
+            scope=session.scope,
+            documents=documents,
+            budget=budget,
+            embed_batch=embed_batch,
+            conflict_threshold=threshold if threshold is not None else 1.0,
+        )
+        self.trace(
+            session_id,
+            "module_pack_built",
+            {
+                "diagnostics_digest": pack["diagnostics_digest"],
+                "estimated_tokens": pack["estimated_tokens"],
+                "budget": pack["budget"],
+                "items": {name: len(items) for name, items in pack["sections"].items()},
+                "omitted": pack["omitted"],
+            },
+        )
+        return pack
+
+    def list_curated_advisories_v3(self, session_id: str) -> dict[str, object]:
+        """Project curated memories into an advisory v3 payload for the host."""
+
+        session = self._require_session(session_id)
+        rows = self.store.list_curated_memories(session_id, limit=32)
+        superseded_ids = sorted({row.supersedes_id for row in rows if row.supersedes_id})
+        superseded_rows = self.store.get_curated_memories_by_ids(superseded_ids)
+        message_ids: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            for source in row.sources:
+                message_id = source.get("message_id")
+                if isinstance(message_id, str) and message_id not in seen:
+                    seen.add(message_id)
+                    message_ids.append(message_id)
+        message_info = self.store.get_message_source_info(message_ids)
+        items = build_advisory_v3_items(
+            rows,
+            superseded_rows,
+            session_scope=session.scope,
+            message_info=message_info,
+        )
+        return {
+            "schema": ADVISORY_SCHEMA_V3,
+            "session_scope": session.scope.model_dump(mode="json")
+            if session.scope is not None
+            else None,
+            "items": items,
+        }
 
     def curator_status(self) -> dict[str, object]:
         """Report curator state without ever exposing provider secrets."""
@@ -1405,7 +1489,8 @@ class MemoryOSService:
                 session_id=session_id,
             ),
         ):
-            self._require_session(session_id)
+            session = self._require_session(session_id)
+            validate_activity_metadata(request.metadata, session.scope)
             INGEST_TOTAL.inc()
             if request.external_id is not None:
                 existing = self.store.get_message_by_external_id(
