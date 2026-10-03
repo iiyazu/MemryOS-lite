@@ -105,6 +105,50 @@ def test_api_creates_module_sessions_and_rejects_bad_activity_metadata(tmp_path)
         app.dependency_overrides.pop(get_service, None)
 
 
+def test_module_lesson_occurrences_count_cited_review_and_gate_messages(tmp_path):
+    llm = ScriptedLLM()
+    settings = Settings(
+        data_dir=tmp_path / "memoryos",
+        memoryos_curator_enabled=True,
+        memoryos_curator_window_messages=3,
+    )
+    store = create_store(settings)
+    store.reset()
+    curator = Curator(store=store, settings=settings, llm=llm)
+    service = MemoryOSService(store=store, settings=settings, curator=curator)
+    session = service.create_session("auth", scope=SessionScope(type="module", id="auth"))
+
+    def lesson(*cited: tuple[str, str]) -> dict[str, object]:
+        return {
+            "op": "add",
+            "kind": "lesson",
+            "topic_key": "auth.refresh_lock",
+            "statement": "Take the per-user lock before refreshing a token.",
+            "sources": [{"message_id": mid, "quote": quote} for mid, quote in cited],
+        }
+
+    note = "Owner: I refresh tokens without a lock for now."
+    gate = "FAILED test_concurrent_refresh - token written twice"
+    note_id = _ingest(service, session.id, note, _activity(1, "message"))
+    gate_id = _ingest(service, session.id, gate, _activity(2, "gate_failure"))
+    # A plain message cited next to the gate failure is not an occurrence.
+    llm.responses = [{"operations": [lesson((note_id, note), (gate_id, gate))]}]
+    curator.run_session(session.id, force=True)
+    assert service.store.list_active_curated_memories(session.id)[0].occurrences == 1
+
+    review = "Objection: refresh still runs without the per-user lock."
+    rerun = "FAILED test_parallel_refresh - token written twice again"
+    review_id = _ingest(service, session.id, review, _activity(3, "review_objection"))
+    rerun_id = _ingest(service, session.id, rerun, _activity(4, "gate_failure"))
+    # One re-added proposal citing two new review/gate messages is two occurrences.
+    llm.responses = [{"operations": [lesson((review_id, review), (rerun_id, rerun))]}]
+    curator.run_session(session.id, force=True)
+
+    active = service.store.list_active_curated_memories(session.id)
+    assert len(active) == 1
+    assert active[0].occurrences == 3
+
+
 def test_module_lessons_must_quote_a_review_objection_or_gate_failure(tmp_path):
     llm = ScriptedLLM()
     service, curator = _service(tmp_path, llm)
