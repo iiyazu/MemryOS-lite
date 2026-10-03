@@ -78,6 +78,7 @@ from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
 from memoryos_lite.curator.runner import normalize_topic_key
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.agentic import AskRequest, AskResponse, render_ask_item
+from memoryos_lite.retrieval.supersede import SupersededQuote, superseded_quotes
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
@@ -2788,12 +2789,14 @@ def _run_room_arm(
         )
     advisories: dict[str, Mapping[str, Any]] = {}
 
-    modes = list(evidence_modes) if arm == "curated" else ["plain"]
-    marks = (
-        service.superseded_marks(session_id)
-        if service is not None and any(mode != "plain" for mode in modes)
-        else []
-    )
+    # The oracle arm derives marks from the gold supersede chain: the ceiling of
+    # demotion/annotation when every supersede is known.
+    modes = list(evidence_modes) if arm in {"curated", "oracle"} else ["plain"]
+    marks: list[SupersededQuote] = []
+    if service is not None and any(mode != "plain" for mode in modes):
+        marks = (
+            superseded_quotes(views) if arm == "oracle" else service.superseded_marks(session_id)
+        )
     results: list[dict[str, Any]] = []
     for probe in room.probes:
         target_session = new_session_id
@@ -3566,7 +3569,7 @@ def run_roommem(
                         ),
                     )
                 rewrite_llm: CuratorLLM | None = None
-                if arm == "curated" and "agentic" in evidence_modes:
+                if arm in {"curated", "oracle"} and "agentic" in evidence_modes:
                     rewrite_llm = _rewrite_llm(
                         fake_llm=fake_llm,
                         settings=settings,
@@ -3667,7 +3670,9 @@ def run_roommem(
         "heuristic_advisories": heuristic_advisories,
         "llm": llm_label or ("fake" if fake_llm else "custom"),
         "curated_source": curated_source_name if "curated" in selected_arms else None,
-        "curated_evidence": evidence_modes if "curated" in selected_arms else None,
+        "curated_evidence": (
+            evidence_modes if {"curated", "oracle"} & set(selected_arms) else None
+        ),
         "curator_window": curator_window if "curated" in selected_arms else None,
         "curator_consolidation": (
             (curator_consolidation or "deterministic") if "curated" in selected_arms else None

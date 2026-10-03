@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS, normalize_text
 from memoryos_lite.store_curator import CuratedMemoryRow
@@ -28,18 +28,28 @@ class SupersededQuote:
     current: str | None = None
 
 
-def superseded_quotes(rows: Sequence[CuratedMemoryRow]) -> list[SupersededQuote]:
-    """Marks for every quote that grounds only superseded memories."""
+def _quote(source: Any) -> str:
+    value = source.get("quote", "") if isinstance(source, dict) else getattr(source, "quote", "")
+    return value if isinstance(value, str) else ""
+
+
+def superseded_quotes(rows: Sequence[CuratedMemoryRow | Any]) -> list[SupersededQuote]:
+    """Marks for every quote that grounds only superseded memories.
+
+    ``rows`` are curated rows or any memory objects with ``status``, ``kind``,
+    ``topic_key``, ``statement`` and ``sources`` (dicts or objects with ``quote``),
+    such as RoomMem's oracle views.
+    """
 
     active = [row for row in rows if row.status == "active"]
-    active_quotes = {normalize_text(source["quote"]) for row in active for source in row.sources}
+    active_quotes = {normalize_text(_quote(source)) for row in active for source in row.sources}
     current = {(row.kind == "lesson", row.topic_key): row.statement for row in active}
     marks: dict[str, SupersededQuote] = {}
     for row in rows:
         if row.status != "superseded":
             continue
         for source in row.sources:
-            quote = source.get("quote", "")
+            quote = _quote(source)
             key = normalize_text(quote)
             if len(quote) < MIN_QUOTE_CHARS or key in active_quotes or key in marks:
                 continue

@@ -1566,6 +1566,15 @@ def test_curated_evidence_modes_share_one_curation(tmp_path, rooms_dir):
     assert agentic and all(row["ask"]["retrievals"] >= 1 for row in agentic)
     probes = {(row["room"], row["probe"]) for row in rows if row["arm"] == "curated"}
     assert probes == {(row["room"], row["probe"]) for row in agentic}
+    oracle = run_roommem(
+        rooms,
+        out_dir=tmp_path / "oracle",
+        arms=["oracle"],
+        fake_llm=True,
+        scratch_root=tmp_path / "scratch-oracle",
+        curated_evidence=("plain", "demote", "agentic"),
+    )
+    assert {"oracle", "oracle+demote", "oracle+agentic"} <= set(oracle["read_side"])
     with pytest.raises(RoomMemConfigError, match="unknown curated evidence mode"):
         run_roommem(
             rooms,
