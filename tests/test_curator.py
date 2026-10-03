@@ -284,7 +284,9 @@ def test_operation_schema_violations_are_rejected(tmp_path):
 
 def test_update_supersedes_in_one_transaction_and_advisory_carries_link(tmp_path):
     fake = FakeLLM([{"operations": []}])
-    service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
+    service, curator = _service(
+        tmp_path, fake, memoryos_curator_consolidation="llm", memoryos_curator_window_messages=1
+    )
     session = service.create_session("curator-supersede")
     first_content = "The launch city is Lisbon."
     first_id = _ingest(service, session.id, first_content)
@@ -334,7 +336,9 @@ def test_update_supersedes_in_one_transaction_and_advisory_carries_link(tmp_path
 
 def test_one_window_supersedes_a_memory_once_and_drops_duplicate_writes(tmp_path):
     fake = FakeLLM([{"operations": []}])
-    service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=2)
+    service, curator = _service(
+        tmp_path, fake, memoryos_curator_consolidation="llm", memoryos_curator_window_messages=2
+    )
     session = service.create_session("curator-window-conflicts")
     first_content = "The launch city is Lisbon."
     first_id = _ingest(service, session.id, first_content)
@@ -368,7 +372,9 @@ def test_one_window_supersedes_a_memory_once_and_drops_duplicate_writes(tmp_path
 def test_update_with_unknown_supersedes_downgrades_to_add(tmp_path):
     content = "The staging cluster lives in Frankfurt."
     fake = FakeLLM([{"operations": []}])
-    service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
+    service, curator = _service(
+        tmp_path, fake, memoryos_curator_consolidation="llm", memoryos_curator_window_messages=1
+    )
     session = service.create_session("curator-downgrade")
     message_id = _ingest(service, session.id, content)
     fake.responses = [{"operations": [_add_op(message_id, content, supersedes="cmem_missing")]}]
@@ -539,7 +545,7 @@ def test_prompt_renders_ids_speakers_and_bounded_context(tmp_path):
     assert "Do NOT store" in system
     assert "verbatim" in system
     assert f"[{first_id}] Alice (human): Alice notes the launch plan." in first_user
-    assert "Active memories (reconcile against these" in first_user
+    assert "Active memories (reuse a topic_key" in first_user
     _, third_user = fake.calls[2]
     context_section = third_user.split("Messages to curate:", 1)[0]
     assert f"[{first_id}] Alice (human):" in context_section

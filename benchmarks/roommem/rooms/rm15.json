@@ -1,0 +1,70 @@
+{
+  "room_id": "rm15",
+  "title": "lumen 移动端（陷阱）",
+  "language": "zh",
+  "project": "lumen",
+  "participants": [
+    {"id": "human", "kind": "human", "name": "林"},
+    {"id": "lead", "kind": "agent", "name": "Lead", "vendor": "claude"},
+    {"id": "builder", "kind": "agent", "name": "Builder", "vendor": "opencode"}
+  ],
+  "messages": [
+    {"id": "m01", "speaker": "human", "text": "移动端排期开始。@lead 先定一下最低支持的 iOS 版本。"},
+    {"id": "m02", "speaker": "lead", "text": "最低支持 iOS 15，覆盖率够用。"},
+    {"id": "m03", "speaker": "builder", "text": "我先把 CI 的模拟器矩阵配好。"},
+    {"id": "m04", "speaker": "human", "text": "改一下：最低支持版本提到 iOS 16，因为我们要用 iOS 16 的锁屏小组件。"},
+    {"id": "m05", "speaker": "builder", "text": "iOS 15 的崩溃报告以后不用再看了，那些机型已经不在支持范围内。"},
+    {"id": "m06", "speaker": "lead", "text": "发版节奏：每两周发一次版。"},
+    {"id": "m07", "speaker": "human", "text": "发版节奏改成每周发一次版，每周四下午提审。"},
+    {"id": "m08", "speaker": "lead", "text": "以前两周一发确实太慢了，热修复都要等很久。"},
+    {"id": "m09", "speaker": "human", "text": "项目规则：所有用户可见的文案都必须走 i18n 词条，不允许在代码里硬编码。"},
+    {"id": "m10", "speaker": "human", "text": "另外我个人偏好：每天给我的进度汇报用三条以内的中文要点。"},
+    {"id": "m11", "speaker": "builder", "text": "有人问能不能给老用户继续保留 iOS 15 的构建，结论是不保留，最低就是 iOS 16。"},
+    {"id": "m12", "speaker": "lead", "text": "收到，大家辛苦了。"}
+  ],
+  "gold_memories": [
+    {"id": "g1", "kind": "decision", "scope": "room", "topic_key": "mobile.min_ios",
+     "statement": "移动端最低支持 iOS 15。",
+     "sources": [{"message_id": "m02", "quote": "最低支持 iOS 15"}],
+     "superseded_by": "g2"},
+    {"id": "g2", "kind": "decision", "scope": "room", "topic_key": "mobile.min_ios",
+     "statement": "移动端最低支持 iOS 16（为了使用锁屏小组件），不再保留 iOS 15 构建。",
+     "sources": [
+       {"message_id": "m04", "quote": "最低支持版本提到 iOS 16"},
+       {"message_id": "m11", "quote": "最低就是 iOS 16"}
+     ],
+     "superseded_by": null},
+    {"id": "g3", "kind": "decision", "scope": "room", "topic_key": "mobile.release_cadence",
+     "statement": "每两周发一次版。",
+     "sources": [{"message_id": "m06", "quote": "每两周发一次版"}],
+     "superseded_by": "g4"},
+    {"id": "g4", "kind": "decision", "scope": "room", "topic_key": "mobile.release_cadence",
+     "statement": "每周发一次版，每周四下午提审。",
+     "sources": [{"message_id": "m07", "quote": "发版节奏改成每周发一次版，每周四下午提审"}],
+     "superseded_by": null},
+    {"id": "g5", "kind": "rule", "scope": "project", "topic_key": "rule.i18n_strings",
+     "statement": "所有用户可见的文案都必须走 i18n 词条，不允许硬编码。",
+     "sources": [{"message_id": "m09", "quote": "所有用户可见的文案都必须走 i18n 词条，不允许在代码里硬编码"}],
+     "superseded_by": null},
+    {"id": "g6", "kind": "preference", "scope": "user", "topic_key": "pref.progress_report",
+     "statement": "林希望每日进度汇报用三条以内的中文要点。",
+     "sources": [{"message_id": "m10", "quote": "每天给我的进度汇报用三条以内的中文要点"}],
+     "superseded_by": null}
+  ],
+  "noise": [
+    {"message_id": "m03", "type": "plan_step", "note": "工作计划"},
+    {"message_id": "m05", "type": "restatement", "note": "陷阱：提到旧值 iOS 15，但说的是不再支持"},
+    {"message_id": "m08", "type": "chitchat", "note": "陷阱：评论旧的两周节奏"},
+    {"message_id": "m12", "type": "chitchat", "note": "收尾"}
+  ],
+  "probes": [
+    {"id": "p1", "question": "移动端最低支持哪个 iOS 版本？", "asked_in": "same_room",
+     "answer_memory_ids": ["g2"], "must_contain": ["16"], "must_not_contain": ["最低支持 iOS 15"]},
+    {"id": "p2", "question": "移动端多久发一次版？", "asked_in": "same_room",
+     "answer_memory_ids": ["g4"], "must_contain": ["每周"], "must_not_contain": ["两周"]},
+    {"id": "p3", "question": "用户可见文案应该怎么处理？", "asked_in": "new_room_same_project",
+     "answer_memory_ids": ["g5"], "must_contain": ["i18n"], "must_not_contain": []},
+    {"id": "p4", "question": "林希望进度汇报是什么格式？", "asked_in": "new_room_same_project",
+     "answer_memory_ids": ["g6"], "must_contain": ["三条"], "must_not_contain": []}
+  ]
+}

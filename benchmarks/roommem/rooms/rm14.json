@@ -1,0 +1,80 @@
+{
+  "room_id": "rm14",
+  "title": "orbit api gateway (trap)",
+  "language": "en",
+  "project": "orbit",
+  "participants": [
+    {"id": "human", "kind": "human", "name": "Priya"},
+    {"id": "lead", "kind": "agent", "name": "Lead", "vendor": "claude"},
+    {"id": "reviewer", "kind": "agent", "name": "Reviewer", "vendor": "opencode"}
+  ],
+  "messages": [
+    {"id": "m01", "speaker": "human", "text": "Gateway planning. @lead propose the rate limit for public clients."},
+    {"id": "m02", "speaker": "lead", "text": "Public clients get a rate limit of 100 requests per minute per key."},
+    {"id": "m03", "speaker": "reviewer", "text": "Should we measure real traffic before fixing a number?"},
+    {"id": "m04", "speaker": "human", "text": "Raise it: the public rate limit is now 300 requests per minute per key. The 100 per minute limit broke the mobile app last week."},
+    {"id": "m05", "speaker": "lead", "text": "The gateway itself runs on Kong for now."},
+    {"id": "m06", "speaker": "human", "text": "We are moving the gateway off Kong to Envoy; Envoy is the gateway from today."},
+    {"id": "m07", "speaker": "reviewer", "text": "Kong's admin UI was nicer, but Envoy stays."},
+    {"id": "m08", "speaker": "lead", "text": "Client authentication uses static API keys."},
+    {"id": "m09", "speaker": "human", "text": "We are replacing static API keys with OAuth2 client credentials for all clients. Existing API keys stop working on June 30."},
+    {"id": "m10", "speaker": "reviewer", "text": "Project rule: every public endpoint needs an OpenAPI spec entry before it can merge."},
+    {"id": "m11", "speaker": "human", "text": "Agreed, that rule stands."},
+    {"id": "m12", "speaker": "lead", "text": "A partner asked if they could keep using their API key past June. Declined; OAuth2 client credentials are the only option."},
+    {"id": "m13", "speaker": "reviewer", "text": "Load test summary: at 300 requests per minute per key the gateway p99 stays under 40 ms."},
+    {"id": "m14", "speaker": "human", "text": "Great, let's wrap up."}
+  ],
+  "gold_memories": [
+    {"id": "g1", "kind": "decision", "scope": "room", "topic_key": "gateway.rate_limit",
+     "statement": "Public clients are limited to 100 requests per minute per key.",
+     "sources": [{"message_id": "m02", "quote": "rate limit of 100 requests per minute per key"}],
+     "superseded_by": "g2"},
+    {"id": "g2", "kind": "decision", "scope": "room", "topic_key": "gateway.rate_limit",
+     "statement": "The public rate limit is 300 requests per minute per key.",
+     "sources": [{"message_id": "m04", "quote": "the public rate limit is now 300 requests per minute per key"}],
+     "superseded_by": null},
+    {"id": "g3", "kind": "decision", "scope": "room", "topic_key": "gateway.runtime",
+     "statement": "The API gateway runs on Kong.",
+     "sources": [{"message_id": "m05", "quote": "The gateway itself runs on Kong for now."}],
+     "superseded_by": "g4"},
+    {"id": "g4", "kind": "decision", "scope": "room", "topic_key": "gateway.runtime",
+     "statement": "The API gateway runs on Envoy.",
+     "sources": [
+       {"message_id": "m06", "quote": "Envoy is the gateway from today"},
+       {"message_id": "m07", "quote": "Envoy stays"}
+     ],
+     "superseded_by": null},
+    {"id": "g5", "kind": "decision", "scope": "room", "topic_key": "gateway.client_auth",
+     "statement": "Clients authenticate with static API keys.",
+     "sources": [{"message_id": "m08", "quote": "Client authentication uses static API keys."}],
+     "superseded_by": "g6"},
+    {"id": "g6", "kind": "decision", "scope": "room", "topic_key": "gateway.client_auth",
+     "statement": "All clients authenticate with OAuth2 client credentials; static API keys stop working on June 30.",
+     "sources": [
+       {"message_id": "m09", "quote": "replacing static API keys with OAuth2 client credentials for all clients"},
+       {"message_id": "m12", "quote": "OAuth2 client credentials are the only option"}
+     ],
+     "superseded_by": null},
+    {"id": "g7", "kind": "rule", "scope": "project", "topic_key": "rule.openapi_before_merge",
+     "statement": "Every public endpoint needs an OpenAPI spec entry before it can merge.",
+     "sources": [{"message_id": "m10", "quote": "every public endpoint needs an OpenAPI spec entry before it can merge"}],
+     "superseded_by": null}
+  ],
+  "noise": [
+    {"message_id": "m03", "type": "question", "note": "Open question"},
+    {"message_id": "m07", "type": "chitchat", "note": "Trap: praises the old Kong value; only 'Envoy stays' is current"},
+    {"message_id": "m11", "type": "restatement", "note": "Acknowledges g7"},
+    {"message_id": "m13", "type": "restatement", "note": "Load-test evidence restating the current limit"},
+    {"message_id": "m14", "type": "chitchat", "note": "Wrap-up"}
+  ],
+  "probes": [
+    {"id": "p1", "question": "What is the public rate limit per key?", "asked_in": "same_room",
+     "answer_memory_ids": ["g2"], "must_contain": ["300"], "must_not_contain": ["100 requests"]},
+    {"id": "p2", "question": "Which software runs the API gateway?", "asked_in": "same_room",
+     "answer_memory_ids": ["g4"], "must_contain": ["Envoy"], "must_not_contain": ["runs on Kong"]},
+    {"id": "p3", "question": "How do clients authenticate to the gateway?", "asked_in": "same_room",
+     "answer_memory_ids": ["g6"], "must_contain": ["OAuth2"], "must_not_contain": ["use static API keys"]},
+    {"id": "p4", "question": "What is required before a public endpoint can merge?", "asked_in": "new_room_same_project",
+     "answer_memory_ids": ["g7"], "must_contain": ["OpenAPI"], "must_not_contain": []}
+  ]
+}

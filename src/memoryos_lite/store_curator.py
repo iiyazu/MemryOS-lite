@@ -14,6 +14,7 @@ from memoryos_lite.store_models import (
     CuratedMemoryRecord,
     CuratorStateRecord,
     MessageRecord,
+    SessionRecord,
 )
 
 
@@ -31,6 +32,10 @@ class CuratedMemoryRow:
     run_id: str
     model: str
     created_at: datetime
+    version: int = 0
+    occurrences: int = 1
+    scope_type: str | None = None
+    scope_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,11 +53,23 @@ class CuratorStateRow:
 
 @dataclass(frozen=True)
 class CuratedMemoryWrite:
+    """One memory row to insert in a curator window.
+
+    ``supersedes_id`` links the replaced row (advisory chain);
+    ``also_supersedes`` flips further same-topic rows to superseded.  A write
+    with ``superseded_by_id`` arrived out of order: it is stored already
+    superseded by that newer active row.
+    """
+
     kind: str
     topic_key: str
     statement: str
     sources: list[dict[str, str]]
     supersedes_id: str | None = None
+    version: int = 0
+    occurrences: int = 1
+    also_supersedes: tuple[str, ...] = ()
+    superseded_by_id: str | None = None
 
 
 class CuratorStoreMixin:
@@ -77,6 +94,10 @@ class CuratorStoreMixin:
             run_id=record.run_id,
             model=record.model,
             created_at=record.created_at,
+            version=record.version or 0,
+            occurrences=record.occurrences or 1,
+            scope_type=record.scope_type,
+            scope_id=record.scope_id,
         )
 
     @staticmethod
@@ -259,6 +280,9 @@ class CuratorStoreMixin:
         now = utc_now()
         created: list[CuratedMemoryRow] = []
         with self.db() as db:
+            session = db.get(SessionRecord, session_id)
+            scope_type = session.scope_type if session is not None else None
+            scope_id = session.scope_id if session is not None else None
             for write in writes:
                 record = CuratedMemoryRecord(
                     id=new_id("cmem"),
@@ -267,16 +291,23 @@ class CuratorStoreMixin:
                     topic_key=write.topic_key,
                     statement=write.statement,
                     sources_json=json.dumps(write.sources, ensure_ascii=False),
-                    status="active",
+                    status="active" if write.superseded_by_id is None else "superseded",
                     supersedes_id=write.supersedes_id,
-                    superseded_by_id=None,
+                    superseded_by_id=write.superseded_by_id,
                     run_id=run_id,
                     model=model,
                     created_at=now,
+                    version=write.version,
+                    occurrences=write.occurrences,
+                    scope_type=scope_type,
+                    scope_id=scope_id,
                 )
                 db.add(record)
-                if write.supersedes_id is not None:
-                    old = db.get(CuratedMemoryRecord, write.supersedes_id)
+                targets = ([write.supersedes_id] if write.supersedes_id is not None else []) + list(
+                    write.also_supersedes
+                )
+                for target in targets:
+                    old = db.get(CuratedMemoryRecord, target)
                     if old is not None and old.session_id == session_id and old.status == "active":
                         old.status = "superseded"
                         old.superseded_by_id = record.id

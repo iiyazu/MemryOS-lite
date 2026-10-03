@@ -75,6 +75,7 @@ from memoryos_lite.chat_models import build_chat_openai, message_text
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
 from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
+from memoryos_lite.curator.runner import normalize_topic_key
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
@@ -109,7 +110,12 @@ EMBEDDING_VALUES: tuple[str, ...] = ("none", "fastembed")
 SPLIT_PRESETS: dict[str, tuple[str, ...]] = {
     "dev": tuple(f"rm{index:02d}" for index in range(1, 7)),
     "test": tuple(f"rm{index:02d}" for index in range(7, 13)),
+    # Old values are mentioned again after they changed ("we used to use X").
+    "trap": tuple(f"rm{index:02d}" for index in range(13, 17)),
 }
+CONSOLIDATION_VALUES: tuple[str, ...] = ("deterministic", "llm")
+#: Cosine thresholds reported for FastEmbed "possible conflict" flags.
+CONFLICT_THRESHOLDS: tuple[float, ...] = (0.75, 0.8, 0.85, 0.9)
 
 #: Curator run counters recorded per room for the curated arm.
 CURATOR_COUNTER_KEYS: tuple[str, ...] = (
@@ -149,6 +155,46 @@ LIMITATIONS_EN = (
 )
 #: Providers the non-fake LLM roles can use.
 REMOTE_LLM_PROVIDERS: tuple[str, ...] = ("deepseek", "opencode")
+_MODEL_FIELD_BY_PROVIDER = {"deepseek": "deepseek_model", "opencode": "opencode_model"}
+
+
+def settings_for_llm_spec(base: Settings, spec: str | None) -> Settings:
+    """Apply a ``provider:model[@wire]`` role spec on top of ``base``.
+
+    ``None`` keeps ``base``.  Example specs: ``deepseek:deepseek-v4-flash``,
+    ``opencode:muse-spark-1.2-contributor@responses``,
+    ``opencode:glm-5.3-flash@chat``.  Keys still come from the environment.
+    """
+
+    if spec is None or not spec.strip():
+        return base
+    provider, sep, rest = spec.strip().partition(":")
+    model, _, wire = rest.partition("@")
+    provider = provider.strip().lower()
+    if not sep or provider not in REMOTE_LLM_PROVIDERS or not model.strip():
+        raise RoomMemConfigError(
+            f"invalid LLM spec {spec!r}; expected provider:model[@wire] with provider in "
+            + ", ".join(REMOTE_LLM_PROVIDERS)
+        )
+    update: dict[str, Any] = {
+        "memoryos_llm_provider": provider,
+        _MODEL_FIELD_BY_PROVIDER[provider]: model.strip(),
+    }
+    if wire.strip():
+        if provider != "opencode":
+            raise RoomMemConfigError(f"LLM spec {spec!r}: a wire API applies only to opencode")
+        update["opencode_wire_api"] = wire.strip()
+    resolved = base.model_copy(update=update)
+    try:
+        _ = resolved.chat_wire_api
+    except ValueError as exc:
+        raise RoomMemConfigError(f"LLM spec {spec!r}: {exc}") from exc
+    return resolved
+
+
+def llm_spec_label(settings: Settings) -> str:
+    label = f"{settings.resolved_llm_provider}:{settings.chat_model}"
+    return f"{label}@{settings.chat_wire_api}" if settings.chat_wire_api != "chat" else label
 
 
 class RoomMemError(ValueError):
@@ -494,6 +540,8 @@ class CuratedSourceContext:
     cache_dir: Path | None = None
     llm_factory: Callable[[Settings], CuratorLLM] | None = None
     usage: LLMUsageTracker | None = None
+    llm_spec: str | None = None
+    consolidation: str | None = None
 
 
 class CuratedMemorySource(Protocol):
@@ -785,6 +833,8 @@ class CuratorMemorySource:
         cache_dir: Path | None = None,
         llm_factory: Callable[[Settings], CuratorLLM] | None = None,
         usage: LLMUsageTracker | None = None,
+        llm_spec: str | None = None,
+        consolidation: str | None = None,
     ) -> None:
         self._window = window
         self._fake_llm = fake_llm
@@ -792,6 +842,8 @@ class CuratorMemorySource:
         self._cache_dir = Path(cache_dir) if cache_dir is not None else None
         self._llm_factory = llm_factory
         self._usage = usage
+        self._llm_spec = llm_spec
+        self._consolidation = consolidation
         self._last_counts: dict[str, int] = {}
 
     @property
@@ -806,7 +858,10 @@ class CuratorMemorySource:
         }
         if not self._fake_llm:
             overrides["memoryos_llm_provider"] = base.memoryos_llm_provider
-        return Settings(**overrides)
+        if self._consolidation is not None:
+            overrides["memoryos_curator_consolidation"] = self._consolidation
+        settings = Settings(**overrides)
+        return settings if self._fake_llm else settings_for_llm_spec(settings, self._llm_spec)
 
     def _build_llm(self, settings: Settings) -> CuratorLLM:
         inner: CuratorLLM
@@ -884,6 +939,8 @@ def _default_curated_source(
         cache_dir=context.cache_dir,
         llm_factory=context.llm_factory,
         usage=context.usage,
+        llm_spec=context.llm_spec,
+        consolidation=context.consolidation,
     )
 
 
@@ -1467,27 +1524,33 @@ def build_llm_factory(
     fake_llm: bool,
     settings: Settings | None = None,
     usage: LLMUsageTracker | None = None,
+    answerer_llm: str | None = None,
+    judge_llm: str | None = None,
 ) -> LLMFactory:
     """Create the per-repeat answerer/judge factory.
 
-    Non-fake runs use one remote chat client behind per-role, per-repeat disk
-    caches under ``out_dir/llm_cache``.  The client is built eagerly so missing
-    credentials fail before any room is ingested.  When ``usage`` is given,
-    every provider call and cache hit is recorded per role.
+    Non-fake runs use remote chat clients behind per-role, per-repeat disk
+    caches under ``out_dir/llm_cache``.  ``answerer_llm``/``judge_llm`` are
+    ``provider:model[@wire]`` specs (default: the configured provider), so the
+    judge can come from a different model family than the curator.  Clients
+    are built eagerly so missing credentials fail before any room is
+    ingested.  When ``usage`` is given, every provider call and cache hit is
+    recorded per role.
     """
 
     if fake_llm:
         return lambda repeat: (FakeAnswerer(), FakeJudge())
     resolved = settings or get_settings()
-    base = RemoteChatClient(resolved)
+    answerer_client = RemoteChatClient(settings_for_llm_spec(resolved, answerer_llm))
+    judge_client = RemoteChatClient(settings_for_llm_spec(resolved, judge_llm))
     cache_dir = out_dir / "llm_cache"
 
     def factory(repeat: int) -> tuple[RoomMemAnswerer, RoomMemJudge]:
         answerer_chat = DiskCachedChatClient(
-            base, role="answerer", cache_dir=cache_dir, repeat=repeat, usage=usage
+            answerer_client, role="answerer", cache_dir=cache_dir, repeat=repeat, usage=usage
         )
         judge_chat = DiskCachedChatClient(
-            base, role="judge", cache_dir=cache_dir, repeat=repeat, usage=usage
+            judge_client, role="judge", cache_dir=cache_dir, repeat=repeat, usage=usage
         )
         return ChatAnswerer(answerer_chat), ChatJudge(judge_chat)
 
@@ -1642,6 +1705,18 @@ def score_write_side(
         for view_ids in candidates_by_gold.values()
         if sum(1 for view_id in view_ids if view_by_id[view_id].status == "active") > 1
     )
+    # Chain key consistency: both ends of a gold supersede chain matched, and
+    # the curator gave them the same (normalized) topic key.
+    chain_pairs = 0
+    chain_key_consistent = 0
+    for memory in superseded_gold:
+        old_view = matched_by_gold.get(memory.id)
+        new_view = matched_by_gold.get(memory.superseded_by or "")
+        if old_view is None or new_view is None:
+            continue
+        chain_pairs += 1
+        if _comparable_key(old_view.topic_key) == _comparable_key(new_view.topic_key):
+            chain_key_consistent += 1
 
     memories = len(curated)
     matched = len(matches)
@@ -1662,7 +1737,10 @@ def score_write_side(
         "stale_active": stale_active,
         "golds_with_matches": with_matches,
         "duplicate_golds": duplicate_golds,
+        "chain_pairs": chain_pairs,
+        "chain_key_consistent": chain_key_consistent,
         "rates": {
+            "chain_key_consistency": (chain_key_consistent / chain_pairs if chain_pairs else None),
             "precision": (matched / memories) if memories else None,
             "recall": matched / gold_total,
             "unmatched_rate": (len(unmatched) / memories) if memories else None,
@@ -1679,6 +1757,96 @@ def score_write_side(
         },
     }
     return metrics, matched_by_gold
+
+
+def _comparable_key(topic_key: str) -> str:
+    return normalize_topic_key(topic_key) or topic_key.strip().casefold()
+
+
+def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    dot = sum(a * b for a, b in zip(left, right, strict=False))
+    norm = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
+    return dot / norm if norm else 0.0
+
+
+def conflict_flag_stats(
+    room: Room,
+    views: Sequence[CuratedMemoryView],
+    matched_by_gold: Mapping[str, CuratedMemoryView],
+    embed_batch: Callable[[list[str]], list[list[float]]],
+    thresholds: Sequence[float] = CONFLICT_THRESHOLDS,
+) -> dict[str, Any]:
+    """Score FastEmbed "possible conflict" flags between active memories.
+
+    A pair of active memories with different topic keys is flagged at a
+    threshold when their statement cosine is at least that threshold.  Pairs
+    whose two memories both matched gold are classified by the gold topic
+    keys: ``same_topic`` (a real conflict the keys missed) or
+    ``different_topic`` (a false positive).  Pairs with an unmatched memory are
+    ``unknown`` and excluded from the false-positive rate.
+    """
+
+    active = [view for view in views if view.status == "active"]
+    gold_topic_by_view = {
+        view.id: memory.topic_key
+        for gold_id, view in matched_by_gold.items()
+        if (memory := room.gold_memory(gold_id)) is not None
+    }
+    pairs: list[tuple[float, str]] = []
+    if len(active) >= 2:
+        vectors = embed_batch([view.statement for view in active])
+        for i, left in enumerate(active):
+            for j in range(i + 1, len(active)):
+                right = active[j]
+                if _comparable_key(left.topic_key) == _comparable_key(right.topic_key):
+                    continue
+                left_gold = gold_topic_by_view.get(left.id)
+                right_gold = gold_topic_by_view.get(right.id)
+                if left_gold is None or right_gold is None:
+                    label = "unknown"
+                elif left_gold == right_gold:
+                    label = "same_topic"
+                else:
+                    label = "different_topic"
+                pairs.append((_cosine(vectors[i], vectors[j]), label))
+    by_threshold: dict[str, dict[str, int]] = {}
+    for threshold in thresholds:
+        counts = {"same_topic": 0, "different_topic": 0, "unknown": 0}
+        for score, label in pairs:
+            if score >= threshold:
+                counts[label] += 1
+        by_threshold[f"{threshold:.2f}"] = counts
+    totals = {"same_topic": 0, "different_topic": 0, "unknown": 0}
+    for _score, label in pairs:
+        totals[label] += 1
+    return {"pairs": totals, "flagged": by_threshold}
+
+
+def _pool_conflicts(per_room: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    payloads = [payload["conflicts"] for payload in per_room if payload.get("conflicts")]
+    if not payloads:
+        return None
+    pairs = {"same_topic": 0, "different_topic": 0, "unknown": 0}
+    flagged: dict[str, dict[str, int]] = {}
+    for payload in payloads:
+        for label, count in payload.get("pairs", {}).items():
+            pairs[label] = pairs.get(label, 0) + int(count)
+        for threshold, counts in payload.get("flagged", {}).items():
+            target = flagged.setdefault(
+                threshold, {"same_topic": 0, "different_topic": 0, "unknown": 0}
+            )
+            for label, count in counts.items():
+                target[label] = target.get(label, 0) + int(count)
+    rates: dict[str, dict[str, float | None]] = {}
+    for threshold, counts in sorted(flagged.items()):
+        known = counts["same_topic"] + counts["different_topic"]
+        rates[threshold] = {
+            "false_positive_rate": counts["different_topic"] / known if known else None,
+            "same_topic_recall": (
+                counts["same_topic"] / pairs["same_topic"] if pairs["same_topic"] else None
+            ),
+        }
+    return {"pairs": pairs, "flagged": dict(sorted(flagged.items())), "rates": rates}
 
 
 def _memory_dump_rows(
@@ -1744,6 +1912,8 @@ def pool_write_side(per_room: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "stale_active": 0,
         "golds_with_matches": 0,
         "duplicate_golds": 0,
+        "chain_pairs": 0,
+        "chain_key_consistent": 0,
     }
     judged = {label: 0 for label in UNMATCHED_LABELS}
     noise_types: dict[str, dict[str, int]] = {}
@@ -1775,7 +1945,15 @@ def pool_write_side(per_room: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "noise_types": {name: noise_types[name] for name in sorted(noise_types)},
         "curator_counts": curator_counts,
     }
+    conflicts = _pool_conflicts(per_room)
+    if conflicts is not None:
+        pooled["conflicts"] = conflicts
     pooled["rates"] = {
+        "chain_key_consistency": (
+            (totals["chain_key_consistent"] / totals["chain_pairs"])
+            if totals["chain_pairs"]
+            else None
+        ),
         "precision": (totals["matched"] / totals["memories"]) if totals["memories"] else None,
         "recall": totals["matched"] / totals["gold"] if totals["gold"] else None,
         "unmatched_rate": (
@@ -2376,6 +2554,11 @@ def _run_room_arm(
         write_side["room"] = room.room_id
         if curator_counts:
             write_side["curator_counts"] = curator_counts
+        embedder = getattr(service, "embedding_client", None)
+        if arm == "curated" and embedding == "fastembed" and embedder is not None:
+            write_side["conflicts"] = conflict_flag_stats(
+                room, views, matched_by_gold, embedder.embed_batch
+            )
         memories = _memory_dump_rows(
             arm=arm,
             room=room,
@@ -2750,6 +2933,45 @@ def render_summary_md(summary: Mapping[str, Any]) -> str:
         )
     lines.append("")
     curated = write_side.get("curated")
+    if isinstance(curated, dict) and curated.get("chain_pairs"):
+        lines.append(
+            "Chain key consistency (both ends of a gold supersede chain share one curated "
+            "topic_key): {consistent}/{pairs} = {rate}.".format(
+                consistent=curated.get("chain_key_consistent", 0),
+                pairs=curated.get("chain_pairs", 0),
+                rate=_format_number((curated.get("rates") or {}).get("chain_key_consistency")),
+            )
+        )
+        lines.append("")
+    conflicts = curated.get("conflicts") if isinstance(curated, dict) else None
+    if isinstance(conflicts, dict) and conflicts.get("flagged"):
+        pairs = conflicts.get("pairs") or {}
+        lines.append("### Possible-conflict flags (FastEmbed, different topic keys)")
+        lines.append("")
+        lines.append(
+            "Active pairs with different keys: same gold topic {same}, different gold topic "
+            "{different}, unknown {unknown}.".format(
+                same=pairs.get("same_topic", 0),
+                different=pairs.get("different_topic", 0),
+                unknown=pairs.get("unknown", 0),
+            )
+        )
+        lines.append("")
+        lines.append(
+            "| threshold | flagged same topic | flagged different topic | flagged unknown | "
+            "false positive rate | same-topic recall |"
+        )
+        lines.append("|---|---|---|---|---|---|")
+        rates_by_threshold = conflicts.get("rates") or {}
+        for threshold, counts in conflicts["flagged"].items():
+            rate = rates_by_threshold.get(threshold) or {}
+            lines.append(
+                f"| {threshold} | {counts.get('same_topic', 0)} | "
+                f"{counts.get('different_topic', 0)} | {counts.get('unknown', 0)} | "
+                f"{_format_number(rate.get('false_positive_rate'))} | "
+                f"{_format_number(rate.get('same_topic_recall'))} |"
+            )
+        lines.append("")
     curator_rooms = curated.get("curator_rooms") if isinstance(curated, dict) else None
     if isinstance(curator_rooms, dict) and curator_rooms:
         lines.append("### Curator counters")
@@ -2909,9 +3131,17 @@ def run_roommem(
     usage: LLMUsageTracker | None = None,
     price_in_per_mtok: float | None = None,
     price_out_per_mtok: float | None = None,
+    answerer_llm: str | None = None,
+    judge_llm: str | None = None,
+    curator_llm: str | None = None,
+    curator_consolidation: str | None = None,
 ) -> dict[str, Any]:
     """Run the RoomMem harness and write results/summary reports.
 
+    ``answerer_llm``/``judge_llm``/``curator_llm`` are optional
+    ``provider:model[@wire]`` role specs (see :func:`settings_for_llm_spec`)
+    so one variable can change while the others stay fixed.
+    ``curator_consolidation`` selects ``deterministic`` or ``llm``.
     Returns the summary payload that was written to ``summary.json``.
     """
 
@@ -2933,16 +3163,36 @@ def run_roommem(
         )
     if embedding == "fastembed":
         _require_fastembed()
+    if curator_consolidation is not None and curator_consolidation not in CONSOLIDATION_VALUES:
+        raise RoomMemConfigError(
+            f"unknown curator consolidation {curator_consolidation!r}; "
+            f"valid: {', '.join(CONSOLIDATION_VALUES)}"
+        )
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     tracker = usage if usage is not None else LLMUsageTracker()
     factory = llm_factory or build_llm_factory(
-        out_dir=out_path, fake_llm=fake_llm, settings=settings, usage=tracker
+        out_dir=out_path,
+        fake_llm=fake_llm,
+        settings=settings,
+        usage=tracker,
+        answerer_llm=answerer_llm,
+        judge_llm=judge_llm,
     )
     if llm_label is None and llm_factory is None and not fake_llm:
         resolved = settings or get_settings()
-        llm_label = f"{resolved.resolved_llm_provider}:{resolved.chat_model}"
+        roles = {
+            "answerer": settings_for_llm_spec(resolved, answerer_llm),
+            "judge": settings_for_llm_spec(resolved, judge_llm),
+        }
+        if "curated" in selected_arms:
+            roles["curator"] = settings_for_llm_spec(resolved, curator_llm)
+        labels = {role: llm_spec_label(role_settings) for role, role_settings in roles.items()}
+        if len(set(labels.values())) == 1:
+            llm_label = next(iter(labels.values()))
+        else:
+            llm_label = ", ".join(f"{role}={label}" for role, label in labels.items())
 
     created_scratch = scratch_root is None
     scratch_dir = (
@@ -2969,6 +3219,8 @@ def run_roommem(
                             cache_dir=out_path / "llm_cache",
                             llm_factory=curated_llm_factory,
                             usage=tracker,
+                            llm_spec=curator_llm,
+                            consolidation=curator_consolidation,
                         ),
                     )
                 raw_project_contexts: dict[str, _RawProject] = {}
@@ -3041,6 +3293,9 @@ def run_roommem(
         "llm": llm_label or ("fake" if fake_llm else "custom"),
         "curated_source": curated_source_name if "curated" in selected_arms else None,
         "curator_window": curator_window if "curated" in selected_arms else None,
+        "curator_consolidation": (
+            (curator_consolidation or "deterministic") if "curated" in selected_arms else None
+        ),
     }
     usage_payload = tracker.aggregate()
     curator_usage = _curator_usage_extras(
