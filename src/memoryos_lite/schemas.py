@@ -209,12 +209,24 @@ class BuildContextResponseProfile(StrEnum):
     SOURCE_EVIDENCE_V2 = "source_evidence/v2"
 
 
+class SupersededQuotePayload(BaseModel):
+    """A verbatim quote that grounded a superseded memory, and the current statement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    quote: str = Field(min_length=8, max_length=2000)
+    current: str | None = Field(default=None, max_length=2000)
+
+
 class BuildContextRequest(BaseModel):
     task: str
     budget: int | None = Field(default=None, gt=0)
     retrieval_query: str | None = None
     include_global_core: bool = False
     response_profile: BuildContextResponseProfile = BuildContextResponseProfile.FULL
+    # source_evidence/v2 only: evidence stating one of these superseded values is
+    # ranked behind the rest (and dropped first when the envelope is full).
+    superseded: list[SupersededQuotePayload] = Field(default_factory=list, max_length=64)
 
 
 class SearchRequest(BaseModel):

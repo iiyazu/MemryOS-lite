@@ -519,6 +519,13 @@ def eval_roommem(
             help="Curated/oracle arms deliver project/user memories to every room of the project",
         ),
     ] = False,
+    curated_evidence: Annotated[
+        list[str] | None,
+        Option(
+            "--curated-evidence",
+            help="plain | demote | agentic: how the curated arm builds evidence (repeatable)",
+        ),
+    ] = None,
     out: Annotated[
         str,
         Option("--out", help="Output directory for results and reports"),
@@ -556,6 +563,7 @@ def eval_roommem(
             curator_consolidation=curator_consolidation,
             merge_project=merge_project,
             shared_project=shared_project,
+            curated_evidence=tuple(curated_evidence or ("plain",)),
         )
     except RoomMemError as exc:
         console.print(f"[red]RoomMem error:[/red] {exc}")

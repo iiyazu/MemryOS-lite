@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     # keeps the newest version per topic.  "llm": the earlier pipeline in which
     # the LLM chooses which active memory an update supersedes.
     memoryos_curator_consolidation: str = "deterministic"
+    # source_evidence/v2 ranks raw evidence that states a superseded curated
+    # value (by verbatim quote) behind the rest. Off until RoomMem shows a gain.
+    memoryos_demote_superseded: bool = False
 
     # Middleware
     memoryos_api_key: str | None = None

@@ -77,6 +77,7 @@ from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
 from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
 from memoryos_lite.curator.runner import normalize_topic_key
 from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.retrieval.agentic import AskRequest, AskResponse, render_ask_item
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
@@ -106,6 +107,10 @@ ARM_VALUES: tuple[str, ...] = ("raw", "raw_project", "oracle", "curated", "full_
 #: Arms that carry raw per-message activity documents instead of curated
 #: memory documents (no curated memory id can ever appear in their evidence).
 RAW_LIKE_ARMS: tuple[str, ...] = ("raw", "raw_project", "full_context")
+#: How the curated arm builds evidence: ``plain`` source_evidence/v2, ``demote``
+#: with superseded-source demotion, ``agentic`` through the ask graph. Each mode
+#: answers from the same curated memories (the curator runs once).
+EVIDENCE_MODES: tuple[str, ...] = ("plain", "demote", "agentic")
 #: Arms whose evidence is the whole project transcript, not a retrieval result.
 FULL_CONTEXT_LAYER = "full_history"
 EMBEDDING_VALUES: tuple[str, ...] = ("none", "fastembed")
@@ -731,6 +736,13 @@ class FakeCuratorLLM:
         return {"operations": operations}
 
 
+class FakeRewriteLLM:
+    """Deterministic ask rewriter for ``--fake-llm``: never proposes a new query."""
+
+    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        return {"query": ""}
+
+
 class DiskCachedCuratorLLM:
     """Disk cache for curator JSON calls keyed by role/model/prompt/repeat.
 
@@ -746,6 +758,7 @@ class DiskCachedCuratorLLM:
         cache_dir: Path,
         repeat: int = 0,
         usage: LLMUsageTracker | None = None,
+        role: str = "curator",
     ) -> None:
         if repeat < 0:
             raise ValueError("repeat index must be non-negative")
@@ -754,11 +767,12 @@ class DiskCachedCuratorLLM:
         self._cache_dir = Path(cache_dir)
         self._repeat = repeat
         self._usage = usage
+        self._role = role
 
     def cache_key(self, *, system: str, user: str) -> str:
         payload = json.dumps(
             {
-                "role": "curator",
+                "role": self._role,
                 "model": self._model,
                 "system": system,
                 "user": user,
@@ -788,7 +802,7 @@ class DiskCachedCuratorLLM:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(
-                {"role": "curator", "model": self._model, "response": response},
+                {"role": self._role, "model": self._model, "response": response},
                 ensure_ascii=False,
             ),
             encoding="utf-8",
@@ -800,7 +814,7 @@ class DiskCachedCuratorLLM:
             return
         latency = time.perf_counter() - started
         usage = None if cached else _extract_usage(getattr(self._inner, "last_usage", None))
-        self._usage.record("curator", cached=cached, latency_s=latency, usage=usage)
+        self._usage.record(self._role, cached=cached, latency_s=latency, usage=usage)
 
 
 def _session_dataset_message_ids(service: MemoryOSService, session_id: str) -> dict[str, str]:
@@ -2627,6 +2641,36 @@ class _RoomArmResult:
     memories: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _rewrite_llm(
+    *,
+    fake_llm: bool,
+    settings: Settings | None,
+    spec: str | None,
+    cache_dir: Path,
+    repeat: int,
+    usage: LLMUsageTracker,
+    factory: Callable[[Settings], CuratorLLM] | None,
+) -> CuratorLLM:
+    """The ask graph's query rewriter: same model spec as the curator, own cache role."""
+
+    resolved = settings_for_llm_spec(settings or get_settings(), spec)
+    if factory is not None:
+        return factory(resolved)
+    if fake_llm:
+        return FakeRewriteLLM()
+    built = build_curator_llm(resolved)
+    if built is None:
+        raise RoomMemConfigError(f"agentic evidence needs {resolved.chat_api_key_name}")
+    return DiskCachedCuratorLLM(
+        built,
+        model=resolved.chat_model,
+        cache_dir=cache_dir,
+        repeat=repeat,
+        usage=usage,
+        role="rewrite",
+    )
+
+
 def _run_room_arm(
     *,
     arm: str,
@@ -2641,6 +2685,8 @@ def _run_room_arm(
     raw_project: _RawProject | None = None,
     shared_memory: _SharedMemoryProject | None = None,
     project_rooms: Sequence[Room] | None = None,
+    evidence_modes: Sequence[str] = ("plain",),
+    rewrite_llm: CuratorLLM | None = None,
 ) -> _RoomArmResult:
     kernel_external = heuristic_advisories and arm == "raw"
     views: list[CuratedMemoryView] = []
@@ -2742,16 +2788,26 @@ def _run_room_arm(
         )
     advisories: dict[str, Mapping[str, Any]] = {}
 
+    modes = list(evidence_modes) if arm == "curated" else ["plain"]
+    marks = (
+        service.superseded_marks(session_id)
+        if service is not None and any(mode != "plain" for mode in modes)
+        else []
+    )
     results: list[dict[str, Any]] = []
     for probe in room.probes:
         target_session = new_session_id
         if probe.asked_in != "new_room_same_project" or target_session is None:
             target_session = session_id
+        variants: list[tuple[str, list[EvidenceItem], dict[str, Any]]] = []
         if full_evidence is not None:
-            evidence = full_evidence
-            envelope: dict[str, Any] = {
-                "estimated_tokens": sum(item.estimated_tokens for item in evidence)
-            }
+            variants.append(
+                (
+                    arm,
+                    full_evidence,
+                    {"estimated_tokens": sum(item.estimated_tokens for item in full_evidence)},
+                )
+            )
         else:
             assert service is not None
             package = service.build_context(
@@ -2761,108 +2817,59 @@ def _run_room_arm(
                 retrieval_query=probe.question,
                 include_global_core=False,
             )
-            envelope = build_source_evidence(package, schema_version="v2")
-            evidence = _evidence_items(envelope)
+            for mode in modes:
+                label = arm if mode == "plain" else f"{arm}+{mode}"
+                if mode == "agentic":
+                    asked = service.ask_with(
+                        target_session,
+                        AskRequest(
+                            question=probe.question,
+                            task=XMUSE_TASK,
+                            budget=XMUSE_EVIDENCE_BUDGET,
+                        ),
+                        llm=rewrite_llm,
+                        marks=marks,
+                    )
+                    items = _ask_evidence_items(asked)
+                    variants.append(
+                        (
+                            label,
+                            items,
+                            {
+                                "estimated_tokens": sum(i.estimated_tokens for i in items),
+                                "ask": asked.diagnostics.model_dump(),
+                                "queries": asked.queries,
+                            },
+                        )
+                    )
+                    continue
+                envelope = build_source_evidence(
+                    package,
+                    schema_version="v2",
+                    superseded=marks if mode == "demote" else (),
+                )
+                variants.append((label, _evidence_items(envelope), envelope))
         if kernel_external and service is not None:
             for advisory in service.list_external_advisories(target_session):
                 advisory_id = str(advisory.get("advisory_id", ""))
                 advisories.setdefault(advisory_id, advisory)
 
-        answer = answerer.answer(question=probe.question, evidence=evidence)
-        answer_golds = [
-            memory
-            for memory in (room.gold_memory(memory_id) for memory_id in probe.answer_memory_ids)
-            if memory is not None
-        ]
-        topic_keys = {memory.topic_key for memory in answer_golds}
-        current_statements = [memory.statement for memory in answer_golds]
-        superseded_statements = [
-            memory.statement
-            for memory in room.gold_memories
-            if memory.superseded_by is not None and memory.topic_key in topic_keys
-        ]
-        judge_label = judge.judge_answer(
-            question=probe.question,
-            current_statements=current_statements,
-            superseded_statements=superseded_statements,
-            answer=answer,
-        )
-
-        message_presence, memory_presence = _evidence_presence(
-            evidence, message_id_map, room_id=room.room_id
-        )
-        answer_source_messages = {
-            source.message_id for memory in answer_golds for source in memory.sources
-        }
-        source_hit = bool(answer_source_messages & message_presence)
-        answer_view_ids = {
-            matched_view.id
-            for memory in answer_golds
-            if (matched_view := matched_by_gold.get(memory.id)) is not None
-        }
-        if arm in RAW_LIKE_ARMS:
-            hit = source_hit
-        else:
-            hit = bool(answer_view_ids & memory_presence)
-        stale = False
-        for memory in room.gold_memories:
-            if memory.superseded_by is None or memory.topic_key not in topic_keys:
-                continue
-            stale_sources = {source.message_id for source in memory.sources}
-            if not (stale_sources & message_presence):
-                continue
-            successor = room.gold_memory(memory.superseded_by)
-            if successor is None:
-                continue
-            successor_present = bool(
-                {source.message_id for source in successor.sources} & message_presence
+        for label, evidence, envelope in variants:
+            results.append(
+                _score_probe(
+                    label=label,
+                    arm=arm,
+                    room=room,
+                    probe=probe,
+                    repeat=repeat,
+                    evidence=evidence,
+                    envelope=envelope,
+                    answerer=answerer,
+                    judge=judge,
+                    message_id_map=message_id_map,
+                    matched_by_gold=matched_by_gold,
+                )
             )
-            if arm not in RAW_LIKE_ARMS:
-                successor_view = matched_by_gold.get(successor.id)
-                if successor_view is not None and successor_view.id in memory_presence:
-                    successor_present = True
-            if not successor_present:
-                stale = True
-        citations, citation_correct = _citation_correctness(
-            answer,
-            evidence,
-            arm=arm,
-            room_id=room.room_id,
-            message_id_map=message_id_map,
-            answer_source_messages=answer_source_messages,
-            answer_view_ids=answer_view_ids,
-        )
-        evidence_tokens = envelope.get("estimated_tokens")
-        results.append(
-            {
-                "arm": arm,
-                "room": room.room_id,
-                "probe": probe.id,
-                "asked_in": probe.asked_in,
-                "repeat": repeat,
-                "question": probe.question,
-                "answer_memory_ids": list(probe.answer_memory_ids),
-                "evidence_tokens": evidence_tokens if isinstance(evidence_tokens, int) else 0,
-                "evidence": [
-                    {
-                        "rank": item.rank,
-                        "item_id": item.item_id,
-                        "layer": item.layer,
-                        "document_id": item.document_id,
-                        "text": item.text,
-                    }
-                    for item in evidence
-                ],
-                "hit": hit,
-                "source_hit": source_hit,
-                "stale": stale,
-                "answer": answer,
-                "judge": judge_label if judge_label in JUDGE_LABELS else "wrong",
-                "substring": _substring_verdict(probe, answer),
-                "citations": citations,
-                "citation_correct": citation_correct,
-            }
-        )
 
     if kernel_external:
         write_side = _score_heuristic_advisories(
@@ -2871,6 +2878,139 @@ def _run_room_arm(
             message_id_map,
         )
     return _RoomArmResult(results=results, write_side=write_side, memories=memories)
+
+
+def _ask_evidence_items(asked: AskResponse) -> list[EvidenceItem]:
+    """Ask items as the answerer sees them: outdated items carry the current value."""
+
+    return [
+        EvidenceItem(
+            rank=item.rank,
+            item_id=item.item_id,
+            layer=item.layer,
+            text=render_ask_item(item),
+            estimated_tokens=item.estimated_tokens,
+            document_id=item.document_id,
+            source_refs=tuple(
+                {k: v for k, v in ref.items() if k in {"source_type", "source_id", "session_id"}}
+                for ref in item.source_refs
+            ),
+        )
+        for item in asked.items
+    ]
+
+
+def _score_probe(
+    *,
+    label: str,
+    arm: str,
+    room: Room,
+    probe: RoomProbe,
+    repeat: int,
+    evidence: list[EvidenceItem],
+    envelope: Mapping[str, Any],
+    answerer: RoomMemAnswerer,
+    judge: RoomMemJudge,
+    message_id_map: Mapping[str, str],
+    matched_by_gold: Mapping[str, CuratedMemoryView],
+) -> dict[str, Any]:
+    answer = answerer.answer(question=probe.question, evidence=evidence)
+    answer_golds = [
+        memory
+        for memory in (room.gold_memory(memory_id) for memory_id in probe.answer_memory_ids)
+        if memory is not None
+    ]
+    topic_keys = {memory.topic_key for memory in answer_golds}
+    current_statements = [memory.statement for memory in answer_golds]
+    superseded_statements = [
+        memory.statement
+        for memory in room.gold_memories
+        if memory.superseded_by is not None and memory.topic_key in topic_keys
+    ]
+    judge_label = judge.judge_answer(
+        question=probe.question,
+        current_statements=current_statements,
+        superseded_statements=superseded_statements,
+        answer=answer,
+    )
+
+    message_presence, memory_presence = _evidence_presence(
+        evidence, message_id_map, room_id=room.room_id
+    )
+    answer_source_messages = {
+        source.message_id for memory in answer_golds for source in memory.sources
+    }
+    source_hit = bool(answer_source_messages & message_presence)
+    answer_view_ids = {
+        matched_view.id
+        for memory in answer_golds
+        if (matched_view := matched_by_gold.get(memory.id)) is not None
+    }
+    if arm in RAW_LIKE_ARMS:
+        hit = source_hit
+    else:
+        hit = bool(answer_view_ids & memory_presence)
+    stale = False
+    for memory in room.gold_memories:
+        if memory.superseded_by is None or memory.topic_key not in topic_keys:
+            continue
+        stale_sources = {source.message_id for source in memory.sources}
+        if not (stale_sources & message_presence):
+            continue
+        successor = room.gold_memory(memory.superseded_by)
+        if successor is None:
+            continue
+        successor_present = bool(
+            {source.message_id for source in successor.sources} & message_presence
+        )
+        if arm not in RAW_LIKE_ARMS:
+            successor_view = matched_by_gold.get(successor.id)
+            if successor_view is not None and successor_view.id in memory_presence:
+                successor_present = True
+        if not successor_present:
+            stale = True
+    citations, citation_correct = _citation_correctness(
+        answer,
+        evidence,
+        arm=arm,
+        room_id=room.room_id,
+        message_id_map=message_id_map,
+        answer_source_messages=answer_source_messages,
+        answer_view_ids=answer_view_ids,
+    )
+    evidence_tokens = envelope.get("estimated_tokens")
+    row: dict[str, Any] = {
+        "arm": label,
+        "room": room.room_id,
+        "probe": probe.id,
+        "asked_in": probe.asked_in,
+        "repeat": repeat,
+        "question": probe.question,
+        "answer_memory_ids": list(probe.answer_memory_ids),
+        "evidence_tokens": evidence_tokens if isinstance(evidence_tokens, int) else 0,
+        "evidence": [
+            {
+                "rank": item.rank,
+                "item_id": item.item_id,
+                "layer": item.layer,
+                "document_id": item.document_id,
+                "text": item.text,
+            }
+            for item in evidence
+        ],
+        "hit": hit,
+        "source_hit": source_hit,
+        "stale": stale,
+        "answer": answer,
+        "judge": judge_label if judge_label in JUDGE_LABELS else "wrong",
+        "substring": _substring_verdict(probe, answer),
+        "citations": citations,
+        "citation_correct": citation_correct,
+    }
+    if "ask" in envelope:
+        row["ask"] = envelope["ask"]
+        row["queries"] = envelope.get("queries")
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -3317,8 +3457,14 @@ def run_roommem(
     curator_consolidation: str | None = None,
     merge_project: str | None = None,
     shared_project: bool = False,
+    curated_evidence: Sequence[str] = ("plain",),
+    rewrite_llm_factory: Callable[[Settings], CuratorLLM] | None = None,
 ) -> dict[str, Any]:
     """Run the RoomMem harness and write results/summary reports.
+
+    ``curated_evidence`` lists how the curated arm builds evidence (see
+    :data:`EVIDENCE_MODES`); every mode after ``plain`` is reported as its own
+    arm label, e.g. ``curated+demote``.
 
     ``answerer_llm``/``judge_llm``/``curator_llm`` are optional
     ``provider:model[@wire]`` role specs (see :func:`settings_for_llm_spec`)
@@ -3353,6 +3499,12 @@ def run_roommem(
         )
     if embedding == "fastembed":
         _require_fastembed()
+    evidence_modes = list(dict.fromkeys(curated_evidence)) or ["plain"]
+    for mode in evidence_modes:
+        if mode not in EVIDENCE_MODES:
+            raise RoomMemConfigError(
+                f"unknown curated evidence mode {mode!r}; valid: {', '.join(EVIDENCE_MODES)}"
+            )
     if curator_consolidation is not None and curator_consolidation not in CONSOLIDATION_VALUES:
         raise RoomMemConfigError(
             f"unknown curator consolidation {curator_consolidation!r}; "
@@ -3413,6 +3565,17 @@ def run_roommem(
                             consolidation=curator_consolidation,
                         ),
                     )
+                rewrite_llm: CuratorLLM | None = None
+                if arm == "curated" and "agentic" in evidence_modes:
+                    rewrite_llm = _rewrite_llm(
+                        fake_llm=fake_llm,
+                        settings=settings,
+                        spec=curator_llm,
+                        cache_dir=out_path / "llm_cache",
+                        repeat=repeat,
+                        usage=tracker,
+                        factory=rewrite_llm_factory,
+                    )
                 raw_project_contexts: dict[str, _RawProject] = {}
                 shared_contexts: dict[str, _SharedMemoryProject] = {}
                 rooms_by_project = _rooms_by_project(rooms)
@@ -3455,6 +3618,8 @@ def run_roommem(
                             raw_project=raw_project_contexts.get(room.project),
                             shared_memory=shared_contexts.get(room.project),
                             project_rooms=rooms_by_project.get(room.project),
+                            evidence_modes=evidence_modes,
+                            rewrite_llm=rewrite_llm,
                         )
                     results.extend(room_result.results)
                     memories.extend(room_result.memories)
@@ -3502,6 +3667,7 @@ def run_roommem(
         "heuristic_advisories": heuristic_advisories,
         "llm": llm_label or ("fake" if fake_llm else "custom"),
         "curated_source": curated_source_name if "curated" in selected_arms else None,
+        "curated_evidence": evidence_modes if "curated" in selected_arms else None,
         "curator_window": curator_window if "curated" in selected_arms else None,
         "curator_consolidation": (
             (curator_consolidation or "deterministic") if "curated" in selected_arms else None
