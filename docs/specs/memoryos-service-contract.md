@@ -32,6 +32,7 @@ All request and response bodies are JSON except `/metrics`.
 | `GET` | `/sessions/{id}/trace` | Return diagnostic trace events. |
 | `GET` | `/sessions/{id}/advisories` | Host-facing advisories; `?version=2` selects curated-memory advisories. |
 | `POST` | `/curate` | Stateless module memory curation (`memoryos_curate/v1`). |
+| `POST` | `/sessions/{id}/ask` | Agentic retrieval with superseded marks (`memoryos_memory_ask/v1`). |
 | `POST` | `/archives/ingest` | Idempotently ingest a source document. |
 | `POST` | `/archives/attachments` | Attach an archive document to a session. |
 | `GET` | `/archives/passages` | List bounded archive passages. |
@@ -179,6 +180,33 @@ Errors: 422 for an invalid request, 503 with `curator_llm_key_missing`,
 run, and 502 with `curator_llm_error` when the provider call fails. No error
 carries provider text. `/health` reports `capabilities.curate` as
 `memoryos_curate/v1`.
+
+## Pull side: superseded marks and `POST /sessions/{id}/ask`
+
+A superseded mark is the verbatim quote that grounded a now-superseded memory,
+with the current statement when known. Evidence whose text contains such a
+quote (whitespace- and case-insensitive) and no quote of an active memory
+states an outdated value. Marks come from the host (`superseded` on the
+request, for hosts that keep memories themselves) and, when
+`MEMORYOS_DEMOTE_SUPERSEDED=true`, from the session's own curated memories.
+
+`build-context` with `response_profile: "source_evidence/v2"` accepts
+`"superseded": [{"quote": "...", "current": "..."}]` (up to 64). Marked items
+are ranked after the others, so a full envelope drops them first. Item text
+and fields are unchanged; consumers keep re-proving text by `content_sha256`.
+
+`POST /sessions/{id}/ask` (`AskRequest`: `question`, optional `task`,
+`budget` up to 800, `max_rounds` 0-2, `superseded`) runs a LangGraph graph:
+`retrieve` (one `build-context` + v2 projection, new items merged) → `grade`
+(deterministic: enough when a current item covers at least half of the
+question's keywords) → `rewrite` (the LLM proposes one new query) → `retrieve`
+again, at most `max_rounds` extra times. Without an LLM it stops after the
+first retrieval. The response (`memoryos_memory_ask/v1`) lists `queries` and
+`items` (current items first, outdated last, within `budget`), each with
+`text`, `source_refs`, the `query` that found it, `outdated`, and `current`;
+`diagnostics` reports retrievals, LLM calls, the stop reason, and omitted
+items. 404 for an unknown session, 503 `ask_requires_langgraph` when the
+graph runtime is missing.
 
 ## Behavioral guarantees
 

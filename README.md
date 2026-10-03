@@ -73,6 +73,7 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 | `POST` | `/sessions/{id}/page` | 显式分页 |
 | `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
 | `POST` | `/curate` | 无状态模块记忆提炼（`memoryos_curate/v1`） |
+| `POST` | `/sessions/{id}/ask` | 按需 agentic 检索（`memoryos_memory_ask/v1`） |
 | `POST` | `/archives/ingest` | 摄入可归因归档文档 |
 | `POST` | `/archives/attachments` | 将归档关联到会话 |
 | `POST` | `/memory/search` | 检索记忆 |
@@ -105,6 +106,23 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
   首轮和末轮违规）。无 LLM key 或缺 LangGraph 返回 503，provider 出错返回 502，都不带 provider
   错误原文。
 
+### 拉取端：按需检索 `ask` 与已取代降权
+
+模块记忆文件常驻负责人的上下文（推送端）。负责人需要追问历史时（"当时为什么这么定"），
+通过 `POST /sessions/{id}/ask`（`memoryos_memory_ask/v1`）按需检索完整历史（拉取端）。
+
+- **已取代判定**：证据原文包含某条已被取代记忆的逐字引文，且不包含任何有效记忆的引文，
+  就视为陈述了过时的值。按引文文本匹配，不依赖消息或文档 id。标记来源有两种：宿主在请求里
+  带上 `superseded: [{quote, current}]`（PO 模式，状态在宿主）；或开启
+  `MEMORYOS_DEMOTE_SUPERSEDED` 后，从本会话自己的 curated 记忆推导（Room 模式）。
+- **`source_evidence/v2` 降权**：带标记时，过时条目排到最后，信封装满时先被丢弃。条目原文
+  不改，因为消费方会按 `content_sha256` 复证原文。
+- **`ask` 图**（LangGraph）：`retrieve → grade → (rewrite → retrieve)* → finalize`。
+  - `grade` 是确定性的：只看非过时条目，问题关键词覆盖率达到一半就算够；
+  - 不够时，`rewrite` 让 LLM 给出一个更好的查询，最多再检索两轮；
+  - 结果中当前条目在前，过时条目在后，并附上现值（`outdated`、`current`）。
+  - 没有 LLM 时只做一轮确定性检索。
+
 ## 配置
 
 | 变量 | 默认值 | 说明 |
@@ -120,6 +138,7 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 | `MEMORYOS_CURATOR_POLL_S` | `2.0` | 后台 worker 轮询间隔 |
 | `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |
 | `MEMORYOS_CURATOR_CONSOLIDATION` | `deterministic` | `deterministic`：按 `topic_key` 保留最新版本；`llm`：早期由 LLM 指定被取代记忆的流程 |
+| `MEMORYOS_DEMOTE_SUPERSEDED` | `false` | 用本会话 curated 记忆推导已取代标记，用于 `source_evidence/v2` 降权和 `ask` |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENCODE_API_KEY` | unset | 可选真实模型提供方；`MEMORYOS_LLM_PROVIDER=opencode` 走 OpenCode Go（默认 `muse-spark-1.3-contributor`，Responses API），目前只用于 curator 与 RoomMem |
 | `QDRANT_URL` | unset | 可选向量检索后端 |
 
@@ -147,7 +166,10 @@ uv run memoryos eval modulemem --split dev --arm pack --arm raw_log --arm full_h
   --out artifacts/modulemem
 ```
 
-RoomMem 的 arm 有 `raw`、`raw_project`、`oracle`、`curated`、`full_context`。ModuleMem 的
+RoomMem 的 arm 有 `raw`、`raw_project`、`oracle`、`curated`、`full_context`；
+`--curated-evidence plain|demote|agentic`（可重复）让 `curated` 组在同一批 curated 记忆上
+分别用普通检索、已取代降权、`ask` 图取证据，结果标为 `curated`、`curated+demote`、
+`curated+agentic`。ModuleMem 的
 arm 有 `pack`（扮演宿主走 `/curate` 的图，渲染模块记忆文件）、`oracle_pack`、`recent`、
 `raw_log`（同预算下最新的原始活动）、`retrieval`、`full_history`；`pack` 另报告失败归属与
 gold 教训聚类的成对精确率和召回率、排除数、`unaccounted` 和修复轮数。`--answerer-llm`、
