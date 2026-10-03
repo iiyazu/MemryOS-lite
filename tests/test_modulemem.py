@@ -8,6 +8,7 @@ from memoryos_lite.modulemem import (
     MODULEMEM_ARMS,
     MODULEMEM_SPLITS,
     ModuleMemConfig,
+    _write_side,
     load_modules,
     pack_evidence,
     run_modulemem,
@@ -74,6 +75,33 @@ def test_oracle_pack_contains_current_contract_and_no_superseded_decision(tmp_pa
     evidence = pack_evidence(module, pack)
     assert evidence[0].layer == "contract" and "Current contract" in evidence[0].text
     assert summary["packs"]["oracle_pack"]["packs"] == 1
+
+
+def test_write_side_reports_overcounted_lesson_occurrences():
+    module = load_modules(DATA, ["mm01"])[0]
+    lesson = next(lesson for lesson in module.gold.lessons if lesson.occurrences >= 2)
+
+    def memories(occurrences: int) -> list[dict[str, object]]:
+        return [
+            {
+                "id": "cmem_1",
+                "kind": "lesson",
+                "topic_key": lesson.topic_key,
+                "statement": lesson.statement,
+                "occurrences": occurrences,
+                "status": "active",
+                "sources": [
+                    {"activity_id": s.activity_id, "quote": s.quote} for s in lesson.sources
+                ],
+            }
+        ]
+
+    exact = _write_side(module, memories(lesson.occurrences))
+    over = _write_side(module, memories(lesson.occurrences + 1))
+
+    assert exact["lesson_occurrences_exact"] == 1 and exact["lesson_occurrences_over"] == 0
+    assert over["lesson_occurrences_exact"] == 0 and over["lesson_occurrences_over"] == 1
+    assert over["repeated_lessons_recognized"] == 1
 
 
 def test_all_arms_run_end_to_end_with_fake_llms(tmp_path):

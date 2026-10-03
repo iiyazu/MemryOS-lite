@@ -109,6 +109,25 @@ class _MessageInfo:
     activity_type: str | None
 
 
+def _occurrences_in(fresh: list[dict[str, str]], infos: dict[str, _MessageInfo]) -> int:
+    """Occurrences a lesson gains from newly cited sources.
+
+    With typed activities (module sessions) each newly cited review objection or
+    gate failure is one occurrence, so a plain message cited alongside adds none.
+    Untyped sessions count one occurrence per proposal that cites anything new.
+    Several quotes from the same message (common for long gate logs) count once.
+    """
+
+    types = [
+        info.activity_type
+        for message_id in dict.fromkeys(source["message_id"] for source in fresh)
+        if (info := infos.get(message_id)) is not None
+    ]
+    if not any(types):
+        return 1
+    return sum(1 for activity_type in types if activity_type in LESSON_SOURCE_ACTIVITY_TYPES)
+
+
 def _nullish(value: object) -> bool:
     return value is None or value == "" or value == "null"
 
@@ -399,7 +418,7 @@ class Curator:
                 if row.topic_key == topic_key and (row.kind == "lesson") == is_lesson
             ]
             if is_lesson:
-                self._merge_lessons(proposals, same_topic, counts)
+                self._merge_lessons(proposals, same_topic, counts, infos)
             else:
                 self._keep_newest(proposals, same_topic, counts)
         return counts
@@ -439,6 +458,7 @@ class Curator:
         proposals: list[CuratedMemoryWrite],
         same_topic: list[CuratedMemoryRow],
         counts: _WindowCounts,
+        infos: dict[str, _MessageInfo],
     ) -> None:
         prior = max(same_topic, key=lambda row: (row.version, row.created_at, row.id), default=None)
         sources = list(prior.sources) if prior is not None else []
@@ -447,6 +467,7 @@ class Curator:
         statement = prior.statement if prior is not None else proposals[0].statement
         kind = proposals[0].kind
         seen = {source["message_id"] for source in sources}
+        merged_any = False
         new_occurrences = 0
         for proposal in proposals:
             fresh = [source for source in proposal.sources if source["message_id"] not in seen]
@@ -455,11 +476,12 @@ class Curator:
                 continue
             sources.extend(fresh)
             seen.update(source["message_id"] for source in fresh)
-            new_occurrences += 1
+            merged_any = True
+            new_occurrences += _occurrences_in(fresh, infos)
             version = max(version, proposal.version)
             # The newest wording of a repeated lesson is the one shown.
             statement = proposal.statement
-        if new_occurrences == 0:
+        if not merged_any:
             return
         merged = CuratedMemoryWrite(
             kind=kind,

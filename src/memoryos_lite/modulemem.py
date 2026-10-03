@@ -585,6 +585,13 @@ def _write_side(module: Module, memories: list[dict[str, Any]]) -> dict[str, Any
     occurrence_exact = sum(
         1 for gid in lesson_matches if occurrences.get(by_gold[gid]) == lesson_gold[gid].occurrences
     )
+    # Over-counting (a restatement counted as a new failure) is the risk of asking the
+    # curator to re-add repeated lessons, so it is reported next to the exact count.
+    occurrence_over = sum(
+        1
+        for gid in lesson_matches
+        if occurrences.get(by_gold[gid], 1) > lesson_gold[gid].occurrences
+    )
     repeated = [lesson.id for lesson in module.gold.lessons if lesson.occurrences >= 2]
     repeated_seen = sum(
         1 for gid in repeated if gid in by_gold and occurrences.get(by_gold[gid], 1) >= 2
@@ -602,6 +609,7 @@ def _write_side(module: Module, memories: list[dict[str, Any]]) -> dict[str, Any
         "matched_lessons": len(lesson_matches),
         "gold_lessons": len(module.gold.lessons),
         "lesson_occurrences_exact": occurrence_exact,
+        "lesson_occurrences_over": occurrence_over,
         "repeated_lessons": len(repeated),
         "repeated_lessons_recognized": repeated_seen,
         "superseded_gold": len(superseded_gold),
