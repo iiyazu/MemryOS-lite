@@ -9,13 +9,20 @@ accepted.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
-from datetime import UTC
+from datetime import UTC, datetime
 
 from memoryos_lite.config import Settings
 from memoryos_lite.curator.grounding import ground_quote, normalize_text
 from memoryos_lite.curator.llm import CuratorLLM, CuratorLLMError, CuratorSchemaError
-from memoryos_lite.curator.prompt import CURATOR_SYSTEM_PROMPT, build_user_prompt
+from memoryos_lite.curator.prompt import (
+    ACTIVE_HEADER_DETERMINISTIC,
+    ACTIVE_HEADER_LLM_SUPERSEDE,
+    CURATOR_SYSTEM_PROMPT,
+    CURATOR_SYSTEM_PROMPT_LLM_SUPERSEDE,
+    build_user_prompt,
+)
 from memoryos_lite.observability import current_observability_context
 from memoryos_lite.schemas import Message, TraceEvent, new_id, utc_now
 from memoryos_lite.store import MemoryStore
@@ -26,7 +33,27 @@ CURATOR_OPS = frozenset({"add", "update", "noop"})
 MAX_STATEMENT_CHARS = 600
 MAX_TOPIC_KEY_CHARS = 255
 MAX_SOURCES = 3
+# A lesson accumulates the sources of its repeat occurrences, newest kept.
+MAX_LESSON_SOURCES = 8
 CONTEXT_MESSAGES = 4
+#: Message metadata key carrying the consumer's monotonic activity order.
+ACTIVITY_SEQ_KEY = "activity_seq"
+ACTIVITY_TYPE_KEY = "activity_type"
+_TOPIC_SEPARATORS = re.compile(r"[^\w.]+")
+
+
+def normalize_topic_key(raw: str) -> str | None:
+    """Canonical topic key: casefolded, word characters, ``_`` and ``.`` only."""
+
+    key = _TOPIC_SEPARATORS.sub("_", raw.strip().casefold())
+    key = re.sub(r"_+", "_", key)
+    key = re.sub(r"\.+", ".", key)
+    key = re.sub(r"_?\._?", ".", key).strip("._")
+    if not key or len(key) > MAX_TOPIC_KEY_CHARS:
+        return None
+    return key
+
+
 SKIP_AFTER_FAILURES = 3
 SCHEMA_ATTEMPTS = 2
 
@@ -46,6 +73,7 @@ class CuratorRunResult:
     rejected_grounding: int = 0
     rejected_schema: int = 0
     llm_errors: int = 0
+    stale: int = 0
     status: str = "no_messages"
     error_code: str | None = None
 
@@ -63,11 +91,34 @@ class _WindowCounts:
     noop: int = 0
     rejected_grounding: int = 0
     rejected_schema: int = 0
+    stale: int = 0
     writes: list[CuratedMemoryWrite] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _MessageInfo:
+    content: str
+    version: int
+    created_at: datetime
+    activity_type: str | None
 
 
 def _nullish(value: object) -> bool:
     return value is None or value == "" or value == "null"
+
+
+def _message_info(message: Message, position: int) -> _MessageInfo:
+    """Version a message by the consumer's activity order, else its position."""
+
+    seq = message.metadata.get(ACTIVITY_SEQ_KEY)
+    version = seq if isinstance(seq, int) and not isinstance(seq, bool) and seq >= 0 else position
+    activity_type = message.metadata.get(ACTIVITY_TYPE_KEY)
+    return _MessageInfo(
+        content=message.content,
+        version=version,
+        created_at=message.created_at,
+        activity_type=activity_type if isinstance(activity_type, str) else None,
+    )
 
 
 class Curator:
@@ -149,7 +200,12 @@ class Curator:
                 after_seq=max(0, seq - CONTEXT_MESSAGES),
                 limit=min(CONTEXT_MESSAGES, seq),
             )
-            content_by_id = {message.id: message.content for message in [*context, *window]}
+            first_position = seq - len(context) + 1
+            infos = {
+                message.id: _message_info(message, first_position + offset)
+                for offset, message in enumerate([*context, *window])
+            }
+            content_by_id = {message_id: info.content for message_id, info in infos.items()}
 
             try:
                 operations = self._complete_operations(context, window, active)
@@ -174,7 +230,10 @@ class Curator:
 
             result.windows += 1
             result.operations += len(operations)
-            counts = self._validate_operations(operations, active, content_by_id)
+            if self.settings.resolved_curator_consolidation == "deterministic":
+                counts = self._consolidate(operations, active, infos)
+            else:
+                counts = self._validate_operations(operations, active, content_by_id, infos)
             created = self.store.apply_curator_window(
                 session_id=session_id,
                 run_id=run_id,
@@ -194,12 +253,16 @@ class Curator:
             result.noop += counts.noop
             result.rejected_grounding += counts.rejected_grounding
             result.rejected_schema += counts.rejected_schema
+            result.stale += counts.stale
             result.status = "ok"
             self._window_failures.pop((session_id, seq), None)
             for write, row in zip(counts.writes, created, strict=True):
-                if write.supersedes_id is not None:
-                    active.pop(write.supersedes_id, None)
-                active[row.id] = row
+                for target in (write.supersedes_id, *write.also_supersedes):
+                    if target is not None:
+                        active.pop(target, None)
+                if row.status == "active":
+                    active[row.id] = row
+                self._trace_written(session_id, row, infos)
             self._trace(
                 session_id,
                 "curator_window_processed",
@@ -212,6 +275,7 @@ class Curator:
                     "noop": counts.noop,
                     "rejected_grounding": counts.rejected_grounding,
                     "rejected_schema": counts.rejected_schema,
+                    "stale": counts.stale,
                 },
             )
             seq += len(window)
@@ -245,15 +309,20 @@ class Curator:
             raise CuratorLLMError("curator LLM unavailable")
         max_active = self.settings.memoryos_curator_max_active_in_prompt
         active_rows = list(active.values())[-max_active:]
+        deterministic = self.settings.resolved_curator_consolidation == "deterministic"
         user = build_user_prompt(
             context_messages=context,
             window_messages=window,
             active_memories=active_rows,
+            active_header=(
+                ACTIVE_HEADER_DETERMINISTIC if deterministic else ACTIVE_HEADER_LLM_SUPERSEDE
+            ),
         )
+        system = CURATOR_SYSTEM_PROMPT if deterministic else CURATOR_SYSTEM_PROMPT_LLM_SUPERSEDE
         last_schema_error: CuratorSchemaError | None = None
         for _attempt in range(SCHEMA_ATTEMPTS):
             try:
-                payload = llm.complete_json(CURATOR_SYSTEM_PROMPT, user)
+                payload = llm.complete_json(system, user)
             except CuratorSchemaError as exc:
                 self._mark_llm_call(False, REASON_SCHEMA_ERROR)
                 last_schema_error = exc
@@ -276,17 +345,137 @@ class Curator:
             last_schema_error = CuratorSchemaError("curator response unusable")
         raise last_schema_error
 
+    def _consolidate(
+        self,
+        operations: list[object],
+        active: dict[str, CuratedMemoryRow],
+        infos: dict[str, _MessageInfo],
+    ) -> _WindowCounts:
+        """Deterministic consolidation: the LLM only proposes; versions decide.
+
+        Every grounded proposal gets ``version`` = the newest cited message's
+        order.  Non-lesson proposals sharing a topic_key keep only the newest
+        statement: it supersedes every older active row on that key, and a
+        proposal older than the active row is stored already superseded.
+        Lessons never replace each other: a repeat occurrence (a proposal that
+        cites at least one new message) merges into the active lesson and
+        increments ``occurrences``.
+        """
+
+        counts = _WindowCounts()
+        content_by_id = {message_id: info.content for message_id, info in infos.items()}
+        groups: dict[tuple[bool, str], list[CuratedMemoryWrite]] = {}
+        for raw in operations:
+            outcome = self._validate_operation(raw, {}, content_by_id, infos, normalize_keys=True)
+            if outcome.status == "rejected_grounding":
+                counts.rejected_grounding += 1
+            elif outcome.status == "rejected_schema":
+                counts.rejected_schema += 1
+            elif outcome.status == "noop":
+                counts.noop += 1
+            elif outcome.write is not None:
+                write = outcome.write
+                groups.setdefault((write.kind == "lesson", write.topic_key), []).append(write)
+
+        for (is_lesson, topic_key), proposals in groups.items():
+            same_topic = [
+                row
+                for row in active.values()
+                if row.topic_key == topic_key and (row.kind == "lesson") == is_lesson
+            ]
+            if is_lesson:
+                self._merge_lessons(proposals, same_topic, counts)
+            else:
+                self._keep_newest(proposals, same_topic, counts)
+        return counts
+
+    @staticmethod
+    def _keep_newest(
+        proposals: list[CuratedMemoryWrite],
+        same_topic: list[CuratedMemoryRow],
+        counts: _WindowCounts,
+    ) -> None:
+        # Within one window only the newest proposal per topic survives; ties
+        # go to the later proposal.  Older ones in the same window are noops.
+        winner = proposals[0]
+        for proposal in proposals[1:]:
+            if proposal.version >= winner.version:
+                winner = proposal
+        counts.noop += len(proposals) - 1
+        statement_key = normalize_text(winner.statement)
+        if any(normalize_text(row.statement) == statement_key for row in same_topic):
+            counts.noop += 1
+            return
+        if not same_topic:
+            counts.writes.append(winner)
+            counts.added += 1
+            return
+        newest = max(same_topic, key=lambda row: (row.version, row.created_at, row.id))
+        if winner.version >= newest.version:
+            others = tuple(row.id for row in same_topic if row.id != newest.id)
+            counts.writes.append(replace(winner, supersedes_id=newest.id, also_supersedes=others))
+            counts.superseded += 1
+        else:
+            counts.writes.append(replace(winner, superseded_by_id=newest.id))
+            counts.stale += 1
+
+    @staticmethod
+    def _merge_lessons(
+        proposals: list[CuratedMemoryWrite],
+        same_topic: list[CuratedMemoryRow],
+        counts: _WindowCounts,
+    ) -> None:
+        prior = max(same_topic, key=lambda row: (row.version, row.created_at, row.id), default=None)
+        sources = list(prior.sources) if prior is not None else []
+        occurrences = prior.occurrences if prior is not None else 0
+        version = prior.version if prior is not None else 0
+        statement = prior.statement if prior is not None else proposals[0].statement
+        kind = proposals[0].kind
+        seen = {source["message_id"] for source in sources}
+        new_occurrences = 0
+        for proposal in proposals:
+            fresh = [source for source in proposal.sources if source["message_id"] not in seen]
+            if not fresh:
+                counts.noop += 1
+                continue
+            sources.extend(fresh)
+            seen.update(source["message_id"] for source in fresh)
+            new_occurrences += 1
+            version = max(version, proposal.version)
+            # The newest wording of a repeated lesson is the one shown.
+            statement = proposal.statement
+        if new_occurrences == 0:
+            return
+        merged = CuratedMemoryWrite(
+            kind=kind,
+            topic_key=proposals[0].topic_key,
+            statement=statement,
+            sources=sources[-MAX_LESSON_SOURCES:],
+            version=version,
+            occurrences=occurrences + new_occurrences,
+            supersedes_id=prior.id if prior is not None else None,
+            also_supersedes=tuple(
+                row.id for row in same_topic if prior is not None and row.id != prior.id
+            ),
+        )
+        counts.writes.append(merged)
+        if prior is None:
+            counts.added += 1
+        else:
+            counts.superseded += 1
+
     def _validate_operations(
         self,
         operations: list[object],
         active: dict[str, CuratedMemoryRow],
         content_by_id: dict[str, str],
+        infos: dict[str, _MessageInfo],
     ) -> _WindowCounts:
         counts = _WindowCounts()
         claimed_supersedes: set[str] = set()
         window_statements: set[tuple[str, str]] = set()
         for raw in operations:
-            outcome = self._validate_operation(raw, active, content_by_id)
+            outcome = self._validate_operation(raw, active, content_by_id, infos)
             if outcome.status == "rejected_grounding":
                 counts.rejected_grounding += 1
             elif outcome.status == "rejected_schema":
@@ -321,7 +510,17 @@ class Curator:
         raw: object,
         active: dict[str, CuratedMemoryRow],
         content_by_id: dict[str, str],
+        infos: dict[str, _MessageInfo],
+        *,
+        normalize_keys: bool = False,
     ) -> _ValidatedOp:
+        """Validate and ground one operation.
+
+        With ``normalize_keys`` (deterministic mode) topic keys are
+        canonicalized and any ``supersedes`` field is ignored: consolidation
+        happens afterwards, from versions only.
+        """
+
         if not isinstance(raw, dict):
             return _ValidatedOp("rejected_schema")
         op = raw.get("op")
@@ -332,12 +531,18 @@ class Curator:
         kind = raw.get("kind")
         if kind not in MEMORY_KINDS:
             return _ValidatedOp("rejected_schema")
-        topic_key = raw.get("topic_key")
-        if not isinstance(topic_key, str):
+        raw_topic_key = raw.get("topic_key")
+        if not isinstance(raw_topic_key, str):
             return _ValidatedOp("rejected_schema")
-        topic_key = topic_key.strip()
-        if not topic_key or len(topic_key) > MAX_TOPIC_KEY_CHARS:
-            return _ValidatedOp("rejected_schema")
+        if normalize_keys:
+            normalized = normalize_topic_key(raw_topic_key)
+            if normalized is None:
+                return _ValidatedOp("rejected_schema")
+            topic_key = normalized
+        else:
+            topic_key = raw_topic_key.strip()
+            if not topic_key or len(topic_key) > MAX_TOPIC_KEY_CHARS:
+                return _ValidatedOp("rejected_schema")
         statement = raw.get("statement")
         if not isinstance(statement, str):
             return _ValidatedOp("rejected_schema")
@@ -367,6 +572,18 @@ class Curator:
             sources.append({"message_id": message_id, "quote": repaired})
         if not sources:
             return _ValidatedOp("rejected_grounding")
+        version = max(infos[source["message_id"]].version for source in sources)
+        if normalize_keys:
+            return _ValidatedOp(
+                "write",
+                CuratedMemoryWrite(
+                    kind=kind,
+                    topic_key=topic_key,
+                    statement=statement,
+                    sources=sources,
+                    version=version,
+                ),
+            )
 
         supersedes_id: str | None = None
         supersedes = raw.get("supersedes")
@@ -394,7 +611,52 @@ class Curator:
                 statement=statement,
                 sources=sources,
                 supersedes_id=supersedes_id,
+                version=version,
             ),
+        )
+
+    def _trace_written(
+        self,
+        session_id: str,
+        row: CuratedMemoryRow,
+        infos: dict[str, _MessageInfo],
+    ) -> None:
+        """Record one committed memory and how long its newest source waited.
+
+        ``source_lag_s`` is the time from the newest cited message of this
+        window being ingested to the memory being committed, e.g. a gate
+        failure becoming an available lesson.
+        """
+
+        cited = [
+            infos[source["message_id"]] for source in row.sources if source["message_id"] in infos
+        ]
+        newest = max(cited, key=lambda info: info.created_at, default=None)
+        lag: float | None = None
+        if newest is not None:
+            ingested = newest.created_at
+            if ingested.tzinfo is None:
+                ingested = ingested.replace(tzinfo=UTC)
+            committed = row.created_at
+            if committed.tzinfo is None:
+                committed = committed.replace(tzinfo=UTC)
+            lag = round(max(0.0, (committed - ingested).total_seconds()), 3)
+        self._trace(
+            session_id,
+            "curator_memory_written",
+            {
+                "memory_id": row.id,
+                "kind": row.kind,
+                "topic_key": row.topic_key,
+                "status": row.status,
+                "version": row.version,
+                "occurrences": row.occurrences,
+                "supersedes_id": row.supersedes_id,
+                "activity_types": sorted(
+                    {info.activity_type for info in cited if info.activity_type is not None}
+                ),
+                "source_lag_s": lag,
+            },
         )
 
     def _register_window_failure(

@@ -10,6 +10,21 @@ from sqlalchemy.orm import sessionmaker
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.store_models import Base
 
+ALEMBIC_HEAD = "0011_curated_memory_versions"
+# Columns added after a table was first created; create_all never alters tables.
+_COLUMN_ADDITIONS: dict[str, tuple[tuple[str, str], ...]] = {
+    "curated_memories": (
+        ("version", "INTEGER NOT NULL DEFAULT 0"),
+        ("occurrences", "INTEGER NOT NULL DEFAULT 1"),
+        ("scope_type", "VARCHAR(32)"),
+        ("scope_id", "VARCHAR(255)"),
+    ),
+    "sessions": (
+        ("scope_type", "VARCHAR(32)"),
+        ("scope_id", "VARCHAR(255)"),
+    ),
+}
+
 
 class StoreRuntimeMixin:
     """Engine, schema, and transaction lifecycle for the composed store."""
@@ -84,6 +99,17 @@ class StoreRuntimeMixin:
                         "ON messages(session_id, external_id)"
                     )
                 )
+            for table, additions in _COLUMN_ADDITIONS.items():
+                exists = conn.execute(
+                    text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :name"),
+                    {"name": table},
+                ).fetchone()
+                if exists is None:
+                    continue
+                present = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+                for column, ddl in additions:
+                    if column not in present:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
     def _stamp_alembic_head(self) -> None:
         with self.engine.begin() as conn:
@@ -97,14 +123,13 @@ class StoreRuntimeMixin:
             row = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).fetchone()
             if row is None:
                 conn.execute(
-                    text(
-                        "INSERT INTO alembic_version (version_num)"
-                        " VALUES ('0010_add_curator_tables')"
-                    )
+                    text("INSERT INTO alembic_version (version_num) VALUES (:head)"),
+                    {"head": ALEMBIC_HEAD},
                 )
-            elif row[0] != "0010_add_curator_tables":
+            elif row[0] != ALEMBIC_HEAD:
                 conn.execute(
-                    text("UPDATE alembic_version SET version_num = '0010_add_curator_tables'")
+                    text("UPDATE alembic_version SET version_num = :head"),
+                    {"head": ALEMBIC_HEAD},
                 )
 
     @contextmanager

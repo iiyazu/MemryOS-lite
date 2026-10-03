@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
     from memoryos_lite.config import Settings
 
+MAX_RETRIES = 5
+
 
 def build_chat_openai(settings: Settings, *, json_mode: bool = False) -> ChatOpenAI:
     """Build the configured provider's chat model at temperature 0.
@@ -46,6 +48,8 @@ def build_chat_openai(settings: Settings, *, json_mode: bool = False) -> ChatOpe
         api_key=SecretStr(api_key),
         temperature=0,
         timeout=settings.memoryos_llm_timeout_s,
+        # Transient TLS/connection drops were seen on long eval runs.
+        max_retries=MAX_RETRIES,
         **kwargs,
     )
 

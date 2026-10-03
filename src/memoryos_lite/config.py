@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     memoryos_curator_idle_flush_s: float = 20.0
     memoryos_curator_poll_s: float = 2.0
     memoryos_curator_max_active_in_prompt: int = 40
+    # "deterministic": the LLM only adds memories with a topic_key and MemoryOS
+    # keeps the newest version per topic.  "llm": the earlier pipeline in which
+    # the LLM chooses which active memory an update supersedes.
+    memoryos_curator_consolidation: str = "deterministic"
 
     # Middleware
     memoryos_api_key: str | None = None
@@ -197,6 +201,13 @@ class Settings(BaseSettings):
         val = self.memoryos_recall_pipeline.strip().lower()
         if val not in {"v1", "v2"}:
             raise ValueError("MEMORYOS_RECALL_PIPELINE must be 'v1' or 'v2'")
+        return val
+
+    @property
+    def resolved_curator_consolidation(self) -> str:
+        val = self.memoryos_curator_consolidation.strip().lower()
+        if val not in {"deterministic", "llm"}:
+            raise ValueError("MEMORYOS_CURATOR_CONSOLIDATION must be 'deterministic' or 'llm'")
         return val
 
     @property

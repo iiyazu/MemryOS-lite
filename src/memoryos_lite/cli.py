@@ -443,7 +443,7 @@ def eval_roommem(
     ] = None,
     split: Annotated[
         str | None,
-        Option("--split", help="Dataset preset: dev=rm01-rm06, test=rm07-rm12"),
+        Option("--split", help="Dataset preset: dev=rm01-rm06, test=rm07-rm12, trap=rm13-rm16"),
     ] = None,
     repeats: Annotated[
         int,
@@ -489,6 +489,22 @@ def eval_roommem(
             help="Optional output price per million tokens for the estimated-cost line",
         ),
     ] = None,
+    answerer_llm: Annotated[
+        str | None,
+        Option("--answerer-llm", help="Answerer model spec provider:model[@wire]"),
+    ] = None,
+    judge_llm: Annotated[
+        str | None,
+        Option("--judge-llm", help="Judge model spec provider:model[@wire]"),
+    ] = None,
+    curator_llm: Annotated[
+        str | None,
+        Option("--curator-llm", help="Curator model spec provider:model[@wire]"),
+    ] = None,
+    curator_consolidation: Annotated[
+        str | None,
+        Option("--curator-consolidation", help="deterministic | llm (earlier pipeline)"),
+    ] = None,
     out: Annotated[
         str,
         Option("--out", help="Output directory for results and reports"),
@@ -520,6 +536,10 @@ def eval_roommem(
             fake_llm=fake_llm,
             price_in_per_mtok=price_in_per_mtok,
             price_out_per_mtok=price_out_per_mtok,
+            answerer_llm=answerer_llm,
+            judge_llm=judge_llm,
+            curator_llm=curator_llm,
+            curator_consolidation=curator_consolidation,
         )
     except RoomMemError as exc:
         console.print(f"[red]RoomMem error:[/red] {exc}")
