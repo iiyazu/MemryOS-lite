@@ -1071,15 +1071,15 @@ def test_curated_arm_llm_calls_go_through_disk_cache(tmp_path, rooms_dir):
     roles = {json.loads(path.read_text(encoding="utf-8"))["role"] for path in cache_files}
     assert roles == {"curator"}
 
-    # Curator prompts render freshly minted store message ids, so a replay that
-    # re-ingests the dataset mints new cache keys instead of hitting old ones.
+    # Store ids are deterministic per (arm, repeat, room), so a replay renders
+    # identical curator prompts and is served from the cache.
     run(tmp_path / "scratch-2")
-    assert inner.calls == 4
-    assert len(list((out_dir / "llm_cache").glob("*.json"))) == 4
+    assert inner.calls == 2
+    assert len(list((out_dir / "llm_cache").glob("*.json"))) == 2
 
     run(tmp_path / "scratch-3", repeats=2)
-    assert inner.calls == 8  # repeat 1 curates in its own cache namespace
-    assert len(list((out_dir / "llm_cache").glob("*.json"))) == 8
+    assert inner.calls == 4  # repeat 1 curates in its own cache namespace
+    assert len(list((out_dir / "llm_cache").glob("*.json"))) == 4
 
 
 # ---------------------------------------------------------------------------

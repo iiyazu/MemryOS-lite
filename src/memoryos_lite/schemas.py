@@ -1,9 +1,16 @@
+import itertools
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from enum import StrEnum
+from hashlib import sha256
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+_ID_SOURCE: ContextVar[Callable[[str], str] | None] = ContextVar("memoryos_id_source", default=None)
 
 
 def utc_now() -> datetime:
@@ -11,7 +18,32 @@ def utc_now() -> datetime:
 
 
 def new_id(prefix: str) -> str:
+    source = _ID_SOURCE.get()
+    if source is not None:
+        return source(prefix)
     return f"{prefix}_{uuid4().hex[:12]}"
+
+
+@contextmanager
+def deterministic_ids(seed: str) -> Iterator[None]:
+    """Make ``new_id`` reproducible inside the block (evaluation harnesses only).
+
+    The n-th id created in the block is ``<prefix>_<sha256(seed:n)[:12]>``, so
+    replaying the same operations yields the same ids and prompts that embed
+    them (e.g. curator windows) hit an on-disk LLM cache across reruns.
+    """
+
+    counter = itertools.count()
+
+    def source(prefix: str) -> str:
+        digest = sha256(f"{seed}:{next(counter)}".encode()).hexdigest()
+        return f"{prefix}_{digest[:12]}"
+
+    token = _ID_SOURCE.set(source)
+    try:
+        yield
+    finally:
+        _ID_SOURCE.reset(token)
 
 
 class Role(StrEnum):
