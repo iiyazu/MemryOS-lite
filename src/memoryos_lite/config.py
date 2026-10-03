@@ -6,6 +6,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-flash"
+# OpenCode Go subscription endpoint; Muse Spark models are served on the
+# Responses API only (https://opencode.ai/docs/go).
+OPENCODE_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+OPENCODE_DEFAULT_MODEL = "muse-spark-1.3-contributor"
+LLM_PROVIDERS = ("openai", "deepseek", "opencode")
+WIRE_APIS = ("chat", "responses")
 
 
 class Settings(BaseSettings):
@@ -44,6 +50,13 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_base_url: str = DEEPSEEK_DEFAULT_BASE_URL
     deepseek_model: str = DEEPSEEK_DEFAULT_MODEL
+    opencode_api_key: str | None = None
+    opencode_base_url: str = OPENCODE_DEFAULT_BASE_URL
+    opencode_model: str = OPENCODE_DEFAULT_MODEL
+    # "responses" for Muse Spark/GPT models, "chat" for chat-completions models.
+    opencode_wire_api: str = "responses"
+    # Sent as x-opencode-session; unset means one generated id per client.
+    opencode_session_id: str | None = None
     memoryos_rewrite_enabled: bool = False
     memoryos_rerank_enabled: bool = False
     memoryos_llm_timeout_s: float = 60.0
@@ -200,33 +213,58 @@ class Settings(BaseSettings):
             if self.deepseek_api_key and not self.openai_api_key:
                 return "deepseek"
             return "openai"
-        if provider not in {"openai", "deepseek"}:
-            raise ValueError("MEMORYOS_LLM_PROVIDER must be 'auto', 'openai', or 'deepseek'")
+        if provider not in LLM_PROVIDERS:
+            raise ValueError(
+                "MEMORYOS_LLM_PROVIDER must be 'auto', 'openai', 'deepseek', or 'opencode'"
+            )
         return provider
 
     @property
     def chat_api_key(self) -> str | None:
-        if self.resolved_llm_provider == "deepseek":
+        provider = self.resolved_llm_provider
+        if provider == "deepseek":
             return self.deepseek_api_key
+        if provider == "opencode":
+            return self.opencode_api_key
         return self.openai_api_key
 
     @property
     def chat_api_key_name(self) -> str:
-        if self.resolved_llm_provider == "deepseek":
+        provider = self.resolved_llm_provider
+        if provider == "deepseek":
             return "DEEPSEEK_API_KEY"
+        if provider == "opencode":
+            return "OPENCODE_API_KEY"
         return "OPENAI_API_KEY"
 
     @property
     def chat_base_url(self) -> str | None:
-        if self.resolved_llm_provider == "deepseek":
+        provider = self.resolved_llm_provider
+        if provider == "deepseek":
             return self.deepseek_base_url
+        if provider == "opencode":
+            return self.opencode_base_url
         return self.openai_base_url
 
     @property
     def chat_model(self) -> str:
-        if self.resolved_llm_provider == "deepseek":
+        provider = self.resolved_llm_provider
+        if provider == "deepseek":
             return self.deepseek_model
+        if provider == "opencode":
+            return self.opencode_model
         return self.memoryos_model
+
+    @property
+    def chat_wire_api(self) -> str:
+        """Wire API of the chat provider: ``chat`` completions or ``responses``."""
+
+        if self.resolved_llm_provider != "opencode":
+            return "chat"
+        val = self.opencode_wire_api.strip().lower()
+        if val not in WIRE_APIS:
+            raise ValueError("OPENCODE_WIRE_API must be 'chat' or 'responses'")
+        return val
 
     @property
     def sqlite_url(self) -> str:
