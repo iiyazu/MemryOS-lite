@@ -1,0 +1,69 @@
+{
+  "items": [
+    {
+      "advisory_id": "advisory_dc2b30d35463477c9920e9f7d0876426f2ecc575",
+      "content": "Concurrent refresh without the lock writes the token twice; always take the per-user lock before refreshing.",
+      "fingerprint": "dc2b30d35463477c9920e9f7d0876426f2ecc5755118d904bdc6971758c9b470",
+      "kind": "module_lesson",
+      "memory_kind": "lesson",
+      "occurrences": 2,
+      "proposal_type": "curated_memory",
+      "scope": {
+        "id": "auth",
+        "type": "module"
+      },
+      "source_refs": [
+        {
+          "activity_type": "gate_failure",
+          "external_id": "gate-2026-10-01-001",
+          "quote": "FAILED tests/test_refresh.py::test_concurrent_refresh - token written twice",
+          "session_id": "ses_auth_example01",
+          "source_id": "msg_gate_001",
+          "source_type": "message"
+        },
+        {
+          "activity_type": "review_objection",
+          "external_id": "review-2026-10-01-004",
+          "quote": "refresh again ran without taking the per-user lock",
+          "session_id": "ses_auth_example01",
+          "source_id": "msg_review_004",
+          "source_type": "message"
+        }
+      ],
+      "supersedes_advisory_id": null,
+      "topic_key": "auth.refresh_lock",
+      "version": 2
+    },
+    {
+      "advisory_id": "advisory_485ec996439f7b32c290e4cea7826cbc3f9462f9",
+      "content": "Refreshes must take the per-user lock; gate failures on concurrent refresh now block merge.",
+      "fingerprint": "485ec996439f7b32c290e4cea7826cbc3f9462f9d30a28c8c1437e99b1fb7ef8",
+      "kind": "module_decision",
+      "memory_kind": "decision",
+      "occurrences": 1,
+      "proposal_type": "curated_memory",
+      "scope": {
+        "id": "auth",
+        "type": "module"
+      },
+      "source_refs": [
+        {
+          "activity_type": "message",
+          "external_id": "owner-note-014",
+          "quote": "Owner note: always take the per-user lock before refreshing a token.",
+          "session_id": "ses_auth_example01",
+          "source_id": "msg_owner_014",
+          "source_type": "message"
+        }
+      ],
+      "supersedes_advisory_id": "advisory_29eba13d96b421a46055a1758d50124d838c46c9",
+      "topic_key": "auth.refresh_policy",
+      "version": 3
+    }
+  ],
+  "schema": "memoryos_external_advisories/v3",
+  "session_scope": {
+    "id": "auth",
+    "type": "module"
+  }
+}

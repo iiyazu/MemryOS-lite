@@ -1,0 +1,491 @@
+{
+ "activities": [
+  {
+   "id": "a01",
+   "text": "Priya: we need solid auth for project orbit. The REST API needs token issuing and refresh. You own the auth module, please drive it.",
+   "type": "message",
+   "speaker": "human"
+  },
+  {
+   "id": "a02",
+   "speaker": "owner",
+   "text": "Plan: implement POST /login, GET /me, POST /logout on Postgres session table. Then add tests for login, expiry, and logout. Will keep tokens opaque for now.",
+   "type": "message"
+  },
+  {
+   "id": "a03",
+   "speaker": "human",
+   "text": "Sounds good. Grabbed coffee, by the way the office espresso machine is finally fixed.",
+   "type": "message"
+  },
+  {
+   "id": "a04",
+   "speaker": "owner",
+   "text": "Decision: to keep login fast I will store session tokens in Redis with a 24h TTL. Lookup is a single GET and expiry is automatic.",
+   "type": "message"
+  },
+  {
+   "contract_version": 1,
+   "contract_id": "auth-api",
+   "id": "a05",
+   "speaker": "human",
+   "text": "auth-api v1:\nPOST /login accepts {username, password}.\nOn success returns 200 {token, expires_in}.\ntoken is an opaque bearer token.\nexpires_in is seconds until expiry (3600).\nPOST /logout accepts {token} and revokes it.\nGET /me requires Authorization: Bearer <token>.\nAll responses are JSON with {data} or {error}.\nErrors use 401 for bad credentials, 403 for expired.",
+   "type": "contract_revision"
+  },
+  {
+   "id": "a06",
+   "speaker": "reviewer",
+   "text": "Nit: login handler looks fine, just rename `tok` to `token` for readability. No functional issue.",
+   "type": "message"
+  },
+  {
+   "id": "a07",
+   "speaker": "reviewer",
+   "text": "Objection: Redis eviction can silently drop active sessions. With allkeys-lru and no persistence, a restart logs out everyone and we lose revocation audit. Use Postgres as authority.",
+   "type": "review_objection"
+  },
+  {
+   "id": "a08",
+   "speaker": "owner",
+   "text": "Agreed, switching. We will store session tokens in Postgres with row-level expiry. Redis will only be an optional read cache, never authoritative.",
+   "type": "message"
+  },
+  {
+   "id": "a09",
+   "speaker": "human",
+   "text": "Quick question: what TTL are we using for access tokens? 15 minutes or an hour?",
+   "type": "message"
+  },
+  {
+   "id": "a10",
+   "speaker": "owner",
+   "text": "TTL call: access tokens expire after 15 minutes. Short window limits damage if a token leaks. Refresh will come later with a longer window.",
+   "type": "message"
+  },
+  {
+   "id": "a11",
+   "speaker": "human",
+   "text": "Hypothetical: what if we went fully stateless JWT with no server store? Just thinking out loud, not asking to change anything now.",
+   "type": "message"
+  },
+  {
+   "id": "a12",
+   "speaker": "owner",
+   "text": "Implemented POST /refresh (no rotation yet). It takes the old access token, issues a new one. No locking yet, single UPDATE query.",
+   "type": "message"
+  },
+  {
+   "gate_id": "pytest",
+   "id": "a13",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_refresh.py -x -q\nplatform linux -- Python 3.11.9, pytest-8.2.0, pluggy-1.5.0\nrootdir: /mnt/d/Dev/MemryOS-lite-oc\ncollected 14 items\ntests/test_refresh.py::test_login_ok PASSED\ntests/test_refresh.py::test_expiry PASSED\ntests/test_refresh.py::test_logout PASSED\ntests/test_refresh.py::test_concurrent_refresh_single_token FAILED\ntests/test_refresh.py::TestRefreshRace::test_parallel_refresh_same_user FAILED\nTraceback (most recent call last):\n  File \"tests/test_refresh.py\", line 88, in test_concurrent_refresh_single_token\n    assert issued_tokens == 1, f\"got {issued_tokens}\"\nAssertionError: got 2 tokens for same user\nE   RaceError: concurrent refresh for user u123 without per-user lock\nshort test summary info:\nFAILED tests/test_refresh.py::test_concurrent_refresh_single_token\nFAILED tests/test_refresh.py::TestRefreshRace::test_parallel_refresh_same_user\n2 failed, 3 passed, 9 deselected in 1.42s\nBuild 4127 finished: pytest exit 1.",
+   "type": "gate_failure"
+  },
+  {
+   "id": "a14",
+   "speaker": "reviewer",
+   "text": "Objection: login handler logs the full bearer token at info level. Please do not log raw tokens anywhere; log only a sha256 prefix of 8 chars for debugging.",
+   "type": "review_objection"
+  },
+  {
+   "id": "a15",
+   "speaker": "owner",
+   "text": "Fixed logging: redacted token field, now logs token_prefix only. Grepped codebase, no other raw token prints.",
+   "type": "message"
+  },
+  {
+   "id": "a16",
+   "speaker": "owner",
+   "text": "Added per-user refresh lock with SELECT ... FOR UPDATE on the session row. Concurrent refresh now serializes and issues exactly one token.",
+   "type": "message"
+  },
+  {
+   "id": "a17",
+   "speaker": "human",
+   "text": "Standup note: auth is on track, demo is Thursday. No action needed.",
+   "type": "message"
+  },
+  {
+   "id": "a18",
+   "speaker": "reviewer",
+   "text": "Weekend plans aside, I re-ran login tests locally and they pass. Nice work on the lock fix.",
+   "type": "message"
+  },
+  {
+   "id": "a19",
+   "speaker": "human",
+   "text": "New requirement: mobile clients need long sessions. Please add a refresh_token to the contract so they can renew without re-login.",
+   "type": "message"
+  },
+  {
+   "id": "a20",
+   "speaker": "owner",
+   "text": "Proposal: v2 adds refresh_token with rotation. POST /login returns both tokens, POST /refresh consumes the old refresh token and returns a new pair.",
+   "type": "message"
+  },
+  {
+   "id": "a21",
+   "speaker": "reviewer",
+   "text": "Objection: rotation without reuse detection is unsafe. If an attacker replays an old refresh token we must reject reused refresh tokens and revoke the whole family.",
+   "type": "review_objection"
+  },
+  {
+   "contract_version": 2,
+   "contract_id": "auth-api",
+   "id": "a22",
+   "speaker": "human",
+   "text": "auth-api v2:\nPOST /login accepts {username, password}.\nOn success returns 200 {token, refresh_token, expires_in}.\ntoken is a short-lived bearer token, expires_in 900.\nrefresh_token is a one-time long-lived token, 7 days.\nPOST /refresh accepts {refresh_token}.\nOn success returns 200 {token, refresh_token, expires_in}.\nReuse of a rotated refresh_token returns 401 and revokes family.\nGET /me requires Authorization: Bearer <token>.\nPOST /logout accepts {refresh_token} and revokes the family.",
+   "type": "contract_revision"
+  },
+  {
+   "id": "a23",
+   "speaker": "owner",
+   "text": "Implemented v2: we rotate refresh tokens on every use and reject reuse. Reuse triggers family revoke plus 401. Covered by test_refresh_rotation and test_refresh_reuse.",
+   "type": "message"
+  },
+  {
+   "id": "a24",
+   "speaker": "human",
+   "text": "Rollout plan: 1) merge v2, 2) migrate sessions, 3) update mobile docs. Tracking in issue ORB-214.",
+   "type": "message"
+  },
+  {
+   "id": "a25",
+   "speaker": "owner",
+   "text": "Note for newcomers: we used to store tokens in Redis before the Postgres switch, do not copy that pattern. Postgres is authoritative now.",
+   "type": "message"
+  },
+  {
+   "id": "a26",
+   "speaker": "owner",
+   "text": "Added fast-path refresh for v2 mobile clients. It bypasses the lock for speed, single UPDATE without SELECT FOR UPDATE. Should be fine, tests pass locally.",
+   "type": "message"
+  },
+  {
+   "gate_id": "pytest",
+   "id": "a27",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_refresh.py -x -q\nplatform linux -- Python 3.11.9, pytest-8.2.0, pluggy-1.5.0\nrootdir: /mnt/d/Dev/MemryOS-lite-oc\ncollected 16 items\ntests/test_refresh.py::test_login_v2_ok PASSED\ntests/test_refresh.py::test_refresh_rotation PASSED\ntests/test_refresh.py::test_concurrent_refresh_single_token FAILED\ntests/test_refresh.py::TestRefreshRace::test_parallel_refresh_v2_same_user FAILED\nTraceback (most recent call last):\n  File \"tests/test_refresh.py\", line 112, in test_concurrent_refresh_single_token\n    assert issued_tokens == 1, f\"got {issued_tokens}\"\nAssertionError: got 2 token pairs for same user\nE   RaceError: concurrent refresh for user u123 without per-user lock\nshort test summary info:\nFAILED tests/test_refresh.py::test_concurrent_refresh_single_token\nFAILED tests/test_refresh.py::TestRefreshRace::test_parallel_refresh_v2_same_user\n2 failed, 4 passed, 10 deselected in 1.67s\nBuild 4189 finished: pytest exit 1.",
+   "type": "gate_failure"
+  },
+  {
+   "id": "a28",
+   "speaker": "reviewer",
+   "text": "Reminder for the docs: auth-api v1 returned only {token, expires_in} with no refresh_token. That is obsolete, current v2 always returns refresh_token on login.",
+   "type": "message"
+  },
+  {
+   "id": "a29",
+   "speaker": "human",
+   "text": "Heads up: some v1 clients still send expires_in, ignore them. Server must not trust client expiry, always use server-side expiry and v2 refresh_token flow.",
+   "type": "message"
+  },
+  {
+   "id": "a30",
+   "speaker": "owner",
+   "text": "Proposal: drop refresh_token and go back to auth-api v1 for simplicity. One token is easier to debug. Requesting approval to revert.",
+   "type": "message"
+  },
+  {
+   "id": "a31",
+   "speaker": "human",
+   "text": "Rejected: keep v2 with refresh_token. Mobile needs long sessions and reuse detection. Do not revert to v1.",
+   "type": "message"
+  },
+  {
+   "id": "a32",
+   "speaker": "reviewer",
+   "text": "Coffee break: anyone tried the new place downstairs? Back in 10.",
+   "type": "message"
+  },
+  {
+   "id": "a33",
+   "speaker": "owner",
+   "text": "Fixed fast-path: restored acquire per-user lock before refreshing tokens. All refresh paths now do SELECT ... FOR UPDATE, no lock-free shortcut.",
+   "type": "message"
+  },
+  {
+   "id": "a34",
+   "speaker": "owner",
+   "text": "Confirming: Postgres remains the authoritative token store. Redis is disabled for auth reads until further notice.",
+   "type": "message"
+  },
+  {
+   "id": "a35",
+   "speaker": "owner",
+   "text": "Confirming lifetimes: access tokens 15 min, refresh tokens expire after 7 days with rotation. Family revoke on reuse stays in force.",
+   "type": "message"
+  },
+  {
+   "id": "a36",
+   "speaker": "owner",
+   "text": "Final state: v2 login returns token plus refresh_token, rotation with reuse revoke, per-user lock on every refresh, Postgres authority, no raw token logs.",
+   "type": "message"
+  }
+ ],
+ "gold": {
+  "contracts": [
+   {
+    "activity_id": "a22",
+    "contract_id": "auth-api",
+    "version": 2
+   }
+  ],
+  "decisions": [
+   {
+    "id": "d1",
+    "sources": [
+     {
+      "activity_id": "a04",
+      "quote": "store session tokens in Redis with a 24h TTL"
+     }
+    ],
+    "statement": "Store session tokens in Redis with a 24h TTL for fast lookup.",
+    "superseded_by": "d2",
+    "topic_key": "auth.token_store"
+   },
+   {
+    "id": "d2",
+    "sources": [
+     {
+      "activity_id": "a07",
+      "quote": "Redis eviction can silently drop active sessions"
+     },
+     {
+      "activity_id": "a08",
+      "quote": "store session tokens in Postgres with row-level expiry"
+     }
+    ],
+    "statement": "Store session tokens in Postgres with row-level expiry; Postgres is authoritative, Redis only an optional cache.",
+    "topic_key": "auth.token_store"
+   },
+   {
+    "id": "d3",
+    "sources": [
+     {
+      "activity_id": "a10",
+      "quote": "access tokens expire after 15 minutes"
+     },
+     {
+      "activity_id": "a35",
+      "quote": "refresh tokens expire after 7 days"
+     }
+    ],
+    "statement": "Access tokens expire after 15 minutes; refresh tokens expire after 7 days.",
+    "topic_key": "auth.token_ttl"
+   },
+   {
+    "id": "d4",
+    "sources": [
+     {
+      "activity_id": "a23",
+      "quote": "rotate refresh tokens on every use and reject reuse"
+     }
+    ],
+    "statement": "Rotate refresh tokens on every use and reject reuse with family revoke on 401.",
+    "topic_key": "auth.refresh_rotation"
+   }
+  ],
+  "lessons": [
+   {
+    "id": "l1",
+    "occurrences": 2,
+    "sources": [
+     {
+      "activity_id": "a13",
+      "quote": "RaceError: concurrent refresh for user u123 without per-user lock"
+     },
+     {
+      "activity_id": "a27",
+      "quote": "RaceError: concurrent refresh for user u123 without per-user lock"
+     }
+    ],
+    "statement": "Acquire per-user lock before refreshing tokens; lock-free refresh issues duplicate tokens and fails the race test.",
+    "topic_key": "auth.refresh_lock"
+   },
+   {
+    "id": "l2",
+    "occurrences": 1,
+    "sources": [
+     {
+      "activity_id": "a14",
+      "quote": "do not log raw tokens"
+     }
+    ],
+    "statement": "Never log raw bearer tokens; log only a short hash prefix.",
+    "topic_key": "auth.token_logging"
+   },
+   {
+    "id": "l3",
+    "occurrences": 1,
+    "sources": [
+     {
+      "activity_id": "a21",
+      "quote": "reject reused refresh tokens"
+     }
+    ],
+    "statement": "Reject reused refresh tokens and revoke the whole token family on replay.",
+    "topic_key": "auth.refresh_reuse"
+   }
+  ]
+ },
+ "language": "en",
+ "module_id": "auth",
+ "noise": [
+  {
+   "activity_id": "a03",
+   "note": "chitchat about espresso machine, no technical content",
+   "type": "chitchat"
+  },
+  {
+   "activity_id": "a06",
+   "note": "status nit on variable naming, not a durable decision",
+   "type": "status"
+  },
+  {
+   "activity_id": "a09",
+   "note": "question about TTL, answered later by d3",
+   "type": "question"
+  },
+  {
+   "activity_id": "a11",
+   "note": "hypothetical stateless JWT idea, never adopted",
+   "type": "hypothetical"
+  },
+  {
+   "activity_id": "a17",
+   "note": "standup status update, no technical content",
+   "type": "status"
+  },
+  {
+   "activity_id": "a18",
+   "note": "chitchat about weekend, not memory",
+   "type": "chitchat"
+  },
+  {
+   "activity_id": "a24",
+   "note": "plan steps for rollout tracking, not module behavior",
+   "type": "plan"
+  },
+  {
+   "activity_id": "a32",
+   "note": "chitchat about coffee, not memory",
+   "type": "chitchat"
+  }
+ ],
+ "participants": [
+  {
+   "id": "human",
+   "kind": "human",
+   "name": "Priya"
+  },
+  {
+   "id": "owner",
+   "kind": "agent",
+   "name": "Auth owner"
+  },
+  {
+   "id": "reviewer",
+   "kind": "agent",
+   "name": "Reviewer"
+  },
+  {
+   "id": "gate",
+   "kind": "infra",
+   "name": "CI gate"
+  }
+ ],
+ "probes": [
+  {
+   "answer_ids": [
+    "contract:auth-api"
+   ],
+   "id": "p1",
+   "must_contain": [
+    "refresh_token"
+   ],
+   "must_not_contain": [
+    "only {token, expires_in}"
+   ],
+   "question": "What does POST /login return in the current contract?"
+  },
+  {
+   "answer_ids": [
+    "d2"
+   ],
+   "id": "p2",
+   "must_contain": [
+    "Postgres"
+   ],
+   "must_not_contain": [
+    "Redis"
+   ],
+   "question": "Where are session tokens authoritatively stored?"
+  },
+  {
+   "answer_ids": [
+    "l1"
+   ],
+   "id": "p3",
+   "must_contain": [
+    "per-user lock"
+   ],
+   "question": "What must you do before refreshing tokens for a user?"
+  },
+  {
+   "answer_ids": [
+    "l1"
+   ],
+   "id": "p4",
+   "must_contain": [
+    "per-user lock"
+   ],
+   "question": "Which mistake failed CI twice on the refresh race test?"
+  },
+  {
+   "answer_ids": [
+    "l2"
+   ],
+   "id": "p5",
+   "must_contain": [
+    "raw"
+   ],
+   "question": "What must you never log for auth tokens?"
+  },
+  {
+   "answer_ids": [
+    "d4"
+   ],
+   "id": "p6",
+   "must_contain": [
+    "reject reuse"
+   ],
+   "question": "How are refresh tokens handled on each use?"
+  },
+  {
+   "answer_ids": [
+    "d3"
+   ],
+   "id": "p7",
+   "must_contain": [
+    "15 minutes"
+   ],
+   "question": "How long do access tokens live?"
+  },
+  {
+   "answer_ids": [
+    "contract:auth-api"
+   ],
+   "id": "p8",
+   "must_contain": [
+    "POST /refresh"
+   ],
+   "must_not_contain": [
+    "no refresh_token"
+   ],
+   "question": "How does a client renew tokens in the current contract?"
+  }
+ ],
+ "project": "orbit",
+ "title": "orbit auth module"
+}

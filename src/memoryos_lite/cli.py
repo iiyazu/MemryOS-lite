@@ -565,6 +565,68 @@ def eval_roommem(
     console.print(f"[bold]Reports:[/bold] {Path(out) / 'summary.md'}")
 
 
+@eval_app.command("modulemem")
+def eval_modulemem(
+    data: Annotated[
+        str, Option("--data", help="Directory containing mm*.json ModuleMem modules")
+    ] = "benchmarks/modulemem/modules",
+    arm: Annotated[
+        list[str] | None,
+        Option("--arm", help="pack | oracle_pack | recent | retrieval | full_history (repeatable)"),
+    ] = None,
+    split: Annotated[str | None, Option("--split", help="dev=mm01-mm04, test=mm05-mm08")] = None,
+    modules: Annotated[str | None, Option("--modules", help="Comma-separated module ids")] = None,
+    repeats: Annotated[int, Option("--repeats")] = 1,
+    embedding: Annotated[str, Option("--embedding", help="none | fastembed")] = "none",
+    fake_llm: Annotated[bool, Option("--fake-llm")] = False,
+    curator_llm: Annotated[str | None, Option("--curator-llm")] = None,
+    answerer_llm: Annotated[str | None, Option("--answerer-llm")] = None,
+    judge_llm: Annotated[str | None, Option("--judge-llm")] = None,
+    pack_budget: Annotated[int, Option("--pack-budget")] = 1500,
+    out: Annotated[str, Option("--out")] = "artifacts/modulemem",
+) -> None:
+    """Run the ModuleMem resume-pack evaluation."""
+    from memoryos_lite.modulemem import (
+        MODULEMEM_ARMS,
+        MODULEMEM_SPLITS,
+        ModuleMemConfig,
+        ModuleMemError,
+        load_modules,
+        run_modulemem,
+    )
+    from memoryos_lite.roommem import RoomMemError
+
+    try:
+        if split is not None:
+            if split not in MODULEMEM_SPLITS:
+                raise ModuleMemError(f"unknown split {split!r}")
+            module_ids: list[str] | None = list(MODULEMEM_SPLITS[split])
+        elif modules:
+            module_ids = [value.strip() for value in modules.split(",") if value.strip()]
+        else:
+            module_ids = None
+        summary = run_modulemem(
+            load_modules(Path(data), module_ids),
+            out_dir=Path(out),
+            config=ModuleMemConfig(
+                arms=tuple(arm or MODULEMEM_ARMS),
+                repeats=repeats,
+                embedding=embedding,
+                fake_llm=fake_llm,
+                curator_llm=curator_llm,
+                answerer_llm=answerer_llm,
+                judge_llm=judge_llm,
+                pack_budget=pack_budget,
+            ),
+        )
+    except (ModuleMemError, RoomMemError) as exc:
+        console.print(f"[red]ModuleMem error:[/red] {exc}")
+        raise Exit(1) from exc
+    for arm_name, categories in summary["read_side"].items():
+        console.print(f"{arm_name}: correct={categories['all']['correct']}")
+    console.print(f"[bold]Reports:[/bold] {Path(out) / 'summary.md'}")
+
+
 def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
     grouped: dict[str, list[JudgeVerdict]] = {}
     for result in results:

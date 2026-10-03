@@ -498,6 +498,27 @@ class ArchiveStoreMixin:
             record = db.get(ArchivalDocumentRecord, document_id)
             return None if record is None else self._document_from_record(record)
 
+    def list_archival_documents_for_archives(
+        self,
+        archive_ids: list[str],
+    ) -> list[ArchivalDocument]:
+        """Documents of the given archives, oldest first (deterministic order)."""
+
+        if not archive_ids:
+            return []
+        with self.db() as db:
+            records = list(
+                db.scalars(
+                    select(ArchivalDocumentRecord)
+                    .where(ArchivalDocumentRecord.archive_id.in_(archive_ids))
+                    .order_by(
+                        ArchivalDocumentRecord.created_at.asc(),
+                        ArchivalDocumentRecord.id.asc(),
+                    )
+                )
+            )
+        return [self._document_from_record(record) for record in records]
+
     def create_archival_chunk(self, chunk: ArchivalChunk) -> ArchivalChunk:
         self._require_source_refs(chunk.source_refs, "archival chunk write")
         with self.db() as db:

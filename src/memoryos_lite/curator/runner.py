@@ -24,7 +24,13 @@ from memoryos_lite.curator.prompt import (
     build_user_prompt,
 )
 from memoryos_lite.observability import current_observability_context
-from memoryos_lite.schemas import Message, TraceEvent, new_id, utc_now
+from memoryos_lite.schemas import (
+    LESSON_SOURCE_ACTIVITY_TYPES,
+    Message,
+    TraceEvent,
+    new_id,
+    utc_now,
+)
 from memoryos_lite.store import MemoryStore
 from memoryos_lite.store_curator import CuratedMemoryRow, CuratedMemoryWrite
 
@@ -137,6 +143,8 @@ class Curator:
         self._window_failures: dict[tuple[str, int], int] = {}
         self._last_llm_ok: bool | None = None
         self._last_error_code: str | None = None
+        # Set per run_session: the module scope id of a module session.
+        self._module_id: str | None = None
 
     # -- status -----------------------------------------------------------
 
@@ -163,6 +171,12 @@ class Curator:
 
     def run_session(self, session_id: str, *, force: bool = False) -> CuratorRunResult:
         result = CuratorRunResult()
+        session = self.store.get_session(session_id)
+        self._module_id = (
+            session.scope.id
+            if session is not None and session.scope is not None and session.scope.type == "module"
+            else None
+        )
         state = self.store.get_curator_state(session_id)
         seq = state.last_message_seq if state is not None else 0
         total = self.store.count_session_messages(session_id)
@@ -317,6 +331,7 @@ class Curator:
             active_header=(
                 ACTIVE_HEADER_DETERMINISTIC if deterministic else ACTIVE_HEADER_LLM_SUPERSEDE
             ),
+            module_id=self._module_id,
         )
         system = CURATOR_SYSTEM_PROMPT if deterministic else CURATOR_SYSTEM_PROMPT_LLM_SUPERSEDE
         last_schema_error: CuratorSchemaError | None = None
@@ -571,6 +586,16 @@ class Curator:
             seen_sources.add(key)
             sources.append({"message_id": message_id, "quote": repaired})
         if not sources:
+            return _ValidatedOp("rejected_grounding")
+        if (
+            kind == "lesson"
+            and self._module_id is not None
+            and not any(
+                infos[source["message_id"]].activity_type in LESSON_SOURCE_ACTIVITY_TYPES
+                for source in sources
+            )
+        ):
+            # Module lessons must quote a review objection or a failing gate.
             return _ValidatedOp("rejected_grounding")
         version = max(infos[source["message_id"]].version for source in sources)
         if normalize_keys:

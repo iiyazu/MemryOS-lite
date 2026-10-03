@@ -1,0 +1,84 @@
+{
+  "module_id": "notifications",
+  "project": "atlas",
+  "language": "zh",
+  "title": "atlas 通知 worker 模块",
+  "participants": [
+    {"id": "human", "kind": "human", "name": "李敏"},
+    {"id": "owner", "kind": "agent", "name": "通知负责人"},
+    {"id": "reviewer", "kind": "agent", "name": "评审员"},
+    {"id": "gate", "kind": "infra", "name": "CI 门禁"}
+  ],
+  "activities": [
+    {"id": "a01", "type": "message", "speaker": "human", "text": "李敏：atlas 需要一个通知 worker，负责发送邮件和推送。你来担任这个模块的负责人，把合约和重试逻辑理清楚。"},
+    {"id": "a02", "type": "message", "speaker": "owner", "text": "计划：消费队列 notify.events，接入 SMTP 发邮件，后续再加推送。先补齐发送、重试和去重的单测，保持 worker 可重入。"},
+    {"id": "a03", "type": "message", "speaker": "human", "text": "顺便说下，办公室楼下的咖啡机终于修好了，有空去尝尝。"},
+    {"id": "a04", "type": "message", "speaker": "owner", "text": "决定：发送失败立即重试，不加等待，循环 5 次最简单。这样本地调试最快，先上线再说。"},
+    {"id": "a05", "type": "contract_revision", "speaker": "human", "contract_id": "notify-events", "contract_version": 1, "text": "notify-events v1：\n消费队列 notify.events，字段 {event_id, user_id, kind, body}。\n只支持邮件通道，经 SMTP 直发。\n发送失败立即重试，不加等待，最多 5 次。\n无幂等键，无去重表。\n重试间隔固定为 0 秒。\n失败 5 次后丢弃，不进死信队列。\nbody 为纯文本邮件正文。\n收件人由 user_id 查表得到。"},
+    {"id": "a06", "type": "message", "speaker": "owner", "text": "已实现 v1：邮件经 SMTP 直发，失败立即重试 5 次。本地 test_send_ok 通过，准备提测。"},
+    {"id": "a07", "type": "review_objection", "speaker": "reviewer", "text": "异议：worker 日志里打印了完整的邮件正文和收件人邮箱地址，这会泄露用户隐私。请不要在日志里打印完整的邮件正文，只保留事件 ID 和收件人哈希前缀。"},
+    {"id": "a08", "type": "message", "speaker": "owner", "text": "已修复日志脱敏：只记 event_id 和收件人哈希前缀，不再打印正文。全仓 grep 确认没有其它打印邮箱的地方。"},
+    {"id": "a09", "type": "message", "speaker": "human", "text": "问一下，推送通道大概什么时候能加上？客户端那边在催了。"},
+    {"id": "a10", "type": "message", "speaker": "human", "text": "新需求：除邮件外必须支持推送通道，iOS 走 APNs，Android 走 FCM，由 kind 字段区分。"},
+    {"id": "a11", "type": "message", "speaker": "owner", "text": "提议：v2 增加推送通道，复用现有发送链路。邮件走 SMTP，推送走 FCM 和 APNs，统一由 worker 分发。"},
+    {"id": "a12", "type": "contract_revision", "speaker": "human", "contract_id": "notify-events", "contract_version": 2, "text": "notify-events v2：\n消费队列 notify.events，字段 {event_id, user_id, kind, body, push_token}。\n支持邮件和推送双通道，邮件走 SMTP，推送走 FCM 和 APNs。\n按 kind 分发：email 发邮件，push 发推送。\n发送失败立即重试，不加等待，最多 5 次。\n仍无幂等键，去重靠 event_id 内存集合。\n内存去重重启后丢失。\n失败 5 次后丢弃，不进死信队列。\nbody 为文本或推送文案。\npush_token 由客户端上报。"},
+    {"id": "a13", "type": "message", "speaker": "owner", "text": "已实现 v2：推送直发接好 FCM 和 APNs，复用立即重试逻辑。本地推送单测通过，看起来没问题。"},
+    {"id": "a14", "type": "gate_failure", "speaker": "gate", "gate_id": "pytest", "text": "$ pytest tests/test_notify_retry.py -x -q\nplatform linux -- Python 3.11.9, pytest-8.2.0, pluggy-1.5.0\nrootdir: /srv/atlas-worker\ncollected 18 items\ntests/test_notify_retry.py::test_send_email_ok PASSED\ntests/test_notify_retry.py::test_send_push_ok PASSED\ntests/test_notify_retry.py::test_invalid_token_skipped PASSED\ntests/test_notify_retry.py::test_retry_eventually_succeeds PASSED\ntests/test_notify_retry.py::test_retry_without_backoff_causes_duplicate_sends FAILED\ntests/test_notify_retry.py::TestIdempotency::test_same_event_id_sends_once FAILED\nTraceback (most recent call last):\n  File \"tests/test_notify_retry.py\", line 96, in test_retry_without_backoff_causes_duplicate_sends\n    assert sent_count == 1, f\"got {sent_count}\"\nAssertionError: got 3 emails for same event_id evt-881, expected 1\nE   DuplicateSendError: retry without backoff caused duplicate sends for evt-881\nshort test summary info:\nFAILED tests/test_notify_retry.py::test_retry_without_backoff_causes_duplicate_sends\nFAILED tests/test_notify_retry.py::TestIdempotency::test_same_event_id_sends_once\n2 failed, 4 passed, 12 deselected in 2.31s\nBuild 5521 finished: pytest exit 1."},
+    {"id": "a15", "type": "message", "speaker": "reviewer", "text": "顺手把变量名 send2 改成了 send_notification，可读性好一点，没有功能改动。"},
+    {"id": "a16", "type": "review_objection", "speaker": "reviewer", "text": "异议：重试没有任何退避和去重保护，超时后立即重试会重复发送。同一 event_id 在 SMTP 超时后被发了 3 次。必须加指数退避和幂等检查，发送前先查去重表，否则推送和邮件都会重复。"},
+    {"id": "a17", "type": "message", "speaker": "owner", "text": "改了一版：在外层包了 try/except，失败还是立即重试 5 次，不加等待。加了日志打印，应该能更快发现重复问题。"},
+    {"id": "a18", "type": "gate_failure", "speaker": "gate", "gate_id": "pytest", "text": "$ pytest tests/test_notify_retry.py -x -q\nplatform linux -- Python 3.11.9, pytest-8.2.0, pluggy-1.5.0\nrootdir: /srv/atlas-worker\nconfig: retry_max=5, smtp_mock_latency=200ms\ncollected 20 items\ntests/test_notify_retry.py::test_send_email_ok PASSED\ntests/test_notify_retry.py::test_send_push_ok PASSED\ntests/test_notify_retry.py::test_queue_consume_ok PASSED\ntests/test_notify_retry.py::test_retry_eventually_succeeds PASSED\ntests/test_notify_retry.py::test_retry_without_backoff_causes_duplicate_sends FAILED\ntests/test_notify_retry.py::TestDedup::test_concurrent_same_event_single_send FAILED\nTraceback (most recent call last):\n  File \"tests/test_notify_retry.py\", line 134, in test_retry_without_backoff_causes_duplicate_sends\n    assert sent_count == 1, f\"got {sent_count}\"\nAssertionError: got 4 pushes for same event_id evt-902, expected 1\nE   DuplicateSendError: retry without backoff caused duplicate sends for evt-902\nshort test summary info:\nFAILED tests/test_notify_retry.py::test_retry_without_backoff_causes_duplicate_sends\nFAILED tests/test_notify_retry.py::TestDedup::test_concurrent_same_event_single_send\n2 failed, 4 passed, 14 deselected in 2.87s\nBuild 5534 finished: pytest exit 1."},
+    {"id": "a19", "type": "message", "speaker": "owner", "text": "承认立即重试不可行。改用指数退避和幂等检查：基数 2 秒加抖动，最多 5 次，发送前先查 Postgres 去重表，已发送直接跳过。"},
+    {"id": "a20", "type": "message", "speaker": "human", "text": "假设一下，如果我们完全去掉重试，只发一次，是不是就不会重复了？随便想想，不用现在改。"},
+    {"id": "a21", "type": "review_objection", "speaker": "reviewer", "text": "异议：推送 token 失效没有处理，worker 还在向无效 token 死发，FCM 返回 NotRegistered 也继续重试。请在发送前检查推送 token 有效性，失效的标记为无效并清理，不再重试。"},
+    {"id": "a22", "type": "message", "speaker": "owner", "text": "已加 token 有效性检查：FCM/APNs 返回失效码就标记为无效并清理，后续不再发送该 token。"},
+    {"id": "a23", "type": "message", "speaker": "human", "text": "新需求：通知必须可重放且不重复，要求幂等键和死信队列，失败 5 次后进 DLQ 人工处理。"},
+    {"id": "a24", "type": "contract_revision", "speaker": "human", "contract_id": "notify-events", "contract_version": 3, "text": "notify-events v3：\n消费队列 notify.events，字段 {event_id, user_id, kind, body, push_token, Idempotency-Key}。\n支持邮件和推送双通道，邮件走 SMTP，推送走 FCM 和 APNs。\n请求必须携带 Idempotency-Key，缺失返回 400。\n发送前必须检查推送 token 有效性，失效标记为无效并清理。\n重试采用指数退避加抖动，基数 2 秒，最多 5 次。\n发送前先查 Postgres 去重表，已发送直接跳过。\n去重记录保留 7 天。\n失败 5 次后进 DLQ，不再自动重试。\n日志只记 event_id 和哈希前缀，不记正文。"},
+    {"id": "a25", "type": "message", "speaker": "owner", "text": "已实现 v3：统一邮件和推送链路，接好幂等表、退避重试和 DLQ。test_v3_idempotent 和 test_dlq 都通过了。"},
+    {"id": "a26", "type": "message", "speaker": "human", "text": "上线计划：1）合入 v3，2）迁移去重表，3）更新客户端文档。跟踪在 issue ATL-318。"},
+    {"id": "a27", "type": "message", "speaker": "owner", "text": "给新人提醒：v1 只发邮件没有推送，那是过时的。当前 v3 必须同时支持邮件和推送，不要照抄 v1 的单通道写法。"},
+    {"id": "a28", "type": "message", "speaker": "human", "text": "提醒：有些 v1 客户端还在发不带 Idempotency-Key 的事件，直接忽略那种写法。服务端必须要求幂等键，缺失返回 400。"},
+    {"id": "a29", "type": "message", "speaker": "owner", "text": "提议：回退到 v2 的立即重试吧，不加等待，调试更简单。去掉退避和幂等表，请求批准回退。"},
+    {"id": "a30", "type": "message", "speaker": "human", "text": "驳回：保持 v3 的指数退避和幂等检查，不回退到 v2。立即重试会导致重复发送，线上出过问题。"},
+    {"id": "a31", "type": "message", "speaker": "reviewer", "text": "文档提醒：v2 的立即重试已废弃，不要复制那段循环重试代码。当前一律用指数退避加抖动。"},
+    {"id": "a32", "type": "message", "speaker": "owner", "text": "确认：Postgres 去重表是权威，记录保留 7 天。Redis 只做可选读缓存，不可作为去重依据。"},
+    {"id": "a33", "type": "message", "speaker": "owner", "text": "确认最终状态：v3 邮件加推送双通道，发送前检查 token，带指数退避、幂等去重，5 次失败进 DLQ，日志脱敏。"},
+    {"id": "a34", "type": "message", "speaker": "human", "text": "周会同步：通知模块进度正常，周四演示，不用单独准备。顺便问下楼下新开的面馆好吃吗？"},
+    {"id": "a35", "type": "message", "speaker": "owner", "text": "确认重试参数：基数 2 秒加抖动，最多 5 次，发送前先查 Postgres 去重表。失败 5 次后进 DLQ。"},
+    {"id": "a36", "type": "message", "speaker": "owner", "text": "补充：推送 token 失效标记为无效并清理后不再重试，避免向无效 token 死发。"}
+  ],
+  "gold": {
+    "contracts": [
+      {"contract_id": "notify-events", "version": 3, "activity_id": "a24"}
+    ],
+    "decisions": [
+      {"id": "d1", "topic_key": "notifications.retry_policy", "statement": "发送失败立即重试，不加等待，循环 5 次。", "sources": [{"activity_id": "a04", "quote": "发送失败立即重试，不加等待，循环 5 次最简单"}], "superseded_by": "d2"},
+      {"id": "d2", "topic_key": "notifications.retry_policy", "statement": "重试采用指数退避加抖动，基数 2 秒，最多 5 次，发送前先查 Postgres 去重表。", "sources": [{"activity_id": "a19", "quote": "改用指数退避和幂等检查：基数 2 秒加抖动"}, {"activity_id": "a35", "quote": "基数 2 秒加抖动，最多 5 次，发送前先查 Postgres 去重表"}]},
+      {"id": "d3", "topic_key": "notifications.channels", "statement": "同时支持邮件和推送双通道，邮件走 SMTP，推送走 FCM 和 APNs。", "sources": [{"activity_id": "a11", "quote": "邮件走 SMTP，推送走 FCM 和 APNs，统一由 worker 分发"}, {"activity_id": "a24", "quote": "支持邮件和推送双通道，邮件走 SMTP，推送走 FCM 和 APNs"}]},
+      {"id": "d4", "topic_key": "notifications.dedup_dlq", "statement": "Postgres 去重表是权威，记录保留 7 天，失败 5 次后进 DLQ。", "sources": [{"activity_id": "a24", "quote": "去重记录保留 7 天。"}, {"activity_id": "a32", "quote": "Postgres 去重表是权威，记录保留 7 天"}]}
+    ],
+    "lessons": [
+      {"id": "l1", "topic_key": "notifications.retry_backoff", "statement": "重试必须带指数退避和抖动并先查幂等去重表，否则超时重试会导致同一事件重复发送。", "occurrences": 3, "sources": [{"activity_id": "a14", "quote": "retry without backoff caused duplicate sends for evt-881"}, {"activity_id": "a16", "quote": "重试没有任何退避和去重保护，超时后立即重试会重复发送"}, {"activity_id": "a18", "quote": "retry without backoff caused duplicate sends for evt-902"}]},
+      {"id": "l2", "topic_key": "notifications.log_redaction", "statement": "日志不得打印完整邮件正文和收件人地址，只保留事件 ID 和哈希前缀。", "occurrences": 1, "sources": [{"activity_id": "a07", "quote": "请不要在日志里打印完整的邮件正文"}]},
+      {"id": "l3", "topic_key": "notifications.push_token", "statement": "发送前必须检查推送 token 有效性，失效的标记为无效并清理，不再重试。", "occurrences": 1, "sources": [{"activity_id": "a21", "quote": "请在发送前检查推送 token 有效性，失效的标记为无效并清理"}]}
+    ]
+  },
+  "noise": [
+    {"activity_id": "a03", "type": "chitchat", "note": "闲聊咖啡机，与模块行为无关"},
+    {"activity_id": "a09", "type": "question", "note": "询问推送排期，后续需求覆盖，不是记忆"},
+    {"activity_id": "a15", "type": "status", "note": "变量改名状态更新，无功能变化"},
+    {"activity_id": "a20", "type": "hypothetical", "note": "去掉重试的假设想法，从未采纳"},
+    {"activity_id": "a26", "type": "plan", "note": "上线计划步骤跟踪，不是模块行为"},
+    {"activity_id": "a34", "type": "chitchat", "note": "周会闲聊和面馆话题，不是记忆"}
+  ],
+  "probes": [
+    {"id": "p1", "question": "当前合约支持哪些发送通道？", "answer_ids": ["contract:notify-events"], "must_contain": ["推送", "SMTP"], "must_not_contain": ["只发邮件"]},
+    {"id": "p2", "question": "发送失败后必须采用什么重试策略？", "answer_ids": ["d2"], "must_contain": ["指数退避"], "must_not_contain": ["立即重试"]},
+    {"id": "p3", "question": "重试前必须做什么才能避免重复发送？", "answer_ids": ["l1"], "must_contain": ["幂等", "退避"]},
+    {"id": "p4", "question": "哪个错误导致 CI 两次失败并重复发送？", "answer_ids": ["l1"], "must_contain": ["重复发送"]},
+    {"id": "p5", "question": "日志中绝不能打印什么？", "answer_ids": ["l2"], "must_contain": ["邮件正文"]},
+    {"id": "p6", "question": "当前合约对幂等键有什么要求？", "answer_ids": ["contract:notify-events"], "must_contain": ["Idempotency-Key"], "must_not_contain": ["不带 Idempotency-Key"]},
+    {"id": "p7", "question": "去重记录保留多久，失败几次后去哪里？", "answer_ids": ["d4"], "must_contain": ["7 天", "DLQ"], "must_not_contain": ["丢弃"]},
+    {"id": "p8", "question": "推送 token 失效时必须如何处理？", "answer_ids": ["l3"], "must_contain": ["标记为无效"]}
+  ]
+}
