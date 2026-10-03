@@ -23,14 +23,14 @@ All request and response bodies are JSON except `/metrics`.
 | Method | Path | Contract |
 |---|---|---|
 | `GET` | `/health` | Process liveness and safe capability metadata. |
-| `POST` | `/sessions` | Create a server-identified session. |
-| `POST` | `/sessions/{id}/ingest` | Persist one message. |
+| `POST` | `/sessions` | Create a server-identified session, optionally module-scoped. |
+| `POST` | `/sessions/{id}/ingest` | Persist one message; activity metadata is validated. |
 | `POST` | `/sessions/{id}/ingest-batch` | Persist a bounded message batch. |
 | `POST` | `/sessions/{id}/page` | Explicitly produce a page when eligible. |
-| `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context. |
+| `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context; `response_profile: "module_pack/v1"` returns a module resume pack. |
 | `GET` | `/sessions/{id}/summary` | Return safe session summary data. |
 | `GET` | `/sessions/{id}/trace` | Return diagnostic trace events. |
-| `GET` | `/sessions/{id}/advisories` | Host-facing advisories; `?version=2` selects curated-memory advisories. |
+| `GET` | `/sessions/{id}/advisories` | Host-facing advisories; `?version=2` selects curated-memory advisories, `?version=3` the scoped curated-memory payload. |
 | `POST` | `/archives/ingest` | Idempotently ingest a source document. |
 | `POST` | `/archives/attachments` | Attach an archive document to a session. |
 | `GET` | `/archives/passages` | List bounded archive passages. |
@@ -101,6 +101,90 @@ session messages. `/health` always reports a `curator` block:
 The block never contains provider keys or provider error text. While the curator
 is enabled, the heuristic agent-kernel maintenance advisories are suppressed so
 the two advisory producers do not compete.
+
+## Module sessions
+
+A host that assigns one owning agent per module creates the session with
+`"scope": {"type": "module", "id": "<module_id>"}`. MemoryOS stores and echoes
+the scope; it does not interpret module ownership.
+
+### Activity metadata (`memoryos_activity/v1`)
+
+Ingested message `metadata` may carry `activity_type`, one of `message`,
+`review_objection`, `gate_failure`, or `contract_revision`; any session rejects
+an unknown value. A module session additionally requires `activity_type`,
+`module_id` equal to the scope id, and a non-negative integer `activity_seq`;
+a `contract_revision` also requires `contract_id` and a positive integer
+`contract_version`. Violations fail with HTTP 422. Gate logs are stored in
+full; the curator prompt sees only a bounded head and tail.
+
+### Curated module memories
+
+In a module session a `lesson` must quote at least one `review_objection` or
+`gate_failure` message, otherwise it is rejected. A memory's version is the highest
+`activity_seq` among its cited messages, and with the default deterministic
+consolidation the newest version per `(memory_kind, topic_key)` wins. A
+repeated mistake is recorded under the same `topic_key`: each newly cited
+review-objection or gate-failure message adds one to the lesson's
+`occurrences` (once per message id; plain messages add nothing). A lesson
+keeps its newest 8 sources, while `occurrences` keeps accumulating.
+
+### `module_pack/v1`
+
+`POST /sessions/{id}/build-context` with `"response_profile": "module_pack/v1"`
+returns a resume pack for the module owner after compaction, a crash, or a
+restart. `task` is still required by the request model; `budget` defaults to
+1500 and is capped at 4000. A non-module session or an out-of-range budget
+fails with HTTP 422.
+
+The pack is composed deterministically, with no retrieval and no LLM, from the
+archive documents attached to the module session:
+
+```json
+{
+  "schema": "memoryos_module_pack/v1",
+  "scope": {"type": "module", "id": "auth"},
+  "sections": {
+    "contracts": [
+      {"contract_id": "...", "version": 3, "document_id": "...", "summary": "<one line>",
+       "content_sha256": "...", "source_refs": []}
+    ],
+    "lessons": [
+      {"document_id": "...", "memory_kind": "lesson", "topic_key": "auth.refresh_lock",
+       "version": 7, "text": "...", "occurrences": 2, "content_sha256": "...", "source_refs": []}
+    ],
+    "decisions": []
+  },
+  "omitted": {"contracts": 0, "lessons": 0, "decisions": 0},
+  "estimated_tokens": 412,
+  "budget": 1500,
+  "truncated": false,
+  "diagnostics": {"conflict_check": "unavailable"},
+  "diagnostics_digest": "<sha256 of the canonical payload>"
+}
+```
+
+- `contracts`: newest `contract_version` per `contract_id`, as a pointer only;
+  the host reads the full text from its own copy and can check `content_sha256`.
+- `lessons`: highest version per `topic_key`, most `occurrences` first, then
+  newest.
+- `decisions`: decisions and facts, highest version per `topic_key`, newest
+  first.
+
+Items are added in that order until the token budget or 24 items are reached;
+the rest are counted in `omitted`. Every item is an attached archive document,
+so the host re-proves it through its normal source checks. When
+`MEMORYOS_MODULE_PACK_CONFLICT_THRESHOLD` is set, included memories with
+different topic keys whose FastEmbed cosine reaches the threshold are marked
+`possible_conflict_with`; it is unset by default.
+
+### Advisories v3
+
+`?version=3` returns `memoryos_external_advisories/v3`: the v2 item fields plus
+`scope`, `memory_kind`, `version`, `occurrences`, and per-source
+`activity_type` / `external_id`, under a top-level `session_scope`. Module
+lessons and decisions use the kinds `module_lesson` and `module_decision`. See
+`docs/contracts/memoryos_external_advisories_v3.example.json`.
 
 ## Behavioral guarantees
 

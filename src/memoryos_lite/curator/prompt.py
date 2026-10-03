@@ -150,7 +150,12 @@ MODULE_NOTICE = (
     "owns it. Messages are tagged with their activity type. Record decisions still in force "
     "for this module, and lessons: a lesson is a concrete mistake to avoid and must quote at "
     "least one review_objection or gate_failure message. Contract revisions are tracked "
-    "separately; do not restate contract text as memories."
+    "separately; do not restate contract text as memories.\n"
+    "Repeated mistakes: when a review_objection or gate_failure in this window repeats the "
+    "mistake of an active lesson, do not noop. Add that lesson again with the same topic_key "
+    "and quote the new message; MemoryOS counts each cited review or gate message as one "
+    "more occurrence. Reuse the active lesson's topic_key whenever the root cause is the "
+    "same, even if the failing test, tool, or wording differs."
 )
 ACTIVE_HEADER_DETERMINISTIC = (
     "Active memories (reuse a topic_key from this list for the same subject):"
