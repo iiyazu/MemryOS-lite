@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     memoryos_recovery_circuit_recovery_timeout_s: float = 60.0
     memoryos_recovery_graceful_degradation: bool = True
 
+    # Curator (LLM-extracted durable memories; opt-in)
+    memoryos_curator_enabled: bool = False
+    memoryos_curator_window_messages: int = 12
+    memoryos_curator_idle_flush_s: float = 20.0
+    memoryos_curator_poll_s: float = 2.0
+    memoryos_curator_max_active_in_prompt: int = 40
+
     # Middleware
     memoryos_api_key: str | None = None
     memoryos_cors_origins: str = "*"
@@ -115,6 +122,30 @@ class Settings(BaseSettings):
     def validate_recovery_non_negative_floats(cls, value: float) -> float:
         if value < 0:
             raise ValueError("recovery timing settings must be non-negative")
+        return value
+
+    @field_validator(
+        "memoryos_curator_window_messages",
+        "memoryos_curator_max_active_in_prompt",
+    )
+    @classmethod
+    def validate_curator_positive_ints(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("curator window and prompt budget settings must be positive")
+        return value
+
+    @field_validator("memoryos_curator_idle_flush_s")
+    @classmethod
+    def validate_curator_idle_flush_s(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("MEMORYOS_CURATOR_IDLE_FLUSH_S must be non-negative")
+        return value
+
+    @field_validator("memoryos_curator_poll_s")
+    @classmethod
+    def validate_curator_poll_s(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("MEMORYOS_CURATOR_POLL_S must be positive")
         return value
 
     @property

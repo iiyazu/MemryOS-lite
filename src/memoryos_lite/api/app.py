@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Annotated
 
@@ -5,6 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from prometheus_client import make_asgi_app
 
 from memoryos_lite.config import Settings as _Settings
+from memoryos_lite.curator import ADVISORY_SCHEMA_V2, CuratorWorker
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.middleware import (
     ApiKeyAuthMiddleware,
@@ -36,7 +38,31 @@ def get_service() -> MemoryOSService:
 
 
 ServiceDep = Annotated[MemoryOSService, Depends(get_service)]
-app = FastAPI(title="MemoryOS Lite", version="0.2.1")
+
+
+def _resolved_service() -> MemoryOSService:
+    # Dependency overrides (tests, embedders) win over the cached default.
+    return app.dependency_overrides.get(get_service, get_service)()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    service = _resolved_service()
+    worker: CuratorWorker | None = None
+    curator = service.curator
+    if curator is not None and curator.llm is not None:
+        worker = CuratorWorker(curator, poll_s=service.settings.memoryos_curator_poll_s)
+        worker.start()
+    app.state.curator_worker = worker
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.stop()
+        app.state.curator_worker = None
+
+
+app = FastAPI(title="MemoryOS Lite", version="0.2.1", lifespan=lifespan)
 app.mount("/metrics", make_asgi_app())
 
 # Middleware (registration order is reverse of request processing order)
@@ -78,6 +104,7 @@ def health(service: ServiceDep) -> dict[str, object]:
             "agentic_advisory": external_governance,
             "paging": service.settings.resolved_paging_mode != "off",
         },
+        "curator": service.curator_status(),
     }
 
 
@@ -222,10 +249,28 @@ def trace(session_id: str, service: ServiceDep) -> list[TraceEvent]:
 
 
 @app.get("/sessions/{session_id}/advisories")
-def advisories(session_id: str, service: ServiceDep) -> dict[str, object]:
-    """Expose only bounded external-governance candidates to the Room host."""
+def advisories(
+    session_id: str,
+    service: ServiceDep,
+    version: int | None = None,
+) -> dict[str, object]:
+    """Expose only bounded external-governance candidates to the Room host.
+
+    ``version`` omitted or ``1`` keeps the original deterministic v1 response;
+    ``version=2`` serves curated-memory advisories.
+    """
 
     try:
+        if version == 2:
+            return {
+                "schema": ADVISORY_SCHEMA_V2,
+                "items": service.list_curated_advisories(session_id),
+            }
+        if version not in (None, 1):
+            raise HTTPException(
+                status_code=400,
+                detail=f"unsupported advisories version: {version}",
+            )
         items = service.list_external_advisories(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

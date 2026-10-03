@@ -6,6 +6,7 @@ the established imports and concrete ``MemoryStore`` entry point stable.
 
 from memoryos_lite.config import Settings
 from memoryos_lite.store_archive import ArchiveStoreMixin
+from memoryos_lite.store_curator import CuratorStoreMixin
 from memoryos_lite.store_legacy import LegacyStoreMixin
 from memoryos_lite.store_models import EMBEDDING_DIM as EMBEDDING_DIM
 from memoryos_lite.store_models import (
@@ -40,6 +41,12 @@ from memoryos_lite.store_models import (
 )
 from memoryos_lite.store_models import (
     CoreMemoryHistoryRecord as CoreMemoryHistoryRecord,
+)
+from memoryos_lite.store_models import (
+    CuratedMemoryRecord as CuratedMemoryRecord,
+)
+from memoryos_lite.store_models import (
+    CuratorStateRecord as CuratorStateRecord,
 )
 from memoryos_lite.store_models import (
     EmbeddingType as EmbeddingType,
@@ -79,6 +86,7 @@ class MemoryStore(
     StoreRuntimeMixin,
     SessionStoreMixin,
     ArchiveStoreMixin,
+    CuratorStoreMixin,
     LegacyStoreMixin,
 ):
     """Concrete, backward-compatible composition of persistence slices."""
