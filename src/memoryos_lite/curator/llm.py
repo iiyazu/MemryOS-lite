@@ -1,0 +1,98 @@
+"""Injectable structured-JSON LLM client for the curator.
+
+The curator never depends on a live provider in tests or CI: callers pass a
+:class:`CuratorLLM` fake.  The production client is built the same way the
+repository builds other chat models (``chat_api_key``/``chat_model``/base URL
+from settings, ``memoryos_llm_timeout_s``) and requests JSON output mode.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from memoryos_lite.config import Settings
+
+
+class CuratorLLMError(RuntimeError):
+    """The provider call itself failed (transport, auth, provider error)."""
+
+
+class CuratorSchemaError(RuntimeError):
+    """The provider response was not a usable JSON object."""
+
+
+class CuratorLLM(Protocol):
+    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        """Return one JSON object for the given system/user prompt pair."""
+        ...
+
+
+def extract_json_object(text: str) -> dict[str, Any]:
+    """Parse the first JSON object in ``text``, tolerating fences and prose."""
+
+    decoder = json.JSONDecoder()
+    start = text.find("{")
+    while start != -1:
+        try:
+            value, _end = decoder.raw_decode(text[start:])
+        except ValueError:
+            start = text.find("{", start + 1)
+            continue
+        if isinstance(value, dict):
+            return value
+        start = text.find("{", start + 1)
+    raise CuratorSchemaError("curator response did not contain a JSON object")
+
+
+class ChatCuratorLLM:
+    """ChatOpenAI-backed curator client with JSON output mode.
+
+    The API key is held by the LangChain client only; it is never logged,
+    traced, or returned by ``complete_json`` errors.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        from langchain_openai import ChatOpenAI
+        from pydantic import SecretStr
+
+        api_key = settings.chat_api_key
+        if not api_key:
+            raise ValueError(f"{settings.chat_api_key_name} is required for the curator")
+        kwargs: dict[str, Any] = {}
+        if settings.chat_base_url:
+            kwargs["base_url"] = settings.chat_base_url
+        self._model = ChatOpenAI(
+            model=settings.chat_model,
+            api_key=SecretStr(api_key),
+            temperature=0,
+            timeout=settings.memoryos_llm_timeout_s,
+            model_kwargs={"response_format": {"type": "json_object"}},
+            **kwargs,
+        )
+
+    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        try:
+            result = self._model.invoke(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ]
+            )
+        except Exception as exc:
+            # Deliberately avoid provider error text: it can echo request
+            # metadata, and nothing here needs more than the failure class.
+            raise CuratorLLMError(f"provider call failed: {type(exc).__name__}") from exc
+        content = result.content if hasattr(result, "content") else result
+        if not isinstance(content, str):
+            raise CuratorSchemaError("curator response content was not text")
+        return extract_json_object(content)
+
+
+def build_curator_llm(settings: Settings) -> CuratorLLM | None:
+    """Build the production client, or ``None`` when no API key is configured."""
+
+    if not settings.chat_api_key:
+        return None
+    return ChatCuratorLLM(settings)

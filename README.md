@@ -12,6 +12,7 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 - 默认 `MEMORYOS_MEMORY_ARCH=v3`，使用 layered context composer；`v1` 仅作为显式兼容路径。
 - 默认 `MEMORYOS_RECALL_PIPELINE=v2`，使用 episode-first evidence recall；可显式选择 `v1`。
 - Agent kernel 默认关闭；`MEMORYOS_AGENT_KERNEL=external` 时本服务只产出带来源的维护建议（`/sessions/{id}/advisories`），由宿主 agent 决定是否采纳。
+- 记忆策展（curator）默认关闭；`MEMORYOS_CURATOR_ENABLED=true` 时后台 worker 从消息流抽取带来源证明的持久记忆，并通过 `/sessions/{id}/advisories?version=2`（`memoryos_external_advisories/v2`）暴露，同时抑制启发式维护建议。
 - SQLite 是权威存储；page/trace 文件和可选 Redis/Qdrant 都是派生或实验能力。
 - 以新鲜命令结果而不是文档中的历史通过数判断状态。
 
@@ -72,6 +73,7 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 | `POST` | `/archives/attachments` | 将归档关联到会话 |
 | `POST` | `/memory/search` | 检索记忆 |
 | `GET` | `/sessions/{id}/trace` | 查看调试 trace |
+| `GET` | `/sessions/{id}/advisories` | 维护建议；`?version=2` 返回策展记忆（v2） |
 | `GET` | `/metrics` | Prometheus metrics |
 
 ## 配置
@@ -83,6 +85,11 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 | `MEMORYOS_RECALL_PIPELINE` | `v2` | `v2` 或兼容 `v1` recall |
 | `MEMORYOS_AGENT_KERNEL` | `off` | `off`，或 `external` 维护建议模式 |
 | `MEMORYOS_PAGING_MODE` | `off` | 显式启用分页策略 |
+| `MEMORYOS_CURATOR_ENABLED` | `false` | 启用 LLM 记忆策展与后台 worker |
+| `MEMORYOS_CURATOR_WINDOW_MESSAGES` | `12` | 每次策展窗口的消息数 |
+| `MEMORYOS_CURATOR_IDLE_FLUSH_S` | `20.0` | 不足一窗时的空闲刷新等待秒数 |
+| `MEMORYOS_CURATOR_POLL_S` | `2.0` | 后台 worker 轮询间隔 |
+| `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | unset | 可选真实模型提供方 |
 | `QDRANT_URL` | unset | 可选向量检索后端 |
 

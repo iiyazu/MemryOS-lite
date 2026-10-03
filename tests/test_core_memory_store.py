@@ -7,7 +7,7 @@ from memoryos_lite.store import MemoryStore
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import CoreMemoryBlock, SourceRef
 
-CURRENT_ALEMBIC_HEAD = "0009_add_context_policy_candidates"
+CURRENT_ALEMBIC_HEAD = "0010_add_curator_tables"
 
 
 def _settings(tmp_path):

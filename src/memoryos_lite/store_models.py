@@ -350,6 +350,51 @@ class PromotionCandidateRecord(Base):
     __table_args__ = (Index("ix_promotion_candidates_status_created", "status", "created_at"),)
 
 
+class CuratedMemoryRecord(Base):
+    """One typed, source-grounded memory extracted by the LLM curator.
+
+    Curated rows are derived state: dropping the table and replaying the
+    message stream rebuilds them.  ``supersedes_id``/``superseded_by_id``
+    record the deterministic ADD/UPDATE(supersede) consolidation history.
+    """
+
+    __tablename__ = "curated_memories"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    topic_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    sources_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    supersedes_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    superseded_by_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_curated_memories_session_status", "session_id", "status"),
+        Index("ix_curated_memories_session_created", "session_id", "created_at"),
+    )
+
+
+class CuratorStateRecord(Base):
+    """Per-session curator watermark and cumulative counters."""
+
+    __tablename__ = "curator_state"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    last_message_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_run_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    proposals: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rejected_grounding: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rejected_schema: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    llm_errors: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class ContextPolicyCandidateRecord(Base):
     __tablename__ = "context_policy_candidates"
 
@@ -400,6 +445,8 @@ for _compat_type in (
     ArchiveAttachmentRecord,
     PromotionCandidateRecord,
     ContextPolicyCandidateRecord,
+    CuratedMemoryRecord,
+    CuratorStateRecord,
     ArchivalPassagePage,
 ):
     _compat_type.__module__ = "memoryos_lite.store"

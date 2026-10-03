@@ -20,6 +20,7 @@ from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.conflict import ConflictDetector, _extract_implicit_value
 from memoryos_lite.context_composer import V3ContextComposer
+from memoryos_lite.curator import Curator, build_advisory_v2_items, build_curator_llm
 from memoryos_lite.kernel_analyzer import KernelMaintenanceAnalyzer
 from memoryos_lite.observability import (
     CONTEXT_BUDGET_USED_RATIO,
@@ -855,6 +856,7 @@ class MemoryOSService:
         store: MemoryStore | None = None,
         settings: Settings | None = None,
         embedding_client: EmbeddingClient | None = None,
+        curator: Curator | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.store = store or create_store(self.settings)
@@ -1024,6 +1026,19 @@ class MemoryOSService:
             if self.settings.resolved_agent_kernel == "external"
             else None
         )
+        if curator is not None:
+            self.curator: Curator | None = curator
+        elif self.settings.memoryos_curator_enabled:
+            llm = None
+            try:
+                llm = build_curator_llm(self.settings)
+            except Exception:
+                # A missing optional remote stack degrades the curator; the
+                # service keeps its non-curator behavior.
+                llm = None
+            self.curator = Curator(store=self.store, settings=self.settings, llm=llm)
+        else:
+            self.curator = None
         self.conflict_detector = ConflictDetector(lexical)
         item_llm: Any | None = None
         if (
@@ -1336,6 +1351,35 @@ class MemoryOSService:
 
         self._require_session(session_id)
         return self.store.list_maintenance_advisories(session_id, limit=32)
+
+    def list_curated_advisories(self, session_id: str) -> list[dict[str, object]]:
+        """Project curated memories into advisory v2 items for the host."""
+
+        self._require_session(session_id)
+        rows = self.store.list_curated_memories(session_id, limit=32)
+        superseded_ids = sorted({row.supersedes_id for row in rows if row.supersedes_id})
+        superseded_rows = self.store.get_curated_memories_by_ids(superseded_ids)
+        return build_advisory_v2_items(rows, superseded_rows)
+
+    def curator_status(self) -> dict[str, object]:
+        """Report curator state without ever exposing provider secrets."""
+
+        if self.curator is not None:
+            return self.curator.status()
+        return {
+            "enabled": False,
+            "state": "disabled",
+            "reason_code": "curator_disabled",
+            "model": self.settings.chat_model,
+            "counters": {
+                "sessions": 0,
+                "runs": 0,
+                "proposals": 0,
+                "rejected_grounding": 0,
+                "rejected_schema": 0,
+                "llm_errors": 0,
+            },
+        }
 
     def _ensure_recall_index(self, session_id: str) -> None:
         """Backfill derived recall rows after an ingest or its replay.
@@ -2129,6 +2173,10 @@ class MemoryOSService:
         task: str,
         v3_package: ContextPackageV3,
     ) -> None:
+        if self.settings.memoryos_curator_enabled:
+            # The LLM curator owns advisory production; the heuristic
+            # "repeater" proposals must not compete with it.
+            return
         if self.kernel_maintenance_analyzer is None:
             return
         messages = self.store.list_messages(session_id)

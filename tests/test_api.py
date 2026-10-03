@@ -1,17 +1,44 @@
+import re
+import time
+
 from fastapi.testclient import TestClient
 
 from memoryos_lite.api import app as api_app_module
 from memoryos_lite.api.app import app, get_service
 from memoryos_lite.config import Settings
+from memoryos_lite.curator import Curator
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import ContextPackage, MemoryPage, PageType, Role
 from memoryos_lite.store import create_store
+from memoryos_lite.store_curator import CuratedMemoryWrite
 from memoryos_lite.v3_contracts import (
     ContextLayerItem,
     ContextPackageV3,
     SourceRef,
     SourceType,
 )
+
+
+class _EchoCuratorLLM:
+    """Returns one grounded add op for the first message of the window prompt."""
+
+    def complete_json(self, system: str, user: str) -> dict[str, object]:
+        window = user.split("Messages to curate:\n", 1)[1]
+        match = re.match(r"\[([^\]]+)\] [^:]+: (.+)", window.strip().splitlines()[0])
+        assert match is not None
+        message_id, content = match.group(1), match.group(2)
+        return {
+            "operations": [
+                {
+                    "op": "add",
+                    "kind": "fact",
+                    "topic_key": "api.test",
+                    "statement": content,
+                    "sources": [{"message_id": message_id, "quote": content}],
+                    "supersedes": None,
+                }
+            ]
+        }
 
 
 def test_api_smoke(service):
@@ -438,5 +465,206 @@ def test_api_compact_source_evidence_uses_real_v3_archive(tmp_path):
             "rank",
             "truncated",
         }
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_api_advisories_routes_v1_default_and_v2_schema(service):
+    session = service.create_session("advisories-routing")
+    statement = "Helios launches in Lisbon."
+    service.store.apply_curator_window(
+        session_id=session.id,
+        run_id="crun_api",
+        model="test-model",
+        last_message_seq=0,
+        writes=[
+            CuratedMemoryWrite(
+                kind="decision",
+                topic_key="project.launch_city",
+                statement=statement,
+                sources=[{"message_id": "msg_api", "quote": statement}],
+            )
+        ],
+    )
+    app.dependency_overrides[get_service] = lambda: service
+    client = TestClient(app)
+    try:
+        default = client.get(f"/sessions/{session.id}/advisories")
+        assert default.status_code == 200
+        assert default.json()["schema"] == "memoryos_external_advisories/v1"
+
+        explicit_v1 = client.get(f"/sessions/{session.id}/advisories", params={"version": 1})
+        assert explicit_v1.json() == default.json()
+
+        v2 = client.get(f"/sessions/{session.id}/advisories", params={"version": 2})
+        assert v2.status_code == 200
+        assert v2.json()["schema"] == "memoryos_external_advisories/v2"
+        items = v2.json()["items"]
+        assert len(items) == 1
+        item = items[0]
+        assert set(item) == {
+            "advisory_id",
+            "fingerprint",
+            "proposal_type",
+            "kind",
+            "topic_key",
+            "content",
+            "source_refs",
+            "supersedes_advisory_id",
+        }
+        assert item["proposal_type"] == "curated_memory"
+        assert item["kind"] == "room_decision"
+        assert item["content"] == statement
+        assert item["supersedes_advisory_id"] is None
+        assert item["source_refs"] == [
+            {
+                "source_type": "message",
+                "source_id": "msg_api",
+                "session_id": session.id,
+                "quote": statement,
+            }
+        ]
+        assert len(item["fingerprint"]) == 64
+
+        unsupported = client.get(f"/sessions/{session.id}/advisories", params={"version": 3})
+        assert unsupported.status_code == 400
+        assert "unsupported advisories version" in unsupported.json()["detail"]
+
+        missing = client.get("/sessions/sess_absent/advisories", params={"version": 2})
+        assert missing.status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_health_reports_curator_disabled_by_default():
+    client = TestClient(app)
+    curator_block = client.get("/health").json()["curator"]
+
+    assert curator_block["enabled"] is False
+    assert curator_block["state"] == "disabled"
+    assert curator_block["reason_code"] == "curator_disabled"
+    assert isinstance(curator_block["model"], str)
+    assert curator_block["counters"] == {
+        "sessions": 0,
+        "runs": 0,
+        "proposals": 0,
+        "rejected_grounding": 0,
+        "rejected_schema": 0,
+        "llm_errors": 0,
+    }
+
+
+def test_health_reports_curator_degraded_without_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    settings = Settings(
+        data_dir=tmp_path / "curator-health",
+        memoryos_curator_enabled=True,
+    )
+    store = create_store(settings)
+    store.reset()
+    curator = Curator(store=store, settings=settings, llm=None)
+    service = MemoryOSService(store=store, settings=settings, curator=curator)
+    app.dependency_overrides[get_service] = lambda: service
+    client = TestClient(app)
+    try:
+        curator_block = client.get("/health").json()["curator"]
+
+        assert curator_block["enabled"] is True
+        assert curator_block["state"] == "degraded"
+        assert curator_block["reason_code"] == "curator_llm_key_missing"
+        assert "key" not in str(curator_block["counters"])
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_curator_never_exposes_api_key(tmp_path):
+    secret = "sk-test-curator-secret-value"
+    settings = Settings(
+        data_dir=tmp_path / "curator-secret",
+        memoryos_curator_enabled=True,
+        memoryos_curator_window_messages=1,
+        openai_api_key=secret,
+    )
+    store = create_store(settings)
+    store.reset()
+    curator = Curator(store=store, settings=settings, llm=_EchoCuratorLLM())
+    service = MemoryOSService(store=store, settings=settings, curator=curator)
+    app.dependency_overrides[get_service] = lambda: service
+    client = TestClient(app)
+    try:
+        session_id = client.post("/sessions", json={"title": "secret"}).json()["id"]
+        content = "A durable fact that must not leak credentials."
+        client.post(
+            f"/sessions/{session_id}/ingest",
+            json={"role": Role.USER.value, "content": content},
+        )
+        assert curator.run_session(session_id).added == 1
+
+        health_body = client.get("/health").text
+        v1_body = client.get(f"/sessions/{session_id}/advisories").text
+        v2_body = client.get(f"/sessions/{session_id}/advisories", params={"version": 2}).text
+        trace_body = client.get(f"/sessions/{session_id}/trace").text
+
+        assert secret not in health_body
+        assert secret not in v1_body
+        assert secret not in v2_body
+        assert secret not in trace_body
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_curator_worker_not_started_when_disabled(service):
+    app.dependency_overrides[get_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            assert client.get("/health").status_code == 200
+            assert app.state.curator_worker is None
+        assert app.state.curator_worker is None
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_curator_worker_serves_advisories_v2_when_enabled(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / "curator-worker",
+        memoryos_curator_enabled=True,
+        memoryos_curator_window_messages=1,
+        memoryos_curator_poll_s=0.05,
+    )
+    store = create_store(settings)
+    store.reset()
+    curator = Curator(store=store, settings=settings, llm=_EchoCuratorLLM())
+    service = MemoryOSService(store=store, settings=settings, curator=curator)
+    app.dependency_overrides[get_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            worker = app.state.curator_worker
+            assert worker is not None
+            assert worker.running
+
+            session_id = client.post("/sessions", json={"title": "worker"}).json()["id"]
+            content = "The worker curates this durable launch fact."
+            client.post(
+                f"/sessions/{session_id}/ingest",
+                json={"role": Role.USER.value, "content": content},
+            )
+
+            deadline = time.monotonic() + 5.0
+            items: list[dict] = []
+            while time.monotonic() < deadline:
+                items = client.get(
+                    f"/sessions/{session_id}/advisories", params={"version": 2}
+                ).json()["items"]
+                if items:
+                    break
+                time.sleep(0.05)
+
+            assert items, "worker did not curate the message in time"
+            assert items[0]["content"] == content
+            assert items[0]["source_refs"][0]["source_type"] == "message"
+
+        assert not worker.running
+        assert app.state.curator_worker is None
     finally:
         app.dependency_overrides.clear()
