@@ -140,8 +140,15 @@ def test_module_lesson_occurrences_count_cited_review_and_gate_messages(tmp_path
     rerun = "FAILED test_parallel_refresh - token written twice again"
     review_id = _ingest(service, session.id, review, _activity(3, "review_objection"))
     rerun_id = _ingest(service, session.id, rerun, _activity(4, "gate_failure"))
-    # One re-added proposal citing two new review/gate messages is two occurrences.
-    llm.responses = [{"operations": [lesson((review_id, review), (rerun_id, rerun))]}]
+    # One re-added proposal citing two new review/gate messages is two occurrences;
+    # a second quote from the same gate log does not add a third.
+    llm.responses = [
+        {
+            "operations": [
+                lesson((review_id, review), (rerun_id, rerun), (rerun_id, "token written twice"))
+            ]
+        }
+    ]
     curator.run_session(session.id, force=True)
 
     active = service.store.list_active_curated_memories(session.id)

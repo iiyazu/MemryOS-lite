@@ -115,12 +115,13 @@ def _occurrences_in(fresh: list[dict[str, str]], infos: dict[str, _MessageInfo])
     With typed activities (module sessions) each newly cited review objection or
     gate failure is one occurrence, so a plain message cited alongside adds none.
     Untyped sessions count one occurrence per proposal that cites anything new.
+    Several quotes from the same message (common for long gate logs) count once.
     """
 
     types = [
         info.activity_type
-        for source in fresh
-        if (info := infos.get(source["message_id"])) is not None
+        for message_id in dict.fromkeys(source["message_id"] for source in fresh)
+        if (info := infos.get(message_id)) is not None
     ]
     if not any(types):
         return 1
