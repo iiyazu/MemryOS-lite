@@ -435,7 +435,10 @@ def eval_roommem(
     ] = "benchmarks/roommem/rooms",
     arm: Annotated[
         list[str] | None,
-        Option("--arm", help="raw | raw_project | oracle | curated; repeat for multiple arms"),
+        Option(
+            "--arm",
+            help="raw | raw_project | oracle | curated | full_context; repeat for multiple arms",
+        ),
     ] = None,
     rooms: Annotated[
         str | None,
@@ -505,6 +508,17 @@ def eval_roommem(
         str | None,
         Option("--curator-consolidation", help="deterministic | llm (earlier pipeline)"),
     ] = None,
+    merge_project: Annotated[
+        str | None,
+        Option("--merge-project", help="Put every selected room into this one project"),
+    ] = None,
+    shared_project: Annotated[
+        bool,
+        Option(
+            "--shared-project",
+            help="Curated/oracle arms deliver project/user memories to every room of the project",
+        ),
+    ] = False,
     out: Annotated[
         str,
         Option("--out", help="Output directory for results and reports"),
@@ -540,6 +554,8 @@ def eval_roommem(
             judge_llm=judge_llm,
             curator_llm=curator_llm,
             curator_consolidation=curator_consolidation,
+            merge_project=merge_project,
+            shared_project=shared_project,
         )
     except RoomMemError as exc:
         console.print(f"[red]RoomMem error:[/red] {exc}")
