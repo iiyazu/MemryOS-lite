@@ -87,17 +87,20 @@ Future direction:
 
 - Keep final answer/source projection separate from retrieval-only diagnostics.
 
-## 5. LangGraph Demo Is Experimental
+## 5. Curation Is Not an Agent Runtime
 
-The `demo run` LangGraph path demonstrates Think-Act-Observe style memory
-control, but it is not a production agent runtime.
+`/curate` runs a small LangGraph graph (extract, check, repair, consolidate)
+for one request; `demo curate` runs it offline with a scripted LLM. It is not a
+production agent runtime.
 
 Current constraints:
 
-- The demo path is deterministic enough for local inspection; real agent
-  execution belongs to the host process (`MEMORYOS_AGENT_KERNEL=external` only
-  emits advisories).
+- Real agent execution belongs to the host process (`MEMORYOS_AGENT_KERNEL=external`
+  only emits advisories; `/curate` only returns memory versions).
 - Real LLM usage is optional and requires explicit API keys.
+- `/curate` keeps no state and no checkpoint: a request that times out on the
+  caller side is simply sent again. Curation quality (missed lessons,
+  over-merged lessons) is measured by ModuleMem, not guaranteed.
 - The API supports only an optional single shared key (`MEMORYOS_API_KEY`,
   sent as `X-API-Key`; `/health` and `/metrics` stay open). Without the key it
   is unauthenticated. There is no per-user identity, rate limiting,

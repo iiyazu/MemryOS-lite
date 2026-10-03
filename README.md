@@ -13,7 +13,7 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 - 默认 `MEMORYOS_RECALL_PIPELINE=v2`，使用 episode-first evidence recall；可显式选择 `v1`。
 - Agent kernel 默认关闭；`MEMORYOS_AGENT_KERNEL=external` 时本服务只产出带来源的维护建议（`/sessions/{id}/advisories`），由宿主 agent 决定是否采纳。
 - 记忆策展（curator）默认关闭；`MEMORYOS_CURATOR_ENABLED=true` 时后台 worker 从消息流抽取带来源证明的持久记忆，并通过 `/sessions/{id}/advisories?version=2`（`memoryos_external_advisories/v2`）暴露，同时抑制启发式维护建议。每条记忆的引文必须是原消息的逐字子串，否则拒收；默认由 `topic_key` + 版本号确定性汇总新旧版本，LLM 只输出 add/noop。
-- 模块会话（`scope: {"type": "module", "id": ...}`）面向"一个 Agent 负责一个模块"的宿主：摄入带类型的活动，策展出模块决定和教训（错题本），并按需返回确定性的续命包 `module_pack/v1`，见下文"模块记忆"。
+- 模块记忆走无状态的 `POST /curate`（`memoryos_curate/v1`）：宿主（如 xmuse）带上模块现有记忆和一窗新活动，MemoryOS 返回新的记忆版本，自己不存状态。错题本采用闭合记账：每条复核打回和门禁失败都必须归到一条教训或写明理由排除。提炼过程是一张 LangGraph 图（抽取 → 校验 → 修复 → 汇总），见下文"模块记忆"。
 - SQLite 是权威存储；page/trace 文件和可选 Redis/Qdrant 都是派生或实验能力。
 - 以新鲜命令结果而不是文档中的历史通过数判断状态。
 
@@ -39,15 +39,17 @@ uv run --no-sync memoryos api --reload
 ```
 
 `full-local` 保留 SQLite、BM25、FastEmbed、RRF、paging 和 external-governance，且不安装
-远程 provider/graph stack。需要 LangGraph demo、远程 LLM/Qdrant 或公开 benchmark 时显式安装：
+远程 provider/graph stack。需要 LLM curator、`/curate`、远程 LLM/Qdrant 或公开 benchmark 时
+显式安装：
 
 ```bash
 uv sync --frozen --no-dev --extra remote
-uv run --no-sync memoryos demo run
+# 离线演示 curate 图：第一次回复故意违规，展示修复循环；--mermaid 打印图结构
+uv run --no-sync memoryos demo curate --mermaid
 ```
 
-`demo run` 依赖可选的 LangGraph runtime；缺少可选依赖时命令返回稳定 capability
-error，不会改变 SQLite authority 或离线 API 行为。
+`/curate` 和 `demo curate` 依赖 `remote` extra 里的 LangGraph 与 LangChain；缺少时 `/curate`
+返回 503（`curate_requires_langgraph`），不影响 SQLite authority 或离线 API 行为。
 
 ### 分发边界
 
@@ -66,50 +68,42 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| `POST` | `/sessions` | 创建会话；可带 `scope` 创建模块会话 |
-| `POST` | `/sessions/{id}/ingest` | 摄入消息；`metadata` 按 `memoryos_activity/v1` 校验，不合规返回 422 |
+| `POST` | `/sessions` | 创建会话 |
+| `POST` | `/sessions/{id}/ingest` | 摄入消息 |
 | `POST` | `/sessions/{id}/page` | 显式分页 |
-| `POST` | `/sessions/{id}/build-context` | 构建上下文包；`response_profile: "module_pack/v1"` 返回续命包 |
+| `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
+| `POST` | `/curate` | 无状态模块记忆提炼（`memoryos_curate/v1`） |
 | `POST` | `/archives/ingest` | 摄入可归因归档文档 |
 | `POST` | `/archives/attachments` | 将归档关联到会话 |
 | `POST` | `/memory/search` | 检索记忆 |
 | `GET` | `/sessions/{id}/trace` | 查看调试 trace |
-| `GET` | `/sessions/{id}/advisories` | 维护建议；`?version=2` 返回策展记忆（v2），`?version=3` 返回带 scope 的策展记忆（v3） |
+| `GET` | `/sessions/{id}/advisories` | 维护建议；`?version=2` 返回策展记忆（v2） |
 | `GET` | `/metrics` | Prometheus metrics |
 
-### 模块记忆（错题本与续命包）
+### 模块记忆：无状态 `/curate`
 
-模块会话只在 `POST /sessions` 时通过 `scope: {"type": "module", "id": "<module_id>"}`
-声明；MemoryOS 只保存并回显 scope，不解释模块归属。
+面向"一个 Agent 长期负责一个模块"的宿主。状态归宿主：宿主保存模块的记忆，把它们和一窗新
+活动一起发来；MemoryOS 不存任何东西，重试是安全的。宿主再把记忆渲染成负责人能读到的文件。
 
-**活动元数据（`memoryos_activity/v1`）**：`metadata.activity_type` 取 `message`、
-`review_objection`、`gate_failure` 或 `contract_revision`。任何会话都拒收未知类型；模块会话
-还要求 `activity_type`、等于 scope id 的 `module_id`、非负整数 `activity_seq`，
-`contract_revision` 另需 `contract_id` 与正整数 `contract_version`。门禁日志全文入库，
-curator 提示词只截取开头和结尾。
-
-**错题本**：模块会话里的教训（`memory_kind=lesson`）必须至少引用一条 `review_objection`
-或 `gate_failure`，否则拒收。同一错误再次出现时，curator 用同一个 `topic_key` 重新 add 并
-引用新消息；每新引用一条复核意见或门禁失败消息，`occurrences` 加一（按消息 id 去重，普通
-消息不计入；教训只保留最新 8 条出处，次数持续累加）。记忆版本号取所引消息中最大的
-`activity_seq`。
-
-**续命包（`module_pack/v1`）**：会话被压缩、进程被杀或重启后，负责人调用
-`build-context` 并指定 `response_profile: "module_pack/v1"`（`budget` 默认 1500，上限
-4000）。包体由附在模块会话上的归档文档确定性拼装，不做检索、不调用 LLM：
-
-- `contracts`：每个 `contract_id` 只取最新版本，只给指针（id、版本、sha256、一行摘要），
-  全文由宿主自己读取；
-- `lessons`：每个 `topic_key` 只取最高版本，按 `occurrences` 从多到少、再按新旧排序；
-- `decisions`：决定和事实，每个 `topic_key` 只取最高版本，从新到旧。
-
-每条都是可复证的归档文档；预算放不下的条目计入 `omitted`。非模块会话请求该 profile 返回
-422。`possible_conflict_with`（不同 key 但文本相近的条目）默认关闭，见
-`MEMORYOS_MODULE_PACK_CONFLICT_THRESHOLD`。
-
-**advisories v3**（`memoryos_external_advisories/v3`）：在 v2 的基础上携带 scope，模块会话
-的教训和决定分别以 `module_lesson`、`module_decision` 暴露；示例见
-`docs/contracts/memoryos_external_advisories_v3.example.json`。
+- **请求**：`scope_id`；`active`（模块现有记忆：`id`、`kind` 为 lesson/decision/fact、
+  `topic_key`、`statement`、`version`、`occurrences`、`sources`）；`window`（新活动，1–32 条，
+  每条有宿主自己的 `id`、单调的 `seq`、`type` 为 `message` / `review_objection` /
+  `gate_failure` / `contract_revision`、`speaker`、`text`）；`context`（之前几条活动，只读，
+  可被引用）；`max_repairs`（0–2，默认 2）。
+- **闭合记账（错题本）**：窗口里每条 `review_objection` 和 `gate_failure` 必须恰好得到一个
+  归属：归到一条教训并逐字引用该失败，或写明理由排除（如基础设施抖动）。同一根因沿用已有
+  教训的 `topic_key`。教训的 `occurrences` 就是归到它的失败条数，已引用过的失败不会重复计数；
+  教训只在有失败归入时才新建或改写。
+- **决定和事实**：每条引用 1–3 条活动；按 `topic_key` 只保留最新版本，与现有记忆相同的陈述
+  视为 noop，比现有版本旧的视为过时。版本号取所引活动中最大的 `seq`。
+- **修复循环**：提炼是一张 LangGraph 图：`extract → check → (repair → check)* → consolidate`。
+  `check` 确定性地校验引文（必须是原文逐字子串）、记账是否完整、教训是否存在；有违规就把
+  上次回复和违规清单发回 LLM 修复，最多 `max_repairs` 轮。之后仍无效的部分丢弃，没归属的
+  失败列入 `unaccounted`。
+- **响应**：`memories`（新版本，`supersedes_id` 指向被取代的现有记忆；`id` 由内容确定，
+  重放得到相同 id）、`assignments`、`unaccounted`、`diagnostics`（LLM 调用次数、修复轮数、
+  首轮和末轮违规）。无 LLM key 或缺 LangGraph 返回 503，provider 出错返回 502，都不带 provider
+  错误原文。
 
 ## 配置
 
@@ -126,7 +120,6 @@ curator 提示词只截取开头和结尾。
 | `MEMORYOS_CURATOR_POLL_S` | `2.0` | 后台 worker 轮询间隔 |
 | `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |
 | `MEMORYOS_CURATOR_CONSOLIDATION` | `deterministic` | `deterministic`：按 `topic_key` 保留最新版本；`llm`：早期由 LLM 指定被取代记忆的流程 |
-| `MEMORYOS_MODULE_PACK_CONFLICT_THRESHOLD` | unset | 设为 FastEmbed 余弦阈值后，`module_pack/v1` 标注疑似冲突；默认关闭（RoomMem 上全部是误报） |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENCODE_API_KEY` | unset | 可选真实模型提供方；`MEMORYOS_LLM_PROVIDER=opencode` 走 OpenCode Go（默认 `muse-spark-1.3-contributor`，Responses API），目前只用于 curator 与 RoomMem |
 | `QDRANT_URL` | unset | 可选向量检索后端 |
 
@@ -149,13 +142,15 @@ uv run memoryos eval run --case-set hard --baseline memoryos_lite
 # RoomMem：多 Room 记忆。split dev=rm01-06, test=rm07-12, trap=rm13-16
 uv run memoryos eval roommem --split dev --arm raw_project --arm curated --arm oracle \
   --embedding fastembed --out artifacts/roommem
-# ModuleMem：模块续命包与错题本。split dev=mm01-04, test=mm05-08
-uv run memoryos eval modulemem --split dev --arm pack --arm recent --arm full_history \
-  --embedding fastembed --out artifacts/modulemem
+# ModuleMem：模块记忆与错题本。split dev=mm01-04, test=mm05-08
+uv run memoryos eval modulemem --split dev --arm pack --arm raw_log --arm full_history \
+  --out artifacts/modulemem
 ```
 
-RoomMem 的 arm 有 `raw`、`raw_project`、`oracle`、`curated`、`full_context`；ModuleMem 的
-arm 有 `pack`、`oracle_pack`、`recent`、`retrieval`、`full_history`。`--answerer-llm`、
+RoomMem 的 arm 有 `raw`、`raw_project`、`oracle`、`curated`、`full_context`。ModuleMem 的
+arm 有 `pack`（扮演宿主走 `/curate` 的图，渲染模块记忆文件）、`oracle_pack`、`recent`、
+`raw_log`（同预算下最新的原始活动）、`retrieval`、`full_history`；`pack` 另报告失败归属与
+gold 教训聚类的成对精确率和召回率、排除数、`unaccounted` 和修复轮数。`--answerer-llm`、
 `--judge-llm`、`--curator-llm` 接受 `provider:model[@wire]`。结果写入 `--out` 下的
 `summary.md`。
 
