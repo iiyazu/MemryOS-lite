@@ -14,7 +14,6 @@ from memoryos_lite.store_models import (
     CuratedMemoryRecord,
     CuratorStateRecord,
     MessageRecord,
-    SessionRecord,
 )
 
 
@@ -34,8 +33,6 @@ class CuratedMemoryRow:
     created_at: datetime
     version: int = 0
     occurrences: int = 1
-    scope_type: str | None = None
-    scope_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,8 +93,6 @@ class CuratorStoreMixin:
             created_at=record.created_at,
             version=record.version or 0,
             occurrences=record.occurrences or 1,
-            scope_type=record.scope_type,
-            scope_id=record.scope_id,
         )
 
     @staticmethod
@@ -280,9 +275,6 @@ class CuratorStoreMixin:
         now = utc_now()
         created: list[CuratedMemoryRow] = []
         with self.db() as db:
-            session = db.get(SessionRecord, session_id)
-            scope_type = session.scope_type if session is not None else None
-            scope_id = session.scope_id if session is not None else None
             for write in writes:
                 record = CuratedMemoryRecord(
                     id=new_id("cmem"),
@@ -299,8 +291,6 @@ class CuratorStoreMixin:
                     created_at=now,
                     version=write.version,
                     occurrences=write.occurrences,
-                    scope_type=scope_type,
-                    scope_id=scope_id,
                 )
                 db.add(record)
                 targets = ([write.supersedes_id] if write.supersedes_id is not None else []) + list(

@@ -6,16 +6,15 @@ from fastapi import Depends, FastAPI, HTTPException
 from prometheus_client import make_asgi_app
 
 from memoryos_lite.config import Settings as _Settings
-from memoryos_lite.curator import ADVISORY_SCHEMA_V2, CuratorWorker
-from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.curator import ADVISORY_SCHEMA_V2, CuratorLLMError, CuratorWorker
+from memoryos_lite.curator.curate import CURATE_SCHEMA, CurateRequest, CurateResponse
+from memoryos_lite.engine import CurateUnavailableError, MemoryOSService
 from memoryos_lite.middleware import (
     ApiKeyAuthMiddleware,
     RequestIdMiddleware,
     StructuredLoggingMiddleware,
 )
-from memoryos_lite.module_pack import ModulePackError
 from memoryos_lite.schemas import (
-    ActivityMetadataError,
     ArchiveAttachmentRequest,
     ArchiveAttachmentResponse,
     ArchiveDocumentIngestRequest,
@@ -96,7 +95,6 @@ def health(service: ServiceDep) -> dict[str, object]:
                 BuildContextResponseProfile.FULL.value,
                 BuildContextResponseProfile.SOURCE_EVIDENCE_V1.value,
                 BuildContextResponseProfile.SOURCE_EVIDENCE_V2.value,
-                BuildContextResponseProfile.MODULE_PACK_V1.value,
             ],
             "hybrid": {
                 "lexical": True,
@@ -104,6 +102,7 @@ def health(service: ServiceDep) -> dict[str, object]:
                 "rrf": semantic_ready,
             },
             "message_ingest": True,
+            "curate": CURATE_SCHEMA,
             "agentic_advisory": external_governance,
             "paging": service.settings.resolved_paging_mode != "off",
         },
@@ -116,7 +115,7 @@ def create_session(
     request: CreateSessionRequest,
     service: ServiceDep,
 ) -> Session:
-    return service.create_session(request.title, scope=request.scope)
+    return service.create_session(request.title)
 
 
 @app.post("/sessions/{session_id}/ingest", response_model=IngestResponse)
@@ -127,8 +126,6 @@ def ingest(
 ) -> IngestResponse:
     try:
         return service.ingest(session_id, request)
-    except ActivityMetadataError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         detail = str(exc)
         raise HTTPException(
@@ -151,13 +148,6 @@ def build_context(
     request: BuildContextRequest,
     service: ServiceDep,
 ):
-    if request.response_profile is BuildContextResponseProfile.MODULE_PACK_V1:
-        try:
-            return service.build_module_pack(session_id, budget=request.budget)
-        except ModulePackError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
     try:
         package = service.build_context(
             session_id=session_id,
@@ -269,8 +259,7 @@ def advisories(
     """Expose only bounded external-governance candidates to the Room host.
 
     ``version`` omitted or ``1`` keeps the original deterministic v1 response;
-    ``version=2`` serves curated-memory advisories; ``version=3`` serves the
-    scoped curated-memory payload.
+    ``version=2`` serves curated-memory advisories.
     """
 
     try:
@@ -279,8 +268,6 @@ def advisories(
                 "schema": ADVISORY_SCHEMA_V2,
                 "items": service.list_curated_advisories(session_id),
             }
-        if version == 3:
-            return service.list_curated_advisories_v3(session_id)
         if version not in (None, 1):
             raise HTTPException(
                 status_code=400,
@@ -290,6 +277,22 @@ def advisories(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"schema": "memoryos_external_advisories/v1", "items": items}
+
+
+@app.post("/curate", response_model=CurateResponse)
+def curate(request: CurateRequest, service: ServiceDep) -> CurateResponse:
+    """Stateless module curation: the caller sends state, MemoryOS returns new versions.
+
+    503 means curation cannot run here (no LLM key or runtime); 502 means the
+    provider call failed. Neither leaks provider error text.
+    """
+
+    try:
+        return service.curate(request)
+    except CurateUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=exc.reason_code) from exc
+    except CuratorLLMError as exc:
+        raise HTTPException(status_code=502, detail="curator_llm_error") from exc
 
 
 @app.post("/sessions/{session_id}/ingest-batch")

@@ -2,12 +2,8 @@
 
 from memoryos_lite.curator.advisories import (
     ADVISORY_SCHEMA_V2,
-    ADVISORY_SCHEMA_V3,
-    ADVISORY_V3_ITEM_KEYS,
-    ADVISORY_V3_KINDS,
     advisory_identity,
     build_advisory_v2_items,
-    build_advisory_v3_items,
 )
 from memoryos_lite.curator.llm import (
     ChatCuratorLLM,
@@ -21,9 +17,6 @@ from memoryos_lite.curator.worker import CuratorWorker
 
 __all__ = [
     "ADVISORY_SCHEMA_V2",
-    "ADVISORY_SCHEMA_V3",
-    "ADVISORY_V3_ITEM_KEYS",
-    "ADVISORY_V3_KINDS",
     "ChatCuratorLLM",
     "Curator",
     "CuratorLLM",
@@ -33,6 +26,5 @@ __all__ = [
     "CuratorWorker",
     "advisory_identity",
     "build_advisory_v2_items",
-    "build_advisory_v3_items",
     "build_curator_llm",
 ]

@@ -1,22 +1,25 @@
-"""ModuleMem: does a resume pack bring a restarted module owner back up to speed?
+"""ModuleMem: does curated module memory bring a restarted module owner back up to speed?
 
 Each ``benchmarks/modulemem/modules/mmNN.json`` is one module's activity stream
 (owner messages, review objections, failing gate logs, contract revisions) with
-gold contracts, decisions and lessons. For every arm the stream is replayed
-into a module-scoped MemoryOS session, then the owner "restarts" and answers the
-module's probes from that arm's context:
+gold contracts, decisions and lessons. For every arm the owner "restarts" and
+answers the module's probes from that arm's context:
 
 ``pack``
-    The real path: the curator runs incrementally (full windows, and an
-    immediate flush on every gate failure or review objection), its memories
-    are delivered back as approved candidate documents (as xmuse would for
-    module-scoped memories), contract revisions as activity documents, and the
-    owner gets ``module_pack/v1``. Contract pointers are expanded to the
-    contract text, as the owner can open ``.xmuse/contracts/``.
+    The real path. The harness plays the host (xmuse): it holds the module's
+    memories and sends each window of activities to the stateless curate graph
+    (``POST /curate``), flushing on every gate failure or review objection and
+    otherwise every ``curator_window`` activities. The owner then gets the
+    rendered module memory file: current contracts (expanded, as the owner can
+    open ``.xmuse/contracts/``), lessons by occurrences, then decisions and
+    facts, within ``pack_budget`` tokens.
 ``oracle_pack``
-    Same pack, built from the gold decisions and lessons (upper bound).
+    The same file rendered from the gold decisions and lessons (upper bound).
 ``recent``
     Only the last ``RECENT_ACTIVITIES`` activities (what a compacted session keeps).
+``raw_log``
+    The newest raw activities that fit in ``pack_budget`` tokens: the
+    "just put the module log in the file" baseline with the pack's budget.
 ``retrieval``
     xmuse-style recall: build-context top-8 over the module's raw activity documents.
 ``full_history``
@@ -24,9 +27,10 @@ module's probes from that arm's context:
 
 Scoring: the judge labels each answer (correct/stale/missing/wrong) against the
 current gold; probes are grouped by what they ask about (contract, decision,
-lesson). The ``pack`` arm also reports write-side matching against gold,
-lesson occurrence accuracy, pack size, and the curator's gate-failure-to-lesson
-latency from ``curator_memory_written`` traces.
+lesson). The ``pack`` arm also reports write-side matching against gold, lesson
+occurrence accuracy, failure accounting against the gold lesson clusters
+(pairwise precision/recall, dismissals, unaccounted), repair-loop use, and the
+gate-failure-to-lesson latency of each curate call.
 """
 
 from __future__ import annotations
@@ -37,24 +41,30 @@ import tempfile
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from memoryos_lite.config import Settings, get_settings
-from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
+from memoryos_lite.curator import CuratorLLM, build_curator_llm
+from memoryos_lite.curator.curate import (
+    FAILURE_TYPES,
+    CurateActivity,
+    CurateAssignment,
+    CurateMemory,
+    CurateRequest,
+)
+from memoryos_lite.curator.graph import run_curate
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.module_pack import estimate_tokens
 from memoryos_lite.roommem import (
     XMUSE_ACTIVITY_DOC_PREFIX,
-    XMUSE_MEMORY_DOC_PREFIX,
     XMUSE_MESSAGE_ID_PREFIX,
     XMUSE_TASK,
     CuratedMemoryView,
     DiskCachedCuratorLLM,
     EvidenceItem,
-    FakeCuratorLLM,
     GoldMemory,
     GoldMemorySource,
     LLMUsageTracker,
@@ -74,18 +84,25 @@ from memoryos_lite.schemas import (
     ArchiveSourceRefPayload,
     MessageCreate,
     Role,
-    SessionScope,
     deterministic_ids,
 )
 from memoryos_lite.source_evidence import build_source_evidence
 
-MODULEMEM_ARMS: tuple[str, ...] = ("pack", "oracle_pack", "recent", "retrieval", "full_history")
+MODULEMEM_ARMS: tuple[str, ...] = (
+    "pack",
+    "oracle_pack",
+    "recent",
+    "raw_log",
+    "retrieval",
+    "full_history",
+)
 MODULEMEM_SPLITS: dict[str, tuple[str, ...]] = {
     "dev": ("mm01", "mm02", "mm03", "mm04"),
     "test": ("mm05", "mm06", "mm07", "mm08"),
 }
 RECENT_ACTIVITIES = 8
-FLUSH_ACTIVITY_TYPES = ("gate_failure", "review_objection")
+CONTEXT_ACTIVITIES = 4
+FLUSH_ACTIVITY_TYPES = FAILURE_TYPES
 JUDGE_LABELS = ("correct", "stale", "missing", "wrong")
 
 
@@ -174,6 +191,11 @@ class Module(BaseModel):
     def seq(self, activity_id: str) -> int:
         return next(i for i, a in enumerate(self.activities, start=1) if a.id == activity_id)
 
+    def speaker_name(self, activity: ModuleActivity) -> str:
+        return next(
+            (p.name for p in self.participants if p.id == activity.speaker), activity.speaker
+        )
+
 
 def load_modules(data_dir: str | Path, module_ids: Sequence[str] | None = None) -> list[Module]:
     root = Path(data_dir)
@@ -220,175 +242,133 @@ def _validate_module(module: Module, *, source: object) -> None:
         raise ModuleMemError(f"{source}: " + "; ".join(errors))
 
 
+def estimate_tokens(text: str) -> int:
+    ascii_chars = sum(1 for char in text if ord(char) < 128)
+    return max(1, ascii_chars // 4 + (len(text) - ascii_chars))
+
+
 # ---------------------------------------------------------------------------
-# Replay into MemoryOS
+# The host side of /curate: replay activities, hold the module's memories
 # ---------------------------------------------------------------------------
 
 
-def _external_id(activity: ModuleActivity) -> str:
-    return f"{XMUSE_MESSAGE_ID_PREFIX}{activity.id}"
+class FakeModuleCuratorLLM:
+    """Deterministic curate replies for ``--fake-llm``: one lesson per failure.
 
+    Each failure is assigned to its own lesson quoting the first 40 characters
+    of the failure text; no decisions are recorded.
+    """
 
-def _archive_id(module: Module) -> str:
-    return f"xmuse-module-{module.module_id}"
-
-
-def _ingest_document(
-    service: MemoryOSService,
-    module: Module,
-    *,
-    document_id: str,
-    text: str,
-    metadata: dict[str, Any],
-    source_id: str,
-) -> None:
-    service.ingest_archive_document(
-        ArchiveDocumentIngestRequest(
-            document_id=document_id,
-            title=document_id,
-            content=text,
-            source_refs=[ArchiveSourceRefPayload(source_type="document", source_id=source_id)],
-            identity=ArchiveIdentityArchive(kind="archive", archive_id=_archive_id(module)),
-            metadata=metadata,
-        )
-    )
+    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        marker = "Failures to account for (each needs exactly one assignment): "
+        line = next((ln for ln in user.splitlines() if ln.startswith(marker)), marker)
+        ids = [part.strip() for part in line.removeprefix(marker).split(",") if part.strip()]
+        ids = [activity_id for activity_id in ids if activity_id != "(none)"]
+        assignments: list[dict[str, Any]] = []
+        lessons: list[dict[str, Any]] = []
+        for activity_id in ids:
+            prefix = f"[{activity_id}] "
+            rendered = next((ln for ln in user.splitlines() if ln.startswith(prefix)), "")
+            body = rendered.split("): ", 1)[-1]
+            quote = body[:40].strip()
+            key = f"lesson.{activity_id}"
+            assignments.append({"activity_id": activity_id, "lesson": key, "quote": quote})
+            lessons.append({"topic_key": key, "statement": f"Avoid: {quote}"})
+        return {"assignments": assignments, "lessons": lessons, "memories": []}
 
 
 @dataclass
-class _Replay:
-    service: MemoryOSService
-    session_id: str
-    message_ids: dict[str, str]
-    curator_counts: dict[str, int] = field(default_factory=dict)
-    curator_seconds: list[float] = field(default_factory=list)
+class CurateReplay:
+    """Everything the host accumulated while curating one module."""
+
+    active: dict[str, CurateMemory] = field(default_factory=dict)
+    history: list[dict[str, Any]] = field(default_factory=list)
+    assignments: list[CurateAssignment] = field(default_factory=list)
+    unaccounted: list[str] = field(default_factory=list)
+    calls: int = 0
+    llm_calls: int = 0
+    repairs: int = 0
+    calls_with_initial_violations: int = 0
+    final_violations: int = 0
+    rejected_memories: int = 0
+    gate_lag_s: list[float] = field(default_factory=list)
 
 
-def _replay(
+def _curate_activity(module: Module, seq: int, activity: ModuleActivity) -> CurateActivity:
+    return CurateActivity(
+        id=activity.id,
+        seq=seq,
+        type=activity.type,
+        speaker=module.speaker_name(activity),
+        text=activity.text,
+    )
+
+
+def curate_module(
     module: Module,
+    llm: CuratorLLM,
     *,
-    service: MemoryOSService,
-    curator: Curator | None,
-) -> _Replay:
-    session = service.create_session(
-        f"modulemem {module.module_id}", scope=SessionScope(type="module", id=module.module_id)
-    )
-    service.attach_archive(
-        ArchiveAttachmentRequest(
-            archive_id=_archive_id(module),
-            scope_type="session",
-            scope_id=session.id,
-            source_refs=[
-                ArchiveSourceRefPayload(
-                    source_type="document", source_id=f"binding-{module.module_id}"
-                )
-            ],
+    window_size: int = 12,
+    max_repairs: int = 2,
+) -> CurateReplay:
+    """Replay a module through the curate graph as a stateful host would."""
+
+    replay = CurateReplay()
+    pending: list[CurateActivity] = []
+    done: list[CurateActivity] = []
+    status: dict[str, dict[str, Any]] = {}
+
+    def flush() -> None:
+        if not pending:
+            return
+        request = CurateRequest(
+            scope_id=module.module_id,
+            active=list(replay.active.values())[-60:],
+            context=done[-CONTEXT_ACTIVITIES:],
+            window=pending,
+            max_repairs=max_repairs,
         )
-    )
-    participants = {p.id: p for p in module.participants}
-    replay = _Replay(service=service, session_id=session.id, message_ids={})
-    counts = {
-        "windows": 0,
-        "added": 0,
-        "superseded": 0,
-        "noop": 0,
-        "stale": 0,
-        "rejected_grounding": 0,
-        "rejected_schema": 0,
-        "llm_errors": 0,
-    }
+        started = time.perf_counter()
+        response = run_curate(request, llm)
+        elapsed = time.perf_counter() - started
+        replay.calls += 1
+        replay.llm_calls += response.diagnostics.llm_calls
+        replay.repairs += response.diagnostics.repairs
+        replay.calls_with_initial_violations += bool(response.diagnostics.initial_violations)
+        replay.final_violations += len(response.diagnostics.final_violations)
+        replay.rejected_memories += response.diagnostics.rejected_memories
+        replay.assignments.extend(response.assignments)
+        replay.unaccounted.extend(response.unaccounted)
+        if request.failures:
+            replay.gate_lag_s.append(elapsed)
+        for version in response.memories:
+            if version.supersedes_id is not None:
+                replay.active.pop(version.supersedes_id, None)
+                if version.supersedes_id in status:
+                    status[version.supersedes_id]["status"] = "superseded"
+            memory = CurateMemory.model_validate(version.model_dump(exclude={"supersedes_id"}))
+            replay.active[memory.id] = memory
+            row = {**memory.model_dump(), "status": "active"}
+            status[memory.id] = row
+            replay.history.append(row)
+        done.extend(pending)
+        pending.clear()
+
     for seq, activity in enumerate(module.activities, start=1):
-        participant = participants.get(activity.speaker)
-        metadata: dict[str, Any] = {
-            "activity_type": activity.type,
-            "module_id": module.module_id,
-            "activity_seq": seq,
-            "participant_id": activity.speaker,
-            "speaker_name": participant.name if participant else activity.speaker,
-        }
-        if activity.type == "contract_revision":
-            metadata["contract_id"] = activity.contract_id
-            metadata["contract_version"] = activity.contract_version
-        response = service.ingest(
-            session.id,
-            MessageCreate(
-                role=Role.USER if participant and participant.kind == "human" else Role.ASSISTANT,
-                content=activity.text,
-                external_id=_external_id(activity),
-                metadata=metadata,
-            ),
-        )
-        replay.message_ids[activity.id] = response.message.id
-        # xmuse's activity outbox: every activity becomes an archive document.
-        _ingest_document(
-            service,
-            module,
-            document_id=f"{XMUSE_ACTIVITY_DOC_PREFIX}{activity.id}",
-            text=activity.text,
-            metadata={key: value for key, value in metadata.items() if key != "speaker_name"},
-            source_id=f"{XMUSE_ACTIVITY_DOC_PREFIX}{activity.id}",
-        )
-        if curator is not None:
-            started = time.perf_counter()
-            result = curator.run_session(session.id, force=activity.type in FLUSH_ACTIVITY_TYPES)
-            if result.windows:
-                replay.curator_seconds.append(time.perf_counter() - started)
-            for key in counts:
-                counts[key] += int(getattr(result, key, 0) or 0)
-    if curator is not None:
-        result = curator.run_session(session.id, force=True)
-        for key in counts:
-            counts[key] += int(getattr(result, key, 0) or 0)
-    replay.curator_counts = counts
+        pending.append(_curate_activity(module, seq, activity))
+        if activity.type in FLUSH_ACTIVITY_TYPES or len(pending) >= window_size:
+            flush()
+    flush()
     return replay
 
 
-def _deliver_memories(
-    replay: _Replay,
-    module: Module,
-    memories: Sequence[dict[str, Any]],
-) -> None:
-    """Approved module memories come back as candidate documents (xmuse delivery)."""
-
-    for memory in memories:
-        document_id = f"{XMUSE_MEMORY_DOC_PREFIX}{memory['id']}"
-        _ingest_document(
-            replay.service,
-            module,
-            document_id=document_id,
-            text=memory["statement"],
-            metadata={
-                "memory_kind": memory["kind"],
-                "topic_key": memory["topic_key"],
-                "version": memory["version"],
-                "occurrences": memory["occurrences"],
-                "source_activity_ids": memory["source_activity_ids"],
-            },
-            source_id=document_id,
-        )
-
-
-def _curated_memories(replay: _Replay) -> list[dict[str, Any]]:
-    reverse = {mid: aid for aid, mid in replay.message_ids.items()}
-    rows = replay.service.store.list_curated_memories(replay.session_id, limit=64)
+def _curated_memories(replay: CurateReplay) -> list[dict[str, Any]]:
     return [
         {
-            "id": row.id,
-            "kind": row.kind,
-            "topic_key": row.topic_key,
-            "statement": row.statement,
-            "version": row.version,
-            "occurrences": row.occurrences,
-            "status": row.status,
-            "source_activity_ids": sorted(
-                {reverse[s["message_id"]] for s in row.sources if s["message_id"] in reverse}
-            ),
-            "sources": [
-                {"activity_id": reverse.get(s["message_id"], ""), "quote": s["quote"]}
-                for s in row.sources
-            ],
+            **row,
+            "source_activity_ids": sorted({s["activity_id"] for s in row["sources"]}),
         }
-        for row in rows
-        if row.kind in {"decision", "fact", "lesson"}
+        for row in replay.history
     ]
 
 
@@ -418,90 +398,168 @@ def _gold_memories(module: Module) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _item(rank: int, item_id: str, layer: str, text: str, document_id: str | None) -> EvidenceItem:
+def _item(rank: int, item_id: str, layer: str, text: str) -> EvidenceItem:
     return EvidenceItem(
         rank=rank,
         item_id=item_id,
         layer=layer,
         text=text,
         estimated_tokens=estimate_tokens(text),
-        document_id=document_id,
+        document_id=item_id,
         source_refs=(),
     )
 
 
-def _activity_text(module: Module, activity: ModuleActivity) -> str:
-    speaker = next(
-        (p.name for p in module.participants if p.id == activity.speaker), activity.speaker
-    )
-    return f"({activity.type}) {speaker}: {activity.text}"
+def current_contracts(module: Module) -> list[ModuleActivity]:
+    newest: dict[str, ModuleActivity] = {}
+    for activity in module.activities:
+        if activity.type != "contract_revision" or activity.contract_id is None:
+            continue
+        current = newest.get(activity.contract_id)
+        if current is None or (activity.contract_version or 0) > (current.contract_version or 0):
+            newest[activity.contract_id] = activity
+    return [newest[contract_id] for contract_id in sorted(newest)]
 
 
-def pack_evidence(module: Module, pack: dict[str, Any]) -> list[EvidenceItem]:
+def render_module_memory(
+    module: Module,
+    memories: Sequence[dict[str, Any]],
+    *,
+    budget: int,
+) -> tuple[list[EvidenceItem], dict[str, Any]]:
+    """Reference rendering of the module memory file a host hands to its owner.
+
+    Current contracts come first and are not budgeted (they are files the owner
+    opens). Then active lessons, most occurrences first, then decisions and
+    facts, newest first, while they fit in ``budget`` estimated tokens.
+    """
+
     items: list[EvidenceItem] = []
-    sections = pack["sections"]
-    for contract in sections["contracts"]:
-        activity_id = contract["document_id"].removeprefix(XMUSE_ACTIVITY_DOC_PREFIX)
-        activity = module.activity(activity_id)
-        body = activity.text if activity is not None else contract["summary"]
+    contracts = current_contracts(module)
+    for activity in contracts:
         items.append(
             _item(
                 len(items) + 1,
-                contract["document_id"],
+                activity.id,
                 "contract",
-                f"Current contract {contract['contract_id']} v{contract['version']}:\n{body}",
-                contract["document_id"],
+                f"Current contract {activity.contract_id} v{activity.contract_version}:\n"
+                f"{activity.text}",
             )
         )
-    for lesson in sections["lessons"]:
-        note = (
-            f" (failed {lesson['occurrences']} times)" if lesson.get("occurrences", 1) > 1 else ""
-        )
-        conflict = (
-            " [possible conflict with another memory]"
-            if lesson.get("possible_conflict_with")
-            else ""
-        )
-        items.append(
-            _item(
-                len(items) + 1,
-                lesson["document_id"],
-                "lesson",
-                f"Lesson{note}: {lesson['text']}{conflict}",
-                lesson["document_id"],
-            )
-        )
-    for decision in sections["decisions"]:
-        conflict = (
-            " [possible conflict with another memory]"
-            if decision.get("possible_conflict_with")
-            else ""
-        )
-        items.append(
-            _item(
-                len(items) + 1,
-                decision["document_id"],
-                "decision",
-                f"Decision: {decision['text']}{conflict}",
-                decision["document_id"],
-            )
-        )
-    return items
+    active = [m for m in memories if m.get("status", "active") == "active"]
+    lessons = sorted(
+        (m for m in active if m["kind"] == "lesson"),
+        key=lambda m: (-int(m.get("occurrences", 1)), -int(m.get("version", 0)), str(m["id"])),
+    )
+    others = sorted(
+        (m for m in active if m["kind"] != "lesson"),
+        key=lambda m: (-int(m.get("version", 0)), str(m["id"])),
+    )
+    spent = 0
+    omitted = 0
+    for memory in [*lessons, *others]:
+        if memory["kind"] == "lesson":
+            count = int(memory.get("occurrences", 1))
+            note = f" (failed {count} times)" if count > 1 else ""
+            text = f"Lesson{note}: {memory['statement']}"
+        else:
+            text = f"{str(memory['kind']).capitalize()}: {memory['statement']}"
+        tokens = estimate_tokens(text)
+        if spent + tokens > budget:
+            omitted += 1
+            continue
+        spent += tokens
+        items.append(_item(len(items) + 1, str(memory["id"]), str(memory["kind"]), text))
+    stats = {
+        "contracts": len(contracts),
+        "lessons": sum(1 for item in items if item.layer == "lesson"),
+        "others": sum(1 for item in items if item.layer not in {"contract", "lesson"}),
+        "memory_tokens": spent,
+        "omitted": omitted,
+        "budget": budget,
+    }
+    return items, stats
+
+
+def _activity_text(module: Module, activity: ModuleActivity) -> str:
+    return f"({activity.type}) {module.speaker_name(activity)}: {activity.text}"
 
 
 def _activities_evidence(
     module: Module, activities: Sequence[ModuleActivity]
 ) -> list[EvidenceItem]:
     return [
-        _item(
-            rank,
-            activity.id,
-            "activity",
-            _activity_text(module, activity),
-            f"{XMUSE_ACTIVITY_DOC_PREFIX}{activity.id}",
-        )
+        _item(rank, activity.id, "activity", _activity_text(module, activity))
         for rank, activity in enumerate(activities, start=1)
     ]
+
+
+def _raw_log(module: Module, budget: int) -> list[ModuleActivity]:
+    kept: list[ModuleActivity] = []
+    spent = 0
+    for activity in reversed(module.activities):
+        tokens = estimate_tokens(_activity_text(module, activity))
+        if spent + tokens > budget:
+            break
+        spent += tokens
+        kept.append(activity)
+    return list(reversed(kept))
+
+
+# ---------------------------------------------------------------------------
+# Retrieval arm: raw activities in a MemoryOS session
+# ---------------------------------------------------------------------------
+
+
+def _archive_id(module: Module) -> str:
+    return f"xmuse-module-{module.module_id}"
+
+
+def _retrieval_service(module: Module, service: MemoryOSService) -> str:
+    session = service.create_session(f"modulemem {module.module_id}")
+    service.attach_archive(
+        ArchiveAttachmentRequest(
+            archive_id=_archive_id(module),
+            scope_type="session",
+            scope_id=session.id,
+            source_refs=[
+                ArchiveSourceRefPayload(
+                    source_type="document", source_id=f"binding-{module.module_id}"
+                )
+            ],
+        )
+    )
+    participants = {p.id: p for p in module.participants}
+    for seq, activity in enumerate(module.activities, start=1):
+        participant = participants.get(activity.speaker)
+        metadata: dict[str, Any] = {
+            "activity_type": activity.type,
+            "activity_seq": seq,
+            "participant_id": activity.speaker,
+        }
+        service.ingest(
+            session.id,
+            MessageCreate(
+                role=Role.USER if participant and participant.kind == "human" else Role.ASSISTANT,
+                content=activity.text,
+                external_id=f"{XMUSE_MESSAGE_ID_PREFIX}{activity.id}",
+                metadata={**metadata, "speaker_name": module.speaker_name(activity)},
+            ),
+        )
+        document_id = f"{XMUSE_ACTIVITY_DOC_PREFIX}{activity.id}"
+        service.ingest_archive_document(
+            ArchiveDocumentIngestRequest(
+                document_id=document_id,
+                title=document_id,
+                content=activity.text,
+                source_refs=[
+                    ArchiveSourceRefPayload(source_type="document", source_id=document_id)
+                ],
+                identity=ArchiveIdentityArchive(kind="archive", archive_id=_archive_id(module)),
+                metadata=metadata,
+            )
+        )
+    return session.id
 
 
 # ---------------------------------------------------------------------------
@@ -585,8 +643,6 @@ def _write_side(module: Module, memories: list[dict[str, Any]]) -> dict[str, Any
     occurrence_exact = sum(
         1 for gid in lesson_matches if occurrences.get(by_gold[gid]) == lesson_gold[gid].occurrences
     )
-    # Over-counting (a restatement counted as a new failure) is the risk of asking the
-    # curator to re-add repeated lessons, so it is reported next to the exact count.
     occurrence_over = sum(
         1
         for gid in lesson_matches
@@ -617,6 +673,51 @@ def _write_side(module: Module, memories: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
+def accounting_metrics(
+    module: Module,
+    assignments: Sequence[CurateAssignment],
+    unaccounted: Sequence[str],
+) -> dict[str, int]:
+    """Compare failure assignments with the gold lesson clusters.
+
+    Gold: a failure cited by a gold lesson belongs to that lesson; any other
+    failure should be dismissed. Pairwise counts are over failure pairs: a
+    pair is "together" when both belong to the same lesson.
+    """
+
+    failures = [a.id for a in module.activities if a.type in FLUSH_ACTIVITY_TYPES]
+    gold_of: dict[str, str | None] = {activity_id: None for activity_id in failures}
+    for lesson in module.gold.lessons:
+        for src in lesson.sources:
+            if src.activity_id in gold_of and gold_of[src.activity_id] is None:
+                gold_of[src.activity_id] = lesson.id
+    pred_of: dict[str, str | None] = {}
+    for assignment in assignments:
+        pred_of.setdefault(assignment.activity_id, assignment.lesson)
+    tp = fp = fn = 0
+    for left, right in combinations(failures, 2):
+        gold_together = gold_of[left] is not None and gold_of[left] == gold_of[right]
+        pred_together = pred_of.get(left) is not None and pred_of.get(left) == pred_of.get(right)
+        tp += gold_together and pred_together
+        fp += pred_together and not gold_together
+        fn += gold_together and not pred_together
+    assigned = [f for f in failures if f in pred_of]
+    return {
+        "failures": len(failures),
+        "unaccounted": len(set(unaccounted) & set(failures)),
+        "dismissed": sum(1 for f in assigned if pred_of[f] is None),
+        "dismissed_gold_lesson": sum(
+            1 for f in assigned if pred_of[f] is None and gold_of[f] is not None
+        ),
+        "lesson_gold_dismiss": sum(
+            1 for f in assigned if pred_of[f] is not None and gold_of[f] is None
+        ),
+        "pair_tp": tp,
+        "pair_fp": fp,
+        "pair_fn": fn,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -633,6 +734,7 @@ class ModuleMemConfig:
     judge_llm: str | None = None
     curator_window: int = 12
     pack_budget: int = 1500
+    max_repairs: int = 2
 
 
 def run_modulemem(
@@ -721,7 +823,7 @@ def _curator_llm(
         llm: CuratorLLM = curated_llm_factory(llm_settings)
         return llm
     if config.fake_llm:
-        return FakeCuratorLLM()
+        return FakeModuleCuratorLLM()
     built = build_curator_llm(llm_settings)
     if built is None:
         raise RoomMemConfigError(f"the pack arm needs {llm_settings.chat_api_key_name}")
@@ -744,70 +846,67 @@ def _run_module_arm(
     usage: LLMUsageTracker,
     curated_llm_factory: Any,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None, list[float]]:
-    replay: _Replay | None = None
-    if arm in {"pack", "oracle_pack", "retrieval"}:
-        service_settings = _room_settings(
-            data_dir, embedding=config.embedding, kernel_external=False
-        )
-        curator: Curator | None = None
-        if arm == "pack":
-            service_settings = service_settings.model_copy(
-                update={
-                    "memoryos_curator_enabled": True,
-                    "memoryos_curator_window_messages": config.curator_window,
-                    "memoryos_curator_consolidation": "deterministic",
-                    # Windows close when full or on a gate/review flush, never by idle time.
-                    "memoryos_curator_idle_flush_s": 1e9,
-                }
-            )
-        service = MemoryOSService(settings=service_settings)
-        if arm == "pack":
-            curator = Curator(
-                store=service.store,
-                settings=service_settings,
-                llm=_curator_llm(config, base, repeat, cache_dir, usage, curated_llm_factory),
-            )
-        replay = _replay(module, service=service, curator=curator)
-
     pack_row: dict[str, Any] | None = None
     ws: dict[str, Any] | None = None
     lags: list[float] = []
     evidence: list[EvidenceItem] = []
+    service: MemoryOSService | None = None
+    session_id = ""
     if arm in {"pack", "oracle_pack"}:
-        assert replay is not None
-        memories = _curated_memories(replay) if arm == "pack" else _gold_memories(module)
-        _deliver_memories(replay, module, memories)
-        pack = replay.service.build_module_pack(replay.session_id, budget=config.pack_budget)
-        evidence = pack_evidence(module, pack)
+        replay: CurateReplay | None = None
+        if arm == "pack":
+            llm = _curator_llm(config, base, repeat, cache_dir, usage, curated_llm_factory)
+            replay = curate_module(
+                module, llm, window_size=config.curator_window, max_repairs=config.max_repairs
+            )
+            memories = _curated_memories(replay)
+        else:
+            memories = _gold_memories(module)
+        evidence, stats = render_module_memory(module, memories, budget=config.pack_budget)
         pack_row = {
             "arm": arm,
             "module": module.module_id,
             "repeat": repeat,
-            "pack": pack,
+            "file": stats,
+            "evidence": [item.text for item in evidence],
             "memories": memories,
-            "curator_counts": replay.curator_counts,
         }
-        if arm == "pack":
-            ws = {"module": module.module_id, "repeat": repeat, **_write_side(module, memories)}
-            ws["curator_counts"] = replay.curator_counts
-            for event in replay.service.store.list_traces(replay.session_id):
-                if event.event_type == "curator_memory_written" and "gate_failure" in (
-                    event.payload.get("activity_types") or []
-                ):
-                    lag = event.payload.get("source_lag_s")
-                    if isinstance(lag, (int, float)):
-                        lags.append(float(lag))
+        if replay is not None:
+            curate_counts = {
+                "calls": replay.calls,
+                "llm_calls": replay.llm_calls,
+                "repairs": replay.repairs,
+                "calls_with_initial_violations": replay.calls_with_initial_violations,
+                "final_violations": replay.final_violations,
+                "rejected_memories": replay.rejected_memories,
+            }
+            pack_row["assignments"] = [a.model_dump() for a in replay.assignments]
+            pack_row["curate"] = curate_counts
+            ws = {
+                "module": module.module_id,
+                "repeat": repeat,
+                **_write_side(module, memories),
+                **accounting_metrics(module, replay.assignments, replay.unaccounted),
+                **curate_counts,
+            }
+            lags = replay.gate_lag_s
     elif arm == "recent":
         evidence = _activities_evidence(module, module.activities[-RECENT_ACTIVITIES:])
+    elif arm == "raw_log":
+        evidence = _activities_evidence(module, _raw_log(module, config.pack_budget))
     elif arm == "full_history":
         evidence = _activities_evidence(module, module.activities)
+    elif arm == "retrieval":
+        service = MemoryOSService(
+            settings=_room_settings(data_dir, embedding=config.embedding, kernel_external=False)
+        )
+        session_id = _retrieval_service(module, service)
 
     rows: list[dict[str, Any]] = []
     for probe in module.probes:
-        if arm == "retrieval":
-            assert replay is not None
-            package = replay.service.build_context(
-                session_id=replay.session_id,
+        if service is not None:
+            package = service.build_context(
+                session_id=session_id,
                 task=XMUSE_TASK,
                 budget=800,
                 retrieval_query=probe.question,
@@ -846,6 +945,10 @@ def _rate(rows: Sequence[dict[str, Any]], label: str) -> float | None:
     return sum(1 for row in rows if row["judge"] == label) / len(rows) if rows else None
 
 
+def _ratio(numerator: int, denominator: int) -> float | None:
+    return numerator / denominator if denominator else None
+
+
 def _summarize(
     results: list[dict[str, Any]],
     packs: list[dict[str, Any]],
@@ -879,24 +982,28 @@ def _summarize(
         if not rows:
             continue
         pack_stats[arm] = {
-            "packs": len(rows),
-            "mean_tokens": sum(p["pack"]["estimated_tokens"] for p in rows) / len(rows),
-            "truncated": sum(1 for p in rows if p["pack"]["truncated"]),
-            "mean_items": sum(sum(len(v) for v in p["pack"]["sections"].values()) for p in rows)
-            / len(rows),
-            "conflict_flags": sum(
-                1
-                for p in rows
-                for section in ("lessons", "decisions")
-                for item in p["pack"]["sections"][section]
-                if item.get("possible_conflict_with")
-            ),
+            "files": len(rows),
+            "mean_memory_tokens": sum(p["file"]["memory_tokens"] for p in rows) / len(rows),
+            "omitted": sum(p["file"]["omitted"] for p in rows),
+            "mean_items": sum(p["file"]["lessons"] + p["file"]["others"] for p in rows) / len(rows),
         }
     totals: dict[str, int] = {}
     for ws in write_side:
         for key, value in ws.items():
             if isinstance(value, int) and not isinstance(value, bool) and key != "repeat":
                 totals[key] = totals.get(key, 0) + value
+    accounting = {
+        "pair_precision": _ratio(
+            totals.get("pair_tp", 0), totals.get("pair_tp", 0) + totals.get("pair_fp", 0)
+        ),
+        "pair_recall": _ratio(
+            totals.get("pair_tp", 0), totals.get("pair_tp", 0) + totals.get("pair_fn", 0)
+        ),
+        "unaccounted_rate": _ratio(totals.get("unaccounted", 0), totals.get("failures", 0)),
+        "repair_rate": _ratio(
+            totals.get("calls_with_initial_violations", 0), totals.get("calls", 0)
+        ),
+    }
     return {
         "run": {
             "arms": list(config.arms),
@@ -906,11 +1013,13 @@ def _summarize(
             "answerer_llm": config.answerer_llm,
             "judge_llm": config.judge_llm,
             "pack_budget": config.pack_budget,
+            "max_repairs": config.max_repairs,
             "fake_llm": config.fake_llm,
         },
         "read_side": read,
-        "packs": pack_stats,
+        "files": pack_stats,
         "write_side": totals,
+        "accounting": accounting,
         "gate_to_lesson_lag_s": {
             "n": len(lags),
             "mean": (sum(lags) / len(lags)) if lags else None,
@@ -944,19 +1053,22 @@ def render_modulemem_md(summary: dict[str, Any]) -> str:
                 f"| {fmt(stats['missing'])} | {fmt(stats['wrong'])} | {fmt(stats['substring'])} "
                 f"| {fmt(stats['evidence_tokens'])} |"
             )
-    lines += ["", "## Packs", "", json.dumps(summary["packs"], ensure_ascii=False, indent=1), ""]
+    lines += ["", "## Memory files", "", json.dumps(summary["files"], indent=1), ""]
     lines += [
-        "## Curator write side (pack arm)",
+        "## Curate write side (pack arm)",
+        "",
+        "Accounting: "
+        + ", ".join(f"{key}={fmt(value)}" for key, value in summary["accounting"].items()),
         "",
         json.dumps(summary["write_side"], ensure_ascii=False, indent=1),
         "",
     ]
     lines += [
-        "Gate failure to lesson available (curator commit lag, offline replay): "
+        "Gate failure to lesson available (one curate call, offline replay): "
         + json.dumps(summary["gate_to_lesson_lag_s"]),
         "",
         "Limitations: the dataset is LLM-authored (Muse Spark 1.3) and checked by rules, not by a "
-        "human; the replay is offline, so lag is curator processing time, not wall-clock in a live "
-        "Workroom; the oracle pack delivers gold memories as if a perfect curator ran.",
+        "human; the replay is offline, so lag is curate processing time, not wall-clock in a live "
+        "Workroom; the oracle file renders gold memories as if a perfect curator ran.",
     ]
     return "\n".join(lines) + "\n"
