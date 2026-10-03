@@ -90,8 +90,9 @@ curator 提示词只截取开头和结尾。
 
 **错题本**：模块会话里的教训（`memory_kind=lesson`）必须至少引用一条 `review_objection`
 或 `gate_failure`，否则拒收。同一错误再次出现时，curator 用同一个 `topic_key` 重新 add 并
-引用新消息；`occurrences` 统计新引用的复核意见和门禁失败消息数（按消息 id 去重，普通消息
-不计入）。记忆版本号取消息的 `activity_seq`。
+引用新消息；每新引用一条复核意见或门禁失败消息，`occurrences` 加一（按消息 id 去重，普通
+消息不计入；教训只保留最新 8 条出处，次数持续累加）。记忆版本号取所引消息中最大的
+`activity_seq`。
 
 **续命包（`module_pack/v1`）**：会话被压缩、进程被杀或重启后，负责人调用
 `build-context` 并指定 `response_profile: "module_pack/v1"`（`budget` 默认 1500，上限
