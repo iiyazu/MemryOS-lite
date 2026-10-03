@@ -496,7 +496,8 @@ def test_ingest_increments_counter(service):
     assert after == before + 1
 
 
-def test_page_increments_counter(service):
+def test_page_increments_counter(legacy_service):
+    service = legacy_service  # heuristic paging opt-in
     session = service.create_session("test")
     for content in [
         "用户目标是在 20 天内完成 Agent infra 项目。",

@@ -76,7 +76,7 @@ def health(service: ServiceDep) -> dict[str, object]:
             },
             "message_ingest": True,
             "agentic_advisory": external_governance,
-            "paging": service.settings.memoryos_paging_mode.strip().lower() != "off",
+            "paging": service.settings.resolved_paging_mode != "off",
         },
     }
 

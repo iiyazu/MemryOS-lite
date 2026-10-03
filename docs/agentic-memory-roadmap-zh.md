@@ -8,7 +8,7 @@ MemoryOS Lite 当前是 eval-driven、source-attributed Agent/RAG memory prototy
 - 默认 v3 layered composer 与 v2 episode-first recall。
 - SQLite authority、可重建派生索引和来源证明。
 - Core、recall、archival、recent 分层预算与可解释丢弃。
-- Agent kernel 保持 opt-in，不成为记忆存储 authority。
+- Agent kernel 默认 off；`external` 只产出带来源的维护建议，不成为记忆存储 authority。
 
 ## 后续重点
 

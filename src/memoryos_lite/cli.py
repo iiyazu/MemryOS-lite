@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 import uvicorn
 from rich.console import Console
 from rich.table import Table
-from typer import Argument, Option, Typer
+from typer import Option, Typer
 
 from memoryos_lite.capabilities import require_benchmark_capability, require_remote_capability
-from memoryos_lite.config import Settings, get_settings
+from memoryos_lite.config import get_settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
@@ -49,13 +47,6 @@ EVAL_TABLE_COLUMNS = [
     "supporting",
 ]
 LLM_JUDGE_TABLE_COLUMNS = ["baseline", "cases", "pass_rate", "failed", "errors"]
-AGENT_ANSWER_TABLE_COLUMNS = [
-    "cases",
-    "has_citation",
-    "uses_retrieved_source",
-    "no_evidence_refusal",
-    "unsupported_rate",
-]
 PUBLIC_TABLE_COLUMNS = [
     "benchmark",
     "baseline",
@@ -91,7 +82,6 @@ def demo_run() -> None:
     """Run an end-to-end ingest -> page -> context demo."""
     require_remote_capability("demo.run")
     from memoryos_lite.graphs import build_memory_graph
-    from memoryos_lite.schemas import MessageCreate, Role
 
     service = MemoryOSService()
     service.settings.rot_safe_budget = 1
@@ -125,66 +115,6 @@ def demo_run() -> None:
     console.print(f"[bold]Estimated tokens:[/bold] {context.estimated_tokens}")
     for page in context.retrieved_pages + context.active_task_pages:
         console.print(f"[green]Loaded page[/green] {page.page_id}: {page.title}")
-
-
-class _ScriptedAgentDemoLLM:
-    """Deterministic local LLM stand-in for the CLI demo."""
-
-    def __init__(self, patch_page_id: str) -> None:
-        self.patch_page_id = patch_page_id
-        self._patch_called = False
-
-    def bind_tools(self, tools: list[Any]) -> _ScriptedAgentDemoLLM:
-        return self
-
-    def invoke(self, messages: list[Any]) -> Any:
-        from langchain_core.messages import AIMessage
-
-        system_text = _message_text(messages[0]) if messages else ""
-        user_text = _message_text(messages[-1]) if messages else ""
-        if "Classify the user's intent" in system_text:
-            intent = "update" if "patch" in user_text.lower() else "recall"
-            return AIMessage(content=intent)
-        if "memory management agent" in system_text:
-            if "patch" in user_text.lower() and not self._patch_called:
-                self._patch_called = True
-                return AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": "patch_page",
-                            "args": {
-                                "page_id": self.patch_page_id,
-                                "operation": "replace",
-                                "old_text": "production-ready MemoryOS platform",
-                                "new_text": "eval-driven MemoryOS Lite prototype",
-                            },
-                            "id": "call_demo_patch",
-                            "type": "tool_call",
-                        }
-                    ],
-                )
-            return AIMessage(content="Tool work finished.")
-        if "experimental memory QA node" in system_text:
-            message_id = _first_message_id(user_text)
-            citation = f" [{message_id}]" if message_id else ""
-            return AIMessage(
-                content=(
-                    "The user decided to build MemoryOS Lite as an "
-                    f"eval-driven Agent/RAG memory prototype{citation}."
-                )
-            )
-        return AIMessage(content="recall")
-
-
-def _message_text(message: Any) -> str:
-    content = getattr(message, "content", message)
-    return str(content)
-
-
-def _first_message_id(text: str) -> str | None:
-    match = re.search(r"message_id=([^\s]+)", text)
-    return match.group(1) if match else None
 
 
 ArchiveScopeType = Literal["agent", "project", "source", "user", "run", "session"]
@@ -224,100 +154,6 @@ def _archive_source_ref_payload(
             "session_id": session_id,
         }
     )
-
-
-@demo_app.command("agent")
-def demo_agent(
-    data_dir: Annotated[
-        Path | None,
-        Option(
-            "--data-dir",
-            help="Optional directory for demo storage; defaults to an isolated temp dir.",
-        ),
-    ] = None,
-) -> None:
-    """Run a deterministic LangGraph agent demo without calling a real LLM."""
-    require_remote_capability("demo.agent")
-    if data_dir is None:
-        with TemporaryDirectory(prefix="memoryos-agent-demo-") as tmp_dir:
-            _run_agent_demo(Path(tmp_dir))
-        return
-    _run_agent_demo(data_dir)
-
-
-def _run_agent_demo(data_dir: Path) -> None:
-    from langchain_core.messages import HumanMessage
-
-    from memoryos_lite.agent_graph import build_agent_graph
-
-    settings = Settings(data_dir=data_dir, openai_api_key=None, recent_message_limit=1)
-    service = MemoryOSService(settings=settings)
-    session = service.create_session("MemoryOS Lite agent demo")
-    seed_messages = [
-        "User first considered a Runbook Oncall Agent for the portfolio.",
-        (
-            "Final decision: build MemoryOS Lite as an eval-driven Agent/RAG "
-            "memory prototype with source attribution."
-        ),
-        "The demo should show citations, conflict review, and bounded tool loops.",
-    ]
-    for content in seed_messages:
-        service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-    page = service.page(session.id)
-    if page is None:
-        raise RuntimeError("Agent demo setup failed to create a memory page.")
-
-    llm = _ScriptedAgentDemoLLM(page.id)
-    graph = build_agent_graph(service, session.id, settings=settings, llm=llm)
-    config = {"configurable": {"thread_id": "agent-demo"}}
-
-    recall_state = graph.invoke(
-        {
-            "messages": [HumanMessage(content="What project did the user decide to build?")],
-            "session_id": session.id,
-            "intent": "",
-            "should_page": False,
-            "context": None,
-            "conflict_detected": False,
-            "patch_errors": [],
-            "human_approved": False,
-            "result": "",
-            "tool_turns": 0,
-        },
-        config=config,
-    )
-    patch_state = graph.invoke(
-        {
-            "messages": [HumanMessage(content="Patch the page with the corrected positioning.")],
-            "session_id": session.id,
-            "intent": "",
-            "should_page": False,
-            "context": None,
-            "conflict_detected": False,
-            "patch_errors": [],
-            "human_approved": False,
-            "result": "",
-            "tool_turns": 0,
-        },
-        config={"configurable": {"thread_id": "agent-demo-patch"}},
-    )
-
-    console.print("[bold]Agent demo:[/bold] deterministic LangGraph run; no real LLM call")
-    console.print(f"[bold]Session:[/bold] {session.id}")
-    console.print(f"[bold]Paged memory:[/bold] {page.id} ({len(page.source_message_ids)} sources)")
-    console.print("\n[bold]Recall answer[/bold]")
-    console.print(recall_state["result"], markup=False)
-    console.print("\n[bold]Patch conflict review[/bold]")
-    errors = patch_state.get("patch_errors") or ["No patch errors recorded."]
-    for error in errors:
-        console.print(f"- {error}", markup=False)
-    trace_types = [
-        trace.event_type
-        for trace in service.store.list_traces(session.id)
-        if trace.event_type.startswith("agent_")
-    ]
-    console.print("\n[bold]Agent trace[/bold]")
-    console.print(", ".join(trace_types), markup=False)
 
 
 @archive_app.command("ingest")
@@ -482,23 +318,6 @@ def eval_run(
     console.print(f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}.json'}")
 
 
-@eval_app.command("agent-answer")
-def eval_agent_answer(run_id: str | None = None) -> None:
-    """Run deterministic agent-answer diagnostics without real LLM/API calls."""
-    from memoryos_lite.agent_answer_eval import run_agent_answer_eval
-
-    settings = get_settings()
-    eval_run_id = run_id or datetime.now(UTC).strftime("agent_answer_%Y%m%d_%H%M%S")
-    summary = run_agent_answer_eval(settings, eval_run_id)
-    table = Table(*AGENT_ANSWER_TABLE_COLUMNS)
-    row = _agent_answer_table_row(summary)
-    table.add_row(*(row[column] for column in AGENT_ANSWER_TABLE_COLUMNS))
-    console.print(table)
-    console.print(
-        f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}_agent_answer.json'}"
-    )
-
-
 @eval_app.command("public")
 def eval_public(
     benchmark: Annotated[str, Option("--benchmark", "-k", help="longmemeval | locomo")],
@@ -524,17 +343,6 @@ def eval_public(
         bool,
         Option("--llm-judge/--no-llm-judge", help="Score answers with the configured chat LLM"),
     ] = False,
-    comparison_report: Annotated[
-        list[str] | None,
-        Option("--comparison-report", help="Previous public JSON report for case movement"),
-    ] = None,
-    repair_smoke_baseline_report: Annotated[
-        str | None,
-        Option(
-            "--repair-smoke-baseline-report",
-            help="Explicit baseline public JSON report for opt-in LoCoMo repair smoke",
-        ),
-    ] = None,
     isolated: bool = True,
 ) -> None:
     """Run LongMemEval or LoCoMo JSON through the local benchmark adapter."""
@@ -554,10 +362,6 @@ def eval_public(
         llm_answer=llm_answer,
         llm_judge=llm_judge,
         isolated=isolated,
-        comparison_report_paths=[Path(path) for path in comparison_report or []],
-        repair_smoke_baseline_report_path=(
-            Path(repair_smoke_baseline_report) if repair_smoke_baseline_report is not None else None
-        ),
     )
     table = Table(*PUBLIC_TABLE_COLUMNS)
     for row in _public_table_rows(results):
@@ -583,36 +387,6 @@ def eval_manifest(
     console.print(f"[green]Manifest created:[/green] {output_path} ({n} cases, seed={seed})")
 
 
-@eval_app.command("diagnose")
-def eval_diagnose(
-    report_path: Annotated[str, Argument(help="Path to benchmark result JSON")],
-) -> None:
-    """Classify failure modes from a benchmark result file."""
-    from memoryos_lite.diagnostic_report import generate_report, load_results
-
-    results = load_results(Path(report_path))
-    report = generate_report(results)
-
-    console.print(f"\n[bold]Diagnostic Report[/bold] ({report['total_cases']} cases)\n")
-    console.print(f"Source hit rate: [green]{report['source_hit_rate']:.1%}[/green]\n")
-
-    console.print("[bold]Failure Breakdown:[/bold]")
-    for mode, count in sorted(report["failure_breakdown"].items(), key=lambda x: -x[1]):
-        pct = count / report["total_cases"] * 100 if report["total_cases"] > 0 else 0
-        color = "green" if mode == "pass" else "red"
-        console.print(f"  [{color}]{mode}[/{color}]: {count} ({pct:.0f}%)")
-
-    if report["typical_failures"]:
-        console.print("\n[bold]Typical Failures:[/bold]")
-        for mode, case_ids in report["typical_failures"].items():
-            console.print(f"  {mode}: {', '.join(case_ids)}")
-
-    item_contrib = report["item_contribution"]
-    console.print("\n[bold]Item Contribution:[/bold]")
-    console.print(f"  Item helped: {item_contrib['item_helped']}")
-    console.print(f"  Page only: {item_contrib['page_only']}")
-
-
 def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
     grouped: dict[str, list[JudgeVerdict]] = {}
     for result in results:
@@ -632,21 +406,6 @@ def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
             }
         )
     return rows
-
-
-def _agent_answer_table_row(summary: Any) -> dict[str, str]:
-    refusal = (
-        "-"
-        if summary.refusal_when_no_evidence is None
-        else f"{summary.refusal_when_no_evidence:.2f}"
-    )
-    return {
-        "cases": str(summary.total_cases),
-        "has_citation": f"{summary.answer_has_citation:.2f}",
-        "uses_retrieved_source": f"{summary.answer_uses_retrieved_source:.2f}",
-        "no_evidence_refusal": refusal,
-        "unsupported_rate": f"{summary.unsupported_answer_rate:.2f}",
-    }
 
 
 def _public_table_rows(results: list[PublicBenchmarkResult]) -> list[dict[str, str]]:

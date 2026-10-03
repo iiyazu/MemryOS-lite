@@ -280,6 +280,15 @@ def test_external_kernel_mode_is_advisory_only(tmp_path):
         memoryos_agent_kernel="external",
     )
 
-    assert service.agent_kernel is None
-    assert service.kernel_maintenance_executor is None
     assert service.kernel_maintenance_analyzer is not None
+
+
+def test_external_kernel_mode_off_has_no_analyzer(tmp_path):
+    service = _service(
+        tmp_path,
+        memoryos_memory_arch="v3",
+        memoryos_recall_pipeline="v2",
+        memoryos_agent_kernel="off",
+    )
+
+    assert service.kernel_maintenance_analyzer is None

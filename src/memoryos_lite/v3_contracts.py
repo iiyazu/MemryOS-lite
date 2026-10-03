@@ -605,7 +605,6 @@ REQUIRED_V3_ADAPTERS: dict[str, str] = {
     "MemoryPage": "ArchivalDocument migration input",
     "MemoryItem": "ArchivalMemory or ArchivalPassage adapter",
     "ContextPackage": "ContextPackageV3 compatibility payload",
-    "agent_graph": "Agentic kernel request/result adapter",
 }
 
 

@@ -11,8 +11,9 @@ are derived. The FastAPI surface is suitable for trusted local integrations; it
 does not provide a complete remote authentication, tenancy, rate-limit, or
 ownership model.
 
-Defaults are `memory_arch=v3` and `recall_pipeline=v2`. Legacy `v1` paths may be
-selected explicitly. Agent kernel execution remains off by default.
+Defaults are `memory_arch=v3` and `recall_pipeline=v2`. Legacy `v1` memory and
+recall paths may be selected explicitly. The agent kernel is off by default;
+`external` mode only emits source-attributed advisories for a host process.
 
 ## HTTP surface
 
