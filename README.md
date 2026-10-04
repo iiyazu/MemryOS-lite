@@ -30,6 +30,56 @@ build_context(task)
 
 主要对象包括 `Message`、`Episode`、`MemoryPage`、`MemoryItem`、`CoreMemoryBlock`、`ArchivalDocument` / `ArchivalPassage` / `ArchivalMemory` 和 `ContextPackage`。
 
+## 架构：推送端与拉取端
+
+状态归宿主（如 xmuse 的 `chat.db`），MemoryOS 只做计算。推送端把一窗新活动提炼成带引文的记忆，
+宿主把它们渲染成负责人常驻上下文里的记忆文件；拉取端在负责人追问历史时按需检索，旧值带着现值标注
+排在后面。
+
+```mermaid
+flowchart TB
+  subgraph Host["宿主（持有状态）"]
+    direction LR
+    A[活动流：消息 / 复核打回 / 门禁失败 / 契约修订]
+    M[(模块记忆)]
+    F[记忆文件<br/>负责人常驻上下文]
+    O[模块负责人 Agent]
+  end
+  subgraph Push["推送端 POST /curate（无状态）"]
+    direction TB
+    E[extract] --> C{check<br/>逐字引文 / 闭合记账}
+    C -- 有违规 --> R[repair] --> C
+    C -- 通过 --> K[consolidate<br/>topic_key 版本化]
+  end
+  subgraph Pull["拉取端 POST /sessions/{id}/ask"]
+    direction TB
+    Q[retrieve<br/>BM25 + FastEmbed] --> G{grade}
+    G -- 不够 --> W[rewrite] --> Q
+    G -- 够了 --> Z[finalize<br/>现值在前，旧值标注]
+  end
+  A -- 一窗活动 + 现有记忆 --> E
+  K -- 新版本 / 归属 --> M --> F --> O
+  O -- 追问历史 --> Q
+  Z -- source_evidence/v2 --> O
+```
+
+两张图都是 LangGraph，可以离线演示：`memoryos demo curate --mermaid`、`memoryos demo ask --mermaid`。
+
+## 评测结论
+
+结论只写方向，数字和设置见评测记录 `FINDINGS.md` 的对应小节（不随本仓库分发）。所有评测里回答模型与
+评委属同一模型家族，数据集由 LLM 起草并经规则校验；行为评测的种子仓库技术债由评测设计者按活动历史手写。
+
+| 结论 | 依据 |
+|---|---|
+| 行为：重启后的模块负责人拿到记忆文件，按现行决定和契约做任务的比例接近看全历史；在带技术债的真实仓库里由编码 agent 动手改时，无记忆组会照抄已废弃的旧写法，拿到记忆文件的组不会 | §9.20（补丁文本）、§9.23（OpenCode 真改代码） |
+| 代码库本身已承载大部分现行决定；记忆的增量主要在防止 agent 被代码里看似可用的旧东西带偏 | §9.22、§9.23 |
+| 历史超出上下文预算时，记忆文件以远少于全量历史的 token 接近全量历史的答对率；同预算的原始日志主要因截断而缺失 | §9.19（长模块） |
+| 短模块、预算足够装下原文时，原始日志不差于记忆文件；记忆文件只在小预算下赢在教训题 | §9.17、§9.19（预算扫描） |
+| 闭合记账能把重复错误归到同一条教训并数对次数 | §9.16、§9.17、§9.19 |
+| 有取代标记时，降权消除旧值答案，ask 图补回第一轮漏检；新旧值落在同一窗口时真实 curator 不产生标记 | §9.18、§9.19 |
+| 跨 Room 问答上，curated 记忆与项目级原始检索在噪声内，优势在证据体积和审批治理 | §9.9、§9.15 |
+
 ## 快速开始
 
 ```bash
@@ -46,9 +96,11 @@ uv run --no-sync memoryos api --reload
 uv sync --frozen --no-dev --extra remote
 # 离线演示 curate 图：第一次回复故意违规，展示修复循环；--mermaid 打印图结构
 uv run --no-sync memoryos demo curate --mermaid
+# 离线演示 ask 图：第一轮只找到旧值，改写查询后找到现值，旧值附现值标注排在后面
+uv run --no-sync memoryos demo ask --mermaid
 ```
 
-`/curate` 和 `demo curate` 依赖 `remote` extra 里的 LangGraph 与 LangChain；缺少时 `/curate`
+`/curate`、`demo curate` 和 `demo ask` 依赖 `remote` extra 里的 LangGraph 与 LangChain；缺少时 `/curate`
 返回 503（`curate_requires_langgraph`），不影响 SQLite authority 或离线 API 行为。
 
 ### 分发边界

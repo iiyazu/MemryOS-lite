@@ -158,6 +158,58 @@ def demo_curate(
     console.print_json(response.model_dump_json())
 
 
+@demo_app.command("ask")
+def demo_ask(
+    mermaid: Annotated[bool, Option("--mermaid", help="Print the graph as Mermaid")] = False,
+) -> None:
+    """Run the ask graph (retrieve -> grade -> rewrite -> retrieve) on a scripted example."""
+    try:
+        from memoryos_lite.retrieval.agentic import build_ask_graph, render_ask_item, run_ask
+        from memoryos_lite.retrieval.demo import (
+            DEMO_MARKS,
+            DEMO_REQUEST,
+            DemoRewriteLLM,
+            demo_retrieve,
+        )
+
+        graph = build_ask_graph(
+            demo_retrieve, DEMO_MARKS, DemoRewriteLLM(), max_rounds=DEMO_REQUEST.max_rounds
+        )
+    except ImportError as exc:
+        console.print(f"[red]demo ask needs LangGraph:[/red] {exc}")
+        raise Exit(1) from exc
+    if mermaid:
+        console.print(graph.get_graph().draw_mermaid())
+    console.print(f"[bold]question[/bold] {DEMO_REQUEST.question}")
+    for update in graph.stream(
+        {"question": DEMO_REQUEST.question, "queries": [DEMO_REQUEST.question]},
+        stream_mode="updates",
+    ):
+        for node, state in update.items():
+            state = state or {}
+            if node == "retrieve":
+                outdated = sum(1 for item in state["found"] if item["outdated"])
+                note = f" -> {len(state['found'])} item(s) so far, {outdated} outdated"
+            elif node == "grade":
+                note = " -> enough evidence" if state["enough"] else " -> not enough evidence"
+            elif node == "rewrite":
+                queries = state.get("queries")
+                note = f" -> new query: {queries[-1]}" if queries else f" -> {state['stopped']}"
+            else:
+                note = f" -> stopped: {state.get('stopped', '')}" if state else ""
+            console.print(f"[bold]{node}[/bold]{note}")
+    response = run_ask(
+        session_id="demo",
+        request=DEMO_REQUEST,
+        retrieve=demo_retrieve,
+        marks=DEMO_MARKS,
+        llm=DemoRewriteLLM(),
+    )
+    console.print("[bold]evidence for the agent[/bold]")
+    for item in response.items:
+        console.print(f"  {item.rank}. {render_ask_item(item)}", markup=False)
+
+
 ArchiveScopeType = Literal["agent", "project", "source", "user", "run", "session"]
 ARCHIVE_SCOPE_TYPES: set[ArchiveScopeType] = {
     "agent",
