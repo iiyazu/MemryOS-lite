@@ -39,14 +39,20 @@ writes a code change for each task from the same arm context, and a task judge
 labels every requirement of the task satisfied, violated or not_addressed.
 Requirements reference a gold lesson (does the owner repeat a known mistake?),
 a current decision, or a current contract; optional ``violation_patterns`` are
-regexes checked deterministically against the code.
+regexes checked deterministically against the code. By default the owner is an
+LLM that replies with patch text; with a coder command it is a coding agent that
+edits a copy of the module's seed repository with the arm's memory in
+``AGENTS.md``, the judge grades its ``git diff``, and patterns are checked on the
+added lines only.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Sequence
@@ -908,6 +914,174 @@ class FakeTaskJudge:
         }
 
 
+AGENT_TASK_PROMPT = """{prompt}
+
+Make this change in the repository in the current directory. AGENTS.md holds whatever module \
+memory the host has for you, which may be none. Do not ask questions. When you are done, reply \
+with at most three short lines of notes."""
+
+MAX_AGENT_DIFF_CHARS = 60_000
+AGENT_GIT_EXCLUDES = ("__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/", ".venv/")
+
+
+def load_seed(seeds_dir: str | Path, module_id: str) -> dict[str, str]:
+    """A module's seed repository: ``<seeds_dir>/<module_id>.json`` = {"files": {path: text}}."""
+
+    path = Path(seeds_dir) / f"{module_id}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ModuleMemError(f"{path}: {exc}") from exc
+    files = data.get("files") if isinstance(data, dict) else None
+    if (
+        not isinstance(files, dict)
+        or not files
+        or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items())
+    ):
+        raise ModuleMemError(f'{path}: needs a non-empty "files" object of path -> text')
+    for relative in files:
+        parts = Path(relative).parts
+        if Path(relative).is_absolute() or ".." in parts or (parts and parts[0] == ".git"):
+            raise ModuleMemError(f"{path}: bad seed path {relative!r}")
+    return files
+
+
+def agents_file(module: Module, evidence: Sequence[EvidenceItem]) -> str:
+    """The AGENTS.md an owner agent starts with: the module, then the arm's memory if any."""
+
+    title = module.title or module.module_id
+    head = f"# {title}\n\nYou own this module of project {module.project}.\n"
+    if not evidence:
+        return head
+    return f"{head}\n## Module memory from the host\n\n{_memory_block(evidence)}\n"
+
+
+def _git(workspace: Path, *args: str) -> str:
+    completed = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=modulemem",
+            "-c",
+            "user.email=modulemem@localhost",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ModuleMemError(f"git {args[0]} failed in {workspace}: {completed.stderr[-500:]}")
+    return completed.stdout
+
+
+class AgentOwnerCoder:
+    """Owner coder that runs an external coding agent on a copy of the module's seed repository.
+
+    ``command`` is invoked as ``command --workspace DIR`` with the task on stdin (the interface
+    of a sandboxed agent wrapper); its stdout is the agent's notes. The workspace is the seed
+    repository committed once together with the arm's memory in ``AGENTS.md``, so the code the
+    judge sees is exactly the agent's ``git diff``. Results are cached on disk by module, task,
+    repeat and memory, so a rerun after a failure resumes where it stopped.
+    """
+
+    def __init__(
+        self,
+        *,
+        command: Sequence[str],
+        seeds_dir: str | Path,
+        work_root: Path,
+        cache_dir: Path,
+        repeat: int,
+        timeout_s: float = 1800.0,
+    ) -> None:
+        self._command = list(command)
+        self._seeds_dir = Path(seeds_dir)
+        self._work_root = work_root
+        self._cache_dir = cache_dir
+        self._repeat = repeat
+        self._timeout_s = timeout_s
+
+    def write(self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]) -> str:
+        memory = agents_file(module, evidence)
+        key = hashlib.sha256(
+            json.dumps([module.module_id, task.id, task.prompt, self._repeat, memory]).encode()
+        ).hexdigest()[:16]
+        name = f"{module.module_id}-{task.id}-r{self._repeat}-{key}"
+        cache = self._cache_dir / f"{name}.json"
+        if cache.exists():
+            return str(json.loads(cache.read_text(encoding="utf-8"))["code"])
+        workspace = self._work_root / name
+        shutil.rmtree(workspace, ignore_errors=True)
+        workspace.mkdir(parents=True)
+        for relative, text in load_seed(self._seeds_dir, module.module_id).items():
+            path = workspace / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        (workspace / "AGENTS.md").write_text(memory, encoding="utf-8")
+        _git(workspace, "init", "-q")
+        (workspace / ".git" / "info").mkdir(parents=True, exist_ok=True)
+        (workspace / ".git" / "info" / "exclude").write_text(
+            "\n".join(AGENT_GIT_EXCLUDES) + "\n", encoding="utf-8"
+        )
+        _git(workspace, "add", "-A")
+        _git(workspace, "commit", "-q", "-m", "seed")
+        started = time.monotonic()
+        try:
+            completed = subprocess.run(
+                [*self._command, "--workspace", str(workspace)],
+                input=AGENT_TASK_PROMPT.format(prompt=task.prompt),
+                capture_output=True,
+                text=True,
+                timeout=self._timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ModuleMemError(f"coding agent timed out on {module.module_id} {task.id}") from exc
+        if completed.returncode != 0:
+            raise ModuleMemError(
+                f"coding agent failed on {module.module_id} {task.id} "
+                f"(exit {completed.returncode}): {completed.stderr[-500:]}"
+            )
+        _git(workspace, "add", "-A")
+        diff = _git(workspace, "diff", "--cached", "--no-color")
+        code = diff[:MAX_AGENT_DIFF_CHARS]
+        if len(diff) > MAX_AGENT_DIFF_CHARS:
+            code += "\n[diff truncated]"
+        notes = completed.stdout.strip()[-1500:]
+        if notes:
+            code += f"\n\nNotes:\n{notes}"
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        cache.write_text(
+            json.dumps(
+                {
+                    "code": code,
+                    "diff_chars": len(diff),
+                    "files_changed": _git(workspace, "diff", "--cached", "--name-only").split(),
+                    "seconds": round(time.monotonic() - started, 1),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return code
+
+
+def _added_text(code: str) -> str:
+    """The lines a unified diff adds; any other code is returned unchanged."""
+
+    if not code.startswith("diff --git"):
+        return code
+    return "\n".join(
+        line[1:]
+        for line in code.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+
+
 TaskLLMFactory = Callable[[int], tuple[OwnerCoder, TaskJudge]]
 
 
@@ -919,22 +1093,48 @@ def build_task_llm_factory(
     usage: LLMUsageTracker | None = None,
     coder_llm: str | None = None,
     judge_llm: str | None = None,
+    coder_command: Sequence[str] = (),
+    seeds_dir: str | Path | None = None,
+    coder_timeout_s: float = 1800.0,
 ) -> TaskLLMFactory:
-    """Per-repeat coder/task-judge factory with the same disk cache as the probe roles."""
+    """Per-repeat coder/task-judge factory with the same disk cache as the probe roles.
 
-    if fake_llm:
-        return lambda repeat: (FakeOwnerCoder(), FakeTaskJudge())
-    resolved = settings or get_settings()
-    coder_client = RemoteChatClient(settings_for_llm_spec(resolved, coder_llm))
-    judge_client = RemoteChatClient(settings_for_llm_spec(resolved, judge_llm))
+    With ``coder_command`` the owner is an external coding agent working on the module's
+    seed repository (:class:`AgentOwnerCoder`) instead of an LLM writing patch text.
+    """
+
     cache_dir = out_dir / "llm_cache"
 
-    def factory(repeat: int) -> tuple[OwnerCoder, TaskJudge]:
-        coder = DiskCachedChatClient(
-            coder_client, role="coder", cache_dir=cache_dir, repeat=repeat, usage=usage
+    def agent(repeat: int) -> OwnerCoder:
+        assert seeds_dir is not None
+        return AgentOwnerCoder(
+            command=coder_command,
+            seeds_dir=seeds_dir,
+            work_root=out_dir / "agent_work",
+            cache_dir=cache_dir / "agent",
+            repeat=repeat,
+            timeout_s=coder_timeout_s,
         )
+
+    if fake_llm:
+        return lambda repeat: (
+            agent(repeat) if coder_command else FakeOwnerCoder(),
+            FakeTaskJudge(),
+        )
+    resolved = settings or get_settings()
+    coder_client = (
+        None if coder_command else RemoteChatClient(settings_for_llm_spec(resolved, coder_llm))
+    )
+    judge_client = RemoteChatClient(settings_for_llm_spec(resolved, judge_llm))
+
+    def factory(repeat: int) -> tuple[OwnerCoder, TaskJudge]:
         judge = DiskCachedChatClient(
             judge_client, role="task_judge", cache_dir=cache_dir, repeat=repeat, usage=usage
+        )
+        if coder_client is None:
+            return agent(repeat), ChatTaskJudge(judge)
+        coder = DiskCachedChatClient(
+            coder_client, role="coder", cache_dir=cache_dir, repeat=repeat, usage=usage
         )
         return ChatOwnerCoder(coder), ChatTaskJudge(judge)
 
@@ -963,6 +1163,7 @@ def _run_tasks(
         code = coder.write(module=module, task=task, evidence=evidence)
         payloads = [_requirement_payload(module, r) for r in task.requirements]
         labels = judge.judge_task(task=task, code=code, requirements=payloads)
+        scanned = _added_text(code)
         for requirement in task.requirements:
             rows.append(
                 {
@@ -976,7 +1177,7 @@ def _run_tasks(
                     "early": requirement_last_seq(module, requirement) <= third,
                     "label": labels.get(requirement.id, "not_addressed"),
                     "pattern_violation": any(
-                        re.search(pattern, code) for pattern in requirement.violation_patterns
+                        re.search(pattern, scanned) for pattern in requirement.violation_patterns
                     ),
                     "evidence_tokens": sum(item.estimated_tokens for item in evidence),
                     "code": code,
@@ -1004,6 +1205,9 @@ class ModuleMemConfig:
     max_repairs: int = 2
     probes: bool = True
     tasks: bool = False
+    coder_command: tuple[str, ...] = ()
+    seeds_dir: str | None = None
+    coder_timeout_s: float = 1800.0
 
 
 def run_modulemem(
@@ -1024,6 +1228,14 @@ def run_modulemem(
         raise ModuleMemError("nothing to run: enable probes, tasks, or both")
     if config.tasks and not any(module.tasks for module in modules):
         raise ModuleMemError("--tasks needs modules that carry tasks")
+    if config.coder_command:
+        if not config.tasks:
+            raise ModuleMemError("a coder command only runs owner tasks; add --tasks")
+        if config.seeds_dir is None:
+            raise ModuleMemError("a coder command needs --seeds")
+        for module in modules:
+            if module.tasks:
+                load_seed(config.seeds_dir, module.module_id)
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     tracker = LLMUsageTracker()
@@ -1045,6 +1257,9 @@ def run_modulemem(
             usage=tracker,
             coder_llm=config.answerer_llm,
             judge_llm=config.judge_llm,
+            coder_command=config.coder_command,
+            seeds_dir=config.seeds_dir,
+            coder_timeout_s=config.coder_timeout_s,
         )
     created_scratch = scratch_root is None
     scratch = Path(scratch_root) if scratch_root else Path(tempfile.mkdtemp(prefix="modulemem-"))
@@ -1334,6 +1549,7 @@ def _summarize(
             "fake_llm": config.fake_llm,
             "probes": config.probes,
             "tasks": config.tasks,
+            "coder_command": list(config.coder_command),
         },
         "read_side": read,
         "files": pack_stats,

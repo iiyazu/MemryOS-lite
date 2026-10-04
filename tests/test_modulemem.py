@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 from memoryos_lite.curator.curate import CurateAssignment
 from memoryos_lite.modulemem import (
@@ -11,11 +14,13 @@ from memoryos_lite.modulemem import (
     MODULEMEM_SPLITS,
     FakeModuleCuratorLLM,
     ModuleMemConfig,
+    ModuleMemError,
     _write_side,
     accounting_metrics,
     curate_module,
     current_contracts,
     load_modules,
+    load_seed,
     render_module_memory,
     run_modulemem,
 )
@@ -183,6 +188,93 @@ def test_owner_tasks_score_memory_against_no_memory(tmp_path):
     rows = (tmp_path / "out" / "tasks.jsonl").read_text().splitlines()
     assert len(rows) == 6
     assert "Behavior: owner tasks" in (tmp_path / "out" / "summary.md").read_text()
+
+
+FAKE_AGENT = """\
+import pathlib, sys
+args = sys.argv[1:]
+workspace = pathlib.Path(args[args.index("--workspace") + 1])
+with open(args[0], "a", encoding="utf-8") as calls:
+    calls.write(sys.stdin.read().splitlines()[0] + "\\n")
+memory = (workspace / "AGENTS.md").read_text(encoding="utf-8")
+_, _, body = memory.partition("## Module memory from the host")
+body = body.strip() or "NO_MEMORY"
+(workspace / "app").mkdir(exist_ok=True)
+(workspace / "app" / "change.py").write_text(body + "\\n", encoding="utf-8")
+print("done")
+"""
+
+
+def test_agent_coder_edits_the_seed_repo_and_the_judge_grades_its_diff(tmp_path):
+    _, _, contract = _mm01_task_refs()
+    data = _module_with_tasks(
+        tmp_path,
+        [
+            {
+                "id": "t1",
+                "prompt": "Add a logout endpoint.",
+                "requirements": [
+                    {
+                        "id": "r1",
+                        "ref": contract,
+                        "check": "Matches the current contract.",
+                        "violation_patterns": ["NO_MEMORY"],
+                    }
+                ],
+            }
+        ],
+    )
+    module = load_modules(data)[0]
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    # The seed itself contains the pattern: only lines the agent adds may count as a violation.
+    (seeds / f"{module.module_id}.json").write_text(
+        json.dumps({"files": {"app/main.py": "MODE = 'NO_MEMORY'\n"}}), encoding="utf-8"
+    )
+    script = tmp_path / "agent.py"
+    script.write_text(FAKE_AGENT, encoding="utf-8")
+    calls = tmp_path / "calls.txt"
+    config = ModuleMemConfig(
+        arms=("none", "oracle_pack"),
+        fake_llm=True,
+        probes=False,
+        tasks=True,
+        coder_command=(sys.executable, str(script), str(calls)),
+        seeds_dir=str(seeds),
+    )
+
+    summary = run_modulemem([module], out_dir=tmp_path / "out", config=config)
+
+    behavior = summary["behavior"]
+    assert behavior["none"]["all"]["satisfied"] == 0
+    assert behavior["none"]["all"]["pattern_violation"] == 1
+    assert behavior["oracle_pack"]["all"]["satisfied"] == 1
+    assert behavior["oracle_pack"]["all"]["pattern_violation"] == 0
+    rows = [
+        json.loads(line) for line in (tmp_path / "out" / "tasks.jsonl").read_text().splitlines()
+    ]
+    assert all(row["code"].startswith("diff --git a/app/change.py") for row in rows)
+    assert all(row["code"].endswith("Notes:\ndone") for row in rows)
+    assert calls.read_text().splitlines() == ["Add a logout endpoint."] * 2
+    workspaces = sorted((tmp_path / "out" / "agent_work").iterdir())
+    memories = [(w / "AGENTS.md").read_text(encoding="utf-8") for w in workspaces]
+    assert sorted("Module memory from the host" in m for m in memories) == [False, True]
+
+    # A rerun is served from the agent cache.
+    run_modulemem([module], out_dir=tmp_path / "out", config=config)
+    assert len(calls.read_text().splitlines()) == 2
+
+
+def test_agent_coder_needs_tasks_and_safe_seeds(tmp_path):
+    module = load_modules(DATA, ["mm01"])[0]
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    (seeds / "mm01.json").write_text(json.dumps({"files": {"../escape.py": ""}}), encoding="utf-8")
+    config = ModuleMemConfig(arms=("none",), fake_llm=True, coder_command=("agent",))
+    with pytest.raises(ModuleMemError, match="--tasks"):
+        run_modulemem([module], out_dir=tmp_path / "out", config=config)
+    with pytest.raises(ModuleMemError, match="bad seed path"):
+        load_seed(seeds, "mm01")
 
 
 def test_task_refs_and_patterns_are_validated(tmp_path):

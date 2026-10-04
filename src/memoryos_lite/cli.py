@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
@@ -605,6 +606,20 @@ def eval_modulemem(
         bool,
         Option("--tasks", help="Also run owner tasks (behavior); the coder uses --answerer-llm"),
     ] = False,
+    coder_cmd: Annotated[
+        str | None,
+        Option(
+            "--coder-cmd",
+            help="Coding agent for owner tasks, run as CMD --workspace DIR with the task on "
+            "stdin; it edits a copy of the module's seed repository and the judge grades its diff",
+        ),
+    ] = None,
+    seeds: Annotated[
+        str | None, Option("--seeds", help="Directory of <module_id>.json seed repositories")
+    ] = None,
+    coder_timeout: Annotated[
+        float, Option("--coder-timeout", help="Seconds per coding-agent task")
+    ] = 1800.0,
     out: Annotated[str, Option("--out")] = "artifacts/modulemem",
 ) -> None:
     """Run the ModuleMem evaluation of curated module memory."""
@@ -642,6 +657,9 @@ def eval_modulemem(
                 max_repairs=max_repairs,
                 probes=probes,
                 tasks=tasks,
+                coder_command=tuple(shlex.split(coder_cmd)) if coder_cmd else (),
+                seeds_dir=seeds,
+                coder_timeout_s=coder_timeout,
             ),
         )
     except (ModuleMemError, RoomMemError) as exc:
