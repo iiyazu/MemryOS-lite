@@ -11,6 +11,13 @@ verbatim quote) or dismissed with a reason. A lesson's ``occurrences`` is the
 number of failures assigned to it, so repeats are counted by construction and
 a missed failure is reported in ``unaccounted`` instead of disappearing.
 
+Two profiles share the loop. ``module`` (the default) is the lesson log above,
+with decisions and facts. ``room`` is the session curator behind MemoryOS
+sessions (for example an xmuse Room): its activities are plain messages, so it
+records facts, decisions, rules, preferences and lessons as proposed memories;
+a lesson proposal that cites a new activity adds one occurrence to the active
+lesson on its topic_key.
+
 This module is pure: validation (:func:`check_reply`) and consolidation
 (:func:`consolidate`) need no LLM. The LLM loop lives in
 :mod:`memoryos_lite.curator.graph`.
@@ -42,8 +49,19 @@ MAX_REPAIRS = 2
 MAX_DISMISS_CHARS = 200
 
 ActivityType = Literal["message", "review_objection", "gate_failure", "contract_revision"]
-MemoryKind = Literal["lesson", "decision", "fact"]
-NON_LESSON_KINDS: tuple[str, ...] = ("decision", "fact")
+ACTIVITY_TYPES: tuple[str, ...] = (
+    "message",
+    "review_objection",
+    "gate_failure",
+    "contract_revision",
+)
+MemoryKind = Literal["lesson", "decision", "fact", "rule", "preference"]
+Profile = Literal["module", "room"]
+#: Kinds a profile accepts in "memories" (module lessons come only from assignments).
+PROFILE_MEMORY_KINDS: dict[str, tuple[str, ...]] = {
+    "module": ("decision", "fact"),
+    "room": ("fact", "decision", "rule", "preference", "lesson"),
+}
 
 
 class CurateActivity(BaseModel):
@@ -89,6 +107,7 @@ class CurateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scope_id: str = Field(min_length=1, max_length=255)
+    profile: Profile = "module"
     active: list[CurateMemory] = Field(default_factory=list, max_length=MAX_ACTIVE_MEMORIES)
     context: list[CurateActivity] = Field(default_factory=list, max_length=MAX_CONTEXT_ACTIVITIES)
     window: list[CurateActivity] = Field(min_length=1, max_length=MAX_WINDOW_ACTIVITIES)
@@ -284,6 +303,7 @@ def _parse_memories(raw: object, request: CurateRequest, result: CheckResult) ->
         result.violations.append('"memories" must be a list')
         return
     activities = {activity.id: activity for activity in [*request.context, *request.window]}
+    kinds = PROFILE_MEMORY_KINDS[request.profile]
     for item in raw:
         if not isinstance(item, dict):
             result.violations.append('every entry of "memories" must be an object')
@@ -291,7 +311,7 @@ def _parse_memories(raw: object, request: CurateRequest, result: CheckResult) ->
             continue
         kind = item.get("kind")
         label = item.get("topic_key")
-        if kind == "lesson":
+        if kind == "lesson" and kind not in kinds:
             result.violations.append(
                 f"memory {label!r}: lessons are recorded through assignments, not memories"
             )
@@ -301,14 +321,14 @@ def _parse_memories(raw: object, request: CurateRequest, result: CheckResult) ->
         statement = _statement(item.get("statement"))
         sources_raw = item.get("sources")
         if (
-            kind not in NON_LESSON_KINDS
+            kind not in kinds
             or key is None
             or statement is None
             or not isinstance(sources_raw, list)
             or not 1 <= len(sources_raw) <= MAX_SOURCES
         ):
             result.violations.append(
-                f"memory {label!r} needs kind decision|fact, a topic_key, a statement and "
+                f"memory {label!r} needs kind {'|'.join(kinds)}, a topic_key, a statement and "
                 f"1-{MAX_SOURCES} sources"
             )
             result.rejected_memories += 1
@@ -425,23 +445,39 @@ def consolidate(request: CurateRequest, check: CheckResult) -> CurateResponse:
     diagnostics = CurateDiagnostics(rejected_memories=check.rejected_memories)
     out: list[CurateMemoryVersion] = []
 
-    by_lesson: dict[str, list[CurateAssignment]] = {}
+    # Lesson occurrences: an assigned failure, or (room profile) a lesson proposal.
+    occurrences_by_key: dict[str, list[tuple[list[CurateSource], int, bool]]] = {}
+    statements = dict(check.lessons)
     for assignment in check.assignments:
         if assignment.lesson is not None:
-            by_lesson.setdefault(assignment.lesson, []).append(assignment)
-    for key, assigned in by_lesson.items():
+            source = CurateSource(activity_id=assignment.activity_id, quote=assignment.quote or "")
+            occurrences_by_key.setdefault(assignment.lesson, []).append(
+                ([source], seq[assignment.activity_id], False)
+            )
+    for proposal in check.memories:
+        if proposal.kind == "lesson":
+            occurrences_by_key.setdefault(proposal.topic_key, []).append(
+                (proposal.sources, proposal.version, True)
+            )
+            statements[proposal.topic_key] = proposal.statement
+    for key, occurrences in occurrences_by_key.items():
         prior = _newest(active_lessons.get(key, []))
         cited = {s.activity_id for s in prior.sources} if prior is not None else set()
-        fresh = [a for a in assigned if a.activity_id not in cited]
-        if not fresh:
+        sources = list(prior.sources) if prior is not None else []
+        version = prior.version if prior is not None else 0
+        added = 0
+        for occurrence_sources, occurrence_version, proposed in occurrences:
+            fresh = [s for s in occurrence_sources if s.activity_id not in cited]
+            if not fresh:
+                diagnostics.noop_memories += proposed
+                continue
+            cited.update(s.activity_id for s in fresh)
+            sources.extend(fresh)
+            version = max(version, occurrence_version)
+            added += 1
+        statement = statements.get(key) or (prior.statement if prior is not None else None)
+        if not added or statement is None:
             continue
-        statement = check.lessons.get(key) or (prior.statement if prior is not None else None)
-        if statement is None:
-            continue
-        sources = [
-            *(prior.sources if prior is not None else []),
-            *(CurateSource(activity_id=a.activity_id, quote=a.quote or "") for a in fresh),
-        ]
         out.append(
             _versioned(
                 request,
@@ -449,19 +485,16 @@ def consolidate(request: CurateRequest, check: CheckResult) -> CurateResponse:
                 kind="lesson",
                 topic_key=key,
                 statement=statement,
-                version=max(
-                    [
-                        prior.version if prior is not None else 0,
-                        *(seq[a.activity_id] for a in fresh),
-                    ]
-                ),
-                occurrences=(prior.occurrences if prior is not None else 0) + len(fresh),
+                version=version,
+                occurrences=(prior.occurrences if prior is not None else 0) + added,
                 sources=sources[-MAX_LESSON_SOURCES:],
             )
         )
 
     winners: dict[str, _MemoryProposal] = {}
     for proposal in check.memories:
+        if proposal.kind == "lesson":
+            continue
         current = winners.get(proposal.topic_key)
         if current is not None:
             diagnostics.noop_memories += 1

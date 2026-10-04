@@ -504,10 +504,6 @@ def eval_roommem(
         str | None,
         Option("--curator-llm", help="Curator model spec provider:model[@wire]"),
     ] = None,
-    curator_consolidation: Annotated[
-        str | None,
-        Option("--curator-consolidation", help="deterministic | llm (earlier pipeline)"),
-    ] = None,
     merge_project: Annotated[
         str | None,
         Option("--merge-project", help="Put every selected room into this one project"),
@@ -560,7 +556,6 @@ def eval_roommem(
             answerer_llm=answerer_llm,
             judge_llm=judge_llm,
             curator_llm=curator_llm,
-            curator_consolidation=curator_consolidation,
             merge_project=merge_project,
             shared_project=shared_project,
             curated_evidence=tuple(curated_evidence or ("plain",)),
