@@ -11,7 +11,7 @@ import pytest
 from memoryos_lite.config import Settings
 from memoryos_lite.curator import Curator, CuratorLLMError, CuratorSchemaError
 from memoryos_lite.curator.grounding import repair_quote
-from memoryos_lite.curator.prompt import CURATOR_SYSTEM_PROMPT
+from memoryos_lite.curator.prompt import CURATE_ROOM_SYSTEM_PROMPT
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import MessageCreate, Role
 from memoryos_lite.store import create_store
@@ -27,7 +27,7 @@ class FakeLLM:
     def complete_json(self, system: str, user: str) -> dict[str, object]:
         self.calls.append((system, user))
         if not self.responses:
-            return {"operations": []}
+            return {"memories": []}
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -36,22 +36,20 @@ class FakeLLM:
 
 
 class WindowEchoLLM:
-    """Builds one add op from the first message line of each window prompt."""
+    """Builds one memory from the first message line of each window prompt."""
 
     def complete_json(self, system: str, user: str) -> dict[str, object]:
         window = user.split("Messages to curate:\n", 1)[1]
-        match = re.match(r"\[([^\]]+)\] [^:]+: (.+)", window.strip().splitlines()[0])
+        match = re.match(r"\[([^\]]+)\] .+ \(message\): (.+)", window.strip().splitlines()[0])
         assert match is not None
         message_id, content = match.group(1), match.group(2)
         return {
-            "operations": [
+            "memories": [
                 {
-                    "op": "add",
                     "kind": "fact",
                     "topic_key": "test.worker",
                     "statement": content,
-                    "sources": [{"message_id": message_id, "quote": content}],
-                    "supersedes": None,
+                    "sources": [{"activity_id": message_id, "quote": content}],
                 }
             ]
         }
@@ -80,22 +78,19 @@ def _ingest(service: MemoryOSService, session_id: str, content: str, **metadata)
     return response.message.id
 
 
-def _add_op(
+def _mem(
     message_id: str,
     statement: str,
     *,
     quote: str | None = None,
     kind: str = "fact",
     topic_key: str = "project.launch_city",
-    supersedes: str | None = None,
 ) -> dict[str, object]:
     return {
-        "op": "add" if supersedes is None else "update",
         "kind": kind,
         "topic_key": topic_key,
         "statement": statement,
-        "sources": [{"message_id": message_id, "quote": quote or statement}],
-        "supersedes": supersedes,
+        "sources": [{"activity_id": message_id, "quote": quote or statement}],
     }
 
 
@@ -126,20 +121,12 @@ def test_repair_quote_rejects_short_absent_and_ambiguous_quotes() -> None:
 
 def test_add_writes_grounded_memory_and_advisory_v2(tmp_path):
     statement = "Project Helios launches in Lisbon."
-    fake = FakeLLM(
-        [
-            {
-                "operations": [
-                    _add_op("pending", statement)  # id patched after ingest
-                ]
-            }
-        ]
-    )
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-add")
     message_id = _ingest(service, session.id, statement)
     fake.responses = [
-        {"operations": [_add_op(message_id, statement)]},
+        {"memories": [_mem(message_id, statement)]},
     ]
 
     result = curator.run_session(session.id)
@@ -194,20 +181,21 @@ def test_add_writes_grounded_memory_and_advisory_v2(tmp_path):
 
 def test_ungrounded_and_short_quotes_are_rejected_but_window_advances(tmp_path):
     content = "Alice keeps the rollout notes in the shared wiki."
-    fake = FakeLLM([{"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-grounding")
     message_id = _ingest(service, session.id, content)
-    fake.responses = [
-        {
-            "operations": [
-                _add_op(message_id, "Hallucinated statement about Lisbon.", quote="not in text"),
-                _add_op(message_id, "Short quote memory", quote="Alice"),
-                # message id from another session is not groundable either.
-                _add_op("msg_elsewhere", "Foreign message memory", quote=content),
-            ]
-        }
-    ]
+    bad_reply = {
+        "memories": [
+            _mem(message_id, "Hallucinated statement about Lisbon.", quote="not in text"),
+            _mem(message_id, "Short quote memory", quote="Alice"),
+            # message id from another session is not groundable either.
+            _mem("msg_elsewhere", "Foreign message memory", quote=content),
+        ]
+    }
+    # Per-memory problems are repaired inside the loop: repeat the bad reply
+    # until repairs are exhausted so the final check still rejects all three.
+    fake.responses = [bad_reply, bad_reply, bad_reply]
 
     result = curator.run_session(session.id)
 
@@ -222,14 +210,14 @@ def test_ungrounded_and_short_quotes_are_rejected_but_window_advances(tmp_path):
 
 def test_normalized_quote_is_rewritten_to_exact_original_span(tmp_path):
     content = "Alice   PREFERS   rail travel for launches."
-    fake = FakeLLM([{"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-normalize")
     message_id = _ingest(service, session.id, content)
     fake.responses = [
         {
-            "operations": [
-                _add_op(
+            "memories": [
+                _mem(
                     message_id,
                     "Alice prefers rail travel for launches.",
                     quote="alice prefers rail travel",
@@ -246,35 +234,33 @@ def test_normalized_quote_is_rewritten_to_exact_original_span(tmp_path):
     assert "Alice   PREFERS   rail travel" in content
 
 
-def test_operation_schema_violations_are_rejected(tmp_path):
+def test_memory_schema_violations_are_rejected(tmp_path):
     content = "Rollout notes live in the shared wiki for the Helios project."
-    fake = FakeLLM([{"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-schema")
     message_id = _ingest(service, session.id, content)
-    fake.responses = [
-        {
-            "operations": [
-                _add_op(message_id, "x" * 601),
-                _add_op(message_id, "Valid statement but bad kind.", kind="vibe"),
-                {
-                    "op": "add",
-                    "kind": "fact",
-                    "topic_key": "too.many",
-                    "statement": "Four sources are too many for one memory.",
-                    "sources": [
-                        {"message_id": message_id, "quote": content},
-                    ]
-                    * 4,
-                    "supersedes": None,
-                },
-            ]
-        }
-    ]
+    bad_reply = {
+        "memories": [
+            _mem(message_id, "x" * 601),
+            _mem(message_id, "Valid statement but bad kind.", kind="vibe"),
+            {
+                "kind": "fact",
+                "topic_key": "too.many",
+                "statement": "Four sources are too many for one memory.",
+                "sources": [
+                    {"activity_id": message_id, "quote": content},
+                ]
+                * 4,
+            },
+        ]
+    }
+    fake.responses = [bad_reply, bad_reply, bad_reply]
 
     result = curator.run_session(session.id)
 
-    assert result.rejected_schema == 3
+    assert result.rejected_grounding == 3
+    assert result.rejected_schema == 0
     assert result.added == 0
     assert service.store.get_curator_state(session.id).last_message_seq == 1
 
@@ -283,14 +269,12 @@ def test_operation_schema_violations_are_rejected(tmp_path):
 
 
 def test_update_supersedes_in_one_transaction_and_advisory_carries_link(tmp_path):
-    fake = FakeLLM([{"operations": []}])
-    service, curator = _service(
-        tmp_path, fake, memoryos_curator_consolidation="llm", memoryos_curator_window_messages=1
-    )
+    fake = FakeLLM([{"memories": []}])
+    service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-supersede")
     first_content = "The launch city is Lisbon."
     first_id = _ingest(service, session.id, first_content)
-    fake.responses = [{"operations": [_add_op(first_id, first_content)]}]
+    fake.responses = [{"memories": [_mem(first_id, first_content)]}]
     assert curator.run_session(session.id).added == 1
     old = service.store.list_active_curated_memories(session.id)[0]
 
@@ -298,12 +282,11 @@ def test_update_supersedes_in_one_transaction_and_advisory_carries_link(tmp_path
     new_id = _ingest(service, session.id, new_content)
     fake.responses = [
         {
-            "operations": [
-                _add_op(
+            "memories": [
+                _mem(
                     new_id,
                     new_content,
                     quote=new_content,
-                    supersedes=old.id,
                 )
             ]
         }
@@ -335,27 +318,25 @@ def test_update_supersedes_in_one_transaction_and_advisory_carries_link(tmp_path
 
 
 def test_one_window_supersedes_a_memory_once_and_drops_duplicate_writes(tmp_path):
-    fake = FakeLLM([{"operations": []}])
-    service, curator = _service(
-        tmp_path, fake, memoryos_curator_consolidation="llm", memoryos_curator_window_messages=2
-    )
+    fake = FakeLLM([{"memories": []}])
+    service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=2)
     session = service.create_session("curator-window-conflicts")
     first_content = "The launch city is Lisbon."
     first_id = _ingest(service, session.id, first_content)
-    fake.responses = [{"operations": [_add_op(first_id, first_content)]}]
+    fake.responses = [{"memories": [_mem(first_id, first_content)]}]
     assert curator.run_session(session.id, force=True).added == 1
     old = service.store.list_active_curated_memories(session.id)[0]
 
     porto = "The launch city changed to Porto."
-    madrid = "Actually the launch city is Madrid."
+    madrid = "The afterparty venue is in Madrid."
     porto_id = _ingest(service, session.id, porto)
     madrid_id = _ingest(service, session.id, madrid)
     fake.responses = [
         {
-            "operations": [
-                _add_op(porto_id, porto, supersedes=old.id),
-                _add_op(porto_id, porto, supersedes=old.id),
-                _add_op(madrid_id, madrid, supersedes=old.id),
+            "memories": [
+                _mem(porto_id, porto),
+                _mem(porto_id, porto),
+                _mem(madrid_id, madrid, topic_key="project.afterparty_venue"),
             ]
         }
     ]
@@ -369,40 +350,23 @@ def test_one_window_supersedes_a_memory_once_and_drops_duplicate_writes(tmp_path
     assert superseded is not None and superseded.status == "superseded"
 
 
-def test_update_with_unknown_supersedes_downgrades_to_add(tmp_path):
-    content = "The staging cluster lives in Frankfurt."
-    fake = FakeLLM([{"operations": []}])
-    service, curator = _service(
-        tmp_path, fake, memoryos_curator_consolidation="llm", memoryos_curator_window_messages=1
-    )
-    session = service.create_session("curator-downgrade")
-    message_id = _ingest(service, session.id, content)
-    fake.responses = [{"operations": [_add_op(message_id, content, supersedes="cmem_missing")]}]
-
-    result = curator.run_session(session.id)
-
-    assert (result.added, result.superseded) == (1, 0)
-    rows = service.store.list_active_curated_memories(session.id)
-    assert rows[0].supersedes_id is None
-
-
 def test_restatements_become_noop_without_writes(tmp_path):
     content = "Rollout happens on Fridays after the sync."
-    fake = FakeLLM([{"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-noop")
     first_id = _ingest(service, session.id, content)
-    fake.responses = [{"operations": [_add_op(first_id, content)]}]
+    fake.responses = [{"memories": [_mem(first_id, content)]}]
     assert curator.run_session(session.id).added == 1
 
-    second_content = "Rollout happens on Fridays after the sync!"
-    _ingest(service, session.id, second_content)
     # Same statement modulo whitespace/case: groundable, but a restatement.
-    third_content = "ROLLOUT   HAPPENS on Fridays after the sync."
+    second_content = "ROLLOUT   HAPPENS on Fridays after the sync."
+    second_id = _ingest(service, session.id, second_content)
+    third_content = "Rollout  happens  ON Fridays after the sync."
     third_id = _ingest(service, session.id, third_content)
     fake.responses = [
-        {"operations": [{"op": "noop"}]},
-        {"operations": [_add_op(third_id, third_content)]},
+        {"memories": [_mem(second_id, content, quote=second_content)]},
+        {"memories": [_mem(third_id, content, quote=third_content)]},
     ]
     result = curator.run_session(session.id, force=True)
 
@@ -416,8 +380,14 @@ def test_restatements_become_noop_without_writes(tmp_path):
 
 
 def test_watermark_advances_only_on_accepted_output(tmp_path):
-    schema_error = {"operations": "this is not a list"}
-    fake = FakeLLM([schema_error, schema_error, {"operations": []}])
+    fake = FakeLLM(
+        [
+            CuratorSchemaError("unparseable"),
+            CuratorSchemaError("unparseable"),
+            CuratorSchemaError("unparseable"),
+            {"memories": []},
+        ]
+    )
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-watermark")
     _ingest(service, session.id, "A durable fact that will wait for a schema fix.")
@@ -427,6 +397,7 @@ def test_watermark_advances_only_on_accepted_output(tmp_path):
     assert first.windows == 0
     assert first.rejected_schema == 1
     assert first.status == "failed"
+    assert len(fake.calls) == 3
     assert service.store.get_curator_state(session.id).last_message_seq == 0
 
     second = curator.run_session(session.id)
@@ -437,15 +408,15 @@ def test_watermark_advances_only_on_accepted_output(tmp_path):
     assert "curator_schema_error" in trace_types
 
 
-def test_schema_failure_retries_once_then_succeeds(tmp_path):
+def test_schema_failure_retries_inside_one_run_then_succeeds(tmp_path):
     content = "The design review moved to Thursday."
-    fake = FakeLLM([CuratorSchemaError("unparseable"), {"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-retry")
     message_id = _ingest(service, session.id, content)
     fake.responses = [
         CuratorSchemaError("unparseable"),
-        {"operations": [_add_op(message_id, content)]},
+        {"memories": [_mem(message_id, content)]},
     ]
 
     result = curator.run_session(session.id)
@@ -479,7 +450,7 @@ def test_window_is_skipped_after_three_consecutive_failures(tmp_path):
 
 
 def test_idle_gate_flushes_partial_window_only_when_due(tmp_path):
-    fake = FakeLLM([{"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(
         tmp_path,
         fake,
@@ -503,7 +474,7 @@ def test_idle_gate_flushes_partial_window_only_when_due(tmp_path):
 
 
 def test_idle_gate_flushes_when_oldest_message_waited_long_enough(tmp_path):
-    fake = FakeLLM([{"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(
         tmp_path,
         fake,
@@ -523,7 +494,7 @@ def test_idle_gate_flushes_when_oldest_message_waited_long_enough(tmp_path):
 
 
 def test_prompt_renders_ids_speakers_and_bounded_context(tmp_path):
-    fake = FakeLLM([{"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-prompt")
     first_id = _ingest(service, session.id, "Alice notes the launch plan.", speaker_name="Alice")
@@ -541,16 +512,18 @@ def test_prompt_renders_ids_speakers_and_bounded_context(tmp_path):
 
     assert len(fake.calls) == 3
     system, first_user = fake.calls[0]
-    assert system == CURATOR_SYSTEM_PROMPT
+    assert system == CURATE_ROOM_SYSTEM_PROMPT
     assert "Do NOT store" in system
     assert "verbatim" in system
-    assert f"[{first_id}] Alice (human): Alice notes the launch plan." in first_user
+    assert f"[{first_id}] Alice, human (message): Alice notes the launch plan." in first_user
     assert "Active memories (reuse a topic_key" in first_user
+    assert "- fact project.launch_city:" in first_user or "(none)" in first_user
     _, third_user = fake.calls[2]
     context_section = third_user.split("Messages to curate:", 1)[0]
-    assert f"[{first_id}] Alice (human):" in context_section
-    assert f"[{second.id}] agent-7 (agent):" in context_section
-    assert f"[{third_id}] user (human): Carol confirms the timeline." in third_user
+    assert f"[{first_id}] Alice, human (message):" in context_section
+    assert f"[{second.id}] agent-7, agent (message):" in context_section
+    assert "Earlier context" in context_section
+    assert f"[{third_id}] user, human (message): Carol confirms the timeline." in third_user
 
 
 # -- health ------------------------------------------------------------------
@@ -577,7 +550,7 @@ def test_health_state_machine_for_llm_failures_and_recovery(tmp_path):
     assert counters["llm_errors"] == 1
     assert counters["sessions"] == 1
 
-    fake.responses = [{"operations": [_add_op(message_id, "A fact for the health state machine.")]}]
+    fake.responses = [{"memories": [_mem(message_id, "A fact for the health state machine.")]}]
     recovered = curator.run_session(session.id)
 
     assert recovered.windows == 1
@@ -676,12 +649,12 @@ def test_curator_suppresses_heuristic_maintenance_advisories(tmp_path):
 )
 def test_memory_kind_maps_to_advisory_kind(tmp_path, kind, advisory_kind):
     statement = f"A durable {kind} statement for mapping."
-    fake = FakeLLM([{"operations": []}])
+    fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session(f"curator-kind-{kind}")
     message_id = _ingest(service, session.id, statement)
     fake.responses = [
-        {"operations": [_add_op(message_id, statement, kind=kind, topic_key=f"test.{kind}")]}
+        {"memories": [_mem(message_id, statement, kind=kind, topic_key=f"test.{kind}")]}
     ]
 
     assert curator.run_session(session.id).added == 1
