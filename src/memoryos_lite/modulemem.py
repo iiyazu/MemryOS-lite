@@ -836,6 +836,13 @@ value, or the mistake the requirement warns about;
 Judge only from the code and notes shown. Reply with one JSON object mapping each requirement \
 id to its label, for example {"r1": "satisfied", "r2": "violated"}."""
 
+TASK_JUDGE_DIFF_NOTE = """
+
+The code is a unified diff of a change to an existing repository: lines starting with "+" are \
+added, "-" removed, the rest is unchanged context. Judge the change. Calling an existing helper \
+counts as using it; unchanged code outside the diff is not shown, so a requirement the change \
+never touches is "not_addressed"."""
+
 
 class OwnerCoder(Protocol):
     def write(
@@ -879,7 +886,10 @@ class ChatTaskJudge:
             {"task": task.prompt, "requirements": list(requirements), "code": code},
             ensure_ascii=False,
         )
-        data = _extract_json_object(self._chat.complete(system=TASK_JUDGE_SYSTEM_PROMPT, user=user))
+        system = TASK_JUDGE_SYSTEM_PROMPT
+        if code.startswith("diff --git"):
+            system += TASK_JUDGE_DIFF_NOTE
+        data = _extract_json_object(self._chat.complete(system=system, user=user))
         data = data or {}
         return {
             str(r["id"]): label
@@ -1024,8 +1034,12 @@ class AgentOwnerCoder:
 
     def write(self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]) -> str:
         memory = agents_file(module, evidence)
+        seed = load_seed(self._seeds_dir, module.module_id)
         key = hashlib.sha256(
-            json.dumps([module.module_id, task.id, task.prompt, self._repeat, memory]).encode()
+            json.dumps(
+                [module.module_id, task.id, task.prompt, self._repeat, memory, seed],
+                sort_keys=True,
+            ).encode()
         ).hexdigest()[:16]
         name = f"{module.module_id}-{task.id}-r{self._repeat}-{key}"
         cache = self._cache_dir / f"{name}.json"
@@ -1034,7 +1048,7 @@ class AgentOwnerCoder:
         workspace = self._work_root / name
         shutil.rmtree(workspace, ignore_errors=True)
         workspace.mkdir(parents=True)
-        for relative, text in load_seed(self._seeds_dir, module.module_id).items():
+        for relative, text in seed.items():
             path = workspace / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
@@ -1583,6 +1597,7 @@ def _summarize(
 
 def _task_stats(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     n = len(rows)
+    addressed = [r for r in rows if r["label"] != "not_addressed"]
     return {
         "n": n,
         **{
@@ -1590,6 +1605,14 @@ def _task_stats(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
             for label in TASK_LABELS
         },
         "pattern_violation": (sum(1 for r in rows if r["pattern_violation"]) / n) if n else None,
+        # A change to an existing repository often leaves a requirement untouched (correct code
+        # stays as it is), so violations are also reported over the requirements it touched.
+        "addressed": len(addressed),
+        "violated_of_addressed": (
+            sum(1 for r in addressed if r["label"] == "violated") / len(addressed)
+            if addressed
+            else None
+        ),
     }
 
 
@@ -1617,6 +1640,10 @@ def summarize_tasks(rows: Sequence[dict[str, Any]], arms: Sequence[str]) -> dict
         stats["tasks"] = len(tasks)
         stats["tasks_all_satisfied"] = sum(
             all(r["label"] == "satisfied" for r in group) for group in tasks.values()
+        ) / len(tasks)
+        stats["tasks_with_violation"] = sum(
+            any(r["label"] == "violated" or r["pattern_violation"] for r in group)
+            for group in tasks.values()
         ) / len(tasks)
         stats["evidence_tokens"] = sum(
             group[0]["evidence_tokens"] for group in tasks.values()
@@ -1655,8 +1682,9 @@ def render_modulemem_md(summary: dict[str, Any]) -> str:
             "",
             "## Behavior: owner tasks (requirement level)",
             "",
-            "| arm | gold | n | satisfied | violated | not addressed | pattern violation |",
-            "|---|---|---|---|---|---|---|",
+            "| arm | gold | n | satisfied | violated | not addressed | pattern violation "
+            "| addressed | violated of addressed |",
+            "|---|---|---|---|---|---|---|---|---|",
         ]
         for arm, stats in behavior.items():
             for category in (*REQUIREMENT_CATEGORIES, "early", "all"):
@@ -1664,17 +1692,18 @@ def render_modulemem_md(summary: dict[str, Any]) -> str:
                 lines.append(
                     f"| {arm} | {category} | {row['n']} | {fmt(row['satisfied'])} "
                     f"| {fmt(row['violated'])} | {fmt(row['not_addressed'])} "
-                    f"| {fmt(row['pattern_violation'])} |"
+                    f"| {fmt(row['pattern_violation'])} | {row['addressed']} "
+                    f"| {fmt(row['violated_of_addressed'])} |"
                 )
         lines += [
             "",
-            "| arm | tasks | all requirements satisfied | evidence tok |",
-            "|---|---|---|---|",
+            "| arm | tasks | all requirements satisfied | tasks with a violation | evidence tok |",
+            "|---|---|---|---|---|",
         ]
         for arm, stats in behavior.items():
             lines.append(
                 f"| {arm} | {stats['tasks']} | {fmt(stats['tasks_all_satisfied'])} "
-                f"| {fmt(stats['evidence_tokens'])} |"
+                f"| {fmt(stats['tasks_with_violation'])} | {fmt(stats['evidence_tokens'])} |"
             )
     lines += ["", "## Memory files", "", json.dumps(summary["files"], indent=1), ""]
     lines += [

@@ -250,6 +250,11 @@ def test_agent_coder_edits_the_seed_repo_and_the_judge_grades_its_diff(tmp_path)
     assert behavior["none"]["all"]["pattern_violation"] == 1
     assert behavior["oracle_pack"]["all"]["satisfied"] == 1
     assert behavior["oracle_pack"]["all"]["pattern_violation"] == 0
+    assert behavior["none"]["tasks_with_violation"] == 1
+    assert behavior["oracle_pack"]["tasks_with_violation"] == 0
+    assert behavior["none"]["all"]["addressed"] == 0
+    assert behavior["oracle_pack"]["all"]["addressed"] == 1
+    assert behavior["oracle_pack"]["all"]["violated_of_addressed"] == 0
     rows = [
         json.loads(line) for line in (tmp_path / "out" / "tasks.jsonl").read_text().splitlines()
     ]
