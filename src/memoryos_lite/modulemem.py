@@ -921,7 +921,24 @@ memory the host has for you, which may be none. Do not ask questions. When you a
 with at most three short lines of notes."""
 
 MAX_AGENT_DIFF_CHARS = 60_000
-AGENT_GIT_EXCLUDES = ("__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/", ".venv/")
+#: Tool output an agent may leave behind (caches, environments, lockfiles from installing the
+#: seed's dependencies); untracked, so it never reaches the diff the judge reads.
+AGENT_GIT_EXCLUDES = (
+    "__pycache__/",
+    "*.pyc",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    ".mypy_cache/",
+    "*.egg-info/",
+    ".venv/",
+    "node_modules/",
+    "uv.lock",
+    "poetry.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "go.sum",
+)
 
 
 def load_seed(seeds_dir: str | Path, module_id: str) -> dict[str, str]:
