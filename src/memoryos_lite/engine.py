@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Sequence
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
@@ -54,6 +55,7 @@ from memoryos_lite.retrieval import (
     Searcher,
     SearchHit,
 )
+from memoryos_lite.retrieval.agentic import AskRequest, AskResponse, run_ask
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
@@ -64,6 +66,7 @@ from memoryos_lite.retrieval.evidence_representer import EvidenceCandidate, Evid
 from memoryos_lite.retrieval.evidence_searcher import EvidenceSearcher
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
+from memoryos_lite.retrieval.supersede import SupersededQuote, superseded_quotes
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveAttachmentResponse,
@@ -93,6 +96,7 @@ from memoryos_lite.schemas import (
     new_id,
     utc_now,
 )
+from memoryos_lite.source_evidence import build_source_evidence
 from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
@@ -1377,12 +1381,26 @@ class MemoryOSService:
         superseded_rows = self.store.get_curated_memories_by_ids(superseded_ids)
         return build_advisory_v2_items(rows, superseded_rows)
 
-    def curate(self, request: CurateRequest) -> CurateResponse:
-        """Stateless module curation (``POST /curate``); see ``curator.curate``.
+    def superseded_marks(self, session_id: str) -> list[SupersededQuote]:
+        """Quotes that ground only superseded curated memories of this session."""
 
-        Raises :class:`CurateUnavailableError` when no LLM or no LangGraph runtime
-        is available, and lets :class:`CuratorLLMError` through on provider errors.
-        """
+        self._require_session(session_id)
+        return superseded_quotes(self.store.list_curated_memories(session_id, limit=64))
+
+    def evidence_marks(
+        self,
+        session_id: str,
+        requested: Sequence[SupersededQuote] = (),
+    ) -> list[SupersededQuote]:
+        """Host-sent marks plus, when enabled, this session's own superseded quotes."""
+
+        marks = list(requested)
+        if self.settings.memoryos_demote_superseded:
+            marks.extend(self.superseded_marks(session_id))
+        return marks
+
+    def _json_llm(self) -> CuratorLLM:
+        """The JSON-mode LLM shared by ``/curate`` and ``ask`` query rewriting."""
 
         llm = self._curate_llm
         if llm is None and self.curator is not None:
@@ -1397,6 +1415,63 @@ class MemoryOSService:
             self._curate_llm = llm
         if llm is None:
             raise CurateUnavailableError("curator_llm_key_missing")
+        return llm
+
+    def ask(self, session_id: str, request: AskRequest) -> AskResponse:
+        """Agentic retrieval over the session (``memory_ask/v1``).
+
+        Without an LLM the graph still runs one deterministic retrieval and
+        marks outdated items; query rewriting needs the LLM.
+        """
+
+        self._require_session(session_id)
+        marks = self.evidence_marks(
+            session_id,
+            [SupersededQuote(quote=m.quote, current=m.current) for m in request.superseded],
+        )
+        try:
+            llm: CuratorLLM | None = self._json_llm()
+        except CurateUnavailableError:
+            llm = None
+        return self.ask_with(session_id, request, llm=llm, marks=marks)
+
+    def ask_with(
+        self,
+        session_id: str,
+        request: AskRequest,
+        *,
+        llm: CuratorLLM | None,
+        marks: Sequence[SupersededQuote],
+    ) -> AskResponse:
+        """Run the ask graph with an explicit rewrite LLM and superseded marks."""
+
+        self._require_session(session_id)
+
+        def retrieve(query: str) -> list[dict[str, Any]]:
+            package = self.build_context(
+                session_id=session_id,
+                task=request.task or request.question,
+                budget=request.budget,
+                retrieval_query=query,
+                include_global_core=False,
+            )
+            envelope = build_source_evidence(package, schema_version="v2", superseded=marks)
+            items = envelope.get("items")
+            return list(items) if isinstance(items, list) else []
+
+        with timed_core_operation(component="engine", operation="ask", logger=logger):
+            return run_ask(
+                session_id=session_id, request=request, retrieve=retrieve, marks=marks, llm=llm
+            )
+
+    def curate(self, request: CurateRequest) -> CurateResponse:
+        """Stateless module curation (``POST /curate``); see ``curator.curate``.
+
+        Raises :class:`CurateUnavailableError` when no LLM or no LangGraph runtime
+        is available, and lets :class:`CuratorLLMError` through on provider errors.
+        """
+
+        llm = self._json_llm()
         try:
             from memoryos_lite.curator.graph import run_curate
         except ImportError as exc:

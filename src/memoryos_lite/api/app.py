@@ -14,6 +14,8 @@ from memoryos_lite.middleware import (
     RequestIdMiddleware,
     StructuredLoggingMiddleware,
 )
+from memoryos_lite.retrieval.agentic import AskRequest, AskResponse
+from memoryos_lite.retrieval.supersede import SupersededQuote
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveAttachmentResponse,
@@ -164,7 +166,11 @@ def build_context(
     }:
         try:
             if request.response_profile is BuildContextResponseProfile.SOURCE_EVIDENCE_V2:
-                return build_source_evidence(package, schema_version="v2")
+                marks = service.evidence_marks(
+                    session_id,
+                    [SupersededQuote(quote=m.quote, current=m.current) for m in request.superseded],
+                )
+                return build_source_evidence(package, schema_version="v2", superseded=marks)
             return build_source_evidence(package)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -277,6 +283,22 @@ def advisories(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"schema": "memoryos_external_advisories/v1", "items": items}
+
+
+@app.post("/sessions/{session_id}/ask", response_model=AskResponse)
+def ask(session_id: str, request: AskRequest, service: ServiceDep) -> AskResponse:
+    """Agentic retrieval (``memoryos_memory_ask/v1``): retrieve, grade, rewrite, retrieve.
+
+    Outdated items (stating a superseded value) come last and carry the current
+    statement when known. 503 when the LangGraph runtime is missing.
+    """
+
+    try:
+        return service.ask(session_id, request)
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="ask_requires_langgraph") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/curate", response_model=CurateResponse)
