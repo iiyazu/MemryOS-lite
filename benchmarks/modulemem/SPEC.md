@@ -84,3 +84,30 @@ activity stream.
   worker, data pipeline, CLI); owners write like engineers; logs look like real tool output.
 - Language: `en` unless the brief says `zh` (then human and agent text is Chinese; logs stay
   in their tool's language).
+
+## Owner tasks (optional, behavior evaluation)
+
+A module may carry `tasks`: work the restarted owner does after the stream ends. The owner
+writes a code change from its memory only; a judge labels each requirement `satisfied`,
+`violated` or `not_addressed`.
+
+```json
+"tasks": [
+  {"id": "t1", "prompt": "Add GET /orders/{id}/receipt that returns the order total ...",
+   "requirements": [
+     {"id": "r1", "ref": "d3", "check": "Money is returned as integer amount_cents, not a float.",
+      "violation_patterns": ["float\\(", "round\\("]},
+     {"id": "r2", "ref": "l2", "check": "Order items are loaded with the shared eager-load helper, not one query per item."}
+   ]}
+]
+```
+
+- `ref` is a current gold decision, a gold lesson, or `contract:<contract_id>`; the
+  requirement is what that gold implies for this task. `check` is judgeable from code alone.
+- The prompt is a realistic request that never states the requirement: no names, values,
+  helpers or field names taken from the referenced gold. A correct solution needs memory.
+- Requirements are module-specific: an engineer new to the project could not satisfy them
+  from general good practice.
+- `violation_patterns` (optional) are regexes whose match in the code means the requirement
+  was violated (for example the old value or the known mistake); use them only when a match
+  cannot occur in a correct solution.

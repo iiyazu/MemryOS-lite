@@ -1,0 +1,1676 @@
+{
+ "module_id": "invoices",
+ "project": "atlas",
+ "language": "en",
+ "title": "atlas invoices module",
+ "participants": [
+  {
+   "id": "human",
+   "kind": "human",
+   "name": "Mara"
+  },
+  {
+   "id": "owner",
+   "kind": "agent",
+   "name": "Invoices owner"
+  },
+  {
+   "id": "reviewer",
+   "kind": "agent",
+   "name": "Reviewer"
+  },
+  {
+   "id": "gate",
+   "kind": "infra",
+   "name": "CI gate"
+  }
+ ],
+ "activities": [
+  {
+   "id": "a01",
+   "type": "message",
+   "speaker": "human",
+   "text": "Mara: kicking off project atlas invoices module. You own a TypeScript Node service that renders and emails monthly invoices. Start small, we will evolve the invoice-api contract over many weeks."
+  },
+  {
+   "id": "a02",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "invoice-api v1:\nPOST /invoices accepts {customerId, lines:[{desc, qty, unit_cents}], due_at}.\nReturns 201 {id, number, subtotal_cents, tax_cents, total_cents, due_at}.\nGET /invoices/{id} returns the invoice with lines and totals.\nGET /invoices lists with ?offset=0&limit=20, returns {invoices, offset, limit}.\nPOST /invoices/{id}/send emails the rendered PDF to the customer.\nMoney fields use integer cents; dates are ISO strings.\nInvoice numbers come from the server allocator.",
+   "contract_id": "invoice-api",
+   "contract_version": 1
+  },
+  {
+   "id": "a03",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: PDF renderer is pdfkit 0.15 with template invoices/templates/default.hbs, A4 output, Helvetica embedded. Render via renderInvoicePdf(invoice) synchronously."
+  },
+  {
+   "id": "a04",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: invoice numbers use format INV-YYYY-#### (e.g., INV-2026-0007), sequential per year, stored in invoices.number."
+  },
+  {
+   "id": "a05",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: tax rounding uses floor per line via floorTaxCents(lineCents, rateBps), always rounds down to the cent."
+  },
+  {
+   "id": "a06",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: email delivery uses nodemailer 6 SMTP relay smtp.internal:587 with sendInvoiceEmail() and fixed retry 3 attempts 1s apart via sendWithRetry()."
+  },
+  {
+   "id": "a07",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: money is integer cents in fields named *_cents (subtotal_cents, tax_cents, total_cents); all arithmetic uses addCents()/mulCentsBps() helpers, never floats."
+  },
+  {
+   "id": "a08",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: all dates are ISO 8601 UTC strings (e.g., 2026-02-03T14:00:00.000Z) in issued_at, due_at, paid_at; parsed with parseInvoiceDate()."
+  },
+  {
+   "id": "a09",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: invoice numbers come only from allocateInvoiceNumber() helper backed by invoices_seq; never hand-format numbers."
+  },
+  {
+   "id": "a10",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: feature flags are read through flags.get('invoices.xxx') with default false; no direct env reads in module code."
+  },
+  {
+   "id": "a11",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: stack is TypeScript Node 20 service with Express 4, pg 8 against Postgres invoices table, jest 29 snapshots in tests/invoices/."
+  },
+  {
+   "id": "a12",
+   "type": "message",
+   "speaker": "human",
+   "text": "Mara: office coffee machine is back. Also sprint demo moved to Thursday."
+  },
+  {
+   "id": "a13",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented POST /invoices with addCents() totals and allocateInvoiceNumber(). PDF via renderInvoicePdf() looks fine locally."
+  },
+  {
+   "id": "a14",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: should the send endpoint retry on SMTP timeouts, or fail fast for now?"
+  },
+  {
+   "id": "a15",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: pdfkit output matches the design mock. Fonts embedded, A4 checks pass."
+  },
+  {
+   "id": "a16",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx jest tests/invoices/totals.test.ts --ci\nNode v20.11.0, jest 29.7.0\nrootdir: /home/dev/atlas-invoices\nPASS tests/invoices/numbering.test.ts\nFAIL tests/invoices/totals.test.ts\n  ● InvoiceTotals › computes 0.1+0.2 style cart correctly\n    expect(received).toBe(expected) // Object.is equality\n    Expected: 30\n    Received: 30.000000000000004\n    > 41 |   expect(invoice.total_cents).toBe(30);\n         |                               ^\n      at Object.toBe (tests/invoices/totals.test.ts:41:31)\n    Snapshot: floating-point arithmetic on money detected\n    Hint: use integer cents with addCents(), got float sum 0.1+0.2\n    > 42 |   expect(subtotal.total_cents).toBe(10);\n         |                               ^\n    Details: subtotal 0.1+0.2 produced 0.30000000000000004\n    at totals.compute (src/invoices/totals.ts:77:19)\n    Build 6001 finished: jest exit 1\n    See snapshot diff above for totals mismatch\n    Run with --updateSnapshot only after fixing cents math",
+   "gate_id": "jest"
+  },
+  {
+   "id": "a17",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed totals to use addCents() in the new path; the float branch was left in totals.ts by accident. Snapshot green locally."
+  },
+  {
+   "id": "a18",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: createInvoice() calls sendInvoiceEmail() before the pg transaction commits. If the insert rolls back the customer still gets a PDF. Queue to invoice_outbox and drain with pollInvoiceOutbox() after commit."
+  },
+  {
+   "id": "a19",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Moved send behind commit in create path; outbox row written in-txn, pollInvoiceOutbox() sends after. Review please."
+  },
+  {
+   "id": "a20",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: anyone tried the new ramen place near the office? Worth it."
+  },
+  {
+   "id": "a21",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented customer block with direct template string for speed."
+  },
+  {
+   "id": "a22",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx eslint src/invoices/render.ts --ext .ts\nNode v20.11.0, eslint 8.57.0\nrootdir: /home/dev/atlas-invoices\nsrc/invoices/render.ts:112:7  error  customer address injected without escaping\n  > 112 |   html += `<p>${customer.address}</p>`;\n        |           ^ unsafe interpolation of customer.address\n@atlas/security-html/no-unsafe-interpolation triggered\n    Expected escapeHtml(customer.address) or renderAddressSafe(address)\n    See https://eslint.org/docs/rules/no-unsanitized/property\n    1 problem (1 error, 0 warnings)\n      at renderCustomerBlock (src/invoices/render.ts:112:11)\n      at renderInvoicePdf (src/invoices/render.ts:140:5)\n    rule: @atlas/security-html/no-unsafe-interpolation\n    Additional context: address contains <script> in fixture\n    Build 6004: eslint exit 1 with security errors\n    Fix by wrapping with escapeHtml() helper\n    Rerun lint after patch to verify clean\n    16 lines checked, 1 file failed\n    Done in 2.31s",
+   "gate_id": "eslint"
+  },
+  {
+   "id": "a23",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Wrapped address with escapeHtml() in render path. Lint clean locally, using renderAddressSafe() now."
+  },
+  {
+   "id": "a24",
+   "type": "message",
+   "speaker": "human",
+   "text": "Hypothetical: what if we billed in euros only? Just thinking, no change now."
+  },
+  {
+   "id": "a25",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: nodemailer SMTP relay latency p95 400ms. Fixed retry covers blips."
+  },
+  {
+   "id": "a26",
+   "type": "message",
+   "speaker": "human",
+   "text": "Plan: next weeks 1) tax breakdown per line, 2) credit notes, 3) status field. Tracking in ATL-101."
+  },
+  {
+   "id": "a27",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Chitchat: builds green three days straight. Knock on wood."
+  },
+  {
+   "id": "a28",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: staging invoices render fine. No action needed."
+  },
+  {
+   "id": "a29",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented due_at reminder job reading flags.get('invoices.reminders') each run."
+  },
+  {
+   "id": "a30",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: do we store PDFs on disk or regenerate on GET? Leaning regenerate."
+  },
+  {
+   "id": "a31",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: invoice numbers from allocateInvoiceNumber() look good: INV-2026-0019 etc."
+  },
+  {
+   "id": "a32",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: team lunch Friday, vote tacos or pizza."
+  },
+  {
+   "id": "a33",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented monthly batch: loops customers, allocates numbers, renders with pdfkit."
+  },
+  {
+   "id": "a34",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: deploy freeze Friday for billing run. Small fixes only."
+  },
+  {
+   "id": "a35",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Note: tax uses floorTaxCents() per line for now. Finance signed off for v1."
+  },
+  {
+   "id": "a36",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: should line items carry their own tax rate? Some customers have mixed VAT."
+  },
+  {
+   "id": "a37",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Hypothetical: puppeteer for pixel-perfect PDFs? Parking it, pdfkit fine for now."
+  },
+  {
+   "id": "a38",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: SMTP relay had a blip, fixed retry handled it."
+  },
+  {
+   "id": "a39",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: jest snapshots for totals use integer cents fixtures now."
+  },
+  {
+   "id": "a40",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: hackathon signups open. Prizes include headphones."
+  },
+  {
+   "id": "a41",
+   "type": "message",
+   "speaker": "human",
+   "text": "New requirement: finance needs line-item tax breakdown on the invoice and API. Please add per-line tax_cents in v2."
+  },
+  {
+   "id": "a42",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Proposal: v2 adds lines[].tax_cents and tax_rate_bps per line, totals still via addCents(). Chromium rendering evaluated."
+  },
+  {
+   "id": "a43",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: PDF renderer is puppeteer 22 Chromium headless with template invoices/templates/chromium.hbs, render via renderInvoicePdfAsync(invoice). pdfkit path retired."
+  },
+  {
+   "id": "a44",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: puppeteer PDFs look sharper in staging. Keep an eye on memory."
+  },
+  {
+   "id": "a45",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented float shortcut in bulk import for speed, will convert to cents later."
+  },
+  {
+   "id": "a46",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx jest tests/invoices/totals.test.ts --ci\nNode v20.11.0, jest 29.7.0\nrootdir: /home/dev/atlas-invoices\nPASS tests/invoices/numbering.test.ts\nFAIL tests/invoices/bulk.test.ts\n  ● InvoiceTotals › computes 0.1+0.2 style cart correctly\n    expect(received).toBe(expected) // Object.is equality\n    Expected: 30\n    Received: 30.000000000000004\n    > 41 |   expect(invoice.total_cents).toBe(30);\n         |                               ^\n      at Object.toBe (tests/invoices/totals.test.ts:41:31)\n    Snapshot: floating-point arithmetic on money detected\n    Hint: use integer cents with addCents(), got float sum 0.1+0.2\n    > 42 |   expect(subtotal.total_cents).toBe(10);\n         |                               ^\n    Details: subtotal 0.1+0.2 produced 0.30000000000000004\n    at totals.compute (src/invoices/totals.ts:77:19)\n    Build 6102 finished: jest exit 1\n    See snapshot diff above for totals mismatch\n    Run with --updateSnapshot only after fixing cents math",
+   "gate_id": "jest"
+  },
+  {
+   "id": "a47",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Converted bulk import to mulCentsBps(). Float shortcut removed."
+  },
+  {
+   "id": "a48",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: invoice numbers use format ATL-YYYYMM-##### (e.g., ATL-202603-00012), sequential per month via allocateInvoiceNumber(). Old INV-YYYY-#### retired."
+  },
+  {
+   "id": "a49",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: do old INV-2026 numbers need remapping? No, keep them read-only."
+  },
+  {
+   "id": "a50",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: tax rounding uses half-up per line via roundHalfUpPerLine(lineCents, rateBps). floorTaxCents() retired."
+  },
+  {
+   "id": "a51",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: daylight saving this weekend, watch midnight jobs."
+  },
+  {
+   "id": "a52",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented v2 tax breakdown lines[].tax_cents with roundHalfUpPerLine()."
+  },
+  {
+   "id": "a53",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: finance likes the per-line breakdown in staging."
+  },
+  {
+   "id": "a54",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "invoice-api v2:\nPOST /invoices accepts {customerId, lines:[{desc, qty, unit_cents, tax_rate_bps}], due_at}.\nReturns 201 {id, number, lines:[{desc, qty, unit_cents, tax_cents}], subtotal_cents, tax_cents, total_cents, due_at}.\nEach line carries its own tax_cents computed with the current rounding helper.\nGET /invoices/{id} returns lines with tax breakdown.\nGET /invoices lists with ?offset=0&limit=20.\nPOST /invoices/{id}/send emails the rendered PDF.\nMoney in *_cents; dates are ISO 8601 UTC strings.\nNumbers allocated only by allocateInvoiceNumber().",
+   "contract_id": "invoice-api",
+   "contract_version": 2
+  },
+  {
+   "id": "a55",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: resend path calls sendInvoiceEmail() before the status update transaction commits. Same pre-commit bug as create: use invoice_outbox and pollInvoiceOutbox() after commit."
+  },
+  {
+   "id": "a56",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed resend to queue outbox in-txn. pollInvoiceOutbox() drains after commit."
+  },
+  {
+   "id": "a57",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx jest tests/invoices/email-commit.test.ts --ci\nNode v20.11.0, jest 29.7.0\nrootdir: /home/dev/atlas-invoices\nPASS tests/invoices/render.test.ts\nFAIL tests/invoices/email-commit.test.ts\n  ● InvoiceEmail › does not send before DB commit\n    expect(received).toBe(expected)\n    Expected: 0 emails sent before commit\n    Received: 1 email sent via sendInvoiceEmail() pre-commit\n    > 58 |   expect(sentBeforeCommit.length).toBe(0);\n         |                                  ^\n      at Object.toBe (tests/invoices/email-commit.test.ts:58:34)\n    Integration DB rolled back but SMTP mock got the invoice\n    Fix: queue to invoice_outbox and drain with pollInvoiceOutbox() after commit\n    at EmailService.send (src/invoices/email.ts:93:9)\n    at createInvoice (src/invoices/service.ts:121:7)\n    Build 6110 finished: jest exit 1\n    1 failed, 4 passed in 3.12s\n    See test: send-after-commit with pg transaction\n    Rerun after moving sendInvoiceEmail() post-commit",
+   "gate_id": "jest"
+  },
+  {
+   "id": "a58",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Patched bulk-send job: it bypassed outbox. Now writes outbox rows then drains."
+  },
+  {
+   "id": "a59",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented address block v2 with raw HTML for the new template."
+  },
+  {
+   "id": "a60",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx eslint src/invoices/render.ts --ext .ts\nNode v20.11.0, eslint 8.57.0\nrootdir: /home/dev/atlas-invoices\nsrc/invoices/address.ts:112:7  error  customer address injected without escaping\n  > 112 |   html += `<p>${customer.address}</p>`;\n        |           ^ unsafe interpolation of customer.address\n@atlas/security-html/no-unsafe-interpolation triggered\n    Expected escapeHtml(customer.address) or renderAddressSafe(address)\n    See https://eslint.org/docs/rules/no-unsanitized/property\n    1 problem (1 error, 0 warnings)\n      at renderCustomerBlock (src/invoices/render.ts:112:11)\n      at renderInvoicePdf (src/invoices/render.ts:140:5)\n    rule: @atlas/security-html/no-unsafe-interpolation\n    Additional context: address contains <script> in fixture\n    Build 6114: eslint exit 1 with security errors\n    Fix by wrapping with escapeHtml() helper\n    Rerun lint after patch to verify clean\n    16 lines checked, 1 file failed\n    Done in 2.31s",
+   "gate_id": "eslint"
+  },
+  {
+   "id": "a61",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Switched address block to renderAddressSafe(). Lint green."
+  },
+  {
+   "id": "a62",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: v2 rollout done, breakdown visible in dashboard."
+  },
+  {
+   "id": "a63",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: email delivery uses SendGrid @sendgrid/mail 8 via sendInvoiceEmail() with fixed retry 3 attempts 1s apart via sendWithRetry(). nodemailer SMTP retired."
+  },
+  {
+   "id": "a64",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: book club picked sci-fi. Meeting Thursday."
+  },
+  {
+   "id": "a65",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: SendGrid deliverability better. Bounce webhook wired."
+  },
+  {
+   "id": "a66",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: should credit notes reuse invoice numbers? Finance says no, separate sequence."
+  },
+  {
+   "id": "a67",
+   "type": "message",
+   "speaker": "human",
+   "text": "Plan: v3 adds credit notes and a status field. Finance demo Monday."
+  },
+  {
+   "id": "a68",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Proposal: v3 POST /invoices/{id}/credit-notes {amount_cents, reason} and status draft|sent|paid|credited via setInvoiceStatus()."
+  },
+  {
+   "id": "a69",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: refund-credit mailer interpolates customer.address without escaping. Must use escapeHtml() or renderAddressSafe() before sending."
+  },
+  {
+   "id": "a70",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Escaped credit mailer with escapeHtml(). Added fixture with <img onerror>."
+  },
+  {
+   "id": "a71",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: leftover cake in kitchen. First come first served."
+  },
+  {
+   "id": "a72",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented credit-note totals with float division for proration."
+  },
+  {
+   "id": "a73",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx jest tests/invoices/totals.test.ts --ci\nNode v20.11.0, jest 29.7.0\nrootdir: /home/dev/atlas-invoices\nPASS tests/invoices/numbering.test.ts\nFAIL tests/invoices/credit.test.ts\n  ● InvoiceTotals › computes 0.1+0.2 style cart correctly\n    expect(received).toBe(expected) // Object.is equality\n    Expected: 30\n    Received: 30.000000000000004\n    > 41 |   expect(invoice.total_cents).toBe(30);\n         |                               ^\n      at Object.toBe (tests/invoices/totals.test.ts:41:31)\n    Snapshot: floating-point arithmetic on money detected\n    Hint: use integer cents with addCents(), got float sum 0.1+0.2\n    > 42 |   expect(subtotal.total_cents).toBe(10);\n         |                               ^\n    Details: subtotal 0.1+0.2 produced 0.30000000000000004\n    at totals.compute (src/invoices/totals.ts:77:19)\n    Build 6201 finished: jest exit 1\n    See snapshot diff above for totals mismatch\n    Run with --updateSnapshot only after fixing cents math",
+   "gate_id": "jest"
+  },
+  {
+   "id": "a74",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Rewrote proration with mulCentsBps()/addCents(). Float path deleted."
+  },
+  {
+   "id": "a75",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: credit-note demo data ready in staging."
+  },
+  {
+   "id": "a76",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: credit-note handler sets status to credited by direct assignment, bypassing setInvoiceStatus(). Must validate via allowedInvoiceTransitions."
+  },
+  {
+   "id": "a77",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Routed credit handler through setInvoiceStatus(). Direct writes removed."
+  },
+  {
+   "id": "a78",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: PDF renderer is pdf-lib 1.17 with template invoices/templates/vector.hbs, render via renderInvoicePdfAsync(invoice). puppeteer Chromium retired for cost."
+  },
+  {
+   "id": "a79",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: midnight deploy okay for the renderer swap? Yes, low traffic."
+  },
+  {
+   "id": "a80",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: pdf-lib output 40% smaller. Fonts subset correctly."
+  },
+  {
+   "id": "a81",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: new office chairs arrived. Adjust lumbar."
+  },
+  {
+   "id": "a82",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: tax rounding uses half-up on invoice total via roundTaxCents(totalCents, rateBps). Per-line half-up retired for v3 totals."
+  },
+  {
+   "id": "a83",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: finance approved total-based rounding for credit notes."
+  },
+  {
+   "id": "a84",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: email delivery uses AWS SES @aws-sdk/client-ses via sendInvoiceEmail() with exponential backoff 5 attempts base 300ms x2 plus jitter via sendWithBackoff(). SendGrid and fixed sendWithRetry() retired."
+  },
+  {
+   "id": "a85",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: SES backoff cut throttle errors. Good."
+  },
+  {
+   "id": "a86",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "invoice-api v3:\nPOST /invoices accepts {customerId, lines:[{desc, qty, unit_cents, tax_rate_bps}], due_at}.\nReturns 201 {id, number, status, lines with tax_cents, subtotal_cents, tax_cents, total_cents, due_at}.\nstatus is one of draft|sent|paid|credited, changed only via setInvoiceStatus().\nPOST /invoices/{id}/send transitions draft to sent and emails the PDF.\nPOST /invoices/{id}/credit-notes accepts {amount_cents, reason}, creates CN- prefixed note.\nGET /invoices/{id} returns invoice with credit notes and status.\nGET /invoices lists with ?offset=0&limit=20.\nMoney in *_cents with addCents() math; dates ISO 8601 UTC.\nNumbers only from allocateInvoiceNumber().",
+   "contract_id": "invoice-api",
+   "contract_version": 3
+  },
+  {
+   "id": "a87",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: v3 implemented behind flags.get('invoices.v3') rollout."
+  },
+  {
+   "id": "a88",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx jest tests/invoices/status.test.ts --ci\nNode v20.11.0, jest 29.7.0\nrootdir: /home/dev/atlas-invoices\nPASS tests/invoices/totals.test.ts\nFAIL tests/invoices/status.test.ts\n  ● InvoiceStatus › rejects illegal credit-note transition\n    expect(received).toThrow(expected)\n    Expected: IllegalTransitionError for paid→draft\n    Received: status set to draft without guard\n    > 33 |   expect(() => setInvoiceStatus(inv, 'draft')).toThrow();\n         |                                                 ^\n      at Object.toThrow (tests/invoices/status.test.ts:33:49)\n    Hint: use setInvoiceStatus() with allowedInvoiceTransitions map\n    at setStatus (src/invoices/status.ts:41:11)\n    Current status field paid, attempted draft\n    Build 6210 finished: jest exit 1\n    1 failed, 6 passed in 1.44s\n    See allowedInvoiceTransitions for legal edges\n    Fix guard before merging status change\n    Done in 1.87s",
+   "gate_id": "jest"
+  },
+  {
+   "id": "a89",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed status guard: paid→draft now throws via allowedInvoiceTransitions."
+  },
+  {
+   "id": "a90",
+   "type": "message",
+   "speaker": "human",
+   "text": "Note for newcomers: early PDFs used pdfkit, do not copy that pattern. Current renderer is pdf-lib via renderInvoicePdfAsync()."
+  },
+  {
+   "id": "a91",
+   "type": "message",
+   "speaker": "human",
+   "text": "Reminder: invoice-api v1 had no per-line tax breakdown. That is obsolete; current v2/v3 require lines[].tax_cents."
+  },
+  {
+   "id": "a92",
+   "type": "message",
+   "speaker": "human",
+   "text": "Heads up: old numbers like INV-2026-0007 still exist read-only. New numbers only look like ATL-202603-00012 from allocateInvoiceNumber()."
+  },
+  {
+   "id": "a93",
+   "type": "message",
+   "speaker": "human",
+   "text": "Rejected: proposal to move PDF rendering back to pdfkit for simplicity. Keep pdf-lib; pdfkit cannot do vector credit-note stamps."
+  },
+  {
+   "id": "a94",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: deploy train leaves at 4pm. Get reviews in."
+  },
+  {
+   "id": "a95",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented dunning email with float percentage math."
+  },
+  {
+   "id": "a96",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx jest tests/invoices/totals.test.ts --ci\nNode v20.11.0, jest 29.7.0\nrootdir: /home/dev/atlas-invoices\nPASS tests/invoices/numbering.test.ts\nFAIL tests/invoices/dunning.test.ts\n  ● InvoiceTotals › computes 0.1+0.2 style cart correctly\n    expect(received).toBe(expected) // Object.is equality\n    Expected: 30\n    Received: 30.000000000000004\n    > 41 |   expect(invoice.total_cents).toBe(30);\n         |                               ^\n      at Object.toBe (tests/invoices/totals.test.ts:41:31)\n    Snapshot: floating-point arithmetic on money detected\n    Hint: use integer cents with addCents(), got float sum 0.1+0.2\n    > 42 |   expect(subtotal.total_cents).toBe(10);\n         |                               ^\n    Details: subtotal 0.1+0.2 produced 0.30000000000000004\n    at totals.compute (src/invoices/totals.ts:77:19)\n    Build 6220 finished: jest exit 1\n    See snapshot diff above for totals mismatch\n    Run with --updateSnapshot only after fixing cents math",
+   "gate_id": "jest"
+  },
+  {
+   "id": "a97",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed dunning to integer bps math with mulCentsBps()."
+  },
+  {
+   "id": "a98",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: dunning job calls sendInvoiceEmail() before its batch transaction commits. Queue to invoice_outbox and drain with pollInvoiceOutbox() after commit."
+  },
+  {
+   "id": "a99",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Queued dunning mails via outbox. Pre-commit send removed."
+  },
+  {
+   "id": "a100",
+   "type": "message",
+   "speaker": "human",
+   "text": "Rejected: proposal to store money as floats for readability. Keep integer *_cents with addCents(); floats caused 0.1+0.2 snapshot failures."
+  },
+  {
+   "id": "a101",
+   "type": "message",
+   "speaker": "human",
+   "text": "Note: tax used to round down with floorTaxCents() per line. That is retired; current v3 uses roundTaxCents() half-up on the invoice total."
+  },
+  {
+   "id": "a102",
+   "type": "message",
+   "speaker": "human",
+   "text": "Reminder: early email went via nodemailer SMTP with fixed sendWithRetry(). Retired; current is SES with sendWithBackoff() exponential backoff."
+  },
+  {
+   "id": "a103",
+   "type": "message",
+   "speaker": "human",
+   "text": "Rejected: proposal to go back to fixed 3x 1s retry. Keep exponential backoff with jitter; fixed retries throttled SES."
+  },
+  {
+   "id": "a104",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented new footer with customer address inline."
+  },
+  {
+   "id": "a105",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ npx eslint src/invoices/render.ts --ext .ts\nNode v20.11.0, eslint 8.57.0\nrootdir: /home/dev/atlas-invoices\nsrc/invoices/footer.ts:112:7  error  customer address injected without escaping\n  > 112 |   html += `<p>${customer.address}</p>`;\n        |           ^ unsafe interpolation of customer.address\n@atlas/security-html/no-unsafe-interpolation triggered\n    Expected escapeHtml(customer.address) or renderAddressSafe(address)\n    See https://eslint.org/docs/rules/no-unsanitized/property\n    1 problem (1 error, 0 warnings)\n      at renderCustomerBlock (src/invoices/render.ts:112:11)\n      at renderInvoicePdf (src/invoices/render.ts:140:5)\n    rule: @atlas/security-html/no-unsafe-interpolation\n    Additional context: address contains <script> in fixture\n    Build 6228: eslint exit 1 with security errors\n    Fix by wrapping with escapeHtml() helper\n    Rerun lint after patch to verify clean\n    16 lines checked, 1 file failed\n    Done in 2.31s",
+   "gate_id": "eslint"
+  },
+  {
+   "id": "a106",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed footer to use renderAddressSafe(). Verified with <script> fixture."
+  },
+  {
+   "id": "a107",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: SES quota raised. Backoff rarely triggers now."
+  },
+  {
+   "id": "a108",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: should the admin list show credited totals inline? Mock tomorrow."
+  },
+  {
+   "id": "a109",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: pdf-lib vector stamps render credit notes correctly."
+  },
+  {
+   "id": "a110",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: end-of-quarter demo scheduled. Invoices slot ten minutes."
+  },
+  {
+   "id": "a111",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: total-based roundTaxCents() matches finance spreadsheet."
+  },
+  {
+   "id": "a112",
+   "type": "message",
+   "speaker": "human",
+   "text": "Rejected: proposal to render customer address with raw interpolation for speed. Keep escapeHtml()/renderAddressSafe(); raw HTML failed security lint three times."
+  },
+  {
+   "id": "a113",
+   "type": "message",
+   "speaker": "human",
+   "text": "Note: v2 required SendGrid briefly; retired now. Current delivery is SES, ignore old SendGrid keys."
+  },
+  {
+   "id": "a114",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: outbox drain pollInvoiceOutbox() handles SES retries cleanly."
+  },
+  {
+   "id": "a115",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: can we drop the puppeteer cache? Yes, retired months ago."
+  },
+  {
+   "id": "a116",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: credit-note prefix CN- stable, separate sequence."
+  },
+  {
+   "id": "a117",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: team offsite next month. Ideas welcome."
+  },
+  {
+   "id": "a118",
+   "type": "message",
+   "speaker": "human",
+   "text": "Plan: next sprint covers dunning analytics. No contract change planned."
+  },
+  {
+   "id": "a119",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: nightly batch allocated 2k numbers via allocateInvoiceNumber() without collision."
+  },
+  {
+   "id": "a120",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: do we still need SMTP relay creds? No, nodemailer retired."
+  },
+  {
+   "id": "a121",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: p95 send latency steady after SES backoff rollout."
+  }
+ ],
+ "gold": {
+  "contracts": [
+   {
+    "contract_id": "invoice-api",
+    "version": 3,
+    "activity_id": "a86"
+   }
+  ],
+  "decisions": [
+   {
+    "id": "d1",
+    "topic_key": "invoices.pdf_renderer",
+    "statement": "PDF renderer was pdfkit 0.15 with default.hbs via renderInvoicePdf() (retired).",
+    "sources": [
+     {
+      "activity_id": "a03",
+      "quote": "PDF renderer is pdfkit 0.15"
+     }
+    ],
+    "superseded_by": "d10"
+   },
+   {
+    "id": "d2",
+    "topic_key": "invoices.number_format",
+    "statement": "Invoice numbers were INV-YYYY-#### sequential per year (retired).",
+    "sources": [
+     {
+      "activity_id": "a04",
+      "quote": "INV-YYYY-####"
+     }
+    ],
+    "superseded_by": "d11"
+   },
+   {
+    "id": "d3",
+    "topic_key": "invoices.tax_rounding",
+    "statement": "Tax rounding was floor per line via floorTaxCents() (retired).",
+    "sources": [
+     {
+      "activity_id": "a05",
+      "quote": "floor per line via floorTaxCents"
+     }
+    ],
+    "superseded_by": "d12"
+   },
+   {
+    "id": "d4",
+    "topic_key": "invoices.email_delivery",
+    "statement": "Email delivery was nodemailer 6 SMTP with fixed retry via sendWithRetry() (retired).",
+    "sources": [
+     {
+      "activity_id": "a06",
+      "quote": "nodemailer 6 SMTP relay smtp.internal:587"
+     }
+    ],
+    "superseded_by": "d13"
+   },
+   {
+    "id": "d5",
+    "topic_key": "invoices.money_cents",
+    "statement": "Money is integer cents in fields named *_cents with addCents()/mulCentsBps() helpers, never floats.",
+    "sources": [
+     {
+      "activity_id": "a07",
+      "quote": "money is integer cents in fields named *_cents"
+     }
+    ]
+   },
+   {
+    "id": "d6",
+    "topic_key": "invoices.dates",
+    "statement": "All dates are ISO 8601 UTC strings in issued_at, due_at, paid_at parsed with parseInvoiceDate().",
+    "sources": [
+     {
+      "activity_id": "a08",
+      "quote": "all dates are ISO 8601 UTC strings"
+     }
+    ]
+   },
+   {
+    "id": "d7",
+    "topic_key": "invoices.number_alloc",
+    "statement": "Invoice numbers come only from allocateInvoiceNumber() backed by invoices_seq.",
+    "sources": [
+     {
+      "activity_id": "a09",
+      "quote": "only from allocateInvoiceNumber() helper"
+     }
+    ]
+   },
+   {
+    "id": "d8",
+    "topic_key": "invoices.flags",
+    "statement": "Feature flags are read through flags.get('invoices.xxx') with default false.",
+    "sources": [
+     {
+      "activity_id": "a10",
+      "quote": "read through flags.get('invoices.xxx')"
+     }
+    ]
+   },
+   {
+    "id": "d9",
+    "topic_key": "invoices.stack",
+    "statement": "Stack is TypeScript Node 20 with Express 4, pg 8, jest 29 snapshots in tests/invoices/.",
+    "sources": [
+     {
+      "activity_id": "a11",
+      "quote": "TypeScript Node 20 service with Express 4"
+     }
+    ]
+   },
+   {
+    "id": "d10",
+    "topic_key": "invoices.pdf_renderer",
+    "statement": "PDF renderer was puppeteer 22 Chromium headless via renderInvoicePdfAsync() (retired).",
+    "sources": [
+     {
+      "activity_id": "a43",
+      "quote": "puppeteer 22 Chromium headless"
+     }
+    ],
+    "superseded_by": "d14"
+   },
+   {
+    "id": "d11",
+    "topic_key": "invoices.number_format",
+    "statement": "Invoice numbers use format ATL-YYYYMM-##### sequential per month via allocateInvoiceNumber().",
+    "sources": [
+     {
+      "activity_id": "a48",
+      "quote": "ATL-YYYYMM-#####"
+     }
+    ]
+   },
+   {
+    "id": "d12",
+    "topic_key": "invoices.tax_rounding",
+    "statement": "Tax rounding was half-up per line via roundHalfUpPerLine() (retired).",
+    "sources": [
+     {
+      "activity_id": "a50",
+      "quote": "half-up per line via roundHalfUpPerLine"
+     }
+    ],
+    "superseded_by": "d15"
+   },
+   {
+    "id": "d13",
+    "topic_key": "invoices.email_delivery",
+    "statement": "Email delivery was SendGrid @sendgrid/mail 8 with fixed retry via sendWithRetry() (retired).",
+    "sources": [
+     {
+      "activity_id": "a63",
+      "quote": "SendGrid @sendgrid/mail 8"
+     }
+    ],
+    "superseded_by": "d16"
+   },
+   {
+    "id": "d14",
+    "topic_key": "invoices.pdf_renderer",
+    "statement": "PDF renderer is pdf-lib 1.17 with vector.hbs via renderInvoicePdfAsync().",
+    "sources": [
+     {
+      "activity_id": "a78",
+      "quote": "pdf-lib 1.17 with template invoices/templates/vector.hbs"
+     }
+    ]
+   },
+   {
+    "id": "d15",
+    "topic_key": "invoices.tax_rounding",
+    "statement": "Tax rounding uses half-up on invoice total via roundTaxCents(totalCents, rateBps).",
+    "sources": [
+     {
+      "activity_id": "a82",
+      "quote": "half-up on invoice total via roundTaxCents"
+     }
+    ]
+   },
+   {
+    "id": "d16",
+    "topic_key": "invoices.email_delivery",
+    "statement": "Email delivery uses AWS SES via sendInvoiceEmail() with exponential backoff via sendWithBackoff().",
+    "sources": [
+     {
+      "activity_id": "a84",
+      "quote": "AWS SES @aws-sdk/client-ses"
+     }
+    ]
+   }
+  ],
+  "lessons": [
+   {
+    "id": "l1",
+    "topic_key": "invoices.float_money",
+    "statement": "Never use floating-point arithmetic on money; compute all totals with addCents()/mulCentsBps() over integer *_cents fields.",
+    "sources": [
+     {
+      "activity_id": "a16",
+      "quote": "floating-point arithmetic on money detected"
+     },
+     {
+      "activity_id": "a46",
+      "quote": "floating-point arithmetic on money detected"
+     },
+     {
+      "activity_id": "a73",
+      "quote": "floating-point arithmetic on money detected"
+     },
+     {
+      "activity_id": "a96",
+      "quote": "floating-point arithmetic on money detected"
+     }
+    ],
+    "occurrences": 4
+   },
+   {
+    "id": "l2",
+    "topic_key": "invoices.email_commit",
+    "statement": "Never call sendInvoiceEmail() before the pg transaction commits; queue to invoice_outbox and drain with pollInvoiceOutbox() after commit.",
+    "sources": [
+     {
+      "activity_id": "a18",
+      "quote": "calls sendInvoiceEmail() before the pg transaction commits"
+     },
+     {
+      "activity_id": "a55",
+      "quote": "calls sendInvoiceEmail() before the status update transaction commits"
+     },
+     {
+      "activity_id": "a57",
+      "quote": "1 email sent via sendInvoiceEmail() pre-commit"
+     },
+     {
+      "activity_id": "a98",
+      "quote": "calls sendInvoiceEmail() before its batch transaction commits"
+     }
+    ],
+    "occurrences": 4
+   },
+   {
+    "id": "l3",
+    "topic_key": "invoices.escape_address",
+    "statement": "Always render the customer address with escapeHtml() or renderAddressSafe(); raw interpolation fails security lint.",
+    "sources": [
+     {
+      "activity_id": "a22",
+      "quote": "customer address injected without escaping"
+     },
+     {
+      "activity_id": "a60",
+      "quote": "customer address injected without escaping"
+     },
+     {
+      "activity_id": "a69",
+      "quote": "interpolates customer.address without escaping"
+     },
+     {
+      "activity_id": "a105",
+      "quote": "customer address injected without escaping"
+     }
+    ],
+    "occurrences": 4
+   },
+   {
+    "id": "l4",
+    "topic_key": "invoices.status_guard",
+    "statement": "Always change invoice status via setInvoiceStatus() validated against allowedInvoiceTransitions; never assign status directly.",
+    "sources": [
+     {
+      "activity_id": "a76",
+      "quote": "bypassing setInvoiceStatus()"
+     },
+     {
+      "activity_id": "a88",
+      "quote": "toThrow(expected)"
+     }
+    ],
+    "occurrences": 2
+   }
+  ]
+ },
+ "noise": [
+  {
+   "activity_id": "a12",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a14",
+   "type": "question",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a15",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a20",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a24",
+   "type": "hypothetical",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a25",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a26",
+   "type": "plan",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a27",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a28",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a30",
+   "type": "question",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a32",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a34",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a36",
+   "type": "question",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a37",
+   "type": "hypothetical",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a38",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a39",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a40",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a44",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a49",
+   "type": "question",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a51",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a53",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a62",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a64",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a65",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a66",
+   "type": "question",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a67",
+   "type": "plan",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a68",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a71",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a75",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a79",
+   "type": "question",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a80",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a81",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a83",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a85",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a94",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a107",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a108",
+   "type": "question",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a110",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a117",
+   "type": "chitchat",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a118",
+   "type": "plan",
+   "note": "non-memory chatter/status/plan"
+  },
+  {
+   "activity_id": "a121",
+   "type": "status",
+   "note": "non-memory chatter/status/plan"
+  }
+ ],
+ "probes": [
+  {
+   "id": "p1",
+   "question": "How is money represented and computed in invoices?",
+   "answer_ids": [
+    "d5"
+   ],
+   "must_contain": [
+    "*_cents"
+   ]
+  },
+  {
+   "id": "p2",
+   "question": "What format do invoice dates use?",
+   "answer_ids": [
+    "d6"
+   ],
+   "must_contain": [
+    "ISO 8601 UTC"
+   ]
+  },
+  {
+   "id": "p3",
+   "question": "How are invoice numbers allocated?",
+   "answer_ids": [
+    "d7"
+   ],
+   "must_contain": [
+    "allocateInvoiceNumber"
+   ]
+  },
+  {
+   "id": "p4",
+   "question": "How is feature-flag state read in the invoices module?",
+   "answer_ids": [
+    "d8"
+   ],
+   "must_contain": [
+    "flags.get"
+   ]
+  },
+  {
+   "id": "p5",
+   "question": "What stack does the invoices service run on?",
+   "answer_ids": [
+    "d9"
+   ],
+   "must_contain": [
+    "Express 4"
+   ]
+  },
+  {
+   "id": "p6",
+   "question": "What default do invoice feature flags use?",
+   "answer_ids": [
+    "d8"
+   ],
+   "must_contain": [
+    "default false"
+   ]
+  },
+  {
+   "id": "p7",
+   "question": "What must you do before sending an invoice email relative to the DB commit?",
+   "answer_ids": [
+    "l2"
+   ],
+   "must_contain": [
+    "pollInvoiceOutbox"
+   ]
+  },
+  {
+   "id": "p8",
+   "question": "Which mistake failed jest snapshots four times on invoice totals?",
+   "answer_ids": [
+    "l1"
+   ],
+   "must_contain": [
+    "floating-point"
+   ]
+  },
+  {
+   "id": "p9",
+   "question": "How must the customer address be rendered to pass security lint?",
+   "answer_ids": [
+    "l3"
+   ],
+   "must_contain": [
+    "escapeHtml"
+   ]
+  },
+  {
+   "id": "p10",
+   "question": "How must invoice status transitions be validated?",
+   "answer_ids": [
+    "l4"
+   ],
+   "must_contain": [
+    "allowedInvoiceTransitions"
+   ]
+  },
+  {
+   "id": "p11",
+   "question": "What PDF renderer is current for invoices?",
+   "answer_ids": [
+    "d14"
+   ],
+   "must_contain": [
+    "pdf-lib"
+   ],
+   "must_not_contain": [
+    "pdfkit"
+   ]
+  },
+  {
+   "id": "p12",
+   "question": "What invoice number format is current?",
+   "answer_ids": [
+    "d11"
+   ],
+   "must_contain": [
+    "ATL-YYYYMM"
+   ],
+   "must_not_contain": [
+    "INV-YYYY"
+   ]
+  },
+  {
+   "id": "p13",
+   "question": "What tax rounding rule is current?",
+   "answer_ids": [
+    "d15"
+   ],
+   "must_contain": [
+    "roundTaxCents"
+   ],
+   "must_not_contain": [
+    "floorTaxCents"
+   ]
+  },
+  {
+   "id": "p14",
+   "question": "What email delivery path is current?",
+   "answer_ids": [
+    "d16"
+   ],
+   "must_contain": [
+    "SES"
+   ],
+   "must_not_contain": [
+    "nodemailer"
+   ]
+  },
+  {
+   "id": "p15",
+   "question": "What retry policy does invoice email use now?",
+   "answer_ids": [
+    "d16"
+   ],
+   "must_contain": [
+    "sendWithBackoff"
+   ],
+   "must_not_contain": [
+    "sendWithRetry"
+   ]
+  },
+  {
+   "id": "p16",
+   "question": "What does the current invoice-api return for tax and credit notes?",
+   "answer_ids": [
+    "contract:invoice-api"
+   ],
+   "must_contain": [
+    "credit-notes"
+   ],
+   "must_not_contain": [
+    "no per-line tax"
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "id": "t1",
+   "prompt": "Add support for mid-cycle plan changes with prorated adjustments on the next billing document.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "Prorated adjustments compute entirely with addCents()/mulCentsBps() over integer *_cents fields, no floating-point arithmetic.",
+     "violation_patterns": [
+      "parseFloat",
+      "\\.toFixed\\("
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d5",
+     "check": "All stored and returned amounts use integer *_cents fields with addCents()/mulCentsBps() helpers, never floats.",
+     "violation_patterns": [
+      "parseFloat",
+      "\\.toFixed\\("
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "contract:invoice-api",
+     "check": "New path follows invoice-api v3: lines carry tax_cents, totals in subtotal_cents/tax_cents/total_cents, numbers only from allocateInvoiceNumber(), dates ISO 8601 UTC.",
+     "violation_patterns": [
+      "INV-"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t2",
+   "prompt": "Build a nightly run that nudges accounts with late balances and records when each nudge went out. It should only operate for pilot workspaces during rollout.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l2",
+     "check": "Reminder mails queue to invoice_outbox in-txn and drain with pollInvoiceOutbox() after commit; never call sendInvoiceEmail() pre-commit."
+    },
+    {
+     "id": "r2",
+     "ref": "d6",
+     "check": "All timestamps are ISO 8601 UTC strings in issued_at/due_at/paid_at style fields, parsed with parseInvoiceDate()."
+    },
+    {
+     "id": "r3",
+     "ref": "d8",
+     "check": "Rollout gating reads through flags.get('invoices.xxx') with default false; no direct process.env reads.",
+     "violation_patterns": [
+      "process\\.env"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t3",
+   "prompt": "Refresh the buyer details section and itemized charges area in the downloadable billing file to match the new brand layout.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l3",
+     "check": "Buyer block renders customer.address only via escapeHtml() or renderAddressSafe(); no raw ${customer.address} interpolation.",
+     "violation_patterns": [
+      "\\$\\{customer\\.address\\}"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d14",
+     "check": "Output is produced via renderInvoicePdfAsync() with pdf-lib 1.17 and invoices/templates/vector.hbs; no pdfkit/puppeteer paths.",
+     "violation_patterns": [
+      "pdfkit",
+      "puppeteer"
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "contract:invoice-api",
+     "check": "File and API include v3 per-line tax_cents breakdown with subtotal_cents/tax_cents/total_cents in *_cents."
+    }
+   ]
+  },
+  {
+   "id": "t4",
+   "prompt": "Add a goodwill adjustment flow for settled billing documents, including levy calculations on the adjustment.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l4",
+     "check": "Lifecycle moves only via setInvoiceStatus() validated against allowedInvoiceTransitions; never assign .status directly.",
+     "violation_patterns": [
+      "\\.status\\s*="
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d15",
+     "check": "Levy uses half-up on invoice total via roundTaxCents(totalCents, rateBps); no floorTaxCents()/roundHalfUpPerLine() per-line path.",
+     "violation_patterns": [
+      "floorTaxCents",
+      "roundHalfUpPerLine"
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "contract:invoice-api",
+     "check": "Adjustment follows invoice-api v3 credit-notes: POST /invoices/{id}/credit-notes with {amount_cents, reason} creates CN- note, status among draft|sent|paid|credited."
+    }
+   ]
+  },
+  {
+   "id": "t5",
+   "prompt": "Add bulk onboarding that creates many billing documents at once and notifies each buyer.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "Bulk creation math uses addCents()/mulCentsBps() over integer *_cents, no floating-point arithmetic.",
+     "violation_patterns": [
+      "parseFloat",
+      "\\.toFixed\\("
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "l2",
+     "check": "Per-buyer notifications queue to invoice_outbox and drain with pollInvoiceOutbox() after commit; no pre-commit sendInvoiceEmail()."
+    },
+    {
+     "id": "r3",
+     "ref": "d5",
+     "check": "Stored amounts are integer *_cents via addCents()/mulCentsBps(), never floats.",
+     "violation_patterns": [
+      "parseFloat"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t6",
+   "prompt": "Build a payment reminder note for late accounts, gated for pilot workspaces, showing buyer location details.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l2",
+     "check": "Reminder path queues to invoice_outbox and drains with pollInvoiceOutbox() after commit; never call sendInvoiceEmail() pre-commit."
+    },
+    {
+     "id": "r2",
+     "ref": "l3",
+     "check": "Location block uses escapeHtml() or renderAddressSafe(); no raw ${customer.address} interpolation.",
+     "violation_patterns": [
+      "\\$\\{customer\\.address\\}"
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "d8",
+     "check": "Pilot gating via flags.get('invoices.xxx') default false; no process.env reads.",
+     "violation_patterns": [
+      "process\\.env"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t7",
+   "prompt": "Add a reimbursement path for settled billing documents that issues a new reference code and moves the lifecycle forward.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "Reimbursement math uses addCents()/mulCentsBps() over integer *_cents, no floating-point arithmetic.",
+     "violation_patterns": [
+      "parseFloat",
+      "\\.toFixed\\("
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "l4",
+     "check": "Moves use setInvoiceStatus() with allowedInvoiceTransitions; no direct .status assignment.",
+     "violation_patterns": [
+      "\\.status\\s*="
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "d7",
+     "check": "Reference codes come only from allocateInvoiceNumber() backed by invoices_seq; never hand-format.",
+     "violation_patterns": [
+      "INV-",
+      "`ATL-"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t8",
+   "prompt": "Make an operations dashboard showing past billing documents with buyer location details and timing info, paged for large volumes.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l3",
+     "check": "Dashboard buyer details use escapeHtml()/renderAddressSafe(); no raw ${customer.address}.",
+     "violation_patterns": [
+      "\\$\\{customer\\.address\\}"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d6",
+     "check": "Timing fields are ISO 8601 UTC strings in issued_at/due_at/paid_at, parsed with parseInvoiceDate()."
+    },
+    {
+     "id": "r3",
+     "ref": "d9",
+     "check": "Implementation stays on TypeScript Node 20 Express 4 pg 8 service with jest 29 snapshots in tests/invoices/.",
+     "violation_patterns": [
+      "fastify",
+      "vitest"
+     ]
+    },
+    {
+     "id": "r4",
+     "ref": "contract:invoice-api",
+     "check": "List follows invoice-api v3: GET /invoices with ?offset=0&limit=20 returns {invoices, offset, limit} with *_cents totals."
+    }
+   ]
+  }
+ ]
+}

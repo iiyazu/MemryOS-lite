@@ -1,0 +1,1685 @@
+{
+ "module_id": "checkout",
+ "project": "harbor",
+ "language": "zh",
+ "title": "harbor 结算页前端模块",
+ "participants": [
+  {
+   "id": "human",
+   "kind": "human",
+   "name": "老李"
+  },
+  {
+   "id": "owner",
+   "kind": "agent",
+   "name": "结算 owner"
+  },
+  {
+   "id": "reviewer",
+   "kind": "agent",
+   "name": "复核员"
+  },
+  {
+   "id": "gate",
+   "kind": "infra",
+   "name": "CI 门禁"
+  }
+ ],
+ "activities": [
+  {
+   "id": "a01",
+   "type": "message",
+   "speaker": "human",
+   "text": "老李：project harbor 结算页前端开工，你负责 CheckoutPage 模块（React 18 + TypeScript），覆盖购物车结算、优惠券、下单支付跳转。先跑通主流程，后面几周慢慢加固。"
+  },
+  {
+   "id": "a02",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "checkout-ui-api v1：\nPOST /api/checkout/quote 接受 {items:[{sku,qty}], address}，返回 {price: 浮点数, total: 浮点数}。\nPOST /api/checkout/orders 接受 {items, address, pay_method}，返回 {order_id}。\nGET /api/checkout/orders/{id} 返回 {order_id, status, price}。\nprice 为浮点数，单位元，如 12.99。\nstatus 为字符串：created / paid / failed。\ncoupon 相关字段暂无，优惠券以后再加。\n所有接口 JSON，错误返回 {code, msg}。",
+   "contract_id": "checkout-ui-api",
+   "contract_version": 1
+  },
+  {
+   "id": "a03",
+   "type": "message",
+   "speaker": "human",
+   "text": "老李：楼下咖啡机修好了，冲刺前先去喝一杯。"
+  },
+  {
+   "id": "a04",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算页所有金额必须用 formatMoney(price_minor, currency) 渲染，禁止手写 toFixed(2)，小数精度统一走该函数。"
+  },
+  {
+   "id": "a05",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算页接口请求只能走 src/lib/apiClient（自动带 X-Request-Id），禁止裸 fetch 或 axios 直调下单接口。"
+  },
+  {
+   "id": "a06",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算页组件文件名用 PascalCase，hooks 统一放在 src/hooks，如 useCartTotal.ts。"
+  },
+  {
+   "id": "a07",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算页文案全部走 t('checkout.*') 国际化，禁止在 JSX 里写死中文。"
+  },
+  {
+   "id": "a08",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算页路由 /checkout 必须经 <CheckoutGate> 校验登录态与空购物车重定向到 /cart，未登录直接拦。"
+  },
+  {
+   "id": "a09",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算页主按钮用 HarborButton variant=\"primary-blue\"（#1A66FF），间距只用 spacing.sm=4px / md=8px，圆角 8px。"
+  },
+  {
+   "id": "a10",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算状态先用 useState + useContext，CheckoutContext 放在 src/context/CheckoutContext.tsx，cart、address、coupon 放同一 context。"
+  },
+  {
+   "id": "a11",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：表单校验先用 yup + yupResolver，schema 在 src/validation/checkoutSchemaYup.ts，手机号正则用 /^1[3-9]\\d{9}$/，邮编 6 位。"
+  },
+  {
+   "id": "a12",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：提交防重先用本地 isPlacing 布尔锁，按钮写 disabled={isPlacing}，提交中直接 return。"
+  },
+  {
+   "id": "a13",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：埋点先用 window.__harborTrack 的 harborTrack SDK v1，上报 track('checkout_submit', {cart_id})。"
+  },
+  {
+   "id": "a14",
+   "type": "message",
+   "speaker": "human",
+   "text": "站会：结算页骨架进度正常，周四联调，不用 action。"
+  },
+  {
+   "id": "a15",
+   "type": "message",
+   "speaker": "human",
+   "text": "问一句：优惠券这期要做吗，还是下期再加？"
+  },
+  {
+   "id": "a16",
+   "type": "message",
+   "speaker": "owner",
+   "text": "已搭通 CheckoutPage 骨架：购物车列表、地址表单、下单按钮调通 quote 接口，本地能下出测试单。"
+  },
+  {
+   "id": "a17",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：中午吃拉面吗，楼下新开那家据说不错。"
+  },
+  {
+   "id": "a18",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pnpm exec playwright test tests/e2e/checkout/no-double-order.spec.ts --reporter=line\nRunning 1 test using 1 worker\n  harbour checkout e2e | chromium 128.0\n  test file: tests/e2e/checkout/no-double-order.spec.ts::test-double-click-creates-one-order\n  baseURL: http://localhost:5173\n  [setup] login fixture: user test+checkout@harbor.test\n  [setup] cart seeded: 2 x SKU-HB-001, coupon EMPTY\n  [step 1/5] goto /checkout ... ok (812ms)\n  [step 2/5] fill address: 北京市朝阳区 ... ok\n  [step 3/5] click #place-order-btn x2 quickly (100ms apart)\n  [step 4/5] wait for network idle ... ok\n  [step 5/5] assert single order created\n  AssertionError: expected 1 order, got 2 — 提交时没有禁用下单按钮导致重复下单\n  orders in mock server: 2 (order_9f21, order_9f22)\n  trace: tests/e2e/checkout/trace-double-click.zip retained\n  retry #1: same double order observed\n  ── summary ──\n  1 failed, 0 passed, 0 skipped in 14.2s\nBuild 7120 finished: playwright exit 1.\nDocs: https://playwright.dev/docs/test-assertions",
+   "gate_id": "e2e"
+  },
+  {
+   "id": "a19",
+   "type": "message",
+   "speaker": "owner",
+   "text": "修了双击重复下单：在 submitOrder 里加 isPlacing 判断，按钮 disabled={isPlacing}，本地连点 10 次只剩 1 单。"
+  },
+  {
+   "id": "a20",
+   "type": "message",
+   "speaker": "owner",
+   "text": "计划：下几周 1）切状态库 2）换校验库 3）加优惠券字段，排期在 HB-204。"
+  },
+  {
+   "id": "a21",
+   "type": "message",
+   "speaker": "owner",
+   "text": "地址表单已接 yup，手机号和 6 位邮编都能拦住，错误提示先直接显示。"
+  },
+  {
+   "id": "a22",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pnpm exec eslint src --ext .ts,.tsx --max-warnings 0\nharbor-checkout eslint 9.12.0, config flat/harbor.js\n  lint target: src/components/CheckoutSummary.tsx\n  rules: react-hooks/exhaustive-deps:error, no-console:warn\n  [1/6] parsing ... ok\n  [2/6] resolving imports ... ok (42 modules)\n  [3/6] running react-hooks plugin ...\n  React Hook useEffect has missing dependencies: 'cartTotal' and 'couponCode'. Either include them or remove the dependency array (react-hooks/exhaustive-deps). Effect 内用了旧的购物车总价。\n  [4/6] running a11y plugin ... ok\n  [5/6] running import/order ... ok\n  [6/6] summary:\n  /app/src/components/CheckoutSummary.tsx\n    88:6  error  react-hooks/exhaustive-deps  see detail above\n    102:3 warning  no-console  (1 allowed in debug file only)\n  ✖ 1 problem (1 error, 1 warning)\nBuild 7131 finished: eslint exit 1.\nFix: add missing deps or split effect; see react-hooks docs.\nCache: .eslintcache updated, 0 files skipped.",
+   "gate_id": "eslint"
+  },
+  {
+   "id": "a23",
+   "type": "message",
+   "speaker": "owner",
+   "text": "补了结算总价 effect 的依赖，购物车变化会重算，本地 eslint 已过。"
+  },
+  {
+   "id": "a24",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：办公室 wifi 又掉了，VPN 一小时一断。"
+  },
+  {
+   "id": "a25",
+   "type": "message",
+   "speaker": "owner",
+   "text": "埋点已接 harborTrack v1，提交成功上报 checkout_submit，带 cart_id。"
+  },
+  {
+   "id": "a26",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：测试环境 provider 沙箱今天有点抖，重试慢不是我们的 bug。"
+  },
+  {
+   "id": "a27",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "异议：CheckoutResult 把后端错误原文直接展示给用户了，setError(err.message) 会把 INSUFFICIENT_STOCK 这类英文原样怼到界面，应用 mapCheckoutError(err) 转成友好文案再展示。"
+  },
+  {
+   "id": "a28",
+   "type": "message",
+   "speaker": "owner",
+   "text": "已改用 mapCheckoutError(err) 包一层再 setError，英文原文不再直接上屏，本地看了下单失败是中文提示。"
+  },
+  {
+   "id": "a29",
+   "type": "message",
+   "speaker": "owner",
+   "text": "假设：如果以后用积分抵扣，总价计算要大改，先想想，不动代码。"
+  },
+  {
+   "id": "a30",
+   "type": "message",
+   "speaker": "owner",
+   "text": "下单链路调通：quote 取价、下单、跳支付页，LOGIN_HOLD 场景也验证过。"
+  },
+  {
+   "id": "a31",
+   "type": "message",
+   "speaker": "human",
+   "text": "问：空购物车进 /checkout 是拦到 /cart 吗，逻辑加了吗？"
+  },
+  {
+   "id": "a32",
+   "type": "message",
+   "speaker": "human",
+   "text": "新需求：很多用户有优惠券，请在 quote 和下单里支持优惠券字段，v2 要加。"
+  },
+  {
+   "id": "a33",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：优惠券联调安排下周二，券码格式 HB-8位大写。"
+  },
+  {
+   "id": "a34",
+   "type": "message",
+   "speaker": "owner",
+   "text": "优惠券输入框草稿已出：CheckoutCouponInput，券码大写 8 位，quote 实时试算折扣。"
+  },
+  {
+   "id": "a35",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "异议：submitOrder 重试时每次都新生成一个 uuid 当幂等键，第一次超时重试会产生两单，应当用 checkoutIdempotencyKey() 取 sessionStorage 里 harbor:checkout:idem 的固定 key，重试复用。"
+  },
+  {
+   "id": "a36",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：茶水间有剩蛋糕，先到先得。"
+  },
+  {
+   "id": "a37",
+   "type": "message",
+   "speaker": "owner",
+   "text": "context 嵌套更新有点卡，准备切 zustand，草案在 HB-210。"
+  },
+  {
+   "id": "a38",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：优惠券测试券已发到 staging，HB-TEST88 可用。"
+  },
+  {
+   "id": "a39",
+   "type": "message",
+   "speaker": "human",
+   "text": "确认：状态切 zustand、校验后面切 zod，v2 合同先加券字段，防重和埋点下个迭代再换。"
+  },
+  {
+   "id": "a40",
+   "type": "message",
+   "speaker": "human",
+   "text": "问：支付方式是只支持支付宝微信，还是加银联？"
+  },
+  {
+   "id": "a41",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算状态改用 zustand 的 useCheckoutStore，store 文件 src/store/useCheckoutStore.ts，按 cartId、address、couponCode 字段分别订阅。"
+  },
+  {
+   "id": "a42",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：表单校验改用 zod + zodResolver，schema 移到 src/validation/checkoutSchema.ts，手机号用 .regex(/^1[3-9]\\d{9}$/)，邮编用 z.string().length(6)。"
+  },
+  {
+   "id": "a43",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：新办公椅到了，记得调腰靠。"
+  },
+  {
+   "id": "a44",
+   "type": "message",
+   "speaker": "owner",
+   "text": "提议：v2 在 quote 和 orders 里加 coupon_code 可选字段，返回加 discount 和 coupon_valid，旧无券调用不受影响。"
+  },
+  {
+   "id": "a45",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "checkout-ui-api v2：\nPOST /api/checkout/quote 接受 {items, address, coupon_code?}，返回 {price: 浮点数, total: 浮点数, discount, coupon_valid}。\nPOST /api/checkout/orders 接受 {items, address, pay_method, coupon_code?}，返回 {order_id}。\nGET /api/checkout/orders/{id} 返回 {order_id, status, price, coupon_code}。\ncoupon_code 为可选，大写 8 位如 HB-TEST88，无效时 coupon_valid=false。\nprice 仍为浮点数单位元。\nstatus 仍为字符串 created / paid / failed。",
+   "contract_id": "checkout-ui-api",
+   "contract_version": 2
+  },
+  {
+   "id": "a46",
+   "type": "message",
+   "speaker": "owner",
+   "text": "v2 优惠券已实现：quote 带 coupon_code 试算，下单透传，staging 用 HB-TEST88 能减 5 元。"
+  },
+  {
+   "id": "a47",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：优惠券联调通过，无券老流程回归也过了。"
+  },
+  {
+   "id": "a48",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "异议：CheckoutPage 的下单按钮还是裸 onClick 直调 submitOrder，连点两下又下了两单，应当用 useSubmitGuard({timeoutMs:8000}) 包住提交并禁用 data-testid=\"place-order-btn\"。"
+  },
+  {
+   "id": "a49",
+   "type": "message",
+   "speaker": "owner",
+   "text": "正在把提交改成 guard 方案，按钮加禁用态，e2e 的连点用例本地复现中。"
+  },
+  {
+   "id": "a50",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：提交防重改用 useSubmitGuard({timeoutMs:8000, key:'place-order'})，返回 {guard, release}，按钮写 disabled 并加 aria-disabled，超时 8000ms 自动释放。"
+  },
+  {
+   "id": "a51",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：回归包在跑，券逻辑 p95 正常。"
+  },
+  {
+   "id": "a52",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "异议：CheckoutSummary 的 useEffect 又漏写依赖，空数组里读了购物车总价，换了券后界面还是旧总价，应当把 cartTotal、price_minor、couponCode 写全并过 exhaustive-deps。"
+  },
+  {
+   "id": "a53",
+   "type": "message",
+   "speaker": "owner",
+   "text": "已把总价 effect 依赖补全，换券和加购都会重算， exhaustive-deps 本地已过。"
+  },
+  {
+   "id": "a54",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：下个迭代换埋点 SDK 和校验增强，冻结在周五。"
+  },
+  {
+   "id": "a55",
+   "type": "message",
+   "speaker": "human",
+   "text": "问：券码大小写要兼容吗，还是严格大写？"
+  },
+  {
+   "id": "a56",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：埋点改用 @harbor/tracker v2，用 tracker.checkout('submit_v2', {cart_id, price_minor, currency})，批量上报 flushInterval 5000ms。"
+  },
+  {
+   "id": "a57",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：周五团建投票，火锅还是烧烤。"
+  },
+  {
+   "id": "a58",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pnpm exec textlint src/components/CheckoutResult.tsx --format pretty\ntextlint 14.5.0, rules: harbor-copy-ja-zh, no-raw-backend-error\n  target: src/components/CheckoutResult.tsx\n  [1/4] loading dictionaries ... ok (checkout-errors.dict, 212 entries)\n  [2/4] scanning JSX text nodes ... 18 nodes\n  [3/4] checking error mapping ...\n  error  harbor/no-raw-backend-error: 后端错误原文直接展示给用户 (setError(err.message))，应经 mapCheckoutError 映射\n  [4/4] checking locale keys ... ok (all keys under checkout.errors.*)\n  offending snippet:\n    setError(err.message); // <- flagged line\n    toast.error(error.response.data.msg); // <- flagged line\n  ── detail ──\n  rule: harbor/no-raw-backend-error (error)\n  fix: map via mapCheckoutError(err) then show friendly copy\n  1 error, 0 warnings in 1 file\nBuild 7140 finished: textlint exit 1.\nSee docs/copy-check.md for friendly copy table.\nCache: .textlintcache written.",
+   "gate_id": "a11y"
+  },
+  {
+   "id": "a59",
+   "type": "message",
+   "speaker": "owner",
+   "text": "已统一走 mapCheckoutError 映射后再上屏，快照里不再出现英文原文。"
+  },
+  {
+   "id": "a60",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：文案检查已过，英文原文清零。"
+  },
+  {
+   "id": "a61",
+   "type": "message",
+   "speaker": "owner",
+   "text": "结算性能优化：useCheckoutStore 按字段订阅后重渲染从 12 次降到 3 次。"
+  },
+  {
+   "id": "a62",
+   "type": "message",
+   "speaker": "human",
+   "text": "假设：以后要不要做分期付款？先 parking，不改。"
+  },
+  {
+   "id": "a63",
+   "type": "message",
+   "speaker": "owner",
+   "text": "压测：连点 20 次下单，guard 方案下只剩 1 单，release 逻辑正常。"
+  },
+  {
+   "id": "a64",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：黑客松报名开始了，奖品有耳机。"
+  },
+  {
+   "id": "a65",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：staging 偶现双击两单，看看是不是 guard 没包住优惠券提交。"
+  },
+  {
+   "id": "a66",
+   "type": "message",
+   "speaker": "owner",
+   "text": "查了下优惠券提交走了另一条 submitCoupon 路径，没包 guard，已加上。"
+  },
+  {
+   "id": "a67",
+   "type": "message",
+   "speaker": "human",
+   "text": "问：幂等键是每次新建还是复用？支付重试怎么处理？"
+  },
+  {
+   "id": "a68",
+   "type": "message",
+   "speaker": "owner",
+   "text": "已确认重试复用固定键，sessionStorage 里那把键下单全程不变，新购物车才换。"
+  },
+  {
+   "id": "a69",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：周末谁去爬山，群里接龙。"
+  },
+  {
+   "id": "a70",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "异议：下单重试又新建幂等键了，checkoutIdempotencyKey() 被包在 submit 内每次调用都 uuid.v4()，应当在结算初始化时生成一次存 harbor:checkout:idem，重试直接复用。"
+  },
+  {
+   "id": "a71",
+   "type": "message",
+   "speaker": "owner",
+   "text": "已把幂等键生成移到结算初始化，一单固定一把键，重试不再换键。"
+  },
+  {
+   "id": "a72",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：金额大改（分+币种）安排下月，v3 合同先评审。"
+  },
+  {
+   "id": "a73",
+   "type": "message",
+   "speaker": "owner",
+   "text": "v3 草案：price 浮点改 price_minor 整型分，新增 currency，券折扣也改 minor。"
+  },
+  {
+   "id": "a74",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：v3 评审通过，前端先做兼容层。"
+  },
+  {
+   "id": "a75",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：书吧上了新咖啡豆，可以试试。"
+  },
+  {
+   "id": "a76",
+   "type": "message",
+   "speaker": "owner",
+   "text": "兼容层已加：读到老 price 浮点先 Math.round(price*100) 转 minor 打日志告警。"
+  },
+  {
+   "id": "a77",
+   "type": "message",
+   "speaker": "human",
+   "text": "问：币种选择器要做吗，还是只显示？"
+  },
+  {
+   "id": "a78",
+   "type": "message",
+   "speaker": "owner",
+   "text": "只显示下单币种，不做切换，币种跟随购物车。"
+  },
+  {
+   "id": "a79",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：兼容层在 staging 跑了 3 天，告警 12 条都是老数据。"
+  },
+  {
+   "id": "a80",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：端午粽子投票，咸蛋黄还是豆沙。"
+  },
+  {
+   "id": "a81",
+   "type": "message",
+   "speaker": "owner",
+   "text": "准备切校验增强版，zod 规则不够细，缺 E_ADDR_ZIP 这类码。"
+  },
+  {
+   "id": "a82",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pnpm exec playwright test tests/e2e/checkout/no-double-order.spec.ts --reporter=line\nRunning 1 test using 1 worker\n  harbour checkout e2e | chromium 128.0\n  test file: tests/e2e/checkout/no-double-order.spec.ts::test-coupon-double-submit\n  baseURL: http://localhost:5173\n  [setup] login fixture: user test+checkout@harbor.test\n  [setup] cart seeded: 2 x SKU-HB-001, coupon EMPTY\n  [step 1/5] goto /checkout ... ok (812ms)\n  [step 2/5] fill address: 北京市朝阳区 ... ok\n  [step 3/5] click #place-order-btn x2 quickly (100ms apart)\n  [step 4/5] wait for network idle ... ok\n  [step 5/5] assert single order created\n  AssertionError: expected 1 order, got 3 — 优惠券提交路径没有禁用下单按钮导致重复下单\n  orders in mock server: 2 (order_9f21, order_9f22)\n  trace: tests/e2e/checkout/trace-double-click.zip retained\n  retry #1: same double order observed\n  ── summary ──\n  1 failed, 0 passed, 0 skipped in 14.2s\nBuild 7120 finished: playwright exit 1.\nDocs: https://playwright.dev/docs/test-assertions",
+   "gate_id": "e2e"
+  },
+  {
+   "id": "a83",
+   "type": "message",
+   "speaker": "owner",
+   "text": "优惠券提交路径也已包 guard，按钮禁用态同步，连点只剩 1 单。"
+  },
+  {
+   "id": "a84",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：e2e 重跑通过，券路径双击用例绿了。"
+  },
+  {
+   "id": "a85",
+   "type": "message",
+   "speaker": "owner",
+   "text": "zustand persist 调研：只存 cartId 和 couponCode，不存地址明文。"
+  },
+  {
+   "id": "a86",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：楼下便利店关门了，换了一家。"
+  },
+  {
+   "id": "a87",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：月底发版，v3 切量 10%。"
+  },
+  {
+   "id": "a88",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pnpm exec eslint src --ext .ts,.tsx --max-warnings 0\nharbor-checkout eslint 9.12.0, config flat/harbor.js\n  lint target: src/components/CheckoutSummary.tsx\n  rules: react-hooks/exhaustive-deps:error, no-console:warn\n  [1/6] parsing ... ok\n  [2/6] resolving imports ... ok (42 modules)\n  [3/6] running react-hooks plugin ...\n  React Hook useEffect has missing dependency: 'price_minor'. Effect 读取的是旧的购物车总价，切换币种后不更新。\n  [4/6] running a11y plugin ... ok\n  [5/6] running import/order ... ok\n  [6/6] summary:\n  /app/src/components/CheckoutSummary.tsx\n    88:6  error  react-hooks/exhaustive-deps  see detail above\n    102:3 warning  no-console  (1 allowed in debug file only)\n  ✖ 1 problem (1 error, 1 warning)\nBuild 7131 finished: eslint exit 1.\nFix: add missing deps or split effect; see react-hooks docs.\nCache: .eslintcache updated, 0 files skipped.",
+   "gate_id": "eslint"
+  },
+  {
+   "id": "a89",
+   "type": "message",
+   "speaker": "owner",
+   "text": "总价 effect 已补 price_minor，切换币种重算正常。"
+  },
+  {
+   "id": "a90",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：结算状态改用 zustand + immer 中间件 + persist，store 名 harbor-checkout-store 版本 3，partialize 只存 cartId 与 couponCode。"
+  },
+  {
+   "id": "a91",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：persist 灰度 10%，刷新页面购物车还在。"
+  },
+  {
+   "id": "a92",
+   "type": "message",
+   "speaker": "owner",
+   "text": "已切新 store，immer 写法替换直接 set，单测全过。"
+  },
+  {
+   "id": "a93",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：团建照片发群里了。"
+  },
+  {
+   "id": "a94",
+   "type": "message",
+   "speaker": "owner",
+   "text": "决定：表单校验改用 @harbor/checkout-schema v3（arktpye 内核）+ 自研 harborResolver，schema 为 checkoutSchemaArk，邮编错误码 E_ADDR_ZIP，手机错误码 E_PHONE_FMT。"
+  },
+  {
+   "id": "a95",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "异议：支付失败页又把后端错误原文直接展示给用户了，toast 里是 PAY_GATEWAY_502，请经 mapCheckoutError 转友好文案。"
+  },
+  {
+   "id": "a96",
+   "type": "message",
+   "speaker": "owner",
+   "text": "支付失败页已改映射，502 显示为支付通道繁忙请稍后重试。"
+  },
+  {
+   "id": "a97",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：新校验包接入后，手机号误拦降到 0。"
+  },
+  {
+   "id": "a98",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "checkout-ui-api v3：\nPOST /api/checkout/quote 接受 {items, address, coupon_code?}，返回 {price_minor: 整数分, currency, total_minor, discount_minor, coupon_valid}。\nPOST /api/checkout/orders 接受 {items, address, pay_method, coupon_code?}，返回 {order_id}。\nGET /api/checkout/orders/{id} 返回 {order_id, status, price_minor, currency, coupon_code}。\ncurrency 仅支持 CNY / USD / EUR。\nprice 浮点字段废弃，统一用 price_minor 整数分（如 1299 表示 12.99 元）。\nstatus 仍为字符串 created / paid / failed。",
+   "contract_id": "checkout-ui-api",
+   "contract_version": 3
+  },
+  {
+   "id": "a99",
+   "type": "message",
+   "speaker": "human",
+   "text": "提醒：v1 的 price 浮点已废弃，旧客户端还在传 12.99 这类值，直接忽略，必须按 v3 的 price_minor 整数处理。"
+  },
+  {
+   "id": "a100",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pnpm exec vitest run tests/checkout/idempotency.test.ts --reporter=verbose\n RUN  v2.1.3 /app\n  test file: tests/checkout/idempotency.test.ts (4 tests)\n  [setup] mock server: POST /api/checkout/orders -> 500 once then 200\n  ✓ creates key on first submit (41ms)\n  × test-retry-reuses-key FAILED — 下单重试新建了幂等键导致两单\n  ✓ reuses key shape uuid v4 (3ms)\n  ✓ different cart gets different key (5ms)\n  ── failure detail ──\n  AssertionError: expected second submit to reuse stored key\n    expected 'uuid-2' to equal 'uuid-1'\n    at tests/checkout/idempotency.test.ts:87:21\n  1 failed, 3 passed in 1.9s\nBuild 7150 finished: vitest exit 1.\nDocs: checkout idempotency section in README-checkout.md.\nRetry with --update-snapshot will NOT fix this.",
+   "gate_id": "vitest"
+  },
+  {
+   "id": "a101",
+   "type": "message",
+   "speaker": "human",
+   "text": "提醒：早期用 useState + CheckoutContext 那套老写法别再抄，当前以 useCheckoutStore 为准，context 文件只留兼容。"
+  },
+  {
+   "id": "a102",
+   "type": "message",
+   "speaker": "owner",
+   "text": "v3 已实现：quote 读写 minor，币种透传，下单金额校验 0 兜底。"
+  },
+  {
+   "id": "a103",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：v3 灰度 50%，券折扣对账一致。"
+  },
+  {
+   "id": "a104",
+   "type": "message",
+   "speaker": "owner",
+   "text": "幂等键已收敛：初始化一次生成，全程复用，重试不再新建。"
+  },
+  {
+   "id": "a105",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：中秋月饼发了，在前台自取。"
+  },
+  {
+   "id": "a106",
+   "type": "message",
+   "speaker": "human",
+   "text": "提醒：yup 那套老 schema（含 checkoutSchemaYup.ts）已废弃，别再引，当前以 checkoutSchemaArk 为准。"
+  },
+  {
+   "id": "a107",
+   "type": "message",
+   "speaker": "owner",
+   "text": "老 yup 引用已清零，zod 过渡文件也删了，只剩新包。"
+  },
+  {
+   "id": "a108",
+   "type": "message",
+   "speaker": "human",
+   "text": "提醒：早期裸 isPlacing 布尔锁的老防重别再用，当前以 useSubmitGuard({timeoutMs:8000}) + 禁用按钮为准。"
+  },
+  {
+   "id": "a109",
+   "type": "message",
+   "speaker": "owner",
+   "text": "老 isPlacing 引用已删，全量走 guard，e2e 连点用例全绿。"
+  },
+  {
+   "id": "a110",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：季度 demo 排期出了，结算占 10 分钟。"
+  },
+  {
+   "id": "a111",
+   "type": "message",
+   "speaker": "human",
+   "text": "提醒：window.__harborTrack 的 v1 上报别再用，当前以 @harbor/tracker v2 的 tracker.checkout 为准。"
+  },
+  {
+   "id": "a112",
+   "type": "message",
+   "speaker": "owner",
+   "text": "v1 上报已下线，flushInterval 5000ms 批量正常。"
+  },
+  {
+   "id": "a113",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：v3 全量，price 浮点兼容层告警清零。"
+  },
+  {
+   "id": "a114",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊： daylight saving 这周末，值班注意。"
+  },
+  {
+   "id": "a115",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "异议：新增的极速购按钮又没禁用，下单中还能连点，提交时没有禁用按钮导致重复下单，请用 useSubmitGuard 包住并禁用 data-testid=\"place-order-btn\" 同组按钮。"
+  },
+  {
+   "id": "a116",
+   "type": "message",
+   "speaker": "owner",
+   "text": "极速购按钮已包 guard，下单中禁用，e2e 加了同组按钮连点用例。"
+  },
+  {
+   "id": "a117",
+   "type": "message",
+   "speaker": "human",
+   "text": "问：银联图标要换新版吗？"
+  },
+  {
+   "id": "a118",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "异议：CheckoutCouponInput 的 effect 又漏了 couponCode 依赖，用的还是旧的购物车总价，导致券后总价不变，请补全 [cartTotal, price_minor, couponCode]。"
+  },
+  {
+   "id": "a119",
+   "type": "message",
+   "speaker": "owner",
+   "text": "券输入 effect 已补全依赖，换券实时重算已验证。"
+  },
+  {
+   "id": "a120",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：下季度做分期，合同不变。"
+  },
+  {
+   "id": "a121",
+   "type": "message",
+   "speaker": "owner",
+   "text": "回归：minor 金额大数 99999999 分渲染正常，币种透传正常。"
+  },
+  {
+   "id": "a122",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pnpm exec textlint src/components/CheckoutResult.tsx --format pretty\ntextlint 14.5.0, rules: harbor-copy-ja-zh, no-raw-backend-error\n  target: src/components/CheckoutResult.tsx\n  [1/4] loading dictionaries ... ok (checkout-errors.dict, 212 entries)\n  [2/4] scanning JSX text nodes ... 18 nodes\n  [3/4] checking error mapping ...\n  error  harbor/no-raw-backend-error: 极速购失败把后端错误原文直接展示给用户 (PAY_GATEWAY_502)，应经 mapCheckoutError 映射\n  [4/4] checking locale keys ... ok (all keys under checkout.errors.*)\n  offending snippet:\n    setError(err.message); // <- flagged line\n    toast.error(error.response.data.msg); // <- flagged line\n  ── detail ──\n  rule: harbor/no-raw-backend-error (error)\n  fix: map via mapCheckoutError(err) then show friendly copy\n  1 error, 0 warnings in 1 file\nBuild 7140 finished: textlint exit 1.\nSee docs/copy-check.md for friendly copy table.\nCache: .textlintcache written.",
+   "gate_id": "a11y"
+  },
+  {
+   "id": "a123",
+   "type": "message",
+   "speaker": "owner",
+   "text": "极速购失败已改映射，不再展示英文原文。"
+  },
+  {
+   "id": "a124",
+   "type": "message",
+   "speaker": "human",
+   "text": "驳回：提议把状态管回 useState + CheckoutContext 以省包体积，不同意，继续用带 persist 的 store 方案，不回退。"
+  },
+  {
+   "id": "a125",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：e2e 全绿，lint 全绿，准备发版。"
+  },
+  {
+   "id": "a126",
+   "type": "message",
+   "speaker": "human",
+   "text": "驳回：提议把 price 改回浮点以方便调试，不同意，继续用 price_minor 整数 + currency，不回退。"
+  },
+  {
+   "id": "a127",
+   "type": "message",
+   "speaker": "owner",
+   "text": "发版检查：minor 对账、幂等键复用、guard 禁用态全过。"
+  },
+  {
+   "id": "a128",
+   "type": "message",
+   "speaker": "human",
+   "text": "驳回：提议把校验换回 yup 以复用旧规则，不同意，继续用 @harbor/checkout-schema v3 + harborResolver，不回退。"
+  },
+  {
+   "id": "a129",
+   "type": "message",
+   "speaker": "human",
+   "text": "提醒：v1 无券字段的老 quote 调用可忽略，当前 v3 必须带 coupon_valid 和 discount_minor 判券态。"
+  },
+  {
+   "id": "a130",
+   "type": "message",
+   "speaker": "human",
+   "text": "闲聊：发版后聚餐，火锅走起。"
+  }
+ ],
+ "gold": {
+  "contracts": [
+   {
+    "contract_id": "checkout-ui-api",
+    "version": 3,
+    "activity_id": "a98"
+   }
+  ],
+  "decisions": [
+   {
+    "id": "d1",
+    "topic_key": "checkout.money_render",
+    "statement": "结算页所有金额必须用 formatMoney(price_minor, currency) 渲染，禁止手写 toFixed(2)。",
+    "sources": [
+     {
+      "activity_id": "a04",
+      "quote": "formatMoney(price_minor, currency)"
+     }
+    ]
+   },
+   {
+    "id": "d2",
+    "topic_key": "checkout.api_client",
+    "statement": "结算页接口请求只能走 src/lib/apiClient（自动带 X-Request-Id），禁止裸 fetch 或 axios 直调。",
+    "sources": [
+     {
+      "activity_id": "a05",
+      "quote": "只能走 src/lib/apiClient"
+     }
+    ]
+   },
+   {
+    "id": "d3",
+    "topic_key": "checkout.file_naming",
+    "statement": "结算页组件文件名用 PascalCase，hooks 统一放在 src/hooks。",
+    "sources": [
+     {
+      "activity_id": "a06",
+      "quote": "组件文件名用 PascalCase"
+     }
+    ]
+   },
+   {
+    "id": "d4",
+    "topic_key": "checkout.i18n",
+    "statement": "结算页文案全部走 t('checkout.*') 国际化，禁止在 JSX 里写死中文。",
+    "sources": [
+     {
+      "activity_id": "a07",
+      "quote": "t('checkout.*')"
+     }
+    ]
+   },
+   {
+    "id": "d5",
+    "topic_key": "checkout.route_guard",
+    "statement": "结算页路由 /checkout 必须经 <CheckoutGate> 校验登录态与空购物车重定向到 /cart。",
+    "sources": [
+     {
+      "activity_id": "a08",
+      "quote": "<CheckoutGate>"
+     }
+    ]
+   },
+   {
+    "id": "d6",
+    "topic_key": "checkout.design_token",
+    "statement": "结算页主按钮用 HarborButton variant=\"primary-blue\"（#1A66FF），间距只用 spacing.sm=4px / md=8px，圆角 8px。",
+    "sources": [
+     {
+      "activity_id": "a09",
+      "quote": "HarborButton variant=\"primary-blue\""
+     }
+    ]
+   },
+   {
+    "id": "d7",
+    "topic_key": "checkout.state",
+    "statement": "结算状态曾用 useState + useContext，CheckoutContext 在 src/context/CheckoutContext.tsx。",
+    "sources": [
+     {
+      "activity_id": "a10",
+      "quote": "useState + useContext"
+     }
+    ],
+    "superseded_by": "d11"
+   },
+   {
+    "id": "d8",
+    "topic_key": "checkout.validation",
+    "statement": "表单校验曾用 yup + yupResolver，schema 在 src/validation/checkoutSchemaYup.ts，手机号正则 /^1[3-9]\\d{9}$/。",
+    "sources": [
+     {
+      "activity_id": "a11",
+      "quote": "src/validation/checkoutSchemaYup.ts"
+     }
+    ],
+    "superseded_by": "d12"
+   },
+   {
+    "id": "d9",
+    "topic_key": "checkout.submit_guard",
+    "statement": "提交防重曾用本地 isPlacing 布尔锁，按钮写 disabled={isPlacing}。",
+    "sources": [
+     {
+      "activity_id": "a12",
+      "quote": "isPlacing 布尔锁"
+     }
+    ],
+    "superseded_by": "d13"
+   },
+   {
+    "id": "d10",
+    "topic_key": "checkout.tracking",
+    "statement": "埋点曾用 window.__harborTrack 的 harborTrack SDK v1，上报 track('checkout_submit', {cart_id})。",
+    "sources": [
+     {
+      "activity_id": "a13",
+      "quote": "harborTrack SDK v1"
+     }
+    ],
+    "superseded_by": "d14"
+   },
+   {
+    "id": "d11",
+    "topic_key": "checkout.state",
+    "statement": "结算状态改用 zustand 的 useCheckoutStore，store 文件 src/store/useCheckoutStore.ts，按 cartId、address、couponCode 分别订阅。",
+    "sources": [
+     {
+      "activity_id": "a41",
+      "quote": "src/store/useCheckoutStore.ts"
+     }
+    ],
+    "superseded_by": "d15"
+   },
+   {
+    "id": "d12",
+    "topic_key": "checkout.validation",
+    "statement": "表单校验改用 zod + zodResolver，schema 在 src/validation/checkoutSchema.ts，邮编用 z.string().length(6)。",
+    "sources": [
+     {
+      "activity_id": "a42",
+      "quote": "src/validation/checkoutSchema.ts"
+     }
+    ],
+    "superseded_by": "d16"
+   },
+   {
+    "id": "d13",
+    "topic_key": "checkout.submit_guard",
+    "statement": "提交防重改用 useSubmitGuard({timeoutMs:8000, key:'place-order'})，返回 {guard, release}，按钮加 aria-disabled，超时 8000ms 自动释放。",
+    "sources": [
+     {
+      "activity_id": "a50",
+      "quote": "useSubmitGuard({timeoutMs:8000, key:'place-order'})"
+     }
+    ]
+   },
+   {
+    "id": "d14",
+    "topic_key": "checkout.tracking",
+    "statement": "埋点改用 @harbor/tracker v2，用 tracker.checkout('submit_v2', {cart_id, price_minor, currency})，批量上报 flushInterval 5000ms。",
+    "sources": [
+     {
+      "activity_id": "a56",
+      "quote": "tracker.checkout('submit_v2'"
+     }
+    ]
+   },
+   {
+    "id": "d15",
+    "topic_key": "checkout.state",
+    "statement": "结算状态改用 zustand + immer 中间件 + persist，store 名 harbor-checkout-store 版本 3，partialize 只存 cartId 与 couponCode。",
+    "sources": [
+     {
+      "activity_id": "a90",
+      "quote": "harbor-checkout-store 版本 3"
+     }
+    ]
+   },
+   {
+    "id": "d16",
+    "topic_key": "checkout.validation",
+    "statement": "表单校验改用 @harbor/checkout-schema v3（arktpye 内核）+ 自研 harborResolver，schema 为 checkoutSchemaArk，邮编错误码 E_ADDR_ZIP，手机错误码 E_PHONE_FMT。",
+    "sources": [
+     {
+      "activity_id": "a94",
+      "quote": "checkoutSchemaArk"
+     }
+    ]
+   }
+  ],
+  "lessons": [
+   {
+    "id": "l1",
+    "topic_key": "checkout.double_submit",
+    "statement": "提交下单必须用 useSubmitGuard({timeoutMs:8000}) 包住并禁用 data-testid=\"place-order-btn\" 同组按钮，禁止裸 onClick 直调 submitOrder；以 tests/e2e/checkout/no-double-order.spec.ts 连点单 order_id 为准。",
+    "sources": [
+     {
+      "activity_id": "a18",
+      "quote": "提交时没有禁用下单按钮导致重复下单"
+     },
+     {
+      "activity_id": "a48",
+      "quote": "用 useSubmitGuard({timeoutMs:8000}) 包住提交"
+     },
+     {
+      "activity_id": "a82",
+      "quote": "优惠券提交路径没有禁用下单按钮导致重复下单"
+     },
+     {
+      "activity_id": "a115",
+      "quote": "提交时没有禁用按钮导致重复下单"
+     }
+    ],
+    "occurrences": 4
+   },
+   {
+    "id": "l2",
+    "topic_key": "checkout.effect_deps",
+    "statement": "结算总价 useEffect 必须在依赖数组写全 [cartTotal, price_minor, couponCode] 并通过 eslint react-hooks/exhaustive-deps，禁止空依赖读取旧的购物车总价。",
+    "sources": [
+     {
+      "activity_id": "a22",
+      "quote": "Effect 内用了旧的购物车总价"
+     },
+     {
+      "activity_id": "a52",
+      "quote": "空数组里读了购物车总价"
+     },
+     {
+      "activity_id": "a88",
+      "quote": "读取的是旧的购物车总价"
+     },
+     {
+      "activity_id": "a118",
+      "quote": "用的还是旧的购物车总价"
+     }
+    ],
+    "occurrences": 4
+   },
+   {
+    "id": "l3",
+    "topic_key": "checkout.error_display",
+    "statement": "后端错误必须经 mapCheckoutError(err) 映射成友好文案再上屏，禁止把 err.message 或后端错误原文直接 setError/toast 展示给用户。",
+    "sources": [
+     {
+      "activity_id": "a27",
+      "quote": "把后端错误原文直接展示给用户"
+     },
+     {
+      "activity_id": "a58",
+      "quote": "后端错误原文直接展示给用户"
+     },
+     {
+      "activity_id": "a95",
+      "quote": "把后端错误原文直接展示给用户"
+     },
+     {
+      "activity_id": "a122",
+      "quote": "把后端错误原文直接展示给用户"
+     }
+    ],
+    "occurrences": 4
+   },
+   {
+    "id": "l4",
+    "topic_key": "checkout.idempotency",
+    "statement": "下单必须用 checkoutIdempotencyKey() 取 sessionStorage 中 harbor:checkout:idem 的固定键作为 Idempotency-Key，重试复用同一把键，禁止每次新建 uuid。",
+    "sources": [
+     {
+      "activity_id": "a35",
+      "quote": "harbor:checkout:idem"
+     },
+     {
+      "activity_id": "a70",
+      "quote": "checkoutIdempotencyKey() 被包在 submit 内每次调用都 uuid.v4()"
+     },
+     {
+      "activity_id": "a100",
+      "quote": "下单重试新建了幂等键导致两单"
+     }
+    ],
+    "occurrences": 3
+   }
+  ]
+ },
+ "noise": [
+  {
+   "activity_id": "a03",
+   "type": "chitchat",
+   "note": "咖啡机闲聊"
+  },
+  {
+   "activity_id": "a14",
+   "type": "status",
+   "note": "站会状态"
+  },
+  {
+   "activity_id": "a15",
+   "type": "question",
+   "note": "优惠券问题"
+  },
+  {
+   "activity_id": "a17",
+   "type": "chitchat",
+   "note": "午饭闲聊"
+  },
+  {
+   "activity_id": "a20",
+   "type": "plan",
+   "note": "排期计划"
+  },
+  {
+   "activity_id": "a24",
+   "type": "chitchat",
+   "note": "wifi闲聊"
+  },
+  {
+   "activity_id": "a26",
+   "type": "status",
+   "note": "沙箱状态"
+  },
+  {
+   "activity_id": "a29",
+   "type": "hypothetical",
+   "note": "积分假设"
+  },
+  {
+   "activity_id": "a31",
+   "type": "question",
+   "note": "空购物车问题"
+  },
+  {
+   "activity_id": "a33",
+   "type": "plan",
+   "note": "联调计划"
+  },
+  {
+   "activity_id": "a36",
+   "type": "chitchat",
+   "note": "蛋糕闲聊"
+  },
+  {
+   "activity_id": "a38",
+   "type": "status",
+   "note": "测试券状态"
+  },
+  {
+   "activity_id": "a43",
+   "type": "chitchat",
+   "note": "办公椅闲聊"
+  },
+  {
+   "activity_id": "a47",
+   "type": "status",
+   "note": "联调状态"
+  },
+  {
+   "activity_id": "a51",
+   "type": "status",
+   "note": "回归状态"
+  },
+  {
+   "activity_id": "a54",
+   "type": "plan",
+   "note": "迭代计划"
+  },
+  {
+   "activity_id": "a55",
+   "type": "question",
+   "note": "券码问题"
+  },
+  {
+   "activity_id": "a57",
+   "type": "chitchat",
+   "note": "团建闲聊"
+  },
+  {
+   "activity_id": "a60",
+   "type": "status",
+   "note": "文案检查状态"
+  },
+  {
+   "activity_id": "a62",
+   "type": "hypothetical",
+   "note": "分期假设"
+  },
+  {
+   "activity_id": "a64",
+   "type": "chitchat",
+   "note": "黑客松闲聊"
+  },
+  {
+   "activity_id": "a69",
+   "type": "chitchat",
+   "note": "爬山闲聊"
+  },
+  {
+   "activity_id": "a74",
+   "type": "status",
+   "note": "评审状态"
+  },
+  {
+   "activity_id": "a75",
+   "type": "chitchat",
+   "note": "咖啡豆闲聊"
+  },
+  {
+   "activity_id": "a77",
+   "type": "question",
+   "note": "币种问题"
+  },
+  {
+   "activity_id": "a79",
+   "type": "status",
+   "note": "兼容层状态"
+  },
+  {
+   "activity_id": "a80",
+   "type": "chitchat",
+   "note": "粽子闲聊"
+  },
+  {
+   "activity_id": "a84",
+   "type": "status",
+   "note": "e2e状态"
+  },
+  {
+   "activity_id": "a86",
+   "type": "chitchat",
+   "note": "便利店闲聊"
+  },
+  {
+   "activity_id": "a93",
+   "type": "chitchat",
+   "note": "团建闲聊"
+  },
+  {
+   "activity_id": "a103",
+   "type": "status",
+   "note": "灰度状态"
+  },
+  {
+   "activity_id": "a105",
+   "type": "chitchat",
+   "note": "月饼闲聊"
+  },
+  {
+   "activity_id": "a110",
+   "type": "chitchat",
+   "note": "demo闲聊"
+  },
+  {
+   "activity_id": "a114",
+   "type": "chitchat",
+   "note": "值班闲聊"
+  },
+  {
+   "activity_id": "a117",
+   "type": "question",
+   "note": "银联图标问题"
+  },
+  {
+   "activity_id": "a120",
+   "type": "plan",
+   "note": "下季度计划"
+  },
+  {
+   "activity_id": "a125",
+   "type": "status",
+   "note": "发版状态"
+  },
+  {
+   "activity_id": "a130",
+   "type": "chitchat",
+   "note": "聚餐闲聊"
+  }
+ ],
+ "probes": [
+  {
+   "id": "p1",
+   "question": "结算页金额渲染必须用什么函数，禁止什么写法？",
+   "answer_ids": [
+    "d1"
+   ],
+   "must_contain": [
+    "formatMoney"
+   ]
+  },
+  {
+   "id": "p2",
+   "question": "结算页接口请求必须走哪个客户端，它会自动带什么请求头？",
+   "answer_ids": [
+    "d2"
+   ],
+   "must_contain": [
+    "apiClient"
+   ]
+  },
+  {
+   "id": "p3",
+   "question": "结算页组件文件名规范是什么，hooks 放在哪里？",
+   "answer_ids": [
+    "d3"
+   ],
+   "must_contain": [
+    "PascalCase"
+   ]
+  },
+  {
+   "id": "p4",
+   "question": "结算页文案国际化必须走哪个函数？",
+   "answer_ids": [
+    "d4"
+   ],
+   "must_contain": [
+    "t('checkout"
+   ]
+  },
+  {
+   "id": "p5",
+   "question": "结算页路由 /checkout 必须经过哪个守卫组件？",
+   "answer_ids": [
+    "d5"
+   ],
+   "must_contain": [
+    "CheckoutGate"
+   ]
+  },
+  {
+   "id": "p6",
+   "question": "结算页主按钮用什么组件和色值，间距和圆角是多少？",
+   "answer_ids": [
+    "d6"
+   ],
+   "must_contain": [
+    "#1A66FF"
+   ]
+  },
+  {
+   "id": "p7",
+   "question": "下单提交时必须用什么 guard、禁用哪个按钮来防止重复下单？",
+   "answer_ids": [
+    "l1"
+   ],
+   "must_contain": [
+    "useSubmitGuard"
+   ],
+   "must_not_contain": [
+    "裸 onClick 直调"
+   ]
+  },
+  {
+   "id": "p8",
+   "question": "结算总价 effect 漏写依赖导致旧总价，哪条 eslint 规则会拦，依赖要写全哪三个？",
+   "answer_ids": [
+    "l2"
+   ],
+   "must_contain": [
+    "exhaustive-deps"
+   ],
+   "must_not_contain": [
+    "空数组"
+   ]
+  },
+  {
+   "id": "p9",
+   "question": "后端报错展示给用户前必须经哪个函数映射，禁止做什么？",
+   "answer_ids": [
+    "l3"
+   ],
+   "must_contain": [
+    "mapCheckoutError"
+   ],
+   "must_not_contain": [
+    "err.message"
+   ]
+  },
+  {
+   "id": "p10",
+   "question": "下单幂等键必须用哪个函数、存在哪里，重试能换键吗？",
+   "answer_ids": [
+    "l4"
+   ],
+   "must_contain": [
+    "checkoutIdempotencyKey"
+   ],
+   "must_not_contain": [
+    "每次新建 uuid"
+   ]
+  },
+  {
+   "id": "p11",
+   "question": "当前结算状态用的是哪个 store 方案，持久化了哪两个字段？",
+   "answer_ids": [
+    "d15"
+   ],
+   "must_contain": [
+    "harbor-checkout-store"
+   ],
+   "must_not_contain": [
+    "CheckoutContext"
+   ]
+  },
+  {
+   "id": "p12",
+   "question": "当前表单校验用的是哪个 schema 包和哪个解析器？",
+   "answer_ids": [
+    "d16"
+   ],
+   "must_contain": [
+    "checkoutSchemaArk"
+   ],
+   "must_not_contain": [
+    "checkoutSchemaYup"
+   ]
+  },
+  {
+   "id": "p13",
+   "question": "当前提交防重用的是哪个 Hook，超时多久自动释放？",
+   "answer_ids": [
+    "d13"
+   ],
+   "must_contain": [
+    "useSubmitGuard"
+   ],
+   "must_not_contain": [
+    "isPlacing"
+   ]
+  },
+  {
+   "id": "p14",
+   "question": "当前埋点用的是哪个 SDK 和上报函数，上报间隔是多少？",
+   "answer_ids": [
+    "d14"
+   ],
+   "must_contain": [
+    "tracker.checkout"
+   ],
+   "must_not_contain": [
+    "harborTrack"
+   ]
+  },
+  {
+   "id": "p15",
+   "question": "当前合同金额字段是什么，币种有哪些？",
+   "answer_ids": [
+    "contract:checkout-ui-api"
+   ],
+   "must_contain": [
+    "price_minor"
+   ],
+   "must_not_contain": [
+    "price: 浮点数"
+   ]
+  },
+  {
+   "id": "p16",
+   "question": "当前合同优惠券字段是什么，无效时哪个字段为 false？",
+   "answer_ids": [
+    "contract:checkout-ui-api"
+   ],
+   "must_contain": [
+    "coupon_code"
+   ],
+   "must_not_contain": [
+    "暂无"
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "id": "t1",
+   "prompt": "在结算汇总区新增小费选项，勾选后应付合计实时更新并参与试算下单。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "d1",
+     "check": "新增小费行与合计金额必须用 formatMoney(price_minor, currency) 渲染，禁止手写 toFixed(2) 拼接。",
+     "violation_patterns": [
+      "toFixed\\(2\\)"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "l2",
+     "check": "汇总合计的 useEffect 依赖必须写全 [cartTotal, price_minor, couponCode] 并通过 eslint react-hooks/exhaustive-deps，切换选购或券后实时重算。"
+    },
+    {
+     "id": "r3",
+     "ref": "contract:checkout-ui-api",
+     "check": "试算与下单必须按 checkout-ui-api v3 读写 price_minor/total_minor/discount_minor 整数分与 currency，仅支持 CNY/USD/EUR，禁止读 price 浮点。"
+    }
+   ]
+  },
+  {
+   "id": "t2",
+   "prompt": "新增复购入口，样式与现有主操作保持一致，按上次选购复刻下单，点按过程中避免重复建单。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "复购提交必须用 useSubmitGuard({timeoutMs:8000}) 包住并禁用 data-testid=\"place-order-btn\" 同组按钮，以 tests/e2e/checkout/no-double-order.spec.ts 连点单 order_id 为准，禁止裸 onClick 直调 submitOrder。"
+    },
+    {
+     "id": "r2",
+     "ref": "l4",
+     "check": "复购下单必须经 checkoutIdempotencyKey() 取 sessionStorage 中 harbor:checkout:idem 固定键作 Idempotency-Key 发起，重试复用同一键，新选购才换键，禁止提交内每次新建 uuid。"
+    },
+    {
+     "id": "r3",
+     "ref": "d6",
+     "check": "复购主按钮必须用 HarborButton variant=\"primary-blue\"(#1A66FF)，间距仅 spacing.sm/md，圆角 8px，与现有主操作一致。"
+    }
+   ]
+  },
+  {
+   "id": "t3",
+   "prompt": "给地址表单新增公司与备注，保存后刷新试算，失败时给出易懂提示。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "d4",
+     "check": "新增公司与备注文案必须走 t('checkout.*') 国际化，禁止在 JSX 写死中文。"
+    },
+    {
+     "id": "r2",
+     "ref": "l3",
+     "check": "保存与试算失败必须经 mapCheckoutError(err) 映射成友好文案再上屏，禁止 setError(err.message) 或 toast.error(error.response.data.msg) 透传后端原文。",
+     "violation_patterns": [
+      "setError\\(err\\.message\\)",
+      "toast\\.error\\(error\\.response\\.data\\.msg\\)"
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "contract:checkout-ui-api",
+     "check": "带地址与券的试算必须按 checkout-ui-api v3 传 coupon_code 并以 coupon_valid/discount_minor 判券态，无券调用不受影响。"
+    }
+   ]
+  },
+  {
+   "id": "t4",
+   "prompt": "新增订单进展查询页，可查看最新状态，异常时给出易懂提示并支持返回重试。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "d2",
+     "check": "进展查询请求必须走 src/lib/apiClient(自动带 X-Request-Id)，禁止裸 fetch 或 axios 直调。",
+     "violation_patterns": [
+      "axios\\.(get|post|request)"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "l3",
+     "check": "查询失败必须经 mapCheckoutError(err) 映射后再上屏，禁止直接展示后端原文。",
+     "violation_patterns": [
+      "setError\\(err\\.message\\)",
+      "error\\.response\\.data\\.msg"
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "contract:checkout-ui-api",
+     "check": "查询必须按 checkout-ui-api v3 解析 {order_id, status, price_minor, currency, coupon_code}，status 仅 created/paid/failed，金额按整数分处理。"
+    }
+   ]
+  },
+  {
+   "id": "t5",
+   "prompt": "把券输入与试算抽成独立组件，保证输入变化后汇总实时刷新，提交链路同样防重。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "券提交路径同样必须用 useSubmitGuard({timeoutMs:8000}) 包住并禁用下单按钮，同 tests/e2e/checkout/no-double-order.spec.ts 券连点用例只建一单。"
+    },
+    {
+     "id": "r2",
+     "ref": "l2",
+     "check": "券输入的试算 useEffect 依赖必须写全 [cartTotal, price_minor, couponCode] 并通过 react-hooks/exhaustive-deps，换券实时重算。"
+    },
+    {
+     "id": "r3",
+     "ref": "d3",
+     "check": "新组件文件名用 PascalCase(如 CheckoutCouponInput)，抽出的复用逻辑放入 src/hooks。"
+    }
+   ]
+  },
+  {
+   "id": "t6",
+   "prompt": "新增支付失败重试页，展示应付金额并支持再次发起支付，失败原因只展示易懂提示。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l3",
+     "check": "支付失败原因必须经 mapCheckoutError(err) 映射，PAY_GATEWAY_502 等后端原文不得直接 setError/toast 上屏。",
+     "violation_patterns": [
+      "setError\\(err\\.message\\)",
+      "toast\\.error\\(error\\.response\\.data\\.msg\\)"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "l4",
+     "check": "支付重试必须经 checkoutIdempotencyKey() 复用 sessionStorage 中 harbor:checkout:idem 固定键，禁止每次 uuid.v4() 新建导致多单。"
+    },
+    {
+     "id": "r3",
+     "ref": "d1",
+     "check": "重试页应付金额必须用 formatMoney(price_minor, currency) 渲染，禁止手写 toFixed(2)。",
+     "violation_patterns": [
+      "toFixed\\(2\\)"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t7",
+   "prompt": "新增下单成功页，提供再次选购入口，并做好登录与空选购拦截。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "d5",
+     "check": "成功页与再次选购路由必须经 <CheckoutGate> 校验登录态，空选购重定向到 /cart。"
+    },
+    {
+     "id": "r2",
+     "ref": "l1",
+     "check": "再次选购的提交必须用 useSubmitGuard({timeoutMs:8000}) 包住并禁用 data-testid=\"place-order-btn\" 同组按钮，连点只建一单。"
+    },
+    {
+     "id": "r3",
+     "ref": "l4",
+     "check": "同单重试必须复用 harbor:checkout:idem 固定键，仅新选购生成新键，禁止每次提交新建 uuid。"
+    }
+   ]
+  },
+  {
+   "id": "t8",
+   "prompt": "整改汇总区与主操作样式，保证展示一致且符合视觉规范，汇总随选购变化实时刷新。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "d6",
+     "check": "主操作必须用 HarborButton variant=\"primary-blue\"(#1A66FF)，间距仅 spacing.sm/md，圆角 8px。"
+    },
+    {
+     "id": "r2",
+     "ref": "l2",
+     "check": "汇总 useEffect 依赖必须写全 [cartTotal, price_minor, couponCode] 并通过 react-hooks/exhaustive-deps，选购变化实时重算。"
+    },
+    {
+     "id": "r3",
+     "ref": "contract:checkout-ui-api",
+     "check": "汇总必须按 checkout-ui-api v3 用 price_minor/total_minor/discount_minor 与 currency 展示，coupon_valid 为 false 时按无效券展示。"
+    }
+   ]
+  }
+ ]
+}

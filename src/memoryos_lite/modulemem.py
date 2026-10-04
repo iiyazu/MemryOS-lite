@@ -24,6 +24,8 @@ answers the module's probes from that arm's context:
     xmuse-style recall: build-context top-8 over the module's raw activity documents.
 ``full_history``
     Every activity of the module in the context window.
+``none``
+    No module memory at all (a fresh owner with only the task).
 
 Scoring: the judge labels each answer (correct/stale/missing/wrong) against the
 current gold; probes are grouped by what they ask about (contract, decision,
@@ -31,19 +33,33 @@ lesson). The ``pack`` arm also reports write-side matching against gold, lesson
 occurrence accuracy, failure accounting against the gold lesson clusters
 (pairwise precision/recall, dismissals, unaccounted), repair-loop use, and the
 gate-failure-to-lesson latency of each curate call.
+
+Behavior (``tasks``): a module may also carry owner tasks. The restarted owner
+writes a code change for each task from the same arm context, and a task judge
+labels every requirement of the task satisfied, violated or not_addressed.
+Requirements reference a gold lesson (does the owner repeat a known mistake?),
+a current decision, or a current contract; optional ``violation_patterns`` are
+regexes checked deterministically against the code. By default the owner is an
+LLM that replies with patch text; with a coder command it is a coding agent that
+edits a copy of the module's seed repository with the arm's memory in
+``AGENTS.md``, the judge grades its ``git diff``, and patterns are checked on the
+added lines only.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import shutil
+import subprocess
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -62,16 +78,21 @@ from memoryos_lite.roommem import (
     XMUSE_ACTIVITY_DOC_PREFIX,
     XMUSE_MESSAGE_ID_PREFIX,
     XMUSE_TASK,
+    ChatCompletionClient,
     CuratedMemoryView,
+    DiskCachedChatClient,
     DiskCachedCuratorLLM,
     EvidenceItem,
     GoldMemory,
     GoldMemorySource,
     LLMUsageTracker,
+    RemoteChatClient,
     RoomMemAnswerer,
     RoomMemConfigError,
     RoomMemJudge,
     _evidence_items,
+    _extract_json_object,
+    _normalize_match_text,
     _room_settings,
     build_llm_factory,
     match_curated_to_gold,
@@ -95,6 +116,7 @@ MODULEMEM_ARMS: tuple[str, ...] = (
     "raw_log",
     "retrieval",
     "full_history",
+    "none",
 )
 MODULEMEM_SPLITS: dict[str, tuple[str, ...]] = {
     "dev": ("mm01", "mm02", "mm03", "mm04"),
@@ -104,6 +126,8 @@ RECENT_ACTIVITIES = 8
 CONTEXT_ACTIVITIES = 4
 FLUSH_ACTIVITY_TYPES = FAILURE_TYPES
 JUDGE_LABELS = ("correct", "stale", "missing", "wrong")
+TASK_LABELS = ("satisfied", "violated", "not_addressed")
+REQUIREMENT_CATEGORIES = ("lesson", "decision", "contract")
 
 
 class ModuleMemError(ValueError):
@@ -173,6 +197,27 @@ class ModuleProbe(BaseModel):
     must_not_contain: list[str] = Field(default_factory=list)
 
 
+class ModuleRequirement(BaseModel):
+    """One thing a correct solution must do; ``ref`` is the gold it comes from."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    id: str
+    ref: str
+    check: str = Field(min_length=1)
+    violation_patterns: list[str] = Field(default_factory=list)
+
+
+class ModuleTask(BaseModel):
+    """A task for the restarted owner, written so that memory matters."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    id: str
+    prompt: str = Field(min_length=1)
+    requirements: list[ModuleRequirement] = Field(min_length=1, max_length=6)
+
+
 class Module(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -184,6 +229,7 @@ class Module(BaseModel):
     activities: list[ModuleActivity] = Field(min_length=1)
     gold: ModuleGold
     probes: list[ModuleProbe] = Field(min_length=1)
+    tasks: list[ModuleTask] = Field(default_factory=list)
 
     def activity(self, activity_id: str) -> ModuleActivity | None:
         return next((a for a in self.activities if a.id == activity_id), None)
@@ -238,8 +284,56 @@ def _validate_module(module: Module, *, source: object) -> None:
             cited = module.activity(src.activity_id)
             if cited is not None and cited.type not in FLUSH_ACTIVITY_TYPES:
                 errors.append(f"{lesson.id}: lesson cites a {cited.type}")
+    errors.extend(_task_errors(module))
     if errors:
         raise ModuleMemError(f"{source}: " + "; ".join(errors))
+
+
+def _task_errors(module: Module) -> list[str]:
+    errors: list[str] = []
+    current = {d.id for d in module.gold.decisions if d.superseded_by is None}
+    current |= {lesson.id for lesson in module.gold.lessons}
+    current |= {f"contract:{c.contract_id}" for c in module.gold.contracts}
+    task_ids = [task.id for task in module.tasks]
+    if len(task_ids) != len(set(task_ids)):
+        errors.append("task ids must be unique")
+    for task in module.tasks:
+        requirement_ids = [r.id for r in task.requirements]
+        if len(requirement_ids) != len(set(requirement_ids)):
+            errors.append(f"{task.id}: requirement ids must be unique")
+        for requirement in task.requirements:
+            if requirement.ref not in current:
+                errors.append(
+                    f"{task.id}.{requirement.id}: ref {requirement.ref!r} is not a current gold "
+                    "decision, a lesson, or contract:<current contract id>"
+                )
+            for pattern in requirement.violation_patterns:
+                try:
+                    re.compile(pattern)
+                except re.error as exc:
+                    errors.append(f"{task.id}.{requirement.id}: bad pattern {pattern!r}: {exc}")
+    return errors
+
+
+def requirement_category(module: Module, requirement: ModuleRequirement) -> str:
+    if requirement.ref.startswith("contract:"):
+        return "contract"
+    if any(lesson.id == requirement.ref for lesson in module.gold.lessons):
+        return "lesson"
+    return "decision"
+
+
+def requirement_last_seq(module: Module, requirement: ModuleRequirement) -> int:
+    """Sequence number of the newest activity the requirement's gold rests on."""
+
+    if requirement.ref.startswith("contract:"):
+        contract_id = requirement.ref.removeprefix("contract:")
+        gold = next(c for c in module.gold.contracts if c.contract_id == contract_id)
+        return module.seq(gold.activity_id)
+    memory = next(
+        m for m in [*module.gold.decisions, *module.gold.lessons] if m.id == requirement.ref
+    )
+    return max(module.seq(src.activity_id) for src in memory.sources)
 
 
 def estimate_tokens(text: str) -> int:
@@ -719,6 +813,486 @@ def accounting_metrics(
 
 
 # ---------------------------------------------------------------------------
+# Behavior: owner tasks
+# ---------------------------------------------------------------------------
+
+CODER_SYSTEM_PROMPT = """You are the owner agent of one software module in a multi-agent \
+project. Your previous session ended; the host gives you whatever module memory it has, which \
+may be empty. Implement the task as a code change in the module's language and stack. Follow \
+the module's current contracts, decisions and conventions, and avoid mistakes the module has \
+already made, whenever the memory tells you about them; where it says nothing, use your best \
+judgment. Reply with the code (one or more files, each headed by its path) and at most three \
+short lines of notes. Do not ask questions."""
+
+TASK_JUDGE_SYSTEM_PROMPT = """You grade a code change against requirements of the module it \
+changes. Each requirement has a check, the module's current rule it comes from, and old values \
+that are no longer in force. The current rule is authoritative; the check only explains how it \
+applies to this task, so do not require details the current rule does not state. Label every \
+requirement:
+- "satisfied": the code clearly follows the requirement;
+- "violated": the code contradicts it, for example a wrong name, value, field or helper, an old \
+value, or the mistake the requirement warns about;
+- "not_addressed": the code neither follows nor contradicts it.
+Judge only from the code and notes shown. Reply with one JSON object mapping each requirement \
+id to its label, for example {"r1": "satisfied", "r2": "violated"}."""
+
+TASK_JUDGE_DIFF_NOTE = """
+
+The code is a unified diff of a change to an existing repository: lines starting with "+" are \
+added, "-" removed, the rest is unchanged context. Judge the change. Calling an existing helper \
+counts as using it; unchanged code outside the diff is not shown, so a requirement the change \
+never touches is "not_addressed"."""
+
+
+class OwnerCoder(Protocol):
+    def write(
+        self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]
+    ) -> str: ...
+
+
+class TaskJudge(Protocol):
+    def judge_task(
+        self, *, task: ModuleTask, code: str, requirements: Sequence[dict[str, Any]]
+    ) -> dict[str, str]: ...
+
+
+def _memory_block(evidence: Sequence[EvidenceItem]) -> str:
+    if not evidence:
+        return "(none)"
+    return "\n".join(f"[{item.rank}] ({item.layer}) {item.text}" for item in evidence)
+
+
+class ChatOwnerCoder:
+    def __init__(self, chat: ChatCompletionClient) -> None:
+        self._chat = chat
+
+    def write(self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]) -> str:
+        user = (
+            f"Module: {module.title or module.module_id} (project {module.project})\n\n"
+            f"Module memory from the host:\n{_memory_block(evidence)}\n\n"
+            f"Task: {task.prompt}"
+        )
+        return self._chat.complete(system=CODER_SYSTEM_PROMPT, user=user).strip()
+
+
+class ChatTaskJudge:
+    def __init__(self, chat: ChatCompletionClient) -> None:
+        self._chat = chat
+
+    def judge_task(
+        self, *, task: ModuleTask, code: str, requirements: Sequence[dict[str, Any]]
+    ) -> dict[str, str]:
+        user = json.dumps(
+            {"task": task.prompt, "requirements": list(requirements), "code": code},
+            ensure_ascii=False,
+        )
+        system = TASK_JUDGE_SYSTEM_PROMPT
+        if code.startswith("diff --git"):
+            system += TASK_JUDGE_DIFF_NOTE
+        data = _extract_json_object(self._chat.complete(system=system, user=user))
+        data = data or {}
+        return {
+            str(r["id"]): label
+            if (label := str(data.get(r["id"], "")).strip().lower()) in TASK_LABELS
+            else "not_addressed"
+            for r in requirements
+        }
+
+
+class FakeOwnerCoder:
+    """Deterministic coder for ``--fake-llm``: writes the memory it was given as comments."""
+
+    def write(self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]) -> str:
+        return "\n".join(f"# {item.text}" for item in evidence) or "# NO_MEMORY"
+
+
+class FakeTaskJudge:
+    """Satisfied when the requirement's current rule appears in the code, else not_addressed."""
+
+    def judge_task(
+        self, *, task: ModuleTask, code: str, requirements: Sequence[dict[str, Any]]
+    ) -> dict[str, str]:
+        normalized = _normalize_match_text(code)
+        return {
+            str(r["id"]): "satisfied"
+            if any(
+                (rule := _normalize_match_text(text)) and rule in normalized
+                for text in r["current"]
+            )
+            else "not_addressed"
+            for r in requirements
+        }
+
+
+AGENT_TASK_PROMPT = """{prompt}
+
+Make this change in the repository in the current directory. AGENTS.md holds whatever module \
+memory the host has for you, which may be none. Do not ask questions. When you are done, reply \
+with at most three short lines of notes."""
+
+MAX_AGENT_DIFF_CHARS = 60_000
+#: Tool output an agent may leave behind (caches, environments, lockfiles from installing the
+#: seed's dependencies); untracked, so it never reaches the diff the judge reads.
+AGENT_GIT_EXCLUDES = (
+    "__pycache__/",
+    "*.pyc",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    ".mypy_cache/",
+    "*.egg-info/",
+    ".venv/",
+    "node_modules/",
+    "uv.lock",
+    "poetry.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "go.sum",
+)
+
+
+def load_seed(seeds_dir: str | Path, module_id: str) -> dict[str, str]:
+    """A module's seed repository: ``<seeds_dir>/<module_id>.json`` = {"files": {path: text}}."""
+
+    path = Path(seeds_dir) / f"{module_id}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ModuleMemError(f"{path}: {exc}") from exc
+    files = data.get("files") if isinstance(data, dict) else None
+    if (
+        not isinstance(files, dict)
+        or not files
+        or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items())
+    ):
+        raise ModuleMemError(f'{path}: needs a non-empty "files" object of path -> text')
+    for relative in files:
+        parts = Path(relative).parts
+        if Path(relative).is_absolute() or ".." in parts or (parts and parts[0] == ".git"):
+            raise ModuleMemError(f"{path}: bad seed path {relative!r}")
+    return files
+
+
+@dataclass(frozen=True)
+class SeedDebt:
+    """Technical debt left in a seed: patterns whose use in added code repeats a known mistake."""
+
+    id: str
+    ref: str
+    patterns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SeedSpec:
+    """What a seed declares besides its files: its debt and the tasks it cannot host."""
+
+    debt: tuple[SeedDebt, ...] = ()
+    exclude_tasks: dict[str, str] = field(default_factory=dict)
+
+
+def load_seed_spec(seeds_dir: str | Path, module: Module) -> SeedSpec:
+    """Validate a seed and read its optional ``debt`` and ``exclude_tasks``.
+
+    ``debt`` = [{"id", "ref" (a gold decision or lesson id, or ``contract:<id>``),
+    "patterns" (regexes matched against added lines)}];
+    ``exclude_tasks`` = {task id: reason}, for tasks the seed's code contradicts.
+    """
+
+    load_seed(seeds_dir, module.module_id)
+    path = Path(seeds_dir) / f"{module.module_id}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    gold_ids = {m.id for m in [*module.gold.decisions, *module.gold.lessons]} | {
+        f"contract:{c.contract_id}" for c in module.gold.contracts
+    }
+    debt: list[SeedDebt] = []
+    for item in data.get("debt") or []:
+        patterns = item.get("patterns") if isinstance(item, dict) else None
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("id"), str)
+            or item.get("ref") not in gold_ids
+            or not isinstance(patterns, list)
+            or not patterns
+        ):
+            raise ModuleMemError(f"{path}: debt needs an id, a gold ref and patterns: {item!r}")
+        for pattern in patterns:
+            try:
+                re.compile(pattern)
+            except (re.error, TypeError) as exc:
+                raise ModuleMemError(f"{path}: bad debt pattern {pattern!r}: {exc}") from exc
+        debt.append(SeedDebt(id=item["id"], ref=item["ref"], patterns=tuple(patterns)))
+    exclude = data.get("exclude_tasks") or {}
+    task_ids = {task.id for task in module.tasks}
+    if not isinstance(exclude, dict) or not set(exclude) <= task_ids:
+        raise ModuleMemError(f"{path}: exclude_tasks must map task ids of the module to reasons")
+    return SeedSpec(debt=tuple(debt), exclude_tasks={str(k): str(v) for k, v in exclude.items()})
+
+
+def agents_file(module: Module, evidence: Sequence[EvidenceItem]) -> str:
+    """The AGENTS.md an owner agent starts with: the module, then the arm's memory if any."""
+
+    title = module.title or module.module_id
+    head = f"# {title}\n\nYou own this module of project {module.project}.\n"
+    if not evidence:
+        return head
+    return f"{head}\n## Module memory from the host\n\n{_memory_block(evidence)}\n"
+
+
+def _git(workspace: Path, *args: str) -> str:
+    completed = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=modulemem",
+            "-c",
+            "user.email=modulemem@localhost",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ModuleMemError(f"git {args[0]} failed in {workspace}: {completed.stderr[-500:]}")
+    return completed.stdout
+
+
+class AgentOwnerCoder:
+    """Owner coder that runs an external coding agent on a copy of the module's seed repository.
+
+    ``command`` is invoked as ``command --workspace DIR`` with the task on stdin (the interface
+    of a sandboxed agent wrapper); its stdout is the agent's notes. The workspace is the seed
+    repository committed once together with the arm's memory in ``AGENTS.md``, so the code the
+    judge sees is exactly the agent's ``git diff``. Results are cached on disk by module, task,
+    repeat and memory, so a rerun after a failure resumes where it stopped.
+    """
+
+    def __init__(
+        self,
+        *,
+        command: Sequence[str],
+        seeds_dir: str | Path,
+        work_root: Path,
+        cache_dir: Path,
+        repeat: int,
+        timeout_s: float = 1800.0,
+    ) -> None:
+        self._command = list(command)
+        self._seeds_dir = Path(seeds_dir)
+        self._work_root = work_root
+        self._cache_dir = cache_dir
+        self._repeat = repeat
+        self._timeout_s = timeout_s
+
+    def write(self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]) -> str:
+        memory = agents_file(module, evidence)
+        seed = load_seed(self._seeds_dir, module.module_id)
+        key = hashlib.sha256(
+            json.dumps(
+                [module.module_id, task.id, task.prompt, self._repeat, memory, seed],
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()[:16]
+        name = f"{module.module_id}-{task.id}-r{self._repeat}-{key}"
+        cache = self._cache_dir / f"{name}.json"
+        if cache.exists():
+            return str(json.loads(cache.read_text(encoding="utf-8"))["code"])
+        workspace = self._work_root / name
+        shutil.rmtree(workspace, ignore_errors=True)
+        workspace.mkdir(parents=True)
+        for relative, text in seed.items():
+            path = workspace / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        (workspace / "AGENTS.md").write_text(memory, encoding="utf-8")
+        _git(workspace, "init", "-q")
+        (workspace / ".git" / "info").mkdir(parents=True, exist_ok=True)
+        (workspace / ".git" / "info" / "exclude").write_text(
+            "\n".join(AGENT_GIT_EXCLUDES) + "\n", encoding="utf-8"
+        )
+        _git(workspace, "add", "-A")
+        _git(workspace, "commit", "-q", "-m", "seed")
+        started = time.monotonic()
+        try:
+            completed = subprocess.run(
+                [*self._command, "--workspace", str(workspace)],
+                input=AGENT_TASK_PROMPT.format(prompt=task.prompt),
+                capture_output=True,
+                text=True,
+                timeout=self._timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ModuleMemError(f"coding agent timed out on {module.module_id} {task.id}") from exc
+        if completed.returncode != 0:
+            raise ModuleMemError(
+                f"coding agent failed on {module.module_id} {task.id} "
+                f"(exit {completed.returncode}): {completed.stderr[-500:]}"
+            )
+        _git(workspace, "add", "-A")
+        diff = _git(workspace, "diff", "--cached", "--no-color")
+        code = diff[:MAX_AGENT_DIFF_CHARS]
+        if len(diff) > MAX_AGENT_DIFF_CHARS:
+            code += "\n[diff truncated]"
+        notes = completed.stdout.strip()[-1500:]
+        if notes:
+            code += f"\n\nNotes:\n{notes}"
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        cache.write_text(
+            json.dumps(
+                {
+                    "code": code,
+                    "diff_chars": len(diff),
+                    "files_changed": _git(workspace, "diff", "--cached", "--name-only").split(),
+                    "seconds": round(time.monotonic() - started, 1),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return code
+
+
+_COMMENT_LINE = re.compile(r"^\s*(#|//|/\*|\*)")
+_TRAILING_COMMENT = re.compile(r"\s(#|//)\s.*$")
+
+
+def _added_text(code: str) -> str:
+    """The code lines a unified diff adds, without comments; other code is returned unchanged.
+
+    Comments are dropped so a note such as "no SQLite here" never counts as using a pattern.
+    """
+
+    if not code.startswith("diff --git"):
+        return code
+    lines = []
+    for line in code.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        text = line[1:]
+        if _COMMENT_LINE.match(text):
+            continue
+        lines.append(_TRAILING_COMMENT.sub("", text))
+    return "\n".join(lines)
+
+
+TaskLLMFactory = Callable[[int], tuple[OwnerCoder, TaskJudge]]
+
+
+def build_task_llm_factory(
+    *,
+    out_dir: Path,
+    fake_llm: bool,
+    settings: Settings | None = None,
+    usage: LLMUsageTracker | None = None,
+    coder_llm: str | None = None,
+    judge_llm: str | None = None,
+    coder_command: Sequence[str] = (),
+    seeds_dir: str | Path | None = None,
+    coder_timeout_s: float = 1800.0,
+) -> TaskLLMFactory:
+    """Per-repeat coder/task-judge factory with the same disk cache as the probe roles.
+
+    With ``coder_command`` the owner is an external coding agent working on the module's
+    seed repository (:class:`AgentOwnerCoder`) instead of an LLM writing patch text.
+    """
+
+    cache_dir = out_dir / "llm_cache"
+
+    def agent(repeat: int) -> OwnerCoder:
+        assert seeds_dir is not None
+        return AgentOwnerCoder(
+            command=coder_command,
+            seeds_dir=seeds_dir,
+            work_root=out_dir / "agent_work",
+            cache_dir=cache_dir / "agent",
+            repeat=repeat,
+            timeout_s=coder_timeout_s,
+        )
+
+    if fake_llm:
+        return lambda repeat: (
+            agent(repeat) if coder_command else FakeOwnerCoder(),
+            FakeTaskJudge(),
+        )
+    resolved = settings or get_settings()
+    coder_client = (
+        None if coder_command else RemoteChatClient(settings_for_llm_spec(resolved, coder_llm))
+    )
+    judge_client = RemoteChatClient(settings_for_llm_spec(resolved, judge_llm))
+
+    def factory(repeat: int) -> tuple[OwnerCoder, TaskJudge]:
+        judge = DiskCachedChatClient(
+            judge_client, role="task_judge", cache_dir=cache_dir, repeat=repeat, usage=usage
+        )
+        if coder_client is None:
+            return agent(repeat), ChatTaskJudge(judge)
+        coder = DiskCachedChatClient(
+            coder_client, role="coder", cache_dir=cache_dir, repeat=repeat, usage=usage
+        )
+        return ChatOwnerCoder(coder), ChatTaskJudge(judge)
+
+    return factory
+
+
+def _requirement_payload(module: Module, requirement: ModuleRequirement) -> dict[str, Any]:
+    probe = ModuleProbe(id=requirement.id, question=requirement.check, answer_ids=[requirement.ref])
+    current, old = _probe_statements(module, probe)
+    return {"id": requirement.id, "check": requirement.check, "current": current, "old": old}
+
+
+def _run_tasks(
+    module: Module,
+    *,
+    arm: str,
+    repeat: int,
+    coder: OwnerCoder,
+    judge: TaskJudge,
+    evidence_for: Callable[[str], list[EvidenceItem]],
+    seed: SeedSpec | None = None,
+) -> list[dict[str, Any]]:
+    third = len(module.activities) / 3
+    rows: list[dict[str, Any]] = []
+    for task in module.tasks:
+        if seed is not None and task.id in seed.exclude_tasks:
+            continue
+        evidence = evidence_for(task.prompt)
+        code = coder.write(module=module, task=task, evidence=evidence)
+        payloads = [_requirement_payload(module, r) for r in task.requirements]
+        labels = judge.judge_task(task=task, code=code, requirements=payloads)
+        scanned = _added_text(code)
+        debt_reused = sorted(
+            debt.id
+            for debt in (seed.debt if seed is not None else ())
+            if any(re.search(pattern, scanned) for pattern in debt.patterns)
+        )
+        for requirement in task.requirements:
+            rows.append(
+                {
+                    "arm": arm,
+                    "module": module.module_id,
+                    "repeat": repeat,
+                    "task": task.id,
+                    "requirement": requirement.id,
+                    "ref": requirement.ref,
+                    "category": requirement_category(module, requirement),
+                    "early": requirement_last_seq(module, requirement) <= third,
+                    "label": labels.get(requirement.id, "not_addressed"),
+                    "pattern_violation": any(
+                        re.search(pattern, scanned) for pattern in requirement.violation_patterns
+                    ),
+                    "evidence_tokens": sum(item.estimated_tokens for item in evidence),
+                    "debt_reused": debt_reused,
+                    "code": code,
+                }
+            )
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
@@ -735,6 +1309,11 @@ class ModuleMemConfig:
     curator_window: int = 12
     pack_budget: int = 1500
     max_repairs: int = 2
+    probes: bool = True
+    tasks: bool = False
+    coder_command: tuple[str, ...] = ()
+    seeds_dir: str | None = None
+    coder_timeout_s: float = 1800.0
 
 
 def run_modulemem(
@@ -745,11 +1324,26 @@ def run_modulemem(
     settings: Settings | None = None,
     curated_llm_factory: Any = None,
     llm_factory: Any = None,
+    task_llm_factory: TaskLLMFactory | None = None,
     scratch_root: str | Path | None = None,
 ) -> dict[str, Any]:
     for arm in config.arms:
         if arm not in MODULEMEM_ARMS:
             raise ModuleMemError(f"unknown arm {arm!r}; valid: {', '.join(MODULEMEM_ARMS)}")
+    if not config.probes and not config.tasks:
+        raise ModuleMemError("nothing to run: enable probes, tasks, or both")
+    if config.tasks and not any(module.tasks for module in modules):
+        raise ModuleMemError("--tasks needs modules that carry tasks")
+    if config.coder_command:
+        if not config.tasks:
+            raise ModuleMemError("a coder command only runs owner tasks; add --tasks")
+        if config.seeds_dir is None:
+            raise ModuleMemError("a coder command needs --seeds")
+    seeds: dict[str, SeedSpec] = {
+        module.module_id: load_seed_spec(config.seeds_dir, module)
+        for module in modules
+        if config.coder_command and config.seeds_dir is not None and module.tasks
+    }
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     tracker = LLMUsageTracker()
@@ -762,9 +1356,23 @@ def run_modulemem(
         answerer_llm=config.answerer_llm,
         judge_llm=config.judge_llm,
     )
+    task_factory: TaskLLMFactory | None = None
+    if config.tasks:
+        task_factory = task_llm_factory or build_task_llm_factory(
+            out_dir=out_path,
+            fake_llm=config.fake_llm,
+            settings=base,
+            usage=tracker,
+            coder_llm=config.answerer_llm,
+            judge_llm=config.judge_llm,
+            coder_command=config.coder_command,
+            seeds_dir=config.seeds_dir,
+            coder_timeout_s=config.coder_timeout_s,
+        )
     created_scratch = scratch_root is None
     scratch = Path(scratch_root) if scratch_root else Path(tempfile.mkdtemp(prefix="modulemem-"))
     results: list[dict[str, Any]] = []
+    task_rows: list[dict[str, Any]] = []
     packs: list[dict[str, Any]] = []
     write_side: list[dict[str, Any]] = []
     lags: list[float] = []
@@ -772,9 +1380,10 @@ def run_modulemem(
         for arm in config.arms:
             for repeat in range(config.repeats):
                 answerer, judge = factory(repeat)
+                roles = task_factory(repeat) if task_factory is not None else None
                 for module in modules:
                     with deterministic_ids(f"modulemem:{arm}:r{repeat}:{module.module_id}"):
-                        rows, pack_row, ws, lag = _run_module_arm(
+                        rows, tasks, pack_row, ws, lag = _run_module_arm(
                             module,
                             arm=arm,
                             repeat=repeat,
@@ -782,12 +1391,15 @@ def run_modulemem(
                             base=base,
                             answerer=answerer,
                             judge=judge,
+                            task_roles=roles,
+                            seed=seeds.get(module.module_id),
                             data_dir=scratch / arm / f"{module.module_id}-r{repeat}",
                             cache_dir=out_path / "llm_cache",
                             usage=tracker,
                             curated_llm_factory=curated_llm_factory,
                         )
                     results.extend(rows)
+                    task_rows.extend(tasks)
                     if pack_row is not None:
                         packs.append(pack_row)
                     if ws is not None:
@@ -797,9 +1409,15 @@ def run_modulemem(
         if created_scratch:
             shutil.rmtree(scratch, ignore_errors=True)
     summary = _summarize(results, packs, write_side, lags, config, tracker)
+    summary["behavior"] = summarize_tasks(task_rows, config.arms) if config.tasks else {}
     (out_path / "results.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in results), encoding="utf-8"
     )
+    if config.tasks:
+        (out_path / "tasks.jsonl").write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in task_rows),
+            encoding="utf-8",
+        )
     (out_path / "packs.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in packs), encoding="utf-8"
     )
@@ -841,11 +1459,19 @@ def _run_module_arm(
     base: Settings,
     answerer: RoomMemAnswerer,
     judge: RoomMemJudge,
+    task_roles: tuple[OwnerCoder, TaskJudge] | None,
     data_dir: Path,
     cache_dir: Path,
     usage: LLMUsageTracker,
     curated_llm_factory: Any,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None, list[float]]:
+    seed: SeedSpec | None = None,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    list[float],
+]:
     pack_row: dict[str, Any] | None = None
     ws: dict[str, Any] | None = None
     lags: list[float] = []
@@ -902,17 +1528,34 @@ def _run_module_arm(
         )
         session_id = _retrieval_service(module, service)
 
+    def evidence_for(query: str) -> list[EvidenceItem]:
+        if service is None:
+            return evidence
+        package = service.build_context(
+            session_id=session_id,
+            task=XMUSE_TASK,
+            budget=800,
+            retrieval_query=query,
+            include_global_core=False,
+        )
+        return _evidence_items(build_source_evidence(package, schema_version="v2"))
+
+    task_rows: list[dict[str, Any]] = []
+    if task_roles is not None and module.tasks:
+        coder, task_judge = task_roles
+        task_rows = _run_tasks(
+            module,
+            arm=arm,
+            repeat=repeat,
+            coder=coder,
+            judge=task_judge,
+            evidence_for=evidence_for,
+            seed=seed,
+        )
+
     rows: list[dict[str, Any]] = []
-    for probe in module.probes:
-        if service is not None:
-            package = service.build_context(
-                session_id=session_id,
-                task=XMUSE_TASK,
-                budget=800,
-                retrieval_query=probe.question,
-                include_global_core=False,
-            )
-            evidence = _evidence_items(build_source_evidence(package, schema_version="v2"))
+    for probe in module.probes if config.probes else []:
+        evidence = evidence_for(probe.question)
         answer = answerer.answer(question=probe.question, evidence=evidence)
         current, superseded = _probe_statements(module, probe)
         label = judge.judge_answer(
@@ -938,7 +1581,7 @@ def _run_module_arm(
                 "evidence_items": len(evidence),
             }
         )
-    return rows, pack_row, ws, lags
+    return rows, task_rows, pack_row, ws, lags
 
 
 def _rate(rows: Sequence[dict[str, Any]], label: str) -> float | None:
@@ -1015,6 +1658,9 @@ def _summarize(
             "pack_budget": config.pack_budget,
             "max_repairs": config.max_repairs,
             "fake_llm": config.fake_llm,
+            "probes": config.probes,
+            "tasks": config.tasks,
+            "coder_command": list(config.coder_command),
         },
         "read_side": read,
         "files": pack_stats,
@@ -1027,6 +1673,72 @@ def _summarize(
         },
         "usage": tracker.aggregate(),
     }
+
+
+def _task_stats(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    n = len(rows)
+    addressed = [r for r in rows if r["label"] != "not_addressed"]
+    return {
+        "n": n,
+        **{
+            label: (sum(1 for r in rows if r["label"] == label) / n) if n else None
+            for label in TASK_LABELS
+        },
+        "pattern_violation": (sum(1 for r in rows if r["pattern_violation"]) / n) if n else None,
+        # A change to an existing repository often leaves a requirement untouched (correct code
+        # stays as it is), so violations are also reported over the requirements it touched.
+        "addressed": len(addressed),
+        "violated_of_addressed": (
+            sum(1 for r in addressed if r["label"] == "violated") / len(addressed)
+            if addressed
+            else None
+        ),
+    }
+
+
+def summarize_tasks(rows: Sequence[dict[str, Any]], arms: Sequence[str]) -> dict[str, Any]:
+    """Requirement-level rates per arm, by gold category and for early-only gold.
+
+    ``tasks_all_satisfied`` counts a task once per repeat when every requirement
+    is satisfied; ``evidence_tokens`` is the mean per task.
+    """
+
+    out: dict[str, Any] = {}
+    for arm in arms:
+        arm_rows = [r for r in rows if r["arm"] == arm]
+        if not arm_rows:
+            continue
+        tasks: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
+        for row in arm_rows:
+            tasks.setdefault((row["module"], row["repeat"], row["task"]), []).append(row)
+        stats: dict[str, Any] = {
+            category: _task_stats([r for r in arm_rows if r["category"] == category])
+            for category in REQUIREMENT_CATEGORIES
+        }
+        stats["early"] = _task_stats([r for r in arm_rows if r["early"]])
+        stats["all"] = _task_stats(arm_rows)
+        stats["tasks"] = len(tasks)
+        stats["tasks_all_satisfied"] = sum(
+            all(r["label"] == "satisfied" for r in group) for group in tasks.values()
+        ) / len(tasks)
+        stats["tasks_with_violation"] = sum(
+            any(r["label"] == "violated" or r["pattern_violation"] for r in group)
+            for group in tasks.values()
+        ) / len(tasks)
+        # Seed debt (coding-agent runs): tasks whose added code reuses a known-bad pattern.
+        stats["tasks_reusing_debt"] = sum(
+            bool(group[0].get("debt_reused")) for group in tasks.values()
+        ) / len(tasks)
+        reused: dict[str, int] = {}
+        for group in tasks.values():
+            for debt_id in group[0].get("debt_reused") or []:
+                reused[debt_id] = reused.get(debt_id, 0) + 1
+        stats["debt_reuse_by_id"] = reused
+        stats["evidence_tokens"] = sum(
+            group[0]["evidence_tokens"] for group in tasks.values()
+        ) / len(tasks)
+        out[arm] = stats
+    return out
 
 
 def render_modulemem_md(summary: dict[str, Any]) -> str:
@@ -1052,6 +1764,38 @@ def render_modulemem_md(summary: dict[str, Any]) -> str:
                 f"| {fmt(stats['stale'])} "
                 f"| {fmt(stats['missing'])} | {fmt(stats['wrong'])} | {fmt(stats['substring'])} "
                 f"| {fmt(stats['evidence_tokens'])} |"
+            )
+    behavior = summary.get("behavior") or {}
+    if behavior:
+        lines += [
+            "",
+            "## Behavior: owner tasks (requirement level)",
+            "",
+            "| arm | gold | n | satisfied | violated | not addressed | pattern violation "
+            "| addressed | violated of addressed |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+        for arm, stats in behavior.items():
+            for category in (*REQUIREMENT_CATEGORIES, "early", "all"):
+                row = stats[category]
+                lines.append(
+                    f"| {arm} | {category} | {row['n']} | {fmt(row['satisfied'])} "
+                    f"| {fmt(row['violated'])} | {fmt(row['not_addressed'])} "
+                    f"| {fmt(row['pattern_violation'])} | {row['addressed']} "
+                    f"| {fmt(row['violated_of_addressed'])} |"
+                )
+        lines += [
+            "",
+            "| arm | tasks | all requirements satisfied | tasks with a violation "
+            "| tasks reusing seed debt | debt reuse by id | evidence tok |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for arm, stats in behavior.items():
+            by_id = ", ".join(f"{k}={v}" for k, v in sorted(stats["debt_reuse_by_id"].items()))
+            lines.append(
+                f"| {arm} | {stats['tasks']} | {fmt(stats['tasks_all_satisfied'])} "
+                f"| {fmt(stats['tasks_with_violation'])} | {fmt(stats['tasks_reusing_debt'])} "
+                f"| {by_id or '-'} | {fmt(stats['evidence_tokens'])} |"
             )
     lines += ["", "## Memory files", "", json.dumps(summary["files"], indent=1), ""]
     lines += [

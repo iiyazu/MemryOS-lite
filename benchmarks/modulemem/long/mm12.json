@@ -1,0 +1,1658 @@
+{
+ "module_id": "crm-sync",
+ "project": "lumen",
+ "language": "zh",
+ "title": "lumen 数据同步 worker 模块",
+ "participants": [
+  {
+   "id": "human",
+   "kind": "human",
+   "name": "老林"
+  },
+  {
+   "id": "owner",
+   "kind": "agent",
+   "name": "Sync owner"
+  },
+  {
+   "id": "reviewer",
+   "kind": "agent",
+   "name": "Reviewer"
+  },
+  {
+   "id": "gate",
+   "kind": "infra",
+   "name": "CI gate"
+  }
+ ],
+ "activities": [
+  {
+   "id": "a01",
+   "type": "message",
+   "speaker": "human",
+   "text": "老林：第 1 周，project lumen 数据同步 worker 立项。你负责这个模块：定时把 CRM 联系人同步进数据仓库，下游报表都依赖它。先跑通再慢慢加固。"
+  },
+  {
+   "id": "a02",
+   "type": "message",
+   "speaker": "owner",
+   "text": "收到。第 1 周计划：先搭 worker 骨架，打通 CRM 拉取、转换、入库全链路，增量游标和去重键先定一版，后面再调优。"
+  },
+  {
+   "id": "a03",
+   "type": "message",
+   "speaker": "human",
+   "text": "题外话：三楼咖啡机修好了，冲刺前可以去续命。昨晚的球赛看了吗？"
+  },
+  {
+   "id": "a04",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 1 周进展：本地已能拉通 CRM 沙箱接口，仓库侧连通性也验证了。今天先把周期、运行形态和目标表定下来。"
+  },
+  {
+   "id": "a05",
+   "type": "message",
+   "speaker": "human",
+   "text": "需求确认：同步周期为每 10 分钟触发一次，由 cron 调度 worker 拉取 CRM 增量。下游报表按这个频率刷新。"
+  },
+  {
+   "id": "a06",
+   "type": "message",
+   "speaker": "owner",
+   "text": "技术选型：worker 使用 Go 实现，独立部署，通过 systemd 管理进程。仓库写入用 database/sql 直连。"
+  },
+  {
+   "id": "a07",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "crm-sync-schema v1:\nfields: crm_id (string, required, CRM 主键).\nemail (string, required, 联系人邮箱).\nphone (string, optional, 手机号原文).\nname (string, required).\nupdated_at (string, ISO8601, required).\n增量拉取用 updated_since 游标.\n仓库写入为 upsert 语义.\n删除暂不处理，后续版本补充.\n兼容说明：v1 为首版全量字段.",
+   "contract_id": "crm-sync-schema",
+   "contract_version": 1
+  },
+  {
+   "id": "a08",
+   "type": "message",
+   "speaker": "human",
+   "text": "存储确认：仓库目标表为 warehouse.contacts，由数仓团队预先建好，字段与 v1 对齐。权限已开通。"
+  },
+  {
+   "id": "a09",
+   "type": "message",
+   "speaker": "owner",
+   "text": "状态同步：第 1 周已完成 v1 字段映射，本地单条写入验证通过。明天开始做批量拉取。"
+  },
+  {
+   "id": "a10",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 2 周实现：fetchContacts 只调了一次 GET /crm/contacts?limit=100，没有处理 next_token。当时以为沙箱数据只有一页。"
+  },
+  {
+   "id": "a11",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ go test ./internal/sync -run TestSyncPagination -count=1 -v\n=== RUN   TestSyncPagination\n    sync_test.go:42: seeding 250 contacts across 3 pages\n    sync_test.go:48: mock CRM server listening on 127.0.0.1:18441\n    sync_test.go:55: GET /crm/contacts?limit=100 -> 200 (page 1, next_token=abc)\n    sync_test.go:58: worker fetched 1 page(s)\n    sync_test.go:61: warehouse rows after sync: 100\n    sync_test.go:63: expected rows: 250\n--- FAIL: TestSyncPagination (0.42s)\n    sync_test.go:66: pagination error: 只同步了第一页，后续页面未拉取\n    sync_test.go:68: missing contacts from page 2 and page 3\n    sync_test.go:70: hint: loop until next_token is empty\nFAIL\nFAIL\tlumen/sync/internal/sync\t0.512s\ncoverage: 61% of statements\nFAIL: integration pagination gate exits 1\nnext_token empty check missing\nworker stops after first page in test",
+   "gate_id": "go-test"
+  },
+  {
+   "id": "a12",
+   "type": "message",
+   "speaker": "human",
+   "text": "游标方案确认：增量游标保存在 postgres 的 sync_state 表中，key 为 crm_updated_since，失败可回滚。"
+  },
+  {
+   "id": "a13",
+   "type": "message",
+   "speaker": "human",
+   "text": "问一下：CRM 沙箱的 next_token 是在 body 里还是 header 里？文档我没找到。"
+  },
+  {
+   "id": "a14",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 2 周计划：先修分页循环，再补游标提交逻辑。去重和批大小我会各定一版先跑起来。"
+  },
+  {
+   "id": "a15",
+   "type": "message",
+   "speaker": "human",
+   "text": "安全确认：CRM API 认证使用 OAuth2 client_credentials 模式，secret 走环境变量，不落地配置文件。"
+  },
+  {
+   "id": "a16",
+   "type": "message",
+   "speaker": "owner",
+   "text": "收到，认证已按该模式接好，token 缓存 55 分钟，过期前刷新。"
+  },
+  {
+   "id": "a17",
+   "type": "message",
+   "speaker": "human",
+   "text": "周末打算去爬香山，回来再看联调。天气不错，适合放空。"
+  },
+  {
+   "id": "a18",
+   "type": "message",
+   "speaker": "owner",
+   "text": "去重方案 v1：去重键为 email，仓库侧按 email 做 upsert。当时 CRM 主键不稳定，先用邮箱顶着。"
+  },
+  {
+   "id": "a19",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：联调环境 CRM 数据量涨到 2 万了，注意观察同步耗时。"
+  },
+  {
+   "id": "a20",
+   "type": "message",
+   "speaker": "owner",
+   "text": "批量策略 v1：每批同步 500 条，一次拉满再写库。沙箱环境下 500 条延迟尚可。"
+  },
+  {
+   "id": "a21",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "复核意见：fetchContacts 依然只请求第一页，没有循环 next_token，集成测试里 250 条只进了 100 条。必须分页拉取直到 token 为空。"
+  },
+  {
+   "id": "a22",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ go test -race ./internal/sync -run TestCursorRace -count=1 -v\n=== RUN   TestCursorRace\n    cursor_test.go:30: starting worker with 2 goroutines\n    cursor_test.go:36: batch 1 written: 100 rows\n    cursor_test.go:39: cursor updated outside transaction\n    cursor_test.go:44: simulated crash before batch 2 commit\n==================\nWARNING: DATA RACE\nRead at 0x00c0001a2048 by goroutine 7:\n  lumen/sync/internal/sync.UpdateCursor()\n      /home/lumen/sync/cursor.go:58 +0x114\nPrevious write at 0x00c0001a2048 by goroutine 9:\n  lumen/sync/internal/sync.WriteBatch()\n      /home/lumen/sync/store.go:91 +0x1a4\n    cursor_test.go:52: cursor=2026-02-02T10:00:00Z but batch 2 lost\n--- FAIL: TestCursorRace (1.18s)\nFAIL\nFAIL\tlumen/sync/internal/sync\t1.204s\nManual cursor commit causes duplicate writes on restart\nin-txn cursor update required",
+   "gate_id": "go-test-race"
+  },
+  {
+   "id": "a23",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 3 周修复：把游标提交移入事务内，WriteBatch 和 UpdateCursor 同一事务提交，崩溃后可按旧游标重放。"
+  },
+  {
+   "id": "a24",
+   "type": "message",
+   "speaker": "human",
+   "text": "午饭吃啥？楼下新开了家面馆，据说不错。"
+  },
+  {
+   "id": "a25",
+   "type": "message",
+   "speaker": "owner",
+   "text": "容错策略 v1：失败重试 3 次后直接丢弃，当时认为 CRM 脏数据不多，丢弃后靠下次全量补回。"
+  },
+  {
+   "id": "a26",
+   "type": "message",
+   "speaker": "human",
+   "text": "提醒：下游报表下周要试运行，同步失败的话先保住现场日志。"
+  },
+  {
+   "id": "a27",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 3 周实现：syncContact 里加了 zap 日志，把联系人结构体整体打印了，方便排查字段映射问题。"
+  },
+  {
+   "id": "a28",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ privacy-lint ./... --rules PII_NO_PHONE\nScanning 14 files ...\ninternal/sync/worker.go:88: info log prints contact struct\ninternal/sync/worker.go:89:   zap.String(\"phone\", c.Phone)\ninternal/sync/store.go:44: ok\ninternal/sync/fetch.go:31: ok\npkg/crm/client.go:22: ok\n--- privacy report ---\nchecked 142 log calls, 1 violation\nPII_LEAK: log prints full phone number at worker.go:89\nrule PII_NO_PHONE: 禁止在日志里打印完整手机号\nviolation: zap.String(\"phone\", c.Phone) exposes full number 13800138000\nsuggestion: mask to *** + last 4 or drop field\nFAIL: privacy lint exits 1 (1 PII violation)\nsee docs/privacy.md section 3.2\nfull phone must be masked before logging\ncontact phone must not appear in plaintext logs",
+   "gate_id": "privacy-lint"
+  },
+  {
+   "id": "a29",
+   "type": "message",
+   "speaker": "human",
+   "text": "隐私合规提醒：手机号算敏感信息，日志里别留原文。"
+  },
+  {
+   "id": "a30",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 4 周整改：日志里手机号只保留后四位，其余脱敏，存量日志已申请清理。"
+  },
+  {
+   "id": "a31",
+   "type": "message",
+   "speaker": "human",
+   "text": "周会纪要：试运行期间先保证不丢数，性能优化往后放。"
+  },
+  {
+   "id": "a32",
+   "type": "message",
+   "speaker": "human",
+   "text": "时间口径确认：时区按 Asia/Shanghai 本地时间解析，CRM 返回的无时区字符串按上海时间理解。"
+  },
+  {
+   "id": "a33",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "复核意见：删除联系人直接硬删除了整行，下游无法追溯。应当保留软删除标记位，后续 schema 会补 deleted_at。硬删除整行会导致审计断链。"
+  },
+  {
+   "id": "a34",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 4 周回复：先暂停硬删除，等待 v2 的 deleted_at 字段，届时改为标记删除。"
+  },
+  {
+   "id": "a35",
+   "type": "message",
+   "speaker": "human",
+   "text": "随手一问：你们组周五团建去哪？听说要去釣虾？"
+  },
+  {
+   "id": "a36",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 4 周进展：分页循环已补上，游标事务已改，隐私日志已脱敏。准备提测。"
+  },
+  {
+   "id": "a37",
+   "type": "message",
+   "speaker": "human",
+   "text": "有个假设性问题：如果 CRM 一天新增 100 万联系人，现有链路能扛住吗？"
+  },
+  {
+   "id": "a38",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ go test ./internal/sync -run TestSoftDelete -count=1 -v\n=== RUN   TestSoftDelete\n    delete_test.go:18: seeding contact crm_001 with deleted=true\n    delete_test.go:24: worker synced 1 row(s)\n    delete_test.go:27: warehouse row count: 0\n    delete_test.go:30: expected: 1 row with deleted_at set\n--- FAIL: TestSoftDelete (0.33s)\n    delete_test.go:33: HARD_DELETE detected: 整行被硬删除，无法审计\n    delete_test.go:36: missing deleted_at marker\n    delete_test.go:38: need soft-delete flag, not row removal\nFAIL\nFAIL\tlumen/sync/internal/sync\t0.401s\ncoverage: 68% of statements\nFAIL: delete handling gate exits 1\n硬删除整行不符合预期，需等待 v2 字段",
+   "gate_id": "go-test"
+  },
+  {
+   "id": "a39",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 5 周回复：删除逻辑已改为跳过物理删除，等 v2 补 deleted_at 后再做标记。现阶段保留原行。"
+  },
+  {
+   "id": "a40",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：第 5 周联调通过，试运行 pending。下周开始处理 CRM 字段变更和性能复核。"
+  },
+  {
+   "id": "a41",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 6 周开工：CRM 宣布主键治理完成，邮箱重复率上升，准备评估去重键切换。分页和游标逻辑保持不动。"
+  },
+  {
+   "id": "a42",
+   "type": "message",
+   "speaker": "human",
+   "text": "中午要不要一起点咖啡？三楼那台机子排队太长了。"
+  },
+  {
+   "id": "a43",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "复核意见：第 6 周的 fetch 分支里错误重试直接 return，没有退避，短时间会打爆 CRM 限流。建议加指数退避。"
+  },
+  {
+   "id": "a44",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ go test ./... -count=1 2>&1 | tail -25\nok  \tlumen/sync/pkg/crm\t0.412s\nok  \tlumen/sync/internal/sync\t1.021s\nFAIL\tlumen/sync/internal/store\t0.884s\n--- FAIL: TestWarehouseUpsert (0.88s)\n    store_test.go:77: upsert conflict on duplicate email\n    store_test.go:80: 2 contacts share email a@test.com\n    store_test.go:83: expected 2 rows, got 1\n    store_test.go:86: email dedup causes row collapse\n    store_test.go:88: hint: dedup by stable id\nFAIL\nFAIL\tlumen/sync/internal/store\t0.884s\nFAIL\ncoverage: 71% of statements\nTestWarehouseUpsert fails on shared-email case\nemail collision collapses distinct contacts\nneed stable primary key for upsert",
+   "gate_id": "go-test"
+  },
+  {
+   "id": "a45",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 6 周分析：网易邮箱别名和多人共用邮箱导致 email 碰撞，仓库侧 upsert 误合并。准备切主键。"
+  },
+  {
+   "id": "a46",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：第 7 周做主键切换评审，顺带把批大小往下调，CRM 限流 429 变多了。"
+  },
+  {
+   "id": "a47",
+   "type": "message",
+   "speaker": "human",
+   "text": "猜一下：今年年会会去哪里？去年去的温泉还不错。"
+  },
+  {
+   "id": "a48",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 7 周准备：整理邮箱碰撞案例 37 例，全部指向共用邮箱和大小写问题。"
+  },
+  {
+   "id": "a49",
+   "type": "message",
+   "speaker": "human",
+   "text": "提醒：schema v2 评审约在周四，记得带上删除标记方案。"
+  },
+  {
+   "id": "a50",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "crm-sync-schema v2:\nfields: crm_id (string, required).\nemail (string, required).\nphone (string, optional, 原文，待 v3 拆分).\nname (string, required).\nupdated_at (string, ISO8601, UTC).\ndeleted_at (string, nullable, ISO8601, 软删除标记，为空表示未删除).\n增量拉取用 updated_since + deleted_since.\n仓库写入为 upsert，删除改为标记 deleted_at.\n兼容：v1 的 phone 字段原样保留.",
+   "contract_id": "crm-sync-schema",
+   "contract_version": 2
+  },
+  {
+   "id": "a51",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 7 周跟进：已按 v2 补齐 deleted_at 标记逻辑，硬删除代码彻底删除。"
+  },
+  {
+   "id": "a52",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：v2 合入后试运行恢复，下游开始验收删除标记。"
+  },
+  {
+   "id": "a53",
+   "type": "message",
+   "speaker": "human",
+   "text": "问题：如果联系人邮箱变更了，老报表还能关联上吗？"
+  },
+  {
+   "id": "a54",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 8 周答复：邮箱变更场景下老键会断链，这正是要切主键的原因之一。"
+  },
+  {
+   "id": "a55",
+   "type": "message",
+   "speaker": "owner",
+   "text": "去重方案 v2：去重键为 crm_id，仓库侧按 crm_id 做 upsert，email 只做普通字段。切换后碰撞案例全部通过。"
+  },
+  {
+   "id": "a56",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 8 周备注：之前用 email 去重的那版逻辑已经下线，老代码注释忽略即可，不要再按邮箱合并。"
+  },
+  {
+   "id": "a57",
+   "type": "message",
+   "speaker": "human",
+   "text": "周报：主键切换后合并错误归零，辛苦了。周末好好休息。"
+  },
+  {
+   "id": "a58",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 9 周观察：切到新键后写入量上涨 3%，属于原来被误合并的行 now 展开，符合预期。"
+  },
+  {
+   "id": "a59",
+   "type": "message",
+   "speaker": "human",
+   "text": "假设一下：如果 CRM 主键以后又变了，我们还能切回去吗？先记录风险。"
+  },
+  {
+   "id": "a60",
+   "type": "message",
+   "speaker": "owner",
+   "text": "批量策略 v2：每批同步 200 条，429 限流明显下降。200 条下 P95 延迟 1.8s，内存稳定。"
+  },
+  {
+   "id": "a61",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 9 周备注：老配置每批 500 条已经废弃，CRM 限流下会触发 429，不要再调大。"
+  },
+  {
+   "id": "a62",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ go vet ./... && go test ./internal/sync -run TestBatchTimeout -count=1 -v\n=== RUN   TestBatchTimeout\n    batch_test.go:21: batch size 200, 50 batches\n    batch_test.go:28: P95 latency 1.8s, ok\n    batch_test.go:33: simulating CRM 500ms jitter\n    batch_test.go:37: batch 12 timeout after 10s\n    batch_test.go:41: retry without backoff hits rate limit\n--- FAIL: TestBatchTimeout (2.41s)\n    batch_test.go:45: TIMEOUT: retry storm causes 429\n    batch_test.go:48: need exponential backoff + DLQ\n    batch_test.go:50: current direct-retry fails under jitter\nFAIL\nFAIL\tlumen/sync/internal/sync\t2.512s\ncoverage: 74% of statements\nFAIL: batch timeout gate exits 1\nbackoff missing under CRM jitter",
+   "gate_id": "go-test"
+  },
+  {
+   "id": "a63",
+   "type": "message",
+   "speaker": "human",
+   "text": "chitchat：楼下麵馆二店开了，据说牛肉面不错。"
+  },
+  {
+   "id": "a64",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 10 周计划：引入退避和死信队列，失败不再直接丢弃，超限进 DLQ 人工复核。"
+  },
+  {
+   "id": "a65",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "复核意见：第 10 周的 syncAll 只拉了第一页就更新了进度，next_token 非空时直接返回了。必须分页拉取直到 token 为空，否则大数据量下又会漏数。"
+  },
+  {
+   "id": "a66",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 10 周回复：确认是新加的增量路径漏了循环，已补上 while next_token != \"\" 循环。"
+  },
+  {
+   "id": "a67",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：第 10 周回归中，漏数 bug 修复验证中。"
+  },
+  {
+   "id": "a68",
+   "type": "message",
+   "speaker": "human",
+   "text": "问题：死信队列的消息保留多久？需要和 SRE 对齐。"
+  },
+  {
+   "id": "a69",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 11 周答复：DLQ 保留 30 天，超期转冷存，复核后可重放。"
+  },
+  {
+   "id": "a70",
+   "type": "message",
+   "speaker": "owner",
+   "text": "容错策略 v2：失败重试 5 次指数退避，超限进入 sync_dlq 死信队列，支持人工重放。不再直接丢弃。"
+  },
+  {
+   "id": "a71",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 11 周备注：以前失败重试 3 次后直接丢弃的策略已废弃，丢数风险太高，统一走 DLQ，不要再用老逻辑。"
+  },
+  {
+   "id": "a72",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "复核意见：游标提交又被移到了事务外，WriteBatch 成功后才单独 UpdateCursor，崩溃会重复写入。游标更新必须放在同一事务内提交。"
+  },
+  {
+   "id": "a73",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 11 周回复：回滚了那次重构，游标与批次写回同一事务，原子提交。"
+  },
+  {
+   "id": "a74",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：第 12 周做时区统一，CRM 要切 UTC，上海时间的老解析要退役。"
+  },
+  {
+   "id": "a75",
+   "type": "message",
+   "speaker": "owner",
+   "text": "时间口径 v2：所有时间统一按 UTC 解析存储，展示层再转换。CRM 无时区字符串一律按 UTC 理解。"
+  },
+  {
+   "id": "a76",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 12 周备注：以前按 Asia/Shanghai 解析的老逻辑已删除，夏令时边界 bug 不再复现，忽略历史代码。"
+  },
+  {
+   "id": "a77",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 12 周实现：phone 字段拆分预研，CRM 要把区号和号码分开下发。"
+  },
+  {
+   "id": "a78",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "复核意见：worker.go 又在 info 日志里打印了完整手机号，明文 138 开头号码直接落盘。日志中禁止打印完整手机号，须脱敏后记录。"
+  },
+  {
+   "id": "a79",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 13 周回复：已把那行日志改为只打后四位，全量扫描确认无其他明文号码。"
+  },
+  {
+   "id": "a80",
+   "type": "message",
+   "speaker": "human",
+   "text": "chitchat：端午粽子甜咸之争又开始了，你站哪边？"
+  },
+  {
+   "id": "a81",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 13 周状态：UTC 切换后跨天统计对齐了， DLQ 积压为 0。"
+  },
+  {
+   "id": "a82",
+   "type": "message",
+   "speaker": "human",
+   "text": "问题：phone 拆分后老报表里的 phone 列怎么办？"
+  },
+  {
+   "id": "a83",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 14 周答复：老列保留做视图兼容，新写入走拆分字段，双跑两周。"
+  },
+  {
+   "id": "a84",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：第 14 周出 v3 schema，把区号拆出来。"
+  },
+  {
+   "id": "a85",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 14 周进展：CRM 预发环境已下发 country_code，联调中。"
+  },
+  {
+   "id": "a86",
+   "type": "message",
+   "speaker": "human",
+   "text": "status：第 15 周无阻塞，等待 v3 评审。"
+  },
+  {
+   "id": "a87",
+   "type": "message",
+   "speaker": "human",
+   "text": "假设：如果以后要同步企业微信联系人，worker 还能复用吗？"
+  },
+  {
+   "id": "a88",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 15 周回复：复用度应该不错，但认证和字段映射要重做，先不展开。"
+  },
+  {
+   "id": "a89",
+   "type": "message",
+   "speaker": "human",
+   "text": "chitchat：最近降温了，记得加衣服。"
+  },
+  {
+   "id": "a90",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "crm-sync-schema v3:\nfields: crm_id (string, required).\nemail (string, required).\ncountry_code (string, optional, 如 +86).\nnumber (string, optional, 不含区号的号码).\nname (string, required).\nupdated_at (string, ISO8601, UTC).\ndeleted_at (string, nullable, 软删除标记).\n增量拉取用 updated_since + deleted_since.\n仓库写入为 upsert，phone 原文字段不再写入.\n兼容：v1/v2 的 phone 字段只读兼容，新数据以拆分字段为准.",
+   "contract_id": "crm-sync-schema",
+   "contract_version": 3
+  },
+  {
+   "id": "a91",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 16 周备注：v1/v2 的 phone 单一字段只为兼容保留读逻辑，新写入已按 country_code + number 拆分，不要再写老字段。"
+  },
+  {
+   "id": "a92",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：v3 已合入，回归中。"
+  },
+  {
+   "id": "a93",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 16 周进展：拆分后脱敏逻辑改为只对 number 后四位保留，其余掩码。"
+  },
+  {
+   "id": "a94",
+   "type": "message",
+   "speaker": "human",
+   "text": "问题：区号缺失的存量数据怎么补？"
+  },
+  {
+   "id": "a95",
+   "type": "message",
+   "speaker": "owner",
+   "text": "去重方案 v3：去重键以 crm_id 为主，email 仅用于回填缺失。邮箱为空的 CRM 记录可回填，冲突时主键优先。"
+  },
+  {
+   "id": "a96",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 17 周备注：单纯按 email 合并的老逻辑不要再用，大小写和别名问题太多，以主键为准。"
+  },
+  {
+   "id": "a97",
+   "type": "message",
+   "speaker": "human",
+   "text": "chitchat：周五聚餐定在湖边餐厅，记得报名。"
+  },
+  {
+   "id": "a98",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 17 周观察：回填逻辑上线后空邮箱率从 1.2% 降到 0.3%。"
+  },
+  {
+   "id": "a99",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：第 18 周压测批大小，200 条在高峰期仍有 429。"
+  },
+  {
+   "id": "a100",
+   "type": "message",
+   "speaker": "owner",
+   "text": "批量策略 v3：每批同步 100 条，高峰期 429 归零，P95 1.1s。全量 20 万约 34 分钟，满足窗口。"
+  },
+  {
+   "id": "a101",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 18 周决议：有人提议改回每批 500 条以加快全量，已拒绝回退，限流风险太大，维持 100 条。"
+  },
+  {
+   "id": "a102",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 18 周决议：有人提议改回按 email 去重的老方案，已拒绝回退，碰撞和变更断链问题无法接受。"
+  },
+  {
+   "id": "a103",
+   "type": "message",
+   "speaker": "human",
+   "text": "状态：第 18 周压测通过，准备长稳运行。"
+  },
+  {
+   "id": "a104",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 19 周备注：失败重试 3 次后直接丢弃的老策略不要再提，DLQ 是当前唯一出口，丢数事故复盘已归档。"
+  },
+  {
+   "id": "a105",
+   "type": "message",
+   "speaker": "human",
+   "text": "chitchat：新来的实习生很能干， onboarding 很顺利。"
+  },
+  {
+   "id": "a106",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 19 周备注：按 Asia/Shanghai 解析的老时间逻辑已彻底删除，新代码一律 UTC，历史时区 bug 忽略。"
+  },
+  {
+   "id": "a107",
+   "type": "message",
+   "speaker": "human",
+   "text": "问题：DLQ 重放需要审批吗？"
+  },
+  {
+   "id": "a108",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 20 周答复：DLQ 重放需值班审批，默认每天巡检一次。"
+  },
+  {
+   "id": "a109",
+   "type": "message",
+   "speaker": "human",
+   "text": "计划：第 20 周做全链路复核，重点看分页和游标。"
+  },
+  {
+   "id": "a110",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 20 周自查：增量路径分页循环正常，游标事务正常，日志脱敏正常。"
+  },
+  {
+   "id": "a111",
+   "type": "message",
+   "speaker": "human",
+   "text": "chitchat：国庆调休安排出来了，记得提前请假。"
+  },
+  {
+   "id": "a112",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 21 周备注：phone 单一字段的老写入已下线，监控显示零写入，读兼容视图保留。"
+  },
+  {
+   "id": "a113",
+   "type": "message",
+   "speaker": "human",
+   "text": "status：第 21 周长稳运行，DLQ 为空，延迟达标。"
+  },
+  {
+   "id": "a114",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 21 周巡检：全量 20 万联系人，分页 2000 页全部拉完，无漏页。"
+  },
+  {
+   "id": "a115",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ go test ./internal/sync -run TestSyncPaginationFull -count=1 -v\n=== RUN   TestSyncPaginationFull\n    full_test.go:18: seeding 1800 contacts across 18 pages\n    full_test.go:24: mock CRM: page_size=100, pages=18\n    full_test.go:29: GET /crm/contacts?cursor=0 -> 200 (100 rows)\n    full_test.go:33: worker fetched 1 page(s), updated progress\n    full_test.go:37: warehouse rows: 100, expected: 1800\n--- FAIL: TestSyncPaginationFull (1.62s)\n    full_test.go:41: pagination error: 只同步了第一页，后续 17 页未拉取\n    full_test.go:44: next_token=page_2 not followed\n    full_test.go:46: regression: loop until next_token is empty missing\n    full_test.go:48: affected: full sync window 2026-08-10\nFAIL\nFAIL\tlumen/sync/internal/sync\t1.701s\ncoverage: 78% of statements\nFAIL: full pagination gate exits 1\nmust paginate until token empty",
+   "gate_id": "go-test"
+  },
+  {
+   "id": "a116",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 22 周修复：全量路径漏了分页循环，已补回，与增量路径共用同一 pager。"
+  },
+  {
+   "id": "a117",
+   "type": "message",
+   "speaker": "human",
+   "text": "chitchat：最近的 Bug Bash 奖品很丰厚，要参加吗？"
+  },
+  {
+   "id": "a118",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ go test -race ./internal/sync -run TestCursorAtomic -count=1 -v\n=== RUN   TestCursorAtomic\n    atomic_test.go:22: batches=5, crash注入在 batch 3 后\n    atomic_test.go:28: WriteBatch ok, UpdateCursor deferred\n    atomic_test.go:33: simulated restart\n==================\nWARNING: DATA RACE\nRead at 0x00c0002b3090 by goroutine 5:\n  lumen/sync/internal/sync.UpdateCursor()\n      /home/lumen/sync/cursor.go:62 +0x13c\nPrevious write at 0x00c0002b3090 by goroutine 8:\n  lumen/sync/internal/sync.WriteBatch()\n      /home/lumen/sync/store.go:102 +0x1c8\n    atomic_test.go:40: cursor=2026-08-12T02:00:00Z ahead of committed data\n--- FAIL: TestCursorAtomic (1.44s)\n    atomic_test.go:44: cursor moved outside transaction, 重复写入 100 条\n    atomic_test.go:47: need in-txn cursor commit\nFAIL\nFAIL\tlumen/sync/internal/sync\t1.521s\ncoverage: 79% of statements\nFAIL: cursor atomicity gate exits 1\n游标更新必须放在同一事务内提交",
+   "gate_id": "go-test-race"
+  },
+  {
+   "id": "a119",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 22 周修复：游标与批次写回同一事务，race 单独加锁保护，复测通过。"
+  },
+  {
+   "id": "a120",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 23 周决议：有人提议游标在事务外更新以提升吞吐，已拒绝回退，重复写入风险不接受。"
+  },
+  {
+   "id": "a121",
+   "type": "message",
+   "speaker": "human",
+   "text": "status：第 23 周复核通过，准备结项。"
+  },
+  {
+   "id": "a122",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ privacy-lint ./... --rules PII_NO_PHONE\nScanning 18 files ...\ninternal/sync/worker.go:121: debug log prints number field\ninternal/sync/worker.go:122:   zap.String(\"number\", c.Number)\ninternal/sync/store.go:51: ok\ninternal/sync/fetch.go:35: ok\npkg/crm/client.go:28: ok\n--- privacy report ---\nchecked 188 log calls, 1 violation\nPII_LEAK: log prints full phone number at worker.go:122\nrule PII_NO_PHONE: 禁止在日志里打印完整手机号\nviolation: plaintext number 13900139000 in debug log\nsuggestion: keep only last 4 digits\nFAIL: privacy lint exits 1 (1 PII violation)\nsee docs/privacy.md section 3.2\nfull number must be masked\nnumber field must not appear in plaintext",
+   "gate_id": "privacy-lint"
+  },
+  {
+   "id": "a123",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 23 周修复：number 字段日志改为掩码，只留后四位，debug 级别也不打原文。"
+  },
+  {
+   "id": "a124",
+   "type": "message",
+   "speaker": "human",
+   "text": "chitchat：结项聚餐吃什么？火锅还是烧烤？"
+  },
+  {
+   "id": "a125",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 24 周决议：有人提议日志里临时打印完整号码方便排查，已拒绝回退，隐私红线不能碰。"
+  },
+  {
+   "id": "a126",
+   "type": "message",
+   "speaker": "human",
+   "text": "status：第 24 周长稳，准备归档。"
+  },
+  {
+   "id": "a127",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 24 周总结：分页、游标事务、脱敏三处反复出问题，已沉淀为 checklist。"
+  },
+  {
+   "id": "a128",
+   "type": "message",
+   "speaker": "human",
+   "text": "问题：归档后谁值班？"
+  },
+  {
+   "id": "a129",
+   "type": "message",
+   "speaker": "owner",
+   "text": "第 25 周答复：值班表已排好，DLQ 巡检和分页监控保留。"
+  },
+  {
+   "id": "a130",
+   "type": "message",
+   "speaker": "human",
+   "text": "终验：第 25 周全量 20 万、增量准时、删除标记正确，结项。"
+  }
+ ],
+ "gold": {
+  "contracts": [
+   {
+    "contract_id": "crm-sync-schema",
+    "version": 3,
+    "activity_id": "a90"
+   }
+  ],
+  "decisions": [
+   {
+    "id": "d1",
+    "topic_key": "sync.interval",
+    "statement": "同步周期为每 10 分钟触发一次。",
+    "sources": [
+     {
+      "activity_id": "a05",
+      "quote": "同步周期为每 10 分钟触发一次"
+     }
+    ]
+   },
+   {
+    "id": "d2",
+    "topic_key": "sync.runtime",
+    "statement": "worker 使用 Go 实现，独立部署。",
+    "sources": [
+     {
+      "activity_id": "a06",
+      "quote": "worker 使用 Go 实现，独立部署"
+     }
+    ]
+   },
+   {
+    "id": "d3",
+    "topic_key": "sync.warehouse_table",
+    "statement": "仓库目标表为 warehouse.contacts。",
+    "sources": [
+     {
+      "activity_id": "a08",
+      "quote": "仓库目标表为 warehouse.contacts"
+     }
+    ]
+   },
+   {
+    "id": "d4",
+    "topic_key": "sync.cursor_store",
+    "statement": "增量游标保存在 postgres 的 sync_state 表中。",
+    "sources": [
+     {
+      "activity_id": "a12",
+      "quote": "增量游标保存在 postgres 的 sync_state 表中"
+     }
+    ]
+   },
+   {
+    "id": "d5",
+    "topic_key": "sync.auth",
+    "statement": "CRM API 认证使用 OAuth2 client_credentials 模式。",
+    "sources": [
+     {
+      "activity_id": "a15",
+      "quote": "CRM API 认证使用 OAuth2 client_credentials 模式"
+     }
+    ]
+   },
+   {
+    "id": "d6",
+    "topic_key": "sync.dedup_key",
+    "statement": "去重键为 email。",
+    "sources": [
+     {
+      "activity_id": "a18",
+      "quote": "去重键为 email"
+     }
+    ],
+    "superseded_by": "d7"
+   },
+   {
+    "id": "d7",
+    "topic_key": "sync.dedup_key",
+    "statement": "去重键为 crm_id。",
+    "sources": [
+     {
+      "activity_id": "a55",
+      "quote": "去重键为 crm_id"
+     }
+    ],
+    "superseded_by": "d8"
+   },
+   {
+    "id": "d8",
+    "topic_key": "sync.dedup_key",
+    "statement": "去重键以 crm_id 为主，email 仅用于回填缺失。",
+    "sources": [
+     {
+      "activity_id": "a95",
+      "quote": "去重键以 crm_id 为主，email 仅用于回填缺失"
+     }
+    ]
+   },
+   {
+    "id": "d9",
+    "topic_key": "sync.batch_size",
+    "statement": "每批同步 500 条。",
+    "sources": [
+     {
+      "activity_id": "a20",
+      "quote": "每批同步 500 条"
+     }
+    ],
+    "superseded_by": "d10"
+   },
+   {
+    "id": "d10",
+    "topic_key": "sync.batch_size",
+    "statement": "每批同步 200 条。",
+    "sources": [
+     {
+      "activity_id": "a60",
+      "quote": "每批同步 200 条"
+     }
+    ],
+    "superseded_by": "d11"
+   },
+   {
+    "id": "d11",
+    "topic_key": "sync.batch_size",
+    "statement": "每批同步 100 条。",
+    "sources": [
+     {
+      "activity_id": "a100",
+      "quote": "每批同步 100 条"
+     }
+    ]
+   },
+   {
+    "id": "d12",
+    "topic_key": "sync.retry_dlq",
+    "statement": "失败重试 3 次后直接丢弃。",
+    "sources": [
+     {
+      "activity_id": "a25",
+      "quote": "失败重试 3 次后直接丢弃"
+     }
+    ],
+    "superseded_by": "d13"
+   },
+   {
+    "id": "d13",
+    "topic_key": "sync.retry_dlq",
+    "statement": "失败重试 5 次指数退避，超限进入 sync_dlq 死信队列。",
+    "sources": [
+     {
+      "activity_id": "a70",
+      "quote": "失败重试 5 次指数退避，超限进入 sync_dlq 死信队列"
+     }
+    ]
+   },
+   {
+    "id": "d14",
+    "topic_key": "sync.timezone",
+    "statement": "时区按 Asia/Shanghai 本地时间解析。",
+    "sources": [
+     {
+      "activity_id": "a32",
+      "quote": "时区按 Asia/Shanghai 本地时间解析"
+     }
+    ],
+    "superseded_by": "d15"
+   },
+   {
+    "id": "d15",
+    "topic_key": "sync.timezone",
+    "statement": "所有时间统一按 UTC 解析存储，展示层再转换。",
+    "sources": [
+     {
+      "activity_id": "a75",
+      "quote": "所有时间统一按 UTC 解析存储，展示层再转换"
+     }
+    ]
+   }
+  ],
+  "lessons": [
+   {
+    "id": "l1",
+    "topic_key": "sync.pagination",
+    "statement": "必须分页拉取 CRM API 直到 next_token 为空，否则只会同步第一页。",
+    "sources": [
+     {
+      "activity_id": "a11",
+      "quote": "只同步了第一页，后续页面未拉取"
+     },
+     {
+      "activity_id": "a21",
+      "quote": "fetchContacts 依然只请求第一页，没有循环 next_token"
+     },
+     {
+      "activity_id": "a65",
+      "quote": "只拉了第一页就更新了进度"
+     },
+     {
+      "activity_id": "a115",
+      "quote": "只同步了第一页，后续 17 页未拉取"
+     }
+    ],
+    "occurrences": 4
+   },
+   {
+    "id": "l2",
+    "topic_key": "sync.cursor_txn",
+    "statement": "游标更新必须放在同一事务内提交，否则崩溃会导致重复写入。",
+    "sources": [
+     {
+      "activity_id": "a22",
+      "quote": "cursor updated outside transaction"
+     },
+     {
+      "activity_id": "a72",
+      "quote": "游标更新必须放在同一事务内提交"
+     },
+     {
+      "activity_id": "a118",
+      "quote": "游标更新必须放在同一事务内提交"
+     }
+    ],
+    "occurrences": 3
+   },
+   {
+    "id": "l3",
+    "topic_key": "sync.pii_log",
+    "statement": "日志中禁止打印完整手机号，须脱敏后记录。",
+    "sources": [
+     {
+      "activity_id": "a28",
+      "quote": "禁止在日志里打印完整手机号"
+     },
+     {
+      "activity_id": "a78",
+      "quote": "日志中禁止打印完整手机号"
+     },
+     {
+      "activity_id": "a122",
+      "quote": "禁止在日志里打印完整手机号"
+     }
+    ],
+    "occurrences": 3
+   },
+   {
+    "id": "l4",
+    "topic_key": "sync.delete_handling",
+    "statement": "删除联系人不得硬删除整行，必须保留软删除标记。",
+    "sources": [
+     {
+      "activity_id": "a33",
+      "quote": "直接硬删除了整行"
+     },
+     {
+      "activity_id": "a38",
+      "quote": "整行被硬删除，无法审计"
+     }
+    ],
+    "occurrences": 2
+   }
+  ]
+ },
+ "noise": [
+  {
+   "activity_id": "a03",
+   "type": "chitchat",
+   "note": "咖啡机闲聊"
+  },
+  {
+   "activity_id": "a04",
+   "type": "status",
+   "note": "首周连通性状态"
+  },
+  {
+   "activity_id": "a09",
+   "type": "status",
+   "note": "单条写入验证状态"
+  },
+  {
+   "activity_id": "a13",
+   "type": "question",
+   "note": "next_token 位置提问"
+  },
+  {
+   "activity_id": "a14",
+   "type": "plan",
+   "note": "修分页补游标计划"
+  },
+  {
+   "activity_id": "a16",
+   "type": "status",
+   "note": "认证接好状态"
+  },
+  {
+   "activity_id": "a17",
+   "type": "chitchat",
+   "note": "爬山闲聊"
+  },
+  {
+   "activity_id": "a19",
+   "type": "status",
+   "note": "数据量上涨提醒"
+  },
+  {
+   "activity_id": "a24",
+   "type": "chitchat",
+   "note": "午饭闲聊"
+  },
+  {
+   "activity_id": "a26",
+   "type": "status",
+   "note": "试运行提醒"
+  },
+  {
+   "activity_id": "a29",
+   "type": "status",
+   "note": "隐私合规提醒"
+  },
+  {
+   "activity_id": "a31",
+   "type": "status",
+   "note": "周会纪要"
+  },
+  {
+   "activity_id": "a35",
+   "type": "chitchat",
+   "note": "团建闲聊"
+  },
+  {
+   "activity_id": "a37",
+   "type": "hypothetical",
+   "note": "百万新增假设"
+  },
+  {
+   "activity_id": "a40",
+   "type": "status",
+   "note": "联调通过状态"
+  },
+  {
+   "activity_id": "a42",
+   "type": "chitchat",
+   "note": "咖啡闲聊"
+  },
+  {
+   "activity_id": "a46",
+   "type": "plan",
+   "note": "主键切换评审计划"
+  },
+  {
+   "activity_id": "a47",
+   "type": "chitchat",
+   "note": "年会闲聊"
+  },
+  {
+   "activity_id": "a48",
+   "type": "status",
+   "note": "碰撞案例整理状态"
+  },
+  {
+   "activity_id": "a49",
+   "type": "plan",
+   "note": "v2 评审计划"
+  },
+  {
+   "activity_id": "a52",
+   "type": "status",
+   "note": "v2 验收状态"
+  },
+  {
+   "activity_id": "a53",
+   "type": "question",
+   "note": "邮箱变更关联提问"
+  },
+  {
+   "activity_id": "a57",
+   "type": "status",
+   "note": "主键切换周报"
+  },
+  {
+   "activity_id": "a59",
+   "type": "hypothetical",
+   "note": "主键再变假设"
+  },
+  {
+   "activity_id": "a63",
+   "type": "chitchat",
+   "note": "面馆闲聊"
+  },
+  {
+   "activity_id": "a67",
+   "type": "status",
+   "note": "漏数修复验证状态"
+  },
+  {
+   "activity_id": "a68",
+   "type": "question",
+   "note": "DLQ 保留期提问"
+  },
+  {
+   "activity_id": "a80",
+   "type": "chitchat",
+   "note": "粽子闲聊"
+  },
+  {
+   "activity_id": "a82",
+   "type": "question",
+   "note": "老报表 phone 列提问"
+  },
+  {
+   "activity_id": "a86",
+   "type": "status",
+   "note": "等待 v3 评审状态"
+  },
+  {
+   "activity_id": "a87",
+   "type": "hypothetical",
+   "note": "复用企微假设"
+  },
+  {
+   "activity_id": "a89",
+   "type": "chitchat",
+   "note": "降温闲聊"
+  },
+  {
+   "activity_id": "a97",
+   "type": "chitchat",
+   "note": "聚餐闲聊"
+  },
+  {
+   "activity_id": "a103",
+   "type": "status",
+   "note": "压测通过状态"
+  },
+  {
+   "activity_id": "a105",
+   "type": "chitchat",
+   "note": "实习生闲聊"
+  },
+  {
+   "activity_id": "a107",
+   "type": "question",
+   "note": "DLQ 审批提问"
+  },
+  {
+   "activity_id": "a111",
+   "type": "chitchat",
+   "note": "调休闲聊"
+  },
+  {
+   "activity_id": "a113",
+   "type": "status",
+   "note": "长稳运行状态"
+  },
+  {
+   "activity_id": "a117",
+   "type": "chitchat",
+   "note": "Bug Bash 闲聊"
+  },
+  {
+   "activity_id": "a124",
+   "type": "chitchat",
+   "note": "聚餐吃什么闲聊"
+  }
+ ],
+ "probes": [
+  {
+   "id": "p1",
+   "question": "数据同步 worker 的触发周期是多久？",
+   "answer_ids": [
+    "d1"
+   ],
+   "must_contain": [
+    "10 分钟"
+   ]
+  },
+  {
+   "id": "p2",
+   "question": "同步 worker 是用什么语言实现的，部署形态是什么？",
+   "answer_ids": [
+    "d2"
+   ],
+   "must_contain": [
+    "Go"
+   ]
+  },
+  {
+   "id": "p3",
+   "question": "联系人同步写入数据仓库的哪张目标表？",
+   "answer_ids": [
+    "d3"
+   ],
+   "must_contain": [
+    "warehouse.contacts"
+   ]
+  },
+  {
+   "id": "p4",
+   "question": "增量游标保存在哪里？",
+   "answer_ids": [
+    "d4"
+   ],
+   "must_contain": [
+    "sync_state"
+   ]
+  },
+  {
+   "id": "p5",
+   "question": "CRM API 使用哪种认证模式？",
+   "answer_ids": [
+    "d5"
+   ],
+   "must_contain": [
+    "client_credentials"
+   ]
+  },
+  {
+   "id": "p6",
+   "question": "删除联系人时应该怎么处理，为什么不能直接删行？",
+   "answer_ids": [
+    "l4"
+   ],
+   "must_contain": [
+    "软删除"
+   ]
+  },
+  {
+   "id": "p7",
+   "question": "拉取 CRM 联系人时必须怎么做才能避免漏数？漏数的典型表现是什么？",
+   "answer_ids": [
+    "l1"
+   ],
+   "must_contain": [
+    "next_token"
+   ]
+  },
+  {
+   "id": "p8",
+   "question": "更新同步游标时必须遵守什么规则，否则会发生什么？",
+   "answer_ids": [
+    "l2"
+   ],
+   "must_contain": [
+    "同一事务"
+   ]
+  },
+  {
+   "id": "p9",
+   "question": "在日志里记录手机号时必须遵守什么隐私规则？",
+   "answer_ids": [
+    "l3"
+   ],
+   "must_contain": [
+    "脱敏"
+   ]
+  },
+  {
+   "id": "p10",
+   "question": "之前集成测试只同步了第一页的教训是什么，现在全量同步要怎么拉取？",
+   "answer_ids": [
+    "l1"
+   ],
+   "must_contain": [
+    "分页"
+   ]
+  },
+  {
+   "id": "p11",
+   "question": "当前联系人去重键是什么？邮箱起什么作用？",
+   "answer_ids": [
+    "d8"
+   ],
+   "must_contain": [
+    "crm_id"
+   ],
+   "must_not_contain": [
+    "去重键为 email"
+   ]
+  },
+  {
+   "id": "p12",
+   "question": "当前每批同步多少条？高峰期为什么是这个数？",
+   "answer_ids": [
+    "d11"
+   ],
+   "must_contain": [
+    "100"
+   ],
+   "must_not_contain": [
+    "500"
+   ]
+  },
+  {
+   "id": "p13",
+   "question": "当前失败重试和死信队列策略是什么？",
+   "answer_ids": [
+    "d13"
+   ],
+   "must_contain": [
+    "sync_dlq"
+   ],
+   "must_not_contain": [
+    "直接丢弃"
+   ]
+  },
+  {
+   "id": "p14",
+   "question": "当前所有时间按什么口径解析存储？",
+   "answer_ids": [
+    "d15"
+   ],
+   "must_contain": [
+    "UTC"
+   ],
+   "must_not_contain": [
+    "Asia/Shanghai"
+   ]
+  },
+  {
+   "id": "p15",
+   "question": "当前 crm-sync-schema 中电话号码字段是什么形态？",
+   "answer_ids": [
+    "contract:crm-sync-schema"
+   ],
+   "must_contain": [
+    "country_code"
+   ],
+   "must_not_contain": [
+    "phone (string, optional"
+   ]
+  },
+  {
+   "id": "p16",
+   "question": "当前 schema 如何表示删除的联系人？",
+   "answer_ids": [
+    "contract:crm-sync-schema"
+   ],
+   "must_contain": [
+    "deleted_at"
+   ],
+   "must_not_contain": [
+    "删除暂不处理"
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "id": "t1",
+   "prompt": "做一个远端名录与本地镜像逐一比对的小工具，差异输出给运营查看。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "比对时拉取远端必须循环 next_token 直到为空，不得只读第一页，需覆盖全部页面。"
+    },
+    {
+     "id": "r2",
+     "ref": "d3",
+     "check": "本地侧读写均以 warehouse.contacts 为准，不得另起表或写影子表。"
+    },
+    {
+     "id": "r3",
+     "ref": "contract:crm-sync-schema",
+     "check": "比对字段按 v3 约定：以 country_code + number 为准，phone 只做只读兼容，deleted_at 为空表示未删除，updated_at 按 UTC 的 ISO8601 理解。"
+    }
+   ]
+  },
+  {
+   "id": "t2",
+   "prompt": "把现有链路改成可中断后继续跑的形态，中途停掉再启动也能接上，顺手把进度记录方式统一一下。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l2",
+     "check": "进度推进与批次落库必须在同一事务内提交，WriteBatch 与 UpdateCursor 原子提交，崩溃后按旧进度重放，不得在事务外单独推进。"
+    },
+    {
+     "id": "r2",
+     "ref": "d4",
+     "check": "进度保存在 postgres 的 sync_state 表中，键为 crm_updated_since，失败可回滚，不得更换存储。"
+    },
+    {
+     "id": "r3",
+     "ref": "contract:crm-sync-schema",
+     "check": "读写字段遵循 v3：新写入用 country_code + number，不再写入 phone 原文字段，删除以 deleted_at 标记为准。"
+    }
+   ]
+  },
+  {
+   "id": "t3",
+   "prompt": "给值班同学做一个批量核对入口，一次输入一批名单，逐一展示远端与本地是否一致，方便定位异常。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l3",
+     "check": "核对输出与记录中不得出现完整联系号码，phone 与 number 仅保留后四位，其余掩码，不得直接记录原文。",
+     "violation_patterns": [
+      "zap\\.String\\(\"phone\"",
+      "zap\\.String\\(\"number\""
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d5",
+     "check": "调用远端接口必须使用 OAuth2 client_credentials 模式，secret 只从环境变量读取，不得落地配置文件。"
+    },
+    {
+     "id": "r3",
+     "ref": "l1",
+     "check": "批量核对必须循环 next_token 直到为空，不得只查第一页就返回。"
+    }
+   ]
+  },
+  {
+   "id": "t4",
+   "prompt": "处理远端名录里找不到了的名单，下游报表需要能区分这类条目，例行执行时自动处理。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l4",
+     "check": "远端找不到了的联系人不得执行物理删除，必须保留原行并写入 deleted_at 软删除标记，供审计追溯。",
+     "violation_patterns": [
+      "DELETE\\s+FROM"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d1",
+     "check": "该处理纳入现有例行调度，每 10 分钟触发一次，与主链路频率保持一致，不得另起调度。"
+    },
+    {
+     "id": "r3",
+     "ref": "contract:crm-sync-schema",
+     "check": "标记与增量口径按 v3：deleted_at 为空表示未删除，增量需兼顾 updated_since + deleted_since，phone 不再写入。"
+    }
+   ]
+  },
+  {
+   "id": "t5",
+   "prompt": "补一个历史数据补跑入口，支持从最早时间点重新走一遍全量，中间随时可停，下次接着跑。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "补跑全量必须循环 next_token 直到为空，不得只同步第一页，需与增量路径共用同一 pager。"
+    },
+    {
+     "id": "r2",
+     "ref": "l2",
+     "check": "补跑进度与批次写入必须在同一事务内提交，中断重启后按旧进度重放，不得在事务外更新进度。"
+    },
+    {
+     "id": "r3",
+     "ref": "d4",
+     "check": "补跑进度同样保存在 postgres 的 sync_state 表中，键为 crm_updated_since，不得另存他处。"
+    }
+   ]
+  },
+  {
+   "id": "t6",
+   "prompt": "优化写入链路，单次执行涉及多条条目时要么一起生效要么一起不生效，出错时留下可复盘的信息。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l3",
+     "check": "复盘信息中不得记录完整号码，number 与 phone 仅保留后四位，debug 级别也不得输出原文。",
+     "violation_patterns": [
+      "zap\\.String\\(\"number\"",
+      "zap\\.String\\(\"phone\""
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d3",
+     "check": "所有落库与读取均以 warehouse.contacts 为目标表，不得写影子表或临时表。"
+    },
+    {
+     "id": "r3",
+     "ref": "l2",
+     "check": "多条记录与进度必须在同一事务内提交，WriteBatch 成功后不得单独 UpdateCursor，崩溃不得导致重复写入。"
+    }
+   ]
+  },
+  {
+   "id": "t7",
+   "prompt": "给值班同学加一个巡检页，能看到最近一次例行执行是否正常，远端找不到了的记录有多少，服务本身是否存活。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l4",
+     "check": "巡检统计以 deleted_at 是否为空区分，保留软删除行，不得物理删除整行。",
+     "violation_patterns": [
+      "DELETE\\s+FROM"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d1",
+     "check": "巡检展示的最近一次执行按每 10 分钟触发的调度口径判断延迟，不得按其他频率告警。"
+    },
+    {
+     "id": "r3",
+     "ref": "d2",
+     "check": "实现保持 Go 实现、独立部署形态，通过 systemd 管理，不得引入其他语言运行时。"
+    }
+   ]
+  },
+  {
+   "id": "t8",
+   "prompt": "把存量名单逐一按新结构重新整理，老数据仍可查看，新数据按新结构处理。",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "逐一整理存量时必须循环 next_token 直到为空，不得漏页。"
+    },
+    {
+     "id": "r2",
+     "ref": "l3",
+     "check": "整理与核对输出中不得打印完整号码，number 仅保留后四位，其余掩码。",
+     "violation_patterns": [
+      "zap\\.String\\(\"number\""
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "contract:crm-sync-schema",
+     "check": "新写入必须使用 country_code + number 拆分字段，不再写入 phone 原文字段，老 phone 仅只读兼容，新数据以拆分字段为准。"
+    }
+   ]
+  }
+ ]
+}
