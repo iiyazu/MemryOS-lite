@@ -81,7 +81,9 @@ advisory it replaced. Any other `version` value is rejected with HTTP 400.
 
 The curator is opt-in via `MEMORYOS_CURATOR_ENABLED=true`; only then does the
 app lifespan start the background worker that extracts memories from new
-session messages. `/health` always reports a `curator` block:
+session messages. The worker is a stateful host of the `/curate` graph below:
+it sends each window with the session's active memories under
+`profile: "room"` and stores the returned versions. `/health` always reports a `curator` block:
 
 ```json
 {
@@ -115,6 +117,7 @@ Request (`CurateRequest`):
 ```json
 {
   "scope_id": "auth",
+  "profile": "module",
   "active": [
     {"id": "mem_...", "kind": "lesson", "topic_key": "auth.refresh_lock",
      "statement": "...", "version": 7, "occurrences": 2,
@@ -126,8 +129,14 @@ Request (`CurateRequest`):
 }
 ```
 
-- `kind` is `lesson`, `decision`, or `fact`; activity `type` is `message`,
-  `review_objection`, `gate_failure`, or `contract_revision`.
+- `profile` is `module` (default) or `room`. Under `module`, `memories` may
+  only hold decisions and facts; lessons come from failure assignments. `room`
+  is the session curator's profile: plain messages yield facts, decisions,
+  rules, preferences, and lessons, and a lesson proposal that cites a new
+  activity adds one occurrence to the active lesson on its topic key.
+- `kind` is `lesson`, `decision`, `fact`, `rule`, or `preference`; activity
+  `type` is `message`, `review_objection`, `gate_failure`, or
+  `contract_revision`.
 - `window` holds 1-32 activities, `context` up to 8 (read-only, quotable),
   `active` up to 60. Activity ids must be unique across `context` and `window`.
   `seq` is the host's monotonic activity order and becomes memory versions.
