@@ -129,6 +129,91 @@ def test_accounting_matches_gold_clusters():
     assert metrics["unaccounted"] == 0
 
 
+def _module_with_tasks(tmp_path: Path, tasks: list[dict[str, object]]) -> Path:
+    raw = json.loads((DATA / "mm01.json").read_text(encoding="utf-8"))
+    raw["tasks"] = tasks
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "mm01.json").write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    return data
+
+
+def _mm01_task_refs() -> tuple[str, str, str]:
+    module = load_modules(DATA, ["mm01"])[0]
+    lesson = module.gold.lessons[0].id
+    decision = next(d.id for d in module.gold.decisions if d.superseded_by is None)
+    contract = f"contract:{module.gold.contracts[0].contract_id}"
+    return lesson, decision, contract
+
+
+def test_owner_tasks_score_memory_against_no_memory(tmp_path):
+    lesson, decision, contract = _mm01_task_refs()
+    data = _module_with_tasks(
+        tmp_path,
+        [
+            {
+                "id": "t1",
+                "prompt": "Add a logout endpoint.",
+                "requirements": [
+                    {"id": "r1", "ref": lesson, "check": "Avoids the known mistake."},
+                    {"id": "r2", "ref": decision, "check": "Follows the current decision."},
+                    {
+                        "id": "r3",
+                        "ref": contract,
+                        "check": "Matches the current contract.",
+                        "violation_patterns": ["NO_MEMORY"],
+                    },
+                ],
+            }
+        ],
+    )
+    summary = run_modulemem(
+        load_modules(data),
+        out_dir=tmp_path / "out",
+        config=ModuleMemConfig(arms=("none", "oracle_pack"), fake_llm=True, tasks=True),
+        scratch_root=tmp_path / "scratch",
+    )
+
+    behavior = summary["behavior"]
+    assert behavior["none"]["all"]["satisfied"] == 0
+    assert behavior["none"]["contract"]["pattern_violation"] == 1
+    assert behavior["oracle_pack"]["all"]["satisfied"] == 1
+    assert behavior["oracle_pack"]["tasks_all_satisfied"] == 1
+    assert {behavior["oracle_pack"][c]["n"] for c in ("lesson", "decision", "contract")} == {1}
+    rows = (tmp_path / "out" / "tasks.jsonl").read_text().splitlines()
+    assert len(rows) == 6
+    assert "Behavior: owner tasks" in (tmp_path / "out" / "summary.md").read_text()
+
+
+def test_task_refs_and_patterns_are_validated(tmp_path):
+    _, _, contract = _mm01_task_refs()
+    data = _module_with_tasks(
+        tmp_path,
+        [
+            {
+                "id": "t1",
+                "prompt": "Do something.",
+                "requirements": [
+                    {"id": "r1", "ref": "d999", "check": "Unknown gold."},
+                    {
+                        "id": "r2",
+                        "ref": contract,
+                        "check": "Bad regex.",
+                        "violation_patterns": ["("],
+                    },
+                ],
+            }
+        ],
+    )
+    try:
+        load_modules(data)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("invalid tasks must not load")
+    assert "d999" in message and "bad pattern" in message
+
+
 def test_all_arms_run_end_to_end_with_fake_llms(tmp_path):
     modules = load_modules(DATA, ["mm01"])
     summary = run_modulemem(

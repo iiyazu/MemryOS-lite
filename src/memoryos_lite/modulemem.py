@@ -24,6 +24,8 @@ answers the module's probes from that arm's context:
     xmuse-style recall: build-context top-8 over the module's raw activity documents.
 ``full_history``
     Every activity of the module in the context window.
+``none``
+    No module memory at all (a fresh owner with only the task).
 
 Scoring: the judge labels each answer (correct/stale/missing/wrong) against the
 current gold; probes are grouped by what they ask about (contract, decision,
@@ -31,19 +33,27 @@ lesson). The ``pack`` arm also reports write-side matching against gold, lesson
 occurrence accuracy, failure accounting against the gold lesson clusters
 (pairwise precision/recall, dismissals, unaccounted), repair-loop use, and the
 gate-failure-to-lesson latency of each curate call.
+
+Behavior (``tasks``): a module may also carry owner tasks. The restarted owner
+writes a code change for each task from the same arm context, and a task judge
+labels every requirement of the task satisfied, violated or not_addressed.
+Requirements reference a gold lesson (does the owner repeat a known mistake?),
+a current decision, or a current contract; optional ``violation_patterns`` are
+regexes checked deterministically against the code.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -62,16 +72,21 @@ from memoryos_lite.roommem import (
     XMUSE_ACTIVITY_DOC_PREFIX,
     XMUSE_MESSAGE_ID_PREFIX,
     XMUSE_TASK,
+    ChatCompletionClient,
     CuratedMemoryView,
+    DiskCachedChatClient,
     DiskCachedCuratorLLM,
     EvidenceItem,
     GoldMemory,
     GoldMemorySource,
     LLMUsageTracker,
+    RemoteChatClient,
     RoomMemAnswerer,
     RoomMemConfigError,
     RoomMemJudge,
     _evidence_items,
+    _extract_json_object,
+    _normalize_match_text,
     _room_settings,
     build_llm_factory,
     match_curated_to_gold,
@@ -95,6 +110,7 @@ MODULEMEM_ARMS: tuple[str, ...] = (
     "raw_log",
     "retrieval",
     "full_history",
+    "none",
 )
 MODULEMEM_SPLITS: dict[str, tuple[str, ...]] = {
     "dev": ("mm01", "mm02", "mm03", "mm04"),
@@ -104,6 +120,8 @@ RECENT_ACTIVITIES = 8
 CONTEXT_ACTIVITIES = 4
 FLUSH_ACTIVITY_TYPES = FAILURE_TYPES
 JUDGE_LABELS = ("correct", "stale", "missing", "wrong")
+TASK_LABELS = ("satisfied", "violated", "not_addressed")
+REQUIREMENT_CATEGORIES = ("lesson", "decision", "contract")
 
 
 class ModuleMemError(ValueError):
@@ -173,6 +191,27 @@ class ModuleProbe(BaseModel):
     must_not_contain: list[str] = Field(default_factory=list)
 
 
+class ModuleRequirement(BaseModel):
+    """One thing a correct solution must do; ``ref`` is the gold it comes from."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    id: str
+    ref: str
+    check: str = Field(min_length=1)
+    violation_patterns: list[str] = Field(default_factory=list)
+
+
+class ModuleTask(BaseModel):
+    """A task for the restarted owner, written so that memory matters."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    id: str
+    prompt: str = Field(min_length=1)
+    requirements: list[ModuleRequirement] = Field(min_length=1, max_length=6)
+
+
 class Module(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -184,6 +223,7 @@ class Module(BaseModel):
     activities: list[ModuleActivity] = Field(min_length=1)
     gold: ModuleGold
     probes: list[ModuleProbe] = Field(min_length=1)
+    tasks: list[ModuleTask] = Field(default_factory=list)
 
     def activity(self, activity_id: str) -> ModuleActivity | None:
         return next((a for a in self.activities if a.id == activity_id), None)
@@ -238,8 +278,56 @@ def _validate_module(module: Module, *, source: object) -> None:
             cited = module.activity(src.activity_id)
             if cited is not None and cited.type not in FLUSH_ACTIVITY_TYPES:
                 errors.append(f"{lesson.id}: lesson cites a {cited.type}")
+    errors.extend(_task_errors(module))
     if errors:
         raise ModuleMemError(f"{source}: " + "; ".join(errors))
+
+
+def _task_errors(module: Module) -> list[str]:
+    errors: list[str] = []
+    current = {d.id for d in module.gold.decisions if d.superseded_by is None}
+    current |= {lesson.id for lesson in module.gold.lessons}
+    current |= {f"contract:{c.contract_id}" for c in module.gold.contracts}
+    task_ids = [task.id for task in module.tasks]
+    if len(task_ids) != len(set(task_ids)):
+        errors.append("task ids must be unique")
+    for task in module.tasks:
+        requirement_ids = [r.id for r in task.requirements]
+        if len(requirement_ids) != len(set(requirement_ids)):
+            errors.append(f"{task.id}: requirement ids must be unique")
+        for requirement in task.requirements:
+            if requirement.ref not in current:
+                errors.append(
+                    f"{task.id}.{requirement.id}: ref {requirement.ref!r} is not a current gold "
+                    "decision, a lesson, or contract:<current contract id>"
+                )
+            for pattern in requirement.violation_patterns:
+                try:
+                    re.compile(pattern)
+                except re.error as exc:
+                    errors.append(f"{task.id}.{requirement.id}: bad pattern {pattern!r}: {exc}")
+    return errors
+
+
+def requirement_category(module: Module, requirement: ModuleRequirement) -> str:
+    if requirement.ref.startswith("contract:"):
+        return "contract"
+    if any(lesson.id == requirement.ref for lesson in module.gold.lessons):
+        return "lesson"
+    return "decision"
+
+
+def requirement_last_seq(module: Module, requirement: ModuleRequirement) -> int:
+    """Sequence number of the newest activity the requirement's gold rests on."""
+
+    if requirement.ref.startswith("contract:"):
+        contract_id = requirement.ref.removeprefix("contract:")
+        gold = next(c for c in module.gold.contracts if c.contract_id == contract_id)
+        return module.seq(gold.activity_id)
+    memory = next(
+        m for m in [*module.gold.decisions, *module.gold.lessons] if m.id == requirement.ref
+    )
+    return max(module.seq(src.activity_id) for src in memory.sources)
 
 
 def estimate_tokens(text: str) -> int:
@@ -719,6 +807,183 @@ def accounting_metrics(
 
 
 # ---------------------------------------------------------------------------
+# Behavior: owner tasks
+# ---------------------------------------------------------------------------
+
+CODER_SYSTEM_PROMPT = """You are the owner agent of one software module in a multi-agent \
+project. Your previous session ended; the host gives you whatever module memory it has, which \
+may be empty. Implement the task as a code change in the module's language and stack. Follow \
+the module's current contracts, decisions and conventions, and avoid mistakes the module has \
+already made, whenever the memory tells you about them; where it says nothing, use your best \
+judgment. Reply with the code (one or more files, each headed by its path) and at most three \
+short lines of notes. Do not ask questions."""
+
+TASK_JUDGE_SYSTEM_PROMPT = """You grade a code change against requirements of the module it \
+changes. Each requirement has a check, the module's current rule it comes from, and old values \
+that are no longer in force. Label every requirement:
+- "satisfied": the code clearly follows the requirement;
+- "violated": the code contradicts it, for example a wrong name, value, field or helper, an old \
+value, or the mistake the requirement warns about;
+- "not_addressed": the code neither follows nor contradicts it.
+Judge only from the code and notes shown. Reply with one JSON object mapping each requirement \
+id to its label, for example {"r1": "satisfied", "r2": "violated"}."""
+
+
+class OwnerCoder(Protocol):
+    def write(
+        self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]
+    ) -> str: ...
+
+
+class TaskJudge(Protocol):
+    def judge_task(
+        self, *, task: ModuleTask, code: str, requirements: Sequence[dict[str, Any]]
+    ) -> dict[str, str]: ...
+
+
+def _memory_block(evidence: Sequence[EvidenceItem]) -> str:
+    if not evidence:
+        return "(none)"
+    return "\n".join(f"[{item.rank}] ({item.layer}) {item.text}" for item in evidence)
+
+
+class ChatOwnerCoder:
+    def __init__(self, chat: ChatCompletionClient) -> None:
+        self._chat = chat
+
+    def write(self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]) -> str:
+        user = (
+            f"Module: {module.title or module.module_id} (project {module.project})\n\n"
+            f"Module memory from the host:\n{_memory_block(evidence)}\n\n"
+            f"Task: {task.prompt}"
+        )
+        return self._chat.complete(system=CODER_SYSTEM_PROMPT, user=user).strip()
+
+
+class ChatTaskJudge:
+    def __init__(self, chat: ChatCompletionClient) -> None:
+        self._chat = chat
+
+    def judge_task(
+        self, *, task: ModuleTask, code: str, requirements: Sequence[dict[str, Any]]
+    ) -> dict[str, str]:
+        user = json.dumps(
+            {"task": task.prompt, "requirements": list(requirements), "code": code},
+            ensure_ascii=False,
+        )
+        data = _extract_json_object(self._chat.complete(system=TASK_JUDGE_SYSTEM_PROMPT, user=user))
+        data = data or {}
+        return {
+            str(r["id"]): label
+            if (label := str(data.get(r["id"], "")).strip().lower()) in TASK_LABELS
+            else "not_addressed"
+            for r in requirements
+        }
+
+
+class FakeOwnerCoder:
+    """Deterministic coder for ``--fake-llm``: writes the memory it was given as comments."""
+
+    def write(self, *, module: Module, task: ModuleTask, evidence: Sequence[EvidenceItem]) -> str:
+        return "\n".join(f"# {item.text}" for item in evidence) or "# NO_MEMORY"
+
+
+class FakeTaskJudge:
+    """Satisfied when the requirement's current rule appears in the code, else not_addressed."""
+
+    def judge_task(
+        self, *, task: ModuleTask, code: str, requirements: Sequence[dict[str, Any]]
+    ) -> dict[str, str]:
+        normalized = _normalize_match_text(code)
+        return {
+            str(r["id"]): "satisfied"
+            if any(
+                (rule := _normalize_match_text(text)) and rule in normalized
+                for text in r["current"]
+            )
+            else "not_addressed"
+            for r in requirements
+        }
+
+
+TaskLLMFactory = Callable[[int], tuple[OwnerCoder, TaskJudge]]
+
+
+def build_task_llm_factory(
+    *,
+    out_dir: Path,
+    fake_llm: bool,
+    settings: Settings | None = None,
+    usage: LLMUsageTracker | None = None,
+    coder_llm: str | None = None,
+    judge_llm: str | None = None,
+) -> TaskLLMFactory:
+    """Per-repeat coder/task-judge factory with the same disk cache as the probe roles."""
+
+    if fake_llm:
+        return lambda repeat: (FakeOwnerCoder(), FakeTaskJudge())
+    resolved = settings or get_settings()
+    coder_client = RemoteChatClient(settings_for_llm_spec(resolved, coder_llm))
+    judge_client = RemoteChatClient(settings_for_llm_spec(resolved, judge_llm))
+    cache_dir = out_dir / "llm_cache"
+
+    def factory(repeat: int) -> tuple[OwnerCoder, TaskJudge]:
+        coder = DiskCachedChatClient(
+            coder_client, role="coder", cache_dir=cache_dir, repeat=repeat, usage=usage
+        )
+        judge = DiskCachedChatClient(
+            judge_client, role="task_judge", cache_dir=cache_dir, repeat=repeat, usage=usage
+        )
+        return ChatOwnerCoder(coder), ChatTaskJudge(judge)
+
+    return factory
+
+
+def _requirement_payload(module: Module, requirement: ModuleRequirement) -> dict[str, Any]:
+    probe = ModuleProbe(id=requirement.id, question=requirement.check, answer_ids=[requirement.ref])
+    current, old = _probe_statements(module, probe)
+    return {"id": requirement.id, "check": requirement.check, "current": current, "old": old}
+
+
+def _run_tasks(
+    module: Module,
+    *,
+    arm: str,
+    repeat: int,
+    coder: OwnerCoder,
+    judge: TaskJudge,
+    evidence_for: Callable[[str], list[EvidenceItem]],
+) -> list[dict[str, Any]]:
+    third = len(module.activities) / 3
+    rows: list[dict[str, Any]] = []
+    for task in module.tasks:
+        evidence = evidence_for(task.prompt)
+        code = coder.write(module=module, task=task, evidence=evidence)
+        payloads = [_requirement_payload(module, r) for r in task.requirements]
+        labels = judge.judge_task(task=task, code=code, requirements=payloads)
+        for requirement in task.requirements:
+            rows.append(
+                {
+                    "arm": arm,
+                    "module": module.module_id,
+                    "repeat": repeat,
+                    "task": task.id,
+                    "requirement": requirement.id,
+                    "ref": requirement.ref,
+                    "category": requirement_category(module, requirement),
+                    "early": requirement_last_seq(module, requirement) <= third,
+                    "label": labels.get(requirement.id, "not_addressed"),
+                    "pattern_violation": any(
+                        re.search(pattern, code) for pattern in requirement.violation_patterns
+                    ),
+                    "evidence_tokens": sum(item.estimated_tokens for item in evidence),
+                    "code": code,
+                }
+            )
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
@@ -735,6 +1000,8 @@ class ModuleMemConfig:
     curator_window: int = 12
     pack_budget: int = 1500
     max_repairs: int = 2
+    probes: bool = True
+    tasks: bool = False
 
 
 def run_modulemem(
@@ -745,11 +1012,16 @@ def run_modulemem(
     settings: Settings | None = None,
     curated_llm_factory: Any = None,
     llm_factory: Any = None,
+    task_llm_factory: TaskLLMFactory | None = None,
     scratch_root: str | Path | None = None,
 ) -> dict[str, Any]:
     for arm in config.arms:
         if arm not in MODULEMEM_ARMS:
             raise ModuleMemError(f"unknown arm {arm!r}; valid: {', '.join(MODULEMEM_ARMS)}")
+    if not config.probes and not config.tasks:
+        raise ModuleMemError("nothing to run: enable probes, tasks, or both")
+    if config.tasks and not any(module.tasks for module in modules):
+        raise ModuleMemError("--tasks needs modules that carry tasks")
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     tracker = LLMUsageTracker()
@@ -762,9 +1034,20 @@ def run_modulemem(
         answerer_llm=config.answerer_llm,
         judge_llm=config.judge_llm,
     )
+    task_factory: TaskLLMFactory | None = None
+    if config.tasks:
+        task_factory = task_llm_factory or build_task_llm_factory(
+            out_dir=out_path,
+            fake_llm=config.fake_llm,
+            settings=base,
+            usage=tracker,
+            coder_llm=config.answerer_llm,
+            judge_llm=config.judge_llm,
+        )
     created_scratch = scratch_root is None
     scratch = Path(scratch_root) if scratch_root else Path(tempfile.mkdtemp(prefix="modulemem-"))
     results: list[dict[str, Any]] = []
+    task_rows: list[dict[str, Any]] = []
     packs: list[dict[str, Any]] = []
     write_side: list[dict[str, Any]] = []
     lags: list[float] = []
@@ -772,9 +1055,10 @@ def run_modulemem(
         for arm in config.arms:
             for repeat in range(config.repeats):
                 answerer, judge = factory(repeat)
+                roles = task_factory(repeat) if task_factory is not None else None
                 for module in modules:
                     with deterministic_ids(f"modulemem:{arm}:r{repeat}:{module.module_id}"):
-                        rows, pack_row, ws, lag = _run_module_arm(
+                        rows, tasks, pack_row, ws, lag = _run_module_arm(
                             module,
                             arm=arm,
                             repeat=repeat,
@@ -782,12 +1066,14 @@ def run_modulemem(
                             base=base,
                             answerer=answerer,
                             judge=judge,
+                            task_roles=roles,
                             data_dir=scratch / arm / f"{module.module_id}-r{repeat}",
                             cache_dir=out_path / "llm_cache",
                             usage=tracker,
                             curated_llm_factory=curated_llm_factory,
                         )
                     results.extend(rows)
+                    task_rows.extend(tasks)
                     if pack_row is not None:
                         packs.append(pack_row)
                     if ws is not None:
@@ -797,9 +1083,15 @@ def run_modulemem(
         if created_scratch:
             shutil.rmtree(scratch, ignore_errors=True)
     summary = _summarize(results, packs, write_side, lags, config, tracker)
+    summary["behavior"] = summarize_tasks(task_rows, config.arms) if config.tasks else {}
     (out_path / "results.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in results), encoding="utf-8"
     )
+    if config.tasks:
+        (out_path / "tasks.jsonl").write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in task_rows),
+            encoding="utf-8",
+        )
     (out_path / "packs.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in packs), encoding="utf-8"
     )
@@ -841,11 +1133,18 @@ def _run_module_arm(
     base: Settings,
     answerer: RoomMemAnswerer,
     judge: RoomMemJudge,
+    task_roles: tuple[OwnerCoder, TaskJudge] | None,
     data_dir: Path,
     cache_dir: Path,
     usage: LLMUsageTracker,
     curated_llm_factory: Any,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None, list[float]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    list[float],
+]:
     pack_row: dict[str, Any] | None = None
     ws: dict[str, Any] | None = None
     lags: list[float] = []
@@ -902,17 +1201,33 @@ def _run_module_arm(
         )
         session_id = _retrieval_service(module, service)
 
+    def evidence_for(query: str) -> list[EvidenceItem]:
+        if service is None:
+            return evidence
+        package = service.build_context(
+            session_id=session_id,
+            task=XMUSE_TASK,
+            budget=800,
+            retrieval_query=query,
+            include_global_core=False,
+        )
+        return _evidence_items(build_source_evidence(package, schema_version="v2"))
+
+    task_rows: list[dict[str, Any]] = []
+    if task_roles is not None and module.tasks:
+        coder, task_judge = task_roles
+        task_rows = _run_tasks(
+            module,
+            arm=arm,
+            repeat=repeat,
+            coder=coder,
+            judge=task_judge,
+            evidence_for=evidence_for,
+        )
+
     rows: list[dict[str, Any]] = []
-    for probe in module.probes:
-        if service is not None:
-            package = service.build_context(
-                session_id=session_id,
-                task=XMUSE_TASK,
-                budget=800,
-                retrieval_query=probe.question,
-                include_global_core=False,
-            )
-            evidence = _evidence_items(build_source_evidence(package, schema_version="v2"))
+    for probe in module.probes if config.probes else []:
+        evidence = evidence_for(probe.question)
         answer = answerer.answer(question=probe.question, evidence=evidence)
         current, superseded = _probe_statements(module, probe)
         label = judge.judge_answer(
@@ -938,7 +1253,7 @@ def _run_module_arm(
                 "evidence_items": len(evidence),
             }
         )
-    return rows, pack_row, ws, lags
+    return rows, task_rows, pack_row, ws, lags
 
 
 def _rate(rows: Sequence[dict[str, Any]], label: str) -> float | None:
@@ -1015,6 +1330,8 @@ def _summarize(
             "pack_budget": config.pack_budget,
             "max_repairs": config.max_repairs,
             "fake_llm": config.fake_llm,
+            "probes": config.probes,
+            "tasks": config.tasks,
         },
         "read_side": read,
         "files": pack_stats,
@@ -1027,6 +1344,50 @@ def _summarize(
         },
         "usage": tracker.aggregate(),
     }
+
+
+def _task_stats(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    n = len(rows)
+    return {
+        "n": n,
+        **{
+            label: (sum(1 for r in rows if r["label"] == label) / n) if n else None
+            for label in TASK_LABELS
+        },
+        "pattern_violation": (sum(1 for r in rows if r["pattern_violation"]) / n) if n else None,
+    }
+
+
+def summarize_tasks(rows: Sequence[dict[str, Any]], arms: Sequence[str]) -> dict[str, Any]:
+    """Requirement-level rates per arm, by gold category and for early-only gold.
+
+    ``tasks_all_satisfied`` counts a task once per repeat when every requirement
+    is satisfied; ``evidence_tokens`` is the mean per task.
+    """
+
+    out: dict[str, Any] = {}
+    for arm in arms:
+        arm_rows = [r for r in rows if r["arm"] == arm]
+        if not arm_rows:
+            continue
+        tasks: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
+        for row in arm_rows:
+            tasks.setdefault((row["module"], row["repeat"], row["task"]), []).append(row)
+        stats: dict[str, Any] = {
+            category: _task_stats([r for r in arm_rows if r["category"] == category])
+            for category in REQUIREMENT_CATEGORIES
+        }
+        stats["early"] = _task_stats([r for r in arm_rows if r["early"]])
+        stats["all"] = _task_stats(arm_rows)
+        stats["tasks"] = len(tasks)
+        stats["tasks_all_satisfied"] = sum(
+            all(r["label"] == "satisfied" for r in group) for group in tasks.values()
+        ) / len(tasks)
+        stats["evidence_tokens"] = sum(
+            group[0]["evidence_tokens"] for group in tasks.values()
+        ) / len(tasks)
+        out[arm] = stats
+    return out
 
 
 def render_modulemem_md(summary: dict[str, Any]) -> str:
@@ -1051,6 +1412,33 @@ def render_modulemem_md(summary: dict[str, Any]) -> str:
                 f"| {arm} | {category} | {stats['n']} | {fmt(stats['correct'])} "
                 f"| {fmt(stats['stale'])} "
                 f"| {fmt(stats['missing'])} | {fmt(stats['wrong'])} | {fmt(stats['substring'])} "
+                f"| {fmt(stats['evidence_tokens'])} |"
+            )
+    behavior = summary.get("behavior") or {}
+    if behavior:
+        lines += [
+            "",
+            "## Behavior: owner tasks (requirement level)",
+            "",
+            "| arm | gold | n | satisfied | violated | not addressed | pattern violation |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for arm, stats in behavior.items():
+            for category in (*REQUIREMENT_CATEGORIES, "early", "all"):
+                row = stats[category]
+                lines.append(
+                    f"| {arm} | {category} | {row['n']} | {fmt(row['satisfied'])} "
+                    f"| {fmt(row['violated'])} | {fmt(row['not_addressed'])} "
+                    f"| {fmt(row['pattern_violation'])} |"
+                )
+        lines += [
+            "",
+            "| arm | tasks | all requirements satisfied | evidence tok |",
+            "|---|---|---|---|",
+        ]
+        for arm, stats in behavior.items():
+            lines.append(
+                f"| {arm} | {stats['tasks']} | {fmt(stats['tasks_all_satisfied'])} "
                 f"| {fmt(stats['evidence_tokens'])} |"
             )
     lines += ["", "## Memory files", "", json.dumps(summary["files"], indent=1), ""]
