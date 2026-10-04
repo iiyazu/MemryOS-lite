@@ -851,28 +851,25 @@ def test_disk_cache_reuses_responses_and_separates_repeats(tmp_path):
 def test_fake_curator_llm_adds_one_grounded_memory_per_human_message():
     fake = FakeCuratorLLM()
     user = (
-        'Active memories (reconcile against these; "supersedes" must use an id from '
-        "this list):\n(none)\n\n"
+        "Active memories (reuse a topic_key from this list for the same subject):\n(none)\n\n"
         "Earlier context (read-only; you may quote these messages):\n(none)\n\n"
         "Messages to curate:\n"
-        "[msg_1] Lin (human): 我们决定用 SQLite 作为开发阶段的存储。\n"
-        "[msg_2] Atlas (agent): 收到。\n"
-        "[msg_3] Mo (human): Hi\n"
+        "[msg_1] Lin, human (message): 我们决定用 SQLite 作为开发阶段的存储。\n"
+        "[msg_2] Atlas, agent (message): 收到。\n"
+        "[msg_3] Mo, human (message): Hi\n"
     )
 
     payload = fake.complete_json(system="sys", user=user)
 
-    operations = payload["operations"]
-    assert len(operations) == 1
-    operation = operations[0]
-    assert operation["op"] == "add"
-    assert operation["kind"] == "fact"
-    assert operation["topic_key"] == "roommem.msg_1"
-    assert operation["statement"] == "我们决定用 SQLite 作为开发阶段的存储。"
-    assert operation["sources"] == [
-        {"message_id": "msg_1", "quote": "我们决定用 SQLite 作为开发阶段的存储。"}
+    memories = payload["memories"]
+    assert len(memories) == 1
+    memory = memories[0]
+    assert memory["kind"] == "fact"
+    assert memory["topic_key"] == "roommem.msg_1"
+    assert memory["statement"] == "我们决定用 SQLite 作为开发阶段的存储。"
+    assert memory["sources"] == [
+        {"activity_id": "msg_1", "quote": "我们决定用 SQLite 作为开发阶段的存储。"}
     ]
-    assert operation["supersedes"] is None
     assert fake.complete_json(system="sys", user=user) == payload
 
 
@@ -882,7 +879,7 @@ class _CountingCuratorLLM:
 
     def complete_json(self, system, user):
         self.calls += 1
-        return {"operations": []}
+        return {"memories": []}
 
 
 def test_curator_llm_cache_reuses_and_separates_repeats(tmp_path):
@@ -890,21 +887,21 @@ def test_curator_llm_cache_reuses_and_separates_repeats(tmp_path):
     cache_dir = tmp_path / "cache"
 
     first = DiskCachedCuratorLLM(inner, model="curator-model", cache_dir=cache_dir, repeat=0)
-    assert first.complete_json(system="s", user="u") == {"operations": []}
-    assert first.complete_json(system="s", user="u") == {"operations": []}
+    assert first.complete_json(system="s", user="u") == {"memories": []}
+    assert first.complete_json(system="s", user="u") == {"memories": []}
     assert inner.calls == 1
 
     second_inner = _CountingCuratorLLM()
     fresh = DiskCachedCuratorLLM(second_inner, model="curator-model", cache_dir=cache_dir, repeat=0)
-    assert fresh.complete_json(system="s", user="u") == {"operations": []}
+    assert fresh.complete_json(system="s", user="u") == {"memories": []}
     assert second_inner.calls == 0  # a new run with the same key reuses the entry
 
     repeat_one = DiskCachedCuratorLLM(inner, model="curator-model", cache_dir=cache_dir, repeat=1)
-    assert repeat_one.complete_json(system="s", user="u") == {"operations": []}
+    assert repeat_one.complete_json(system="s", user="u") == {"memories": []}
     assert inner.calls == 2
 
     other_model = DiskCachedCuratorLLM(inner, model="other-model", cache_dir=cache_dir, repeat=0)
-    assert other_model.complete_json(system="s", user="u") == {"operations": []}
+    assert other_model.complete_json(system="s", user="u") == {"memories": []}
     assert inner.calls == 3
     assert repeat_one.cache_key(system="s", user="u") != first.cache_key(system="s", user="u")
 
@@ -1108,7 +1105,7 @@ class _UsageCuratorLLM:
         self.last_usage = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
 
     def complete_json(self, system, user):
-        return {"operations": []}
+        return {"memories": []}
 
 
 def _doc_ids(row):

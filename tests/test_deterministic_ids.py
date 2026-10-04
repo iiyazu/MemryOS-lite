@@ -29,7 +29,7 @@ class _RecordingCuratorLLM:
 
     def complete_json(self, system: str, user: str) -> dict[str, object]:
         self.prompts.append(user)
-        return {"operations": []}
+        return {"memories": []}
 
 
 def test_reruns_render_identical_curator_prompts(tmp_path) -> None:

@@ -12,7 +12,7 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 - 默认 `MEMORYOS_MEMORY_ARCH=v3`，使用 layered context composer；`v1` 仅作为显式兼容路径。
 - 默认 `MEMORYOS_RECALL_PIPELINE=v2`，使用 episode-first evidence recall；可显式选择 `v1`。
 - Agent kernel 默认关闭；`MEMORYOS_AGENT_KERNEL=external` 时本服务只产出带来源的维护建议（`/sessions/{id}/advisories`），由宿主 agent 决定是否采纳。
-- 记忆策展（curator）默认关闭；`MEMORYOS_CURATOR_ENABLED=true` 时后台 worker 从消息流抽取带来源证明的持久记忆，并通过 `/sessions/{id}/advisories?version=2`（`memoryos_external_advisories/v2`）暴露，同时抑制启发式维护建议。每条记忆的引文必须是原消息的逐字子串，否则拒收；默认由 `topic_key` + 版本号确定性汇总新旧版本，LLM 只输出 add/noop。
+- 记忆策展（curator）默认关闭；`MEMORYOS_CURATOR_ENABLED=true` 时后台 worker 从消息流抽取带来源证明的持久记忆，并通过 `/sessions/{id}/advisories?version=2`（`memoryos_external_advisories/v2`）暴露，同时抑制启发式维护建议。worker 是 `/curate` 图的有状态宿主：每一窗消息连同会话现有记忆按 `profile=room` 走同一张图，引文必须是原消息的逐字子串，按 `topic_key` + 版本号确定性汇总新旧版本。
 - 模块记忆走无状态的 `POST /curate`（`memoryos_curate/v1`）：宿主（如 xmuse）带上模块现有记忆和一窗新活动，MemoryOS 返回新的记忆版本，自己不存状态。错题本采用闭合记账：每条复核打回和门禁失败都必须归到一条教训或写明理由排除。提炼过程是一张 LangGraph 图（抽取 → 校验 → 修复 → 汇总），见下文"模块记忆"。
 - SQLite 是权威存储；page/trace 文件和可选 Redis/Qdrant 都是派生或实验能力。
 - 以新鲜命令结果而不是文档中的历史通过数判断状态。
@@ -86,7 +86,8 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 面向"一个 Agent 长期负责一个模块"的宿主。状态归宿主：宿主保存模块的记忆，把它们和一窗新
 活动一起发来；MemoryOS 不存任何东西，重试是安全的。宿主再把记忆渲染成负责人能读到的文件。
 
-- **请求**：`scope_id`；`active`（模块现有记忆：`id`、`kind` 为 lesson/decision/fact、
+- **请求**：`scope_id`；`profile`（默认 `module`；`room` 是会话 curator 用的配置，普通消息可直接产出
+  fact/decision/rule/preference/lesson）；`active`（模块现有记忆：`id`、`kind` 为 lesson/decision/fact，`room` 下还有 rule/preference；
   `topic_key`、`statement`、`version`、`occurrences`、`sources`）；`window`（新活动，1–32 条，
   每条有宿主自己的 `id`、单调的 `seq`、`type` 为 `message` / `review_objection` /
   `gate_failure` / `contract_revision`、`speaker`、`text`）；`context`（之前几条活动，只读，
@@ -137,7 +138,6 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 | `MEMORYOS_CURATOR_IDLE_FLUSH_S` | `20.0` | 不足一窗时的空闲刷新等待秒数 |
 | `MEMORYOS_CURATOR_POLL_S` | `2.0` | 后台 worker 轮询间隔 |
 | `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |
-| `MEMORYOS_CURATOR_CONSOLIDATION` | `deterministic` | `deterministic`：按 `topic_key` 保留最新版本；`llm`：早期由 LLM 指定被取代记忆的流程 |
 | `MEMORYOS_DEMOTE_SUPERSEDED` | `false` | 用本会话 curated 记忆推导已取代标记，用于 `source_evidence/v2` 降权和 `ask` |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENCODE_API_KEY` | unset | 可选真实模型提供方；`MEMORYOS_LLM_PROVIDER=opencode` 走 OpenCode Go（默认 `muse-spark-1.3-contributor`，Responses API），目前只用于 curator 与 RoomMem |
 | `QDRANT_URL` | unset | 可选向量检索后端 |

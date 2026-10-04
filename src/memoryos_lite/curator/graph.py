@@ -32,11 +32,18 @@ from memoryos_lite.curator.curate import (
 )
 from memoryos_lite.curator.llm import CuratorLLM, CuratorSchemaError
 from memoryos_lite.curator.prompt import (
+    CURATE_ROOM_SYSTEM_PROMPT,
     CURATE_SYSTEM_PROMPT,
     build_curate_prompt,
     build_repair_prompt,
+    build_room_curate_prompt,
     render_activity,
 )
+
+SYSTEM_PROMPTS = {"module": CURATE_SYSTEM_PROMPT, "room": CURATE_ROOM_SYSTEM_PROMPT}
+#: The violation recorded when a reply is not a JSON object (still present after
+#: the last repair means the window produced nothing usable).
+REPLY_NOT_JSON = "the reply was not a JSON object"
 
 
 class CurateState(TypedDict, total=False):
@@ -51,6 +58,19 @@ class CurateState(TypedDict, total=False):
 
 
 def render_request(request: CurateRequest) -> str:
+    context = [render_activity(a.id, a.speaker, a.type, a.text) for a in request.context]
+    window = [render_activity(a.id, a.speaker, a.type, a.text) for a in request.window]
+    failure_ids = [activity.id for activity in request.failures]
+    if request.profile == "room":
+        return build_room_curate_prompt(
+            memories=[
+                (memory.kind, memory.topic_key, memory.statement)
+                for memory in sorted(request.active, key=lambda m: m.version)
+            ],
+            context=context,
+            window=window,
+            failure_ids=failure_ids,
+        )
     lessons = [
         (memory.topic_key, memory.occurrences, memory.statement)
         for memory in sorted(request.active, key=lambda m: (-m.occurrences, -m.version))
@@ -65,19 +85,19 @@ def render_request(request: CurateRequest) -> str:
         scope_id=request.scope_id,
         lessons=lessons,
         others=others,
-        context=[render_activity(a.id, a.speaker, a.type, a.text) for a in request.context],
-        window=[render_activity(a.id, a.speaker, a.type, a.text) for a in request.window],
-        failure_ids=[activity.id for activity in request.failures],
+        context=context,
+        window=window,
+        failure_ids=failure_ids,
     )
 
 
-def _ask(llm: CuratorLLM, user: str) -> tuple[dict[str, Any] | None, str | None]:
+def _ask(llm: CuratorLLM, system: str, user: str) -> tuple[dict[str, Any] | None, str | None]:
     try:
-        reply = llm.complete_json(CURATE_SYSTEM_PROMPT, user)
+        reply = llm.complete_json(system, user)
     except CuratorSchemaError:
-        return None, "the reply was not a JSON object"
+        return None, REPLY_NOT_JSON
     if not isinstance(reply, dict):
-        return None, "the reply was not a JSON object"
+        return None, REPLY_NOT_JSON
     return reply, None
 
 
@@ -86,7 +106,7 @@ def build_curate_graph(llm: CuratorLLM) -> Any:
 
     def extract(state: CurateState) -> CurateState:
         prompt = render_request(state["request"])
-        reply, error = _ask(llm, prompt)
+        reply, error = _ask(llm, SYSTEM_PROMPTS[state["request"].profile], prompt)
         return {"prompt": prompt, "reply": reply, "reply_error": error, "llm_calls": 1}
 
     def check(state: CurateState) -> CurateState:
@@ -106,7 +126,7 @@ def build_curate_graph(llm: CuratorLLM) -> Any:
         previous = state.get("reply")
         previous_text = json.dumps(previous, ensure_ascii=False) if previous is not None else ""
         user = build_repair_prompt(state["prompt"], previous_text, state["check"].violations)
-        reply, error = _ask(llm, user)
+        reply, error = _ask(llm, SYSTEM_PROMPTS[state["request"].profile], user)
         return {"reply": reply, "reply_error": error, "llm_calls": state["llm_calls"] + 1}
 
     def finish(state: CurateState) -> CurateState:
@@ -139,4 +159,4 @@ def run_curate(request: CurateRequest, llm: CuratorLLM) -> CurateResponse:
     return response
 
 
-__all__ = ["CurateState", "build_curate_graph", "render_request", "run_curate"]
+__all__ = ["REPLY_NOT_JSON", "CurateState", "build_curate_graph", "render_request", "run_curate"]
