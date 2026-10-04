@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 from memoryos_lite.curator.curate import CurateAssignment
 from memoryos_lite.modulemem import (
@@ -11,11 +14,14 @@ from memoryos_lite.modulemem import (
     MODULEMEM_SPLITS,
     FakeModuleCuratorLLM,
     ModuleMemConfig,
+    ModuleMemError,
     _write_side,
     accounting_metrics,
     curate_module,
     current_contracts,
     load_modules,
+    load_seed,
+    load_seed_spec,
     render_module_memory,
     run_modulemem,
 )
@@ -127,6 +133,203 @@ def test_accounting_matches_gold_clusters():
     assert metrics["pair_tp"] == 0
     assert metrics["pair_fn"] == perfect["pair_tp"] > 0
     assert metrics["unaccounted"] == 0
+
+
+def _module_with_tasks(tmp_path: Path, tasks: list[dict[str, object]]) -> Path:
+    raw = json.loads((DATA / "mm01.json").read_text(encoding="utf-8"))
+    raw["tasks"] = tasks
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "mm01.json").write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    return data
+
+
+def _mm01_task_refs() -> tuple[str, str, str]:
+    module = load_modules(DATA, ["mm01"])[0]
+    lesson = module.gold.lessons[0].id
+    decision = next(d.id for d in module.gold.decisions if d.superseded_by is None)
+    contract = f"contract:{module.gold.contracts[0].contract_id}"
+    return lesson, decision, contract
+
+
+def test_owner_tasks_score_memory_against_no_memory(tmp_path):
+    lesson, decision, contract = _mm01_task_refs()
+    data = _module_with_tasks(
+        tmp_path,
+        [
+            {
+                "id": "t1",
+                "prompt": "Add a logout endpoint.",
+                "requirements": [
+                    {"id": "r1", "ref": lesson, "check": "Avoids the known mistake."},
+                    {"id": "r2", "ref": decision, "check": "Follows the current decision."},
+                    {
+                        "id": "r3",
+                        "ref": contract,
+                        "check": "Matches the current contract.",
+                        "violation_patterns": ["NO_MEMORY"],
+                    },
+                ],
+            }
+        ],
+    )
+    summary = run_modulemem(
+        load_modules(data),
+        out_dir=tmp_path / "out",
+        config=ModuleMemConfig(arms=("none", "oracle_pack"), fake_llm=True, tasks=True),
+        scratch_root=tmp_path / "scratch",
+    )
+
+    behavior = summary["behavior"]
+    assert behavior["none"]["all"]["satisfied"] == 0
+    assert behavior["none"]["contract"]["pattern_violation"] == 1
+    assert behavior["oracle_pack"]["all"]["satisfied"] == 1
+    assert behavior["oracle_pack"]["tasks_all_satisfied"] == 1
+    assert {behavior["oracle_pack"][c]["n"] for c in ("lesson", "decision", "contract")} == {1}
+    rows = (tmp_path / "out" / "tasks.jsonl").read_text().splitlines()
+    assert len(rows) == 6
+    assert "Behavior: owner tasks" in (tmp_path / "out" / "summary.md").read_text()
+
+
+FAKE_AGENT = """\
+import pathlib, sys
+args = sys.argv[1:]
+workspace = pathlib.Path(args[args.index("--workspace") + 1])
+with open(args[0], "a", encoding="utf-8") as calls:
+    calls.write(sys.stdin.read().splitlines()[0] + "\\n")
+memory = (workspace / "AGENTS.md").read_text(encoding="utf-8")
+_, _, body = memory.partition("## Module memory from the host")
+body = body.strip() or "NO_MEMORY\\nrows = fetch_legacy(order)"
+body += "\\n# fetch_legacy(order) is not used here"
+(workspace / "app").mkdir(exist_ok=True)
+(workspace / "app" / "change.py").write_text(body + "\\n", encoding="utf-8")
+print("done")
+"""
+
+
+def test_agent_coder_edits_the_seed_repo_and_the_judge_grades_its_diff(tmp_path):
+    lesson, _, contract = _mm01_task_refs()
+    data = _module_with_tasks(
+        tmp_path,
+        [
+            {
+                "id": "t1",
+                "prompt": "Add a logout endpoint.",
+                "requirements": [
+                    {
+                        "id": "r1",
+                        "ref": contract,
+                        "check": "Matches the current contract.",
+                        "violation_patterns": ["NO_MEMORY"],
+                    }
+                ],
+            },
+            {
+                "id": "t2",
+                "prompt": "Move sessions to the new store.",
+                "requirements": [{"id": "r1", "ref": contract, "check": "Matches the contract."}],
+            },
+        ],
+    )
+    module = load_modules(data)[0]
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    # The seed itself contains the patterns: only lines the agent adds may count.
+    seed = {
+        "files": {"app/main.py": "MODE = 'NO_MEMORY'\nrows = fetch_legacy(order)\n"},
+        "debt": [{"id": "legacy_fetch", "ref": lesson, "patterns": [r"\bfetch_legacy\("]}],
+        "exclude_tasks": {"t2": "the seed already uses the new store"},
+    }
+    (seeds / f"{module.module_id}.json").write_text(json.dumps(seed), encoding="utf-8")
+    script = tmp_path / "agent.py"
+    script.write_text(FAKE_AGENT, encoding="utf-8")
+    calls = tmp_path / "calls.txt"
+    config = ModuleMemConfig(
+        arms=("none", "oracle_pack"),
+        fake_llm=True,
+        probes=False,
+        tasks=True,
+        coder_command=(sys.executable, str(script), str(calls)),
+        seeds_dir=str(seeds),
+    )
+
+    summary = run_modulemem([module], out_dir=tmp_path / "out", config=config)
+
+    behavior = summary["behavior"]
+    assert behavior["none"]["all"]["satisfied"] == 0
+    assert behavior["none"]["all"]["pattern_violation"] == 1
+    assert behavior["oracle_pack"]["all"]["satisfied"] == 1
+    assert behavior["oracle_pack"]["all"]["pattern_violation"] == 0
+    assert behavior["none"]["tasks_with_violation"] == 1
+    assert behavior["oracle_pack"]["tasks_with_violation"] == 0
+    assert behavior["none"]["all"]["addressed"] == 0
+    assert behavior["oracle_pack"]["all"]["addressed"] == 1
+    assert behavior["oracle_pack"]["all"]["violated_of_addressed"] == 0
+    assert behavior["none"]["tasks_reusing_debt"] == 1
+    assert behavior["none"]["debt_reuse_by_id"] == {"legacy_fetch": 1}
+    assert behavior["oracle_pack"]["tasks_reusing_debt"] == 0
+    rows = [
+        json.loads(line) for line in (tmp_path / "out" / "tasks.jsonl").read_text().splitlines()
+    ]
+    assert all(row["code"].startswith("diff --git a/app/change.py") for row in rows)
+    assert all(row["code"].endswith("Notes:\ndone") for row in rows)
+    assert calls.read_text().splitlines() == ["Add a logout endpoint."] * 2
+    workspaces = sorted((tmp_path / "out" / "agent_work").iterdir())
+    memories = [(w / "AGENTS.md").read_text(encoding="utf-8") for w in workspaces]
+    assert sorted("Module memory from the host" in m for m in memories) == [False, True]
+
+    # A rerun is served from the agent cache.
+    run_modulemem([module], out_dir=tmp_path / "out", config=config)
+    assert len(calls.read_text().splitlines()) == 2
+
+
+def test_agent_coder_needs_tasks_and_safe_seeds(tmp_path):
+    module = load_modules(DATA, ["mm01"])[0]
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    (seeds / "mm01.json").write_text(json.dumps({"files": {"../escape.py": ""}}), encoding="utf-8")
+    config = ModuleMemConfig(arms=("none",), fake_llm=True, coder_command=("agent",))
+    with pytest.raises(ModuleMemError, match="--tasks"):
+        run_modulemem([module], out_dir=tmp_path / "out", config=config)
+    with pytest.raises(ModuleMemError, match="bad seed path"):
+        load_seed(seeds, "mm01")
+    (seeds / f"{module.module_id}.json").write_text(
+        json.dumps(
+            {"files": {"a.py": ""}, "debt": [{"id": "x", "ref": "d999", "patterns": ["y"]}]}
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ModuleMemError, match="gold ref"):
+        load_seed_spec(seeds, module)
+
+
+def test_task_refs_and_patterns_are_validated(tmp_path):
+    _, _, contract = _mm01_task_refs()
+    data = _module_with_tasks(
+        tmp_path,
+        [
+            {
+                "id": "t1",
+                "prompt": "Do something.",
+                "requirements": [
+                    {"id": "r1", "ref": "d999", "check": "Unknown gold."},
+                    {
+                        "id": "r2",
+                        "ref": contract,
+                        "check": "Bad regex.",
+                        "violation_patterns": ["("],
+                    },
+                ],
+            }
+        ],
+    )
+    try:
+        load_modules(data)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("invalid tasks must not load")
+    assert "d999" in message and "bad pattern" in message
 
 
 def test_all_arms_run_end_to_end_with_fake_llms(tmp_path):

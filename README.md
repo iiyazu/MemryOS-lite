@@ -164,6 +164,9 @@ uv run memoryos eval roommem --split dev --arm raw_project --arm curated --arm o
 # ModuleMem：模块记忆与错题本。split dev=mm01-04, test=mm05-08
 uv run memoryos eval modulemem --split dev --arm pack --arm raw_log --arm full_history \
   --out artifacts/modulemem
+# 负责人重启后的行为：长模块附带开发任务，被测者只凭记忆写代码改动，评委逐条判定要求
+uv run memoryos eval modulemem --data benchmarks/modulemem/long --tasks --no-probes \
+  --arm none --arm raw_log --arm pack --arm full_history --out artifacts/owner
 ```
 
 RoomMem 的 arm 有 `raw`、`raw_project`、`oracle`、`curated`、`full_context`；
@@ -171,8 +174,12 @@ RoomMem 的 arm 有 `raw`、`raw_project`、`oracle`、`curated`、`full_context
 分别用普通检索、已取代降权、`ask` 图取证据，结果标为 `curated`、`curated+demote`、
 `curated+agentic`。ModuleMem 的
 arm 有 `pack`（扮演宿主走 `/curate` 的图，渲染模块记忆文件）、`oracle_pack`、`recent`、
-`raw_log`（同预算下最新的原始活动）、`retrieval`、`full_history`；`pack` 另报告失败归属与
-gold 教训聚类的成对精确率和召回率、排除数、`unaccounted` 和修复轮数。`--answerer-llm`、
+`raw_log`（同预算下最新的原始活动）、`retrieval`、`full_history`，以及作为下限的 `none`
+（不给记忆）；`pack` 另报告失败归属与
+gold 教训聚类的成对精确率和召回率、排除数、`unaccounted` 和修复轮数。`--tasks` 让每组再做一遍
+模块附带的开发任务：`--answerer-llm` 扮演被测的负责人，只输出代码改动不执行；评委把每条要求判为
+satisfied、violated 或 not_addressed，按教训、决定、契约和早期决定分别汇总。数据格式见
+`benchmarks/modulemem/SPEC.md`。`--answerer-llm`、
 `--judge-llm`、`--curator-llm` 接受 `provider:model[@wire]`。结果写入 `--out` 下的
 `summary.md`。
 

@@ -1,0 +1,1615 @@
+{
+ "module_id": "orders",
+ "project": "orbit",
+ "language": "en",
+ "title": "orbit orders-api module",
+ "participants": [
+  {
+   "id": "human",
+   "kind": "human",
+   "name": "Priya"
+  },
+  {
+   "id": "owner",
+   "kind": "agent",
+   "name": "Orders owner"
+  },
+  {
+   "id": "reviewer",
+   "kind": "agent",
+   "name": "Reviewer"
+  },
+  {
+   "id": "gate",
+   "kind": "infra",
+   "name": "CI gate"
+  }
+ ],
+ "activities": [
+  {
+   "id": "a01",
+   "type": "message",
+   "speaker": "human",
+   "text": "Priya: kicking off project orbit orders-api. You own this module: a Python service for our online shop that can create, pay and cancel orders. Keep it small and correct first, we will harden it over the coming weeks."
+  },
+  {
+   "id": "a02",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "orders-api v1:\nPOST /orders accepts {items:[{sku,qty}], amount, currency}.\nOn success returns 201 {id, status, amount, currency}.\nstatus is a free-form string: pending, paid or cancelled.\nPOST /orders/{id}/pay accepts {method} and marks the order paid.\nPOST /orders/{id}/cancel marks a pending order cancelled.\nGET /orders lists with ?offset=0&limit=20, returns {orders, offset, limit, total}.\nGET /orders/{id} returns one order with its items.\nOrder total is computed server-side from sku prices.\nAll responses are JSON. Errors use 4xx with a message.",
+   "contract_id": "orders-api",
+   "contract_version": 1
+  },
+  {
+   "id": "a03",
+   "type": "message",
+   "speaker": "human",
+   "text": "Priya: espresso machine on floor 3 is fixed, by the way. Fuel up before the sprint."
+  },
+  {
+   "id": "a04",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: order state lives in SQLite file data/orders.db with SQLAlchemy sync engine. Single file keeps local dev simple; WAL mode on. Migrations via alembic revision chain."
+  },
+  {
+   "id": "a05",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: money is stored and transferred as float dollars (e.g., 12.99). Amount column is REAL, JSON uses numbers. Simple for demo math."
+  },
+  {
+   "id": "a06",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: payment provider calls use fixed retry: 3 attempts with 1s delay between tries, no backoff. Timeouts set to 5s per attempt."
+  },
+  {
+   "id": "a07",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: list pagination uses offset/limit with ?offset=0&limit=20, default limit 20. Response includes {orders, offset, limit, total}."
+  },
+  {
+   "id": "a08",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: stack is FastAPI 0.115 on Python 3.11 with pydantic v2 for schemas. Uvicorn serves the app; pytest covers the service layer."
+  },
+  {
+   "id": "a09",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: all /orders routes require JWT bearer validated against auth JWKS, sub claim becomes customer_id. Anonymous calls get 401."
+  },
+  {
+   "id": "a10",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: order id is server-generated UUIDv7 string, returned as id field. Clients must not send ids; POST /orders ignores any client id."
+  },
+  {
+   "id": "a11",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: errors return {code, message, request_id} with snake_case codes like order_not_found. HTTP status mirrors the code class."
+  },
+  {
+   "id": "a12",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: webhook handler reads provider callback without verifying its HMAC signature. Anyone can POST a fake paid event and mark orders paid. Verify signature with the shared secret before parsing the body."
+  },
+  {
+   "id": "a13",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: every log line includes order_id and request_id as JSON fields via structlog, level info for state transitions."
+  },
+  {
+   "id": "a14",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: health endpoint /healthz returns {ok:true, version} and checks DB connectivity. K8s readiness probes hit it every 10s."
+  },
+  {
+   "id": "a15",
+   "type": "message",
+   "speaker": "human",
+   "text": "Standup: orders-api scaffolding looks on track. Demo is Thursday, no action needed."
+  },
+  {
+   "id": "a16",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented POST /orders with sku price lookup and float total. Pay calls the fake provider inline, cancel flips the string flag. Tests pass locally."
+  },
+  {
+   "id": "a17",
+   "type": "message",
+   "speaker": "human",
+   "text": "Quick question: should the pay endpoint accept partial amounts, or only full capture for now?"
+  },
+  {
+   "id": "a18",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_list.py -q\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 9 items\ntests/test_list.py::test_create_ok PASSED\ntests/test_list.py::test_pay_ok PASSED\ntests/test_list.py::test_cancel_ok PASSED\ntests/test_list.py::test_list_empty PASSED\ntests/test_list.py::test_list_with_items FAILED\n--- query count ---\nQueryCountError: expected <=3 queries, got 27\nN+1 detected: 27 queries for 20 orders (1 orders query + 20 item queries + 6 price queries)\ntests/test_list.py::test_list_pagination PASSED\nshort test summary info:\nFAILED tests/test_list.py::test_list_with_items - QueryCountError\n1 failed, 5 passed, 3 deselected in 0.92s\nperf-gate exit 1: N+1 budget exceeded.",
+   "gate_id": "perf"
+  },
+  {
+   "id": "a19",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed list: preload items with a single joinedload and batch price fetch. List now runs 2 queries regardless of page size. Re-ran test_list_with_items locally, green."
+  },
+  {
+   "id": "a20",
+   "type": "message",
+   "speaker": "human",
+   "text": "Weekend plans aside, the shop demo went fine. Nice work on the preload fix."
+  },
+  {
+   "id": "a21",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented provider webhook /webhooks/payments that reads JSON {order_id, status} and marks paid. Used raw body parse for speed."
+  },
+  {
+   "id": "a22",
+   "type": "message",
+   "speaker": "human",
+   "text": "Lunch plan: trying the new ramen place Tuesday. No decision, just hungry."
+  },
+  {
+   "id": "a23",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Hypothetical: what if we billed in loyalty points instead of money? Just thinking, not changing anything now."
+  },
+  {
+   "id": "a24",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented cancel flow with string status compare. Timestamps use datetime.now() without tz for simplicity."
+  },
+  {
+   "id": "a25",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_times.py -q\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 11 items\ntests/test_times.py::test_create_ts PASSED\ntests/test_times.py::test_pay_ts PASSED\ntests/test_times.py::test_cancel_window FAILED\ntests/test_times.py::TestMidnight::test_cancel_just_before_midnight FAILED\nTraceback (most recent call last):\n  File \"tests/test_times.py\", line 74, in test_cancel_just_before_midnight\n    assert order.created_at.tzinfo is not None\nAssertionError: naive datetime found: 2026-03-14 23:59:59 without tzinfo\nTypeError: can't compare offset-naive and offset-aware datetimes in cancel guard\nshort test summary info:\nFAILED tests/test_times.py::test_cancel_window\nFAILED tests/test_times.py::TestMidnight::test_cancel_just_before_midnight\n2 failed, 9 passed in 1.18s\nBuild 5120 finished: pytest exit 1.",
+   "gate_id": "pytest"
+  },
+  {
+   "id": "a26",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed timestamps to use timezone-aware UTC via datetime.now(timezone.utc) in create and pay paths. Midnight test passes locally now."
+  },
+  {
+   "id": "a27",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: provider sandbox is flaky today, retries may look slow. Not our bug."
+  },
+  {
+   "id": "a28",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented offset pagination exactly as decided, default 20. Total count query included."
+  },
+  {
+   "id": "a29",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: anyone else fighting the office wifi? VPN drops every hour."
+  },
+  {
+   "id": "a30",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented fixed retry helper call_provider(fn): loop 3 times, sleep 1s, timeout 5s. Logs each attempt."
+  },
+  {
+   "id": "a31",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_limits.py -q\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 7 items\ntests/test_limits.py::test_list_default PASSED\ntests/test_limits.py::test_limit_clamped FAILED\nTraceback (most recent call last):\n  File \"tests/test_limits.py\", line 41, in test_limit_clamped\n    assert resp.status_code == 200 and len(resp.json()[\"orders\"]) <= 100\nAssertionError: LimitTooLarge: limit 10000 exceeds max 100, server tried to load all rows\nE   ValueError: unbounded page size 10000\nshort test summary info:\nFAILED tests/test_limits.py::test_limit_clamped\n1 failed, 6 passed in 0.61s\nBuild 5131 finished: pytest exit 1.",
+   "gate_id": "pytest"
+  },
+  {
+   "id": "a32",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Added limit clamp: max limit 100 on GET /orders, larger values clamp to 100. Default stays 20."
+  },
+  {
+   "id": "a33",
+   "type": "message",
+   "speaker": "human",
+   "text": "Reminder: deploy freeze Friday for the shop sale. Merge small fixes only."
+  },
+  {
+   "id": "a34",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Note: cancel guards compare created_at in UTC now. Midnight edge covered by TestMidnight."
+  },
+  {
+   "id": "a35",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: list endpoint still has no max limit enforced on the DB query path. limit=10000 loads the whole table and times out. Clamp to 100 in the handler, not just docs."
+  },
+  {
+   "id": "a36",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: do we need idempotency keys for POST /orders yet? Provider duplicates are showing up in logs."
+  },
+  {
+   "id": "a37",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Plan for next weeks: 1) add idempotency keys, 2) move off SQLite, 3) fix money type. Tracking in ORB-301."
+  },
+  {
+   "id": "a38",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: office plant wall got new succulents. Photos in #random."
+  },
+  {
+   "id": "a39",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: float totals show 0.30000000004 for 0.1+0.2 carts. Known wart, will fix with a new money type later."
+  },
+  {
+   "id": "a40",
+   "type": "message",
+   "speaker": "human",
+   "text": "New requirement: clients retry POST /orders on timeouts and create duplicates. Please add idempotency keys so replays return the stored response."
+  },
+  {
+   "id": "a41",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Proposal: v2 adds Idempotency-Key header on POST /orders and POST pay. Server stores key+response 24h, replay returns 200 with stored body. Keys scoped per customer."
+  },
+  {
+   "id": "a42",
+   "type": "message",
+   "speaker": "human",
+   "text": "Coffee run: who wants oat latte? Back in 10."
+  },
+  {
+   "id": "a43",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "orders-api v2:\nPOST /orders requires Idempotency-Key header, stores key and response 24h.\nReplay with the same key and customer returns the stored response.\nPOST /orders accepts {items:[{sku,qty}], amount, currency}.\nReturns 201 {id, status, amount, currency} on first create.\nstatus is a free-form string: pending, paid or cancelled.\nPOST /orders/{id}/pay requires Idempotency-Key, marks paid.\nPOST /orders/{id}/cancel marks a pending order cancelled.\nGET /orders lists with ?offset=0&limit=20, returns {orders, offset, limit, total}.\nGET /orders/{id} returns one order with items.\nMax limit 100 enforced server-side; larger values clamp.\nTotals computed server-side from sku prices.",
+   "contract_id": "orders-api",
+   "contract_version": 2
+  },
+  {
+   "id": "a44",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented v2 idempotency: keys table (key, customer, response, created). Replay short-circuits before creating. Covered by test_idem_replay."
+  },
+  {
+   "id": "a45",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: idempotency cut duplicates to zero in staging. Good."
+  },
+  {
+   "id": "a46",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: second webhook handler for refunds also reads provider callback without verifying its HMAC signature. Same flaw as before: verify signature with shared secret before trusting event type."
+  },
+  {
+   "id": "a47",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Patched refund webhook to check HMAC first. Both webhook paths now call verify_signature(raw_body, header) before JSON parse."
+  },
+  {
+   "id": "a48",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: order state moves to Postgres 16, schema orders, SQLAlchemy async engine with asyncpg. Alembic migrates SQLite rows forward; old file kept only as dev fallback, not authority."
+  },
+  {
+   "id": "a49",
+   "type": "message",
+   "speaker": "human",
+   "text": "Hypothetical: should we shard orders by region next quarter? Parking the idea, no change now."
+  },
+  {
+   "id": "a50",
+   "type": "review_objection",
+   "speaker": "reviewer",
+   "text": "Objection: replay with a different payload but same Idempotency-Key silently returns the old order. Must return 422 on key reuse with mismatched body."
+  },
+  {
+   "id": "a51",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: money is now integer cents (e.g., 1299) in DB BIGINT and JSON numbers. All math in cents; display divides by 100."
+  },
+  {
+   "id": "a52",
+   "type": "message",
+   "speaker": "human",
+   "text": "Plan: Postgres migration runs Sunday 02:00 UTC. Freeze writes for 10 minutes."
+  },
+  {
+   "id": "a53",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Migrated totals to cents; 0.1+0.2 wart gone. Display layer divides by 100."
+  },
+  {
+   "id": "a54",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: payment calls use exponential backoff with jitter: up to 5 attempts, base 200ms x2, plus random jitter, 8s timeout per attempt. Idempotent on retry."
+  },
+  {
+   "id": "a55",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: build monitor is green for the third day straight. Knock on wood."
+  },
+  {
+   "id": "a56",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_list.py -q -k n_plus_one\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 4 items\ntests/test_list.py::TestListPerf::test_items_prefetch FAILED\n--- query count ---\nQueryCountError: expected <=3 queries, got 24\nN+1 detected: 24 queries for 15 orders after adding refund join\ntests/test_list.py::TestListPerf::test_page_two PASSED\ntests/test_list.py::TestListPerf::test_empty PASSED\nshort test summary info:\nFAILED tests/test_list.py::TestListPerf::test_items_prefetch\nTraceback (most recent call last):\n  File \"src/orders/service.py\", line 201, in list_orders\n    items = [fetch_items(o.id) for o in orders]\nE   QueryCountError: per-order fetch in list path\n1 failed, 3 passed in 0.88s\nperf-gate exit 1: N+1 budget exceeded.",
+   "gate_id": "perf"
+  },
+  {
+   "id": "a57",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: listing uses cursor pagination with ?cursor=<opaque>&limit=20, response {orders, next_cursor, limit}. Cursor encodes (created_at, id)."
+  },
+  {
+   "id": "a58",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: cursor pagination breaks old offset links in the admin dashboard. Do we keep an offset shim?"
+  },
+  {
+   "id": "a59",
+   "type": "message",
+   "speaker": "owner",
+   "text": "No shim: admin moves to next_cursor this sprint. Offset params now return 410 with a migration note."
+  },
+  {
+   "id": "a60",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: provider latency p99 down after backoff change. Fewer thundering retries."
+  },
+  {
+   "id": "a61",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Re-fixed list prefetch after refund join: single query with items + refunds eager load. Query count back to 2."
+  },
+  {
+   "id": "a62",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_times.py -q -k midnight\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 6 items\ntests/test_times.py::TestMidnight::test_create_at_2359 PASSED\ntests/test_times.py::TestMidnight::test_pay_after_midnight FAILED\nTraceback (most recent call last):\n  File \"tests/test_times.py\", line 96, in test_pay_after_midnight\n    assert paid_at.tzinfo is not None and paid_at.utcoffset() is not None\nAssertionError: naive datetime found in pay path: 2026-06-02 00:00:03\nTypeError: can't compare offset-naive and offset-aware datetimes in pay guard\nshort test summary info:\nFAILED tests/test_times.py::TestMidnight::test_pay_after_midnight\n1 failed, 5 passed in 0.74s\nBuild 5210 finished: pytest exit 1.",
+   "gate_id": "pytest"
+  },
+  {
+   "id": "a63",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed pay-path timestamp to timezone-aware UTC as well. Grepped for datetime.now() without tz, none left in src."
+  },
+  {
+   "id": "a64",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: fantasy league draft tonight, join link in #random."
+  },
+  {
+   "id": "a65",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Patched idempotency mismatch: same key plus different body now returns 422 key_reuse. Same key plus same body returns stored 200."
+  },
+  {
+   "id": "a66",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: staging migration to Postgres done, 12k rows moved. Rollback snapshot kept 7 days."
+  },
+  {
+   "id": "a67",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Switched list endpoint to cursor as decided. Admin updated to follow next_cursor."
+  },
+  {
+   "id": "a68",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: partial refunds keep coming up in support tickets. Should v3 add them?"
+  },
+  {
+   "id": "a69",
+   "type": "message",
+   "speaker": "human",
+   "text": "New requirement for v3: replace loose status strings with a strict enum and add partial refunds. Finance needs to refund single items without cancelling the whole order."
+  },
+  {
+   "id": "a70",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Proposal: v3 status enum PENDING_PAYMENT, PAID, CANCELLED, REFUNDED_PARTIAL, REFUNDED_FULL. New POST /orders/{id}/refunds {items or amount} with its own idempotency key. Old string values rejected with 400."
+  },
+  {
+   "id": "a71",
+   "type": "message",
+   "speaker": "human",
+   "text": "Plan: finance demo next Monday, refunds must show per-item amounts."
+  },
+  {
+   "id": "a72",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Implemented enum guard: unknown status returns 400. Refund endpoint creates refund rows and adjusts paid total."
+  },
+  {
+   "id": "a73",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: kitchen has leftover cake. First come first served."
+  },
+  {
+   "id": "a74",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_limits.py -q\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 8 items\ntests/test_limits.py::test_default PASSED\ntests/test_limits.py::test_clamp PASSED\ntests/test_limits.py::test_cursor_limit FAILED\nTraceback (most recent call last):\n  File \"tests/test_limits.py\", line 66, in test_cursor_limit\n    assert len(data[\"orders\"]) <= 100\nAssertionError: LimitTooLarge: limit 5000 exceeds max 100 on cursor path\nE   ValueError: cursor handler missed the clamp\nshort test summary info:\nFAILED tests/test_limits.py::test_cursor_limit\n1 failed, 7 passed in 0.69s\nBuild 5244 finished: pytest exit 1.",
+   "gate_id": "pytest"
+  },
+  {
+   "id": "a75",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Applied the 100 clamp to the cursor path too. Both list paths share clamp_limit() now."
+  },
+  {
+   "id": "a76",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: refund demo data ready in staging."
+  },
+  {
+   "id": "a77",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Note: refund webhook re-verifies HMAC per event, including test mode events. No unverified fallback."
+  },
+  {
+   "id": "a78",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: should refunds reuse the pay idempotency key or require a fresh one?"
+  },
+  {
+   "id": "a79",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fresh key per refund: reusing a create key on refunds returns 422. Documented in v3."
+  },
+  {
+   "id": "a80",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: new office chairs arrived. Adjust the lumbar thing."
+  },
+  {
+   "id": "a81",
+   "type": "contract_revision",
+   "speaker": "human",
+   "text": "orders-api v3:\nPOST /orders requires Idempotency-Key, stores response 24h, replay returns stored body.\nPOST /orders accepts {items:[{sku,qty}], amount, currency}, returns 201 {id, status, amount, currency}.\nstatus is a strict enum: PENDING_PAYMENT, PAID, CANCELLED, REFUNDED_PARTIAL, REFUNDED_FULL.\nUnknown or free-form status values are rejected with 400.\nPOST /orders/{id}/pay requires Idempotency-Key, transitions PENDING_PAYMENT to PAID.\nPOST /orders/{id}/cancel transitions PENDING_PAYMENT to CANCELLED.\nPOST /orders/{id}/refunds accepts {items or amount} with a fresh Idempotency-Key.\nRefund creates a refund record and transitions to REFUNDED_PARTIAL or REFUNDED_FULL.\nGET /orders lists with ?cursor=<opaque>&limit=20, returns {orders, next_cursor, limit}.\nGET /orders/{id} returns one order with items and refunds.\nMax limit 100 enforced on all list paths.\nTotals computed server-side from sku prices.",
+   "contract_id": "orders-api",
+   "contract_version": 3
+  },
+  {
+   "id": "a82",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: v3 implemented behind the enum flag, old string writes now 400 as proposed."
+  },
+  {
+   "id": "a83",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: deploy train leaves at 4pm. Get reviews in."
+  },
+  {
+   "id": "a84",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Migrated remaining string statuses to the enum via backfill script. Dry-run showed 3k rows touched."
+  },
+  {
+   "id": "a85",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: midnight deploy okay for the enum backfill?"
+  },
+  {
+   "id": "a86",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: orders table in Postgres is range-partitioned by created_month with pgBouncer in transaction mode, dedicated orders_rw role. Partition pruning keeps list queries fast; old file store fully retired."
+  },
+  {
+   "id": "a87",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: partition migration cut p95 list latency in half."
+  },
+  {
+   "id": "a88",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Cut over reads to the partitioned table. Pruning verified with EXPLAIN on month filter."
+  },
+  {
+   "id": "a89",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Decision: money is decimal string in JSON like \"12.34\" with separate currency field, DB NUMERIC(12,2). Prevents float rounding and supports future currencies."
+  },
+  {
+   "id": "a90",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: book club picked a sci-fi novel. Meeting Thursday."
+  },
+  {
+   "id": "a91",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Converted JSON amount to decimal strings; DB to NUMERIC(12,2). Cents math moved to decimal quantize in the service."
+  },
+  {
+   "id": "a92",
+   "type": "message",
+   "speaker": "human",
+   "text": "Note for newcomers: we used to keep order state in SQLite before the Postgres move, do not copy that pattern. Postgres is authoritative now."
+  },
+  {
+   "id": "a93",
+   "type": "message",
+   "speaker": "human",
+   "text": "Reminder: orders-api v1 returned status as plain strings with no enum. That is obsolete; current v3 requires the strict enum and rejects free-form strings."
+  },
+  {
+   "id": "a94",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_webhook.py -q\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 10 items\ntests/test_webhook.py::test_valid_signed PASSED\ntests/test_webhook.py::test_bad_signature_401 PASSED\ntests/test_webhook.py::test_replay_nonce FAILED\ntests/test_webhook.py::TestSecurity::test_unsigned_accepted FAILED\nTraceback (most recent call last):\n  File \"tests/test_webhook.py\", line 118, in test_unsigned_accepted\n    assert resp.status_code == 401\nAssertionError: SECURITY FAIL: webhook accepted without HMAC verification on /webhooks/chargeback\nE   UnsignedCallbackError: missing signature check on new chargeback handler\nshort test summary info:\nFAILED tests/test_webhook.py::test_replay_nonce\nFAILED tests/test_webhook.py::TestSecurity::test_unsigned_accepted\n2 failed, 8 passed in 1.05s\nBuild 5301 finished: pytest exit 1.",
+   "gate_id": "pytest"
+  },
+  {
+   "id": "a95",
+   "type": "message",
+   "speaker": "human",
+   "text": "Heads up: some v1 clients still send status pending as a plain string, ignore them. Server must validate against the enum and return 400 for free-form strings."
+  },
+  {
+   "id": "a96",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed chargeback handler to verify HMAC before parsing, same helper as pay and refund webhooks. Nonce replay now 401 too."
+  },
+  {
+   "id": "a97",
+   "type": "message",
+   "speaker": "human",
+   "text": "Rejected: proposal to move order state back to SQLite for local parity. Keep Postgres partitioned tables; do not revert."
+  },
+  {
+   "id": "a98",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_list.py -q -k perf\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 5 items\ntests/test_list.py::TestListPerf::test_with_refunds FAILED\n--- query count ---\nQueryCountError: expected <=3 queries, got 31\nN+1 detected: 31 queries for 20 orders (refunds lazy-loaded per order)\ntests/test_list.py::TestListPerf::test_cursor_page PASSED\ntests/test_list.py::TestListPerf::test_empty PASSED\nshort test summary info:\nFAILED tests/test_list.py::TestListPerf::test_with_refunds\nTraceback (most recent call last):\n  File \"src/orders/service.py\", line 244, in list_orders\n    refunds = [fetch_refunds(o.id) for o in orders]\nE   QueryCountError: per-order fetch in list path\n1 failed, 4 passed in 0.95s\nperf-gate exit 1: N+1 budget exceeded.",
+   "gate_id": "perf"
+  },
+  {
+   "id": "a99",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed refunds N+1: eager-load refunds alongside items in the list query. Count back to 2 queries."
+  },
+  {
+   "id": "a100",
+   "type": "message",
+   "speaker": "human",
+   "text": "Note: money used to be float dollars in early prototypes, never use floats for totals now. Current v3 uses decimal strings with a currency field."
+  },
+  {
+   "id": "a101",
+   "type": "message",
+   "speaker": "human",
+   "text": "Heads up: early list pagination used offset/limit with total counts. That is deprecated; current API uses cursor with next_cursor."
+  },
+  {
+   "id": "a102",
+   "type": "message",
+   "speaker": "human",
+   "text": "Rejected: proposal to store money as float dollars again for readability. Keep decimal strings; floats caused rounding bugs."
+  },
+  {
+   "id": "a103",
+   "type": "gate_failure",
+   "speaker": "gate",
+   "text": "$ pytest tests/test_times.py -q\nplatform linux -- Python 3.11.9, pytest-8.2.0\nrootdir: /mnt/d/dev/orbit-orders\ncollected 12 items\ntests/test_times.py::test_create_tz PASSED\ntests/test_times.py::test_pay_tz PASSED\ntests/test_times.py::TestMidnight::test_refund_after_midnight FAILED\nTraceback (most recent call last):\n  File \"tests/test_times.py\", line 121, in test_refund_after_midnight\n    assert refund.created_at.tzinfo is not None\nAssertionError: naive datetime found in refund path: 2026-09-18 00:00:01 without tzinfo\nTypeError: can't compare offset-naive and offset-aware datetimes in refund guard\nshort test summary info:\nFAILED tests/test_times.py::TestMidnight::test_refund_after_midnight\n1 failed, 11 passed in 0.81s\nBuild 5320 finished: pytest exit 1.",
+   "gate_id": "pytest"
+  },
+  {
+   "id": "a104",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Fixed refund timestamps to timezone-aware UTC. All create, pay, cancel and refund paths now use the shared utcnow() helper."
+  },
+  {
+   "id": "a105",
+   "type": "message",
+   "speaker": "human",
+   "text": "Rejected: proposal to bring back offset pagination for the admin export. Keep cursor pagination; exporter was updated."
+  },
+  {
+   "id": "a106",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: hackathon signups open. Prizes include headphones."
+  },
+  {
+   "id": "a107",
+   "type": "message",
+   "speaker": "human",
+   "text": "Rejected: proposal to go back to fixed 3x retry with 1s delay. Keep exponential backoff with jitter; fixed retries hammered the provider."
+  },
+  {
+   "id": "a108",
+   "type": "message",
+   "speaker": "human",
+   "text": "Status: enum backfill verified, zero rows with free-form strings left in prod."
+  },
+  {
+   "id": "a109",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Added EXPLAIN check on month filter to the partition smoke test. Pruning confirmed on staging."
+  },
+  {
+   "id": "a110",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: team lunch Friday, vote for tacos or pizza in #random."
+  },
+  {
+   "id": "a111",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: decimal-string amounts render correctly in the shop UI after the format change."
+  },
+  {
+   "id": "a112",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: do we still need the 7-day rollback snapshot for the SQLite data? Can we drop it?"
+  },
+  {
+   "id": "a113",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Yes, dropped the old snapshot after the Postgres cutover proved stable for two weeks."
+  },
+  {
+   "id": "a114",
+   "type": "message",
+   "speaker": "human",
+   "text": "Plan: next sprint covers chargeback automation and refund analytics. No contract change planned."
+  },
+  {
+   "id": "a115",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: chargeback handler replays covered by the new security test. All webhook paths share one verifier."
+  },
+  {
+   "id": "a116",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: daylight saving change this weekend, on-call watch set for the midnight window."
+  },
+  {
+   "id": "a117",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: cursor export for finance runs nightly and pages through next_cursor without timeouts."
+  },
+  {
+   "id": "a118",
+   "type": "message",
+   "speaker": "human",
+   "text": "Question: should the admin list show refunded totals inline? Design mock coming tomorrow."
+  },
+  {
+   "id": "a119",
+   "type": "message",
+   "speaker": "owner",
+   "text": "Status: p95 pay latency steady after the backoff rollout. Provider errors halved."
+  },
+  {
+   "id": "a120",
+   "type": "message",
+   "speaker": "human",
+   "text": "Chitchat: end-of-quarter demo scheduled. Orders module slot is ten minutes."
+  }
+ ],
+ "gold": {
+  "contracts": [
+   {
+    "contract_id": "orders-api",
+    "version": 3,
+    "activity_id": "a81"
+   }
+  ],
+  "decisions": [
+   {
+    "id": "d1",
+    "topic_key": "orders.db",
+    "statement": "Order state was kept in a local SQLite file during prototyping.",
+    "sources": [
+     {
+      "activity_id": "a04",
+      "quote": "order state lives in SQLite file data/orders.db"
+     }
+    ],
+    "superseded_by": "d11"
+   },
+   {
+    "id": "d2",
+    "topic_key": "orders.money",
+    "statement": "Money was represented as floating-point dollars in early prototypes.",
+    "sources": [
+     {
+      "activity_id": "a05",
+      "quote": "money is stored and transferred as float dollars"
+     }
+    ],
+    "superseded_by": "d12"
+   },
+   {
+    "id": "d3",
+    "topic_key": "orders.retry",
+    "statement": "Payment provider calls were retried with a fixed schedule early on.",
+    "sources": [
+     {
+      "activity_id": "a06",
+      "quote": "fixed retry: 3 attempts with 1s delay"
+     }
+    ],
+    "superseded_by": "d13"
+   },
+   {
+    "id": "d4",
+    "topic_key": "orders.pagination",
+    "statement": "Order listing used offset and limit parameters in early versions.",
+    "sources": [
+     {
+      "activity_id": "a07",
+      "quote": "pagination uses offset/limit with ?offset=0&limit=20"
+     }
+    ],
+    "superseded_by": "d14"
+   },
+   {
+    "id": "d5",
+    "topic_key": "orders.framework",
+    "statement": "Service stack is FastAPI 0.115 on Python 3.11 with pydantic v2 schemas.",
+    "sources": [
+     {
+      "activity_id": "a08",
+      "quote": "FastAPI 0.115 on Python 3.11 with pydantic v2"
+     }
+    ]
+   },
+   {
+    "id": "d6",
+    "topic_key": "orders.auth",
+    "statement": "All order routes require JWT bearer validated against auth JWKS with sub as customer id.",
+    "sources": [
+     {
+      "activity_id": "a09",
+      "quote": "require JWT bearer validated against auth JWKS"
+     }
+    ]
+   },
+   {
+    "id": "d7",
+    "topic_key": "orders.order_id",
+    "statement": "Order id is a server-generated UUIDv7 string; clients must not send ids.",
+    "sources": [
+     {
+      "activity_id": "a10",
+      "quote": "order id is server-generated UUIDv7 string"
+     }
+    ]
+   },
+   {
+    "id": "d8",
+    "topic_key": "orders.error_format",
+    "statement": "Errors return code, message and request id with snake_case codes.",
+    "sources": [
+     {
+      "activity_id": "a11",
+      "quote": "errors return {code, message, request_id} with snake_case codes"
+     }
+    ]
+   },
+   {
+    "id": "d9",
+    "topic_key": "orders.log_field",
+    "statement": "Every log line carries order and request ids as JSON fields via structlog.",
+    "sources": [
+     {
+      "activity_id": "a13",
+      "quote": "every log line includes order_id and request_id as JSON fields via structlog"
+     }
+    ]
+   },
+   {
+    "id": "d10",
+    "topic_key": "orders.health",
+    "statement": "Health endpoint /healthz reports ok and version and checks DB connectivity.",
+    "sources": [
+     {
+      "activity_id": "a14",
+      "quote": "health endpoint /healthz returns {ok:true, version}"
+     }
+    ]
+   },
+   {
+    "id": "d11",
+    "topic_key": "orders.db",
+    "statement": "Order state moved to Postgres 16 with an async engine and migrations.",
+    "sources": [
+     {
+      "activity_id": "a48",
+      "quote": "order state moves to Postgres 16, schema orders"
+     }
+    ],
+    "superseded_by": "d15"
+   },
+   {
+    "id": "d12",
+    "topic_key": "orders.money",
+    "statement": "Money was represented as integer cents in DB and JSON numbers.",
+    "sources": [
+     {
+      "activity_id": "a51",
+      "quote": "money is now integer cents"
+     }
+    ],
+    "superseded_by": "d16"
+   },
+   {
+    "id": "d13",
+    "topic_key": "orders.retry",
+    "statement": "Payment calls use exponential backoff with jitter up to 5 attempts with idempotent retry.",
+    "sources": [
+     {
+      "activity_id": "a54",
+      "quote": "exponential backoff with jitter: up to 5 attempts"
+     }
+    ]
+   },
+   {
+    "id": "d14",
+    "topic_key": "orders.pagination",
+    "statement": "Listing uses cursor pagination with an opaque cursor and next_cursor response.",
+    "sources": [
+     {
+      "activity_id": "a57",
+      "quote": "listing uses cursor pagination with ?cursor=<opaque>&limit=20"
+     }
+    ]
+   },
+   {
+    "id": "d15",
+    "topic_key": "orders.db",
+    "statement": "Orders table is range-partitioned by month with pooled connections and a dedicated role.",
+    "sources": [
+     {
+      "activity_id": "a86",
+      "quote": "range-partitioned by created_month with pgBouncer"
+     }
+    ]
+   },
+   {
+    "id": "d16",
+    "topic_key": "orders.money",
+    "statement": "Money is a decimal string in JSON with a separate currency field, NUMERIC in DB.",
+    "sources": [
+     {
+      "activity_id": "a89",
+      "quote": "money is decimal string in JSON"
+     }
+    ]
+   }
+  ],
+  "lessons": [
+   {
+    "id": "l1",
+    "topic_key": "orders.webhook_verify",
+    "statement": "Always verify the payment provider webhook HMAC signature before parsing the body.",
+    "sources": [
+     {
+      "activity_id": "a12",
+      "quote": "without verifying its HMAC signature"
+     },
+     {
+      "activity_id": "a46",
+      "quote": "without verifying its HMAC signature"
+     },
+     {
+      "activity_id": "a94",
+      "quote": "SECURITY FAIL: webhook accepted without HMAC verification"
+     }
+    ],
+    "occurrences": 3
+   },
+   {
+    "id": "l2",
+    "topic_key": "orders.n_plus_one",
+    "statement": "When listing orders with items, avoid N+1 queries: eager-load relations in one query and keep query count at or below 3.",
+    "sources": [
+     {
+      "activity_id": "a18",
+      "quote": "N+1 detected: 27 queries for 20 orders"
+     },
+     {
+      "activity_id": "a56",
+      "quote": "N+1 detected: 24 queries for 15 orders"
+     },
+     {
+      "activity_id": "a98",
+      "quote": "N+1 detected: 31 queries for 20 orders"
+     }
+    ],
+    "occurrences": 3
+   },
+   {
+    "id": "l3",
+    "topic_key": "orders.tz_aware",
+    "statement": "Always use timezone-aware UTC datetimes; naive datetimes break comparisons around midnight.",
+    "sources": [
+     {
+      "activity_id": "a25",
+      "quote": "naive datetime found: 2026-03-14 23:59:59 without tzinfo"
+     },
+     {
+      "activity_id": "a62",
+      "quote": "naive datetime found in pay path: 2026-06-02 00:00:03"
+     },
+     {
+      "activity_id": "a103",
+      "quote": "naive datetime found in refund path: 2026-09-18 00:00:01 without tzinfo"
+     }
+    ],
+    "occurrences": 3
+   },
+   {
+    "id": "l4",
+    "topic_key": "orders.list_limit",
+    "statement": "Enforce max limit 100 on every list path via a shared clamp helper.",
+    "sources": [
+     {
+      "activity_id": "a31",
+      "quote": "LimitTooLarge: limit 10000 exceeds max 100"
+     },
+     {
+      "activity_id": "a35",
+      "quote": "list endpoint still has no max limit enforced on the DB query path"
+     },
+     {
+      "activity_id": "a74",
+      "quote": "LimitTooLarge: limit 5000 exceeds max 100 on cursor path"
+     }
+    ],
+    "occurrences": 3
+   }
+  ]
+ },
+ "noise": [
+  {
+   "activity_id": "a03",
+   "type": "chitchat",
+   "note": "espresso chitchat"
+  },
+  {
+   "activity_id": "a15",
+   "type": "status",
+   "note": "standup status"
+  },
+  {
+   "activity_id": "a17",
+   "type": "plan",
+   "note": "question on partial pay"
+  },
+  {
+   "activity_id": "a20",
+   "type": "question",
+   "note": "weekend chitchat"
+  },
+  {
+   "activity_id": "a23",
+   "type": "hypothetical",
+   "note": "ramen plan"
+  },
+  {
+   "activity_id": "a28",
+   "type": "status",
+   "note": "provider status"
+  },
+  {
+   "activity_id": "a30",
+   "type": "chitchat",
+   "note": "offset impl status"
+  },
+  {
+   "activity_id": "a34",
+   "type": "status",
+   "note": "wifi chitchat"
+  },
+  {
+   "activity_id": "a36",
+   "type": "question",
+   "note": "fixed retry status"
+  },
+  {
+   "activity_id": "a39",
+   "type": "hypothetical",
+   "note": "freeze reminder"
+  },
+  {
+   "activity_id": "a40",
+   "type": "chitchat",
+   "note": "midnight note status"
+  },
+  {
+   "activity_id": "a57",
+   "type": "chitchat",
+   "note": "plant chitchat"
+  },
+  {
+   "activity_id": "a61",
+   "type": "hypothetical",
+   "note": "sharding hypothetical"
+  },
+  {
+   "activity_id": "a64",
+   "type": "plan",
+   "note": "migration plan"
+  },
+  {
+   "activity_id": "a67",
+   "type": "status",
+   "note": "staging status"
+  },
+  {
+   "activity_id": "a70",
+   "type": "question",
+   "note": "latency status"
+  },
+  {
+   "activity_id": "a72",
+   "type": "status",
+   "note": "admin question"
+  },
+  {
+   "activity_id": "a76",
+   "type": "status",
+   "note": "flaky provider status"
+  },
+  {
+   "activity_id": "a78",
+   "type": "status",
+   "note": "refund status"
+  },
+  {
+   "activity_id": "a79",
+   "type": "chitchat",
+   "note": "refund key question"
+  },
+  {
+   "activity_id": "a82",
+   "type": "question",
+   "note": "chairs chitchat"
+  },
+  {
+   "activity_id": "a85",
+   "type": "status",
+   "note": "demo status"
+  },
+  {
+   "activity_id": "a88",
+   "type": "chitchat",
+   "note": "cake chitchat"
+  },
+  {
+   "activity_id": "a90",
+   "type": "question",
+   "note": "backfill question"
+  },
+  {
+   "activity_id": "a92",
+   "type": "plan",
+   "note": "finance plan"
+  },
+  {
+   "activity_id": "a97",
+   "type": "question",
+   "note": "refund key question"
+  },
+  {
+   "activity_id": "a99",
+   "type": "status",
+   "note": "status on partitioned reads"
+  },
+  {
+   "activity_id": "a104",
+   "type": "chitchat",
+   "note": "book club chitchat"
+  },
+  {
+   "activity_id": "a116",
+   "type": "status",
+   "note": "status update, not durable memory"
+  },
+  {
+   "activity_id": "a117",
+   "type": "status",
+   "note": "status update, not durable memory"
+  },
+  {
+   "activity_id": "a118",
+   "type": "status",
+   "note": "status update, not durable memory"
+  },
+  {
+   "activity_id": "a119",
+   "type": "chitchat",
+   "note": "hackathon chitchat"
+  },
+  {
+   "activity_id": "a120",
+   "type": "status",
+   "note": "status update, not durable memory"
+  }
+ ],
+ "probes": [
+  {
+   "id": "p1",
+   "question": "Which web framework and Python version does orders-api run on?",
+   "answer_ids": [
+    "d5"
+   ],
+   "must_contain": [
+    "FastAPI"
+   ]
+  },
+  {
+   "id": "p2",
+   "question": "How are callers authenticated on the order routes?",
+   "answer_ids": [
+    "d6"
+   ],
+   "must_contain": [
+    "JWT"
+   ]
+  },
+  {
+   "id": "p3",
+   "question": "How is the order id assigned?",
+   "answer_ids": [
+    "d7"
+   ],
+   "must_contain": [
+    "UUIDv7"
+   ]
+  },
+  {
+   "id": "p4",
+   "question": "What shape do error responses have?",
+   "answer_ids": [
+    "d8"
+   ],
+   "must_contain": [
+    "snake_case"
+   ]
+  },
+  {
+   "id": "p5",
+   "question": "What fields must every log line carry?",
+   "answer_ids": [
+    "d9"
+   ],
+   "must_contain": [
+    "structlog"
+   ]
+  },
+  {
+   "id": "p6",
+   "question": "What does the health endpoint report?",
+   "answer_ids": [
+    "d10"
+   ],
+   "must_contain": [
+    "healthz"
+   ]
+  },
+  {
+   "id": "p7",
+   "question": "What must you do before parsing a payment provider webhook body?",
+   "answer_ids": [
+    "l1"
+   ],
+   "must_contain": [
+    "HMAC"
+   ]
+  },
+  {
+   "id": "p8",
+   "question": "Which mistake failed the perf gate three times on the order list?",
+   "answer_ids": [
+    "l2"
+   ],
+   "must_contain": [
+    "N+1"
+   ]
+  },
+  {
+   "id": "p9",
+   "question": "Which datetime mistake failed pytest around midnight three times?",
+   "answer_ids": [
+    "l3"
+   ],
+   "must_contain": [
+    "timezone-aware"
+   ]
+  },
+  {
+   "id": "p10",
+   "question": "What limit must every list path enforce?",
+   "answer_ids": [
+    "l4"
+   ],
+   "must_contain": [
+    "100"
+   ]
+  },
+  {
+   "id": "p11",
+   "question": "What does POST /orders return for status in the current contract?",
+   "answer_ids": [
+    "contract:orders-api"
+   ],
+   "must_contain": [
+    "REFUNDED_PARTIAL"
+   ],
+   "must_not_contain": [
+    "free-form string"
+   ]
+  },
+  {
+   "id": "p12",
+   "question": "Where is order state stored authoritatively now?",
+   "answer_ids": [
+    "d15"
+   ],
+   "must_contain": [
+    "partitioned"
+   ],
+   "must_not_contain": [
+    "SQLite"
+   ]
+  },
+  {
+   "id": "p13",
+   "question": "How is money represented in the current API and DB?",
+   "answer_ids": [
+    "d16"
+   ],
+   "must_contain": [
+    "decimal string"
+   ],
+   "must_not_contain": [
+    "float dollars"
+   ]
+  },
+  {
+   "id": "p14",
+   "question": "What is the retry policy for payment provider calls?",
+   "answer_ids": [
+    "d13"
+   ],
+   "must_contain": [
+    "backoff with jitter"
+   ],
+   "must_not_contain": [
+    "fixed retry"
+   ]
+  },
+  {
+   "id": "p15",
+   "question": "How does listing paginate in the current API?",
+   "answer_ids": [
+    "d14"
+   ],
+   "must_contain": [
+    "cursor"
+   ],
+   "must_not_contain": [
+    "offset/limit"
+   ]
+  },
+  {
+   "id": "p16",
+   "question": "How do partial refunds work in the current contract?",
+   "answer_ids": [
+    "contract:orders-api"
+   ],
+   "must_contain": [
+    "POST /orders/{id}/refunds"
+   ],
+   "must_not_contain": [
+    "cancel marks a pending order"
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "id": "t1",
+   "prompt": "Add a receipt view for shoppers showing what they bought.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l2",
+     "check": "Receipt loader eager-loads items and refunds with joinedload in one query (<=3 queries total), never per-order fetch_items/fetch_refunds.",
+     "violation_patterns": [
+      "fetch_items\\(",
+      "fetch_refunds\\("
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d16",
+     "check": "Amounts are decimal strings in JSON with a separate currency field, DB NUMERIC(12,2) with quantize, no float math.",
+     "violation_patterns": [
+      "float\\("
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "contract:orders-api",
+     "check": "Receipt shows the strict status enum and server-side totals computed from sku prices; free-form strings are rejected with 400.",
+     "violation_patterns": [
+      "\"pending\"",
+      "\"paid\"",
+      "\"cancelled\""
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t2",
+   "prompt": "Support dispute callbacks from the external partner for contested charges.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "Dispute handler calls verify_signature(raw_body, header) with the shared secret before JSON parse, same helper as the pay and refund handlers."
+    },
+    {
+     "id": "r2",
+     "ref": "d8",
+     "check": "Unknown order on the dispute path returns {code, message, request_id} with a snake_case code such as order_not_found."
+    },
+    {
+     "id": "r3",
+     "ref": "d9",
+     "check": "Dispute state transitions log via structlog with order_id and request_id JSON fields at info level."
+    }
+   ]
+  },
+  {
+   "id": "t3",
+   "prompt": "Add a nightly job that cancels stale unpaid orders and records when it acted.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l3",
+     "check": "Job compares created_at using timezone-aware UTC via the shared utcnow() helper (datetime.now(timezone.utc)), no naive datetime.now().",
+     "violation_patterns": [
+      "datetime\\.now\\(\\)"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "contract:orders-api",
+     "check": "Job transitions PENDING_PAYMENT to CANCELLED only; other statuses are left alone per the v3 transition rules.",
+     "violation_patterns": [
+      "\"pending\"",
+      "\"cancelled\""
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "d9",
+     "check": "Each cancelled order logs via structlog with order_id and request_id JSON fields."
+    }
+   ]
+  },
+  {
+   "id": "t4",
+   "prompt": "Let shoppers browse their past purchases in the account area.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l2",
+     "check": "Browse path eager-loads items and refunds in one query (<=3 queries), never per-order fetch_items/fetch_refunds.",
+     "violation_patterns": [
+      "fetch_items\\(",
+      "fetch_refunds\\("
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "l4",
+     "check": "Browse path enforces the shared clamp_limit() helper: larger values clamp to max 100."
+    },
+    {
+     "id": "r3",
+     "ref": "d6",
+     "check": "History is scoped to the caller from JWT bearer validated against auth JWKS (sub as customer_id); anonymous calls get 401."
+    }
+   ]
+  },
+  {
+   "id": "t5",
+   "prompt": "Add a refund summary for finance showing per-order activity after the sale.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l3",
+     "check": "Refund rows use timezone-aware UTC via utcnow() in create and guard comparisons, no naive datetime.now().",
+     "violation_patterns": [
+      "datetime\\.now\\(\\)"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d16",
+     "check": "Per-item amounts are decimal strings with a separate currency field, DB NUMERIC(12,2), no float totals.",
+     "violation_patterns": [
+      "float\\("
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "contract:orders-api",
+     "check": "Refunds require a fresh Idempotency-Key, create a refund record and transition to REFUNDED_PARTIAL or REFUNDED_FULL; reuse of a create key returns 422."
+    }
+   ]
+  },
+  {
+   "id": "t6",
+   "prompt": "Harden the checkout call against hiccups when adding the new wallet option.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l3",
+     "check": "Create and pay timestamps use timezone-aware UTC via utcnow(), no naive datetime.now().",
+     "violation_patterns": [
+      "datetime\\.now\\(\\)"
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d13",
+     "check": "Wallet provider call uses exponential backoff with jitter up to 5 attempts, base 200ms x2 plus jitter, 8s timeout per attempt, idempotent on retry.",
+     "violation_patterns": [
+      "sleep\\(1\\)"
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "d7",
+     "check": "New order id is server-generated UUIDv7; any client-sent id is ignored."
+    },
+    {
+     "id": "r4",
+     "ref": "d5",
+     "check": "New request schemas use pydantic v2 BaseModel on the FastAPI service.",
+     "violation_patterns": [
+      "pydantic\\.v1"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t7",
+   "prompt": "Move order history reads to the new storage backend and update the readiness signal accordingly.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l2",
+     "check": "History reads eager-load items and refunds in one query (<=3 queries), never per-order fetch_items/fetch_refunds.",
+     "violation_patterns": [
+      "fetch_items\\(",
+      "fetch_refunds\\("
+     ]
+    },
+    {
+     "id": "r2",
+     "ref": "d15",
+     "check": "Reads use the Postgres range-partitioned table by created_month with pgBouncer in transaction mode and the orders_rw role; no SQLite fallback.",
+     "violation_patterns": [
+      "data/orders\\.db"
+     ]
+    },
+    {
+     "id": "r3",
+     "ref": "d10",
+     "check": "Readiness path keeps /healthz returning {ok:true, version} with a DB connectivity check."
+    },
+    {
+     "id": "r4",
+     "ref": "contract:orders-api",
+     "check": "History reads return {orders, next_cursor, limit} with an opaque cursor encoding (created_at, id) and max 100 enforcement.",
+     "violation_patterns": [
+      "\\?offset="
+     ]
+    }
+   ]
+  },
+  {
+   "id": "t8",
+   "prompt": "Add a settlement feed for support showing contested charges with full details.",
+   "requirements": [
+    {
+     "id": "r1",
+     "ref": "l1",
+     "check": "Feed ingestion calls verify_signature(raw_body, header) with the shared secret before parsing the body, including test-mode events."
+    },
+    {
+     "id": "r2",
+     "ref": "l4",
+     "check": "Feed list path enforces the shared clamp_limit() helper with max 100 on every branch."
+    },
+    {
+     "id": "r3",
+     "ref": "d6",
+     "check": "Feed requires JWT bearer validated against auth JWKS with sub as customer_id; anonymous calls get 401."
+    }
+   ]
+  }
+ ]
+}

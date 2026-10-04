@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
@@ -582,7 +583,8 @@ def eval_modulemem(
         list[str] | None,
         Option(
             "--arm",
-            help="pack | oracle_pack | recent | raw_log | retrieval | full_history (repeatable)",
+            help="pack | oracle_pack | recent | raw_log | retrieval | full_history | none "
+            "(repeatable)",
         ),
     ] = None,
     split: Annotated[str | None, Option("--split", help="dev=mm01-mm04, test=mm05-mm08")] = None,
@@ -597,6 +599,27 @@ def eval_modulemem(
     max_repairs: Annotated[
         int, Option("--max-repairs", help="Curate repair rounds per window (0-2)")
     ] = 2,
+    probes: Annotated[
+        bool, Option("--probes/--no-probes", help="Ask the modules' question probes")
+    ] = True,
+    tasks: Annotated[
+        bool,
+        Option("--tasks", help="Also run owner tasks (behavior); the coder uses --answerer-llm"),
+    ] = False,
+    coder_cmd: Annotated[
+        str | None,
+        Option(
+            "--coder-cmd",
+            help="Coding agent for owner tasks, run as CMD --workspace DIR with the task on "
+            "stdin; it edits a copy of the module's seed repository and the judge grades its diff",
+        ),
+    ] = None,
+    seeds: Annotated[
+        str | None, Option("--seeds", help="Directory of <module_id>.json seed repositories")
+    ] = None,
+    coder_timeout: Annotated[
+        float, Option("--coder-timeout", help="Seconds per coding-agent task")
+    ] = 1800.0,
     out: Annotated[str, Option("--out")] = "artifacts/modulemem",
 ) -> None:
     """Run the ModuleMem evaluation of curated module memory."""
@@ -632,13 +655,21 @@ def eval_modulemem(
                 judge_llm=judge_llm,
                 pack_budget=pack_budget,
                 max_repairs=max_repairs,
+                probes=probes,
+                tasks=tasks,
+                coder_command=tuple(shlex.split(coder_cmd)) if coder_cmd else (),
+                seeds_dir=seeds,
+                coder_timeout_s=coder_timeout,
             ),
         )
     except (ModuleMemError, RoomMemError) as exc:
         console.print(f"[red]ModuleMem error:[/red] {exc}")
         raise Exit(1) from exc
     for arm_name, categories in summary["read_side"].items():
-        console.print(f"{arm_name}: correct={categories['all']['correct']}")
+        if probes:
+            console.print(f"{arm_name}: correct={categories['all']['correct']}")
+    for arm_name, stats in summary["behavior"].items():
+        console.print(f"{arm_name}: requirements satisfied={stats['all']['satisfied']}")
     console.print(f"[bold]Reports:[/bold] {Path(out) / 'summary.md'}")
 
 
