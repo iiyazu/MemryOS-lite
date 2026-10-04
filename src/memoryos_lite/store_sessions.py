@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
-from memoryos_lite.schemas import Episode, Message, Role, Session, SessionScope
+from memoryos_lite.schemas import Episode, Message, Role, Session
 from memoryos_lite.store_models import (
     ArchivalChunkRecord,
     ArchivalDocumentRecord,
@@ -38,28 +38,21 @@ class SessionStoreMixin:
         @staticmethod
         def _item_watermark_part(db: DbSession, session_id: str) -> str: ...
 
-    def create_session(self, title: str, scope: SessionScope | None = None) -> Session:
-        session_model = Session(title=title, scope=scope)
+    def create_session(self, title: str) -> Session:
+        session_model = Session(title=title)
         with self.db() as db:
             db.add(
                 SessionRecord(
                     id=session_model.id,
                     title=session_model.title,
                     created_at=session_model.created_at,
-                    scope_type=scope.type if scope is not None else None,
-                    scope_id=scope.id if scope is not None else None,
                 )
             )
         return session_model
 
     @staticmethod
     def _session_model(record: SessionRecord) -> Session:
-        scope = (
-            SessionScope.model_validate({"type": record.scope_type, "id": record.scope_id})
-            if record.scope_type is not None and record.scope_id is not None
-            else None
-        )
-        return Session(id=record.id, title=record.title, created_at=record.created_at, scope=scope)
+        return Session(id=record.id, title=record.title, created_at=record.created_at)
 
     def get_session(self, session_id: str) -> Session | None:
         with self.db() as db:
@@ -101,29 +94,6 @@ class SessionStoreMixin:
                 )
             )
         return self._message_from_record(record) if record is not None else None
-
-    def get_message_source_info(
-        self, message_ids: list[str]
-    ) -> dict[str, tuple[str | None, str | None]]:
-        """Map message ids to ``(external_id, activity_type)`` for advisories."""
-        if not message_ids:
-            return {}
-        with self.db() as db:
-            records = list(
-                db.scalars(select(MessageRecord).where(MessageRecord.id.in_(message_ids)))
-            )
-        info: dict[str, tuple[str | None, str | None]] = {}
-        for record in records:
-            try:
-                metadata = json.loads(record.metadata_json)
-            except ValueError:
-                metadata = {}
-            activity_type = metadata.get("activity_type") if isinstance(metadata, dict) else None
-            info[record.id] = (
-                record.external_id,
-                activity_type if isinstance(activity_type, str) else None,
-            )
-        return info
 
     @staticmethod
     def _message_from_record(record: MessageRecord) -> Message:

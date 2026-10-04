@@ -25,7 +25,6 @@ from memoryos_lite.curator.prompt import (
 )
 from memoryos_lite.observability import current_observability_context
 from memoryos_lite.schemas import (
-    LESSON_SOURCE_ACTIVITY_TYPES,
     Message,
     TraceEvent,
     new_id,
@@ -109,25 +108,6 @@ class _MessageInfo:
     activity_type: str | None
 
 
-def _occurrences_in(fresh: list[dict[str, str]], infos: dict[str, _MessageInfo]) -> int:
-    """Occurrences a lesson gains from newly cited sources.
-
-    With typed activities (module sessions) each newly cited review objection or
-    gate failure is one occurrence, so a plain message cited alongside adds none.
-    Untyped sessions count one occurrence per proposal that cites anything new.
-    Several quotes from the same message (common for long gate logs) count once.
-    """
-
-    types = [
-        info.activity_type
-        for message_id in dict.fromkeys(source["message_id"] for source in fresh)
-        if (info := infos.get(message_id)) is not None
-    ]
-    if not any(types):
-        return 1
-    return sum(1 for activity_type in types if activity_type in LESSON_SOURCE_ACTIVITY_TYPES)
-
-
 def _nullish(value: object) -> bool:
     return value is None or value == "" or value == "null"
 
@@ -162,8 +142,6 @@ class Curator:
         self._window_failures: dict[tuple[str, int], int] = {}
         self._last_llm_ok: bool | None = None
         self._last_error_code: str | None = None
-        # Set per run_session: the module scope id of a module session.
-        self._module_id: str | None = None
 
     # -- status -----------------------------------------------------------
 
@@ -190,12 +168,6 @@ class Curator:
 
     def run_session(self, session_id: str, *, force: bool = False) -> CuratorRunResult:
         result = CuratorRunResult()
-        session = self.store.get_session(session_id)
-        self._module_id = (
-            session.scope.id
-            if session is not None and session.scope is not None and session.scope.type == "module"
-            else None
-        )
         state = self.store.get_curator_state(session_id)
         seq = state.last_message_seq if state is not None else 0
         total = self.store.count_session_messages(session_id)
@@ -350,7 +322,6 @@ class Curator:
             active_header=(
                 ACTIVE_HEADER_DETERMINISTIC if deterministic else ACTIVE_HEADER_LLM_SUPERSEDE
             ),
-            module_id=self._module_id,
         )
         system = CURATOR_SYSTEM_PROMPT if deterministic else CURATOR_SYSTEM_PROMPT_LLM_SUPERSEDE
         last_schema_error: CuratorSchemaError | None = None
@@ -418,7 +389,7 @@ class Curator:
                 if row.topic_key == topic_key and (row.kind == "lesson") == is_lesson
             ]
             if is_lesson:
-                self._merge_lessons(proposals, same_topic, counts, infos)
+                self._merge_lessons(proposals, same_topic, counts)
             else:
                 self._keep_newest(proposals, same_topic, counts)
         return counts
@@ -458,7 +429,6 @@ class Curator:
         proposals: list[CuratedMemoryWrite],
         same_topic: list[CuratedMemoryRow],
         counts: _WindowCounts,
-        infos: dict[str, _MessageInfo],
     ) -> None:
         prior = max(same_topic, key=lambda row: (row.version, row.created_at, row.id), default=None)
         sources = list(prior.sources) if prior is not None else []
@@ -467,7 +437,6 @@ class Curator:
         statement = prior.statement if prior is not None else proposals[0].statement
         kind = proposals[0].kind
         seen = {source["message_id"] for source in sources}
-        merged_any = False
         new_occurrences = 0
         for proposal in proposals:
             fresh = [source for source in proposal.sources if source["message_id"] not in seen]
@@ -476,12 +445,11 @@ class Curator:
                 continue
             sources.extend(fresh)
             seen.update(source["message_id"] for source in fresh)
-            merged_any = True
-            new_occurrences += _occurrences_in(fresh, infos)
+            new_occurrences += 1
             version = max(version, proposal.version)
             # The newest wording of a repeated lesson is the one shown.
             statement = proposal.statement
-        if not merged_any:
+        if new_occurrences == 0:
             return
         merged = CuratedMemoryWrite(
             kind=kind,
@@ -608,16 +576,6 @@ class Curator:
             seen_sources.add(key)
             sources.append({"message_id": message_id, "quote": repaired})
         if not sources:
-            return _ValidatedOp("rejected_grounding")
-        if (
-            kind == "lesson"
-            and self._module_id is not None
-            and not any(
-                infos[source["message_id"]].activity_type in LESSON_SOURCE_ACTIVITY_TYPES
-                for source in sources
-            )
-        ):
-            # Module lessons must quote a review objection or a failing gate.
             return _ValidatedOp("rejected_grounding")
         version = max(infos[source["message_id"]].version for source in sources)
         if normalize_keys:

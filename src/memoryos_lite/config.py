@@ -92,11 +92,9 @@ class Settings(BaseSettings):
     # keeps the newest version per topic.  "llm": the earlier pipeline in which
     # the LLM chooses which active memory an update supersedes.
     memoryos_curator_consolidation: str = "deterministic"
-    # module_pack/v1 marks included memories with different topic keys whose
-    # FastEmbed cosine is at least this as possible conflicts. Off by default:
-    # on RoomMem (dev/trap/test) every flag at 0.75-0.90 was a false positive
-    # and same-subject/different-key pairs almost never occurred.
-    memoryos_module_pack_conflict_threshold: float | None = None
+    # source_evidence/v2 ranks raw evidence that states a superseded curated
+    # value (by verbatim quote) behind the rest. Off until RoomMem shows a gain.
+    memoryos_demote_superseded: bool = False
 
     # Middleware
     memoryos_api_key: str | None = None

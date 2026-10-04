@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
 import uvicorn
 from rich.console import Console
@@ -11,13 +11,12 @@ from typer import Exit, Option, Typer
 
 from memoryos_lite.capabilities import require_benchmark_capability, require_remote_capability
 from memoryos_lite.config import get_settings
+from memoryos_lite.curator import build_curator_llm
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
     ArchiveSourceRefPayload,
-    MessageCreate,
-    Role,
 )
 
 if TYPE_CHECKING:
@@ -117,44 +116,45 @@ def api(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None
     uvicorn.run("memoryos_lite.api.app:app", host=host, port=port, reload=reload)
 
 
-@demo_app.command("run")
-def demo_run() -> None:
-    """Run an end-to-end ingest -> page -> context demo."""
-    require_remote_capability("demo.run")
-    from memoryos_lite.graphs import build_memory_graph
+@demo_app.command("curate")
+def demo_curate(
+    live: Annotated[
+        bool, Option("--live", help="Use the configured LLM instead of the scripted one")
+    ] = False,
+    mermaid: Annotated[bool, Option("--mermaid", help="Print the graph as Mermaid")] = False,
+) -> None:
+    """Run the curate graph (extract -> check -> repair -> consolidate) on an example."""
+    try:
+        from memoryos_lite.curator.graph import build_curate_graph
+    except ImportError as exc:
+        console.print(f"[red]demo curate needs LangGraph:[/red] {exc}")
+        raise Exit(1) from exc
+    from memoryos_lite.curator.demo import DEMO_REQUEST, DemoCuratorLLM
 
-    service = MemoryOSService()
-    service.settings.rot_safe_budget = 1
-    service.settings.recent_message_limit = 2
-    session = service.create_session("MemoryOS Lite demo")
-    messages = [
-        MessageCreate(role=Role.USER, content="用户目标：20 天内完成 Agent infra 简历项目。"),
-        MessageCreate(role=Role.ASSISTANT, content="已记录目标。"),
-        MessageCreate(
-            role=Role.USER,
-            content="最终决定不做 Runbook Oncall Agent，改做 MemoryOS Lite。",
-        ),
-        MessageCreate(
-            role=Role.USER,
-            content="技术栈优先练习 LangGraph、FastAPI、SQLite 和 benchmark。",
-        ),
-    ]
-    graph = build_memory_graph(service)
-    state = None
-    for message in messages:
-        state = graph.invoke(
-            {
-                "session_id": session.id,
-                "message": message,
-                "task": "用户最终决定做什么 Agent 项目？",
-                "budget": 600,
-            }
-        )
-    context = state["context"] if state else service.build_context(session.id, "demo", 600)
-    console.print(f"[bold]Session:[/bold] {session.id}")
-    console.print(f"[bold]Estimated tokens:[/bold] {context.estimated_tokens}")
-    for page in context.retrieved_pages + context.active_task_pages:
-        console.print(f"[green]Loaded page[/green] {page.page_id}: {page.title}")
+    llm: Any = DemoCuratorLLM()
+    if live:
+        llm = build_curator_llm(get_settings())
+        if llm is None:
+            console.print("[red]--live needs an LLM key for the configured provider[/red]")
+            raise Exit(1)
+    graph = build_curate_graph(llm)
+    if mermaid:
+        console.print(graph.get_graph().draw_mermaid())
+    final: dict[str, Any] = {}
+    for update in graph.stream({"request": DEMO_REQUEST}, stream_mode="updates"):
+        for node, state in update.items():
+            final.update(state)
+            check = state.get("check") if isinstance(state, dict) else None
+            note = ""
+            if check is not None:
+                note = (
+                    f" -> {len(check.violations)} violation(s)" if check.violations else " -> clean"
+                )
+            console.print(f"[bold]{node}[/bold]{note}")
+            for violation in check.violations if check is not None else []:
+                console.print(f"    - {violation}")
+    response = final["response"]
+    console.print_json(response.model_dump_json())
 
 
 ArchiveScopeType = Literal["agent", "project", "source", "user", "run", "session"]
@@ -519,6 +519,13 @@ def eval_roommem(
             help="Curated/oracle arms deliver project/user memories to every room of the project",
         ),
     ] = False,
+    curated_evidence: Annotated[
+        list[str] | None,
+        Option(
+            "--curated-evidence",
+            help="plain | demote | agentic: how the curated arm builds evidence (repeatable)",
+        ),
+    ] = None,
     out: Annotated[
         str,
         Option("--out", help="Output directory for results and reports"),
@@ -556,6 +563,7 @@ def eval_roommem(
             curator_consolidation=curator_consolidation,
             merge_project=merge_project,
             shared_project=shared_project,
+            curated_evidence=tuple(curated_evidence or ("plain",)),
         )
     except RoomMemError as exc:
         console.print(f"[red]RoomMem error:[/red] {exc}")
@@ -572,7 +580,10 @@ def eval_modulemem(
     ] = "benchmarks/modulemem/modules",
     arm: Annotated[
         list[str] | None,
-        Option("--arm", help="pack | oracle_pack | recent | retrieval | full_history (repeatable)"),
+        Option(
+            "--arm",
+            help="pack | oracle_pack | recent | raw_log | retrieval | full_history (repeatable)",
+        ),
     ] = None,
     split: Annotated[str | None, Option("--split", help="dev=mm01-mm04, test=mm05-mm08")] = None,
     modules: Annotated[str | None, Option("--modules", help="Comma-separated module ids")] = None,
@@ -583,9 +594,12 @@ def eval_modulemem(
     answerer_llm: Annotated[str | None, Option("--answerer-llm")] = None,
     judge_llm: Annotated[str | None, Option("--judge-llm")] = None,
     pack_budget: Annotated[int, Option("--pack-budget")] = 1500,
+    max_repairs: Annotated[
+        int, Option("--max-repairs", help="Curate repair rounds per window (0-2)")
+    ] = 2,
     out: Annotated[str, Option("--out")] = "artifacts/modulemem",
 ) -> None:
-    """Run the ModuleMem resume-pack evaluation."""
+    """Run the ModuleMem evaluation of curated module memory."""
     from memoryos_lite.modulemem import (
         MODULEMEM_ARMS,
         MODULEMEM_SPLITS,
@@ -617,6 +631,7 @@ def eval_modulemem(
                 answerer_llm=answerer_llm,
                 judge_llm=judge_llm,
                 pack_budget=pack_budget,
+                max_repairs=max_repairs,
             ),
         )
     except (ModuleMemError, RoomMemError) as exc:

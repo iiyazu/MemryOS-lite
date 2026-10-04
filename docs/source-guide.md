@@ -40,7 +40,8 @@ MemoryOSService
 | `core_memory.py` | Source-backed core memory block service. |
 | `public_benchmarks.py` | LongMemEval/LoCoMo loading, baseline execution, report fields. |
 | `evals.py` | Built-in deterministic evals and baseline output structure. |
-| `graphs.py` | Experimental LangGraph demo graph (`demo run`). |
+| `curator/` | LLM curator: session worker and v2 advisories; stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`). |
+| `roommem.py` / `modulemem.py` | RoomMem and ModuleMem curation evaluations. |
 | `cli.py` | Typer CLI entrypoint. |
 | `api/app.py` | FastAPI REST API. |
 
