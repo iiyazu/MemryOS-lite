@@ -11,7 +11,7 @@ Current defaults are `MEMORYOS_MEMORY_ARCH=v3`, `MEMORYOS_RECALL_PIPELINE=v2`, `
 - SQLite is authoritative. Page mirrors, trace JSONL, Redis cache, Qdrant indexes, and benchmark reports are derived or experimental.
 - v3 composes core, recall, archival, and recent layers. Source references and bounded context are part of the contract.
 - v2 recall uses episode-first evidence retrieval. `v1` memory and recall paths remain explicit compatibility choices, not defaults.
-- The agent kernel is `off` by default; `external` mode only emits source-attributed maintenance advisories for a host agent. The LangGraph demo graph is an opt-in experiment, not a production agent runtime.
+- The agent kernel is `off` by default; `external` mode only emits source-attributed maintenance advisories for a host agent. Stateless `/curate` uses a LangGraph repair loop (remote extra) and keeps no state; it is not an agent runtime.
 - The HTTP API is a local prototype surface without complete remote authentication, tenancy, rate limiting, or ownership controls.
 - Optional consumers such as xmuse must use the public loopback HTTP contract; do not couple this package to a consumer repository.
 
@@ -39,7 +39,7 @@ TMPDIR=/tmp uv run pytest -m "not slow" -q
 uv run ruff check .
 uv run mypy src
 uv run memoryos api --reload
-uv run memoryos demo run
+uv run memoryos demo curate
 uv run memoryos eval run --case-set hard --baseline memoryos_lite
 ```
 

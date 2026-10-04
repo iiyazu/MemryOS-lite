@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from hashlib import sha256
 from math import isfinite
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from memoryos_lite.retrieval.supersede import SupersededQuote, demote_superseded
 from memoryos_lite.schemas import ContextPackage
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import ContextPackageV3
@@ -356,12 +358,16 @@ def build_source_evidence(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_bytes: int = DEFAULT_MAX_BYTES,
     schema_version: Literal["v1", "v2"] = "v1",
+    superseded: Sequence[SupersededQuote] = (),
 ) -> dict[str, object]:
     """Project a full context package into a bounded source-evidence envelope.
 
     v1 remains the exact archival-only compatibility contract.  v2 is an
     opt-in envelope for MemoryOS full-local integrations and carries recall,
     page and core items with an explicit derived/source proof boundary.
+    ``superseded`` (v2 only) moves items that state a superseded value behind
+    the others, so the bounded envelope drops them first; item text is never
+    changed, because consumers re-prove it against its source.
     """
     if schema_version == "v2":
         return _build_source_evidence_v2(
@@ -369,6 +375,7 @@ def build_source_evidence(
             max_items=max_items,
             max_tokens=max_tokens,
             max_bytes=max_bytes,
+            superseded=superseded,
         )
     if schema_version != "v1":
         raise ValueError("unsupported source evidence schema version")
@@ -436,6 +443,7 @@ def _build_source_evidence_v2(
     max_items: int,
     max_tokens: int,
     max_bytes: int,
+    superseded: Sequence[SupersededQuote] = (),
 ) -> dict[str, object]:
     if not 0 < max_items <= DEFAULT_MAX_ITEMS:
         raise ValueError("source evidence max_items must be between 1 and 8")
@@ -464,6 +472,7 @@ def _build_source_evidence_v2(
             omitted_count += 1
         else:
             eligible.append(candidate)
+    eligible = demote_superseded(eligible, lambda item: cast(str, item["text"]), superseded)
 
     # Keep exact archival proofs visible when a large recall layer would
     # otherwise consume the entire bounded envelope. Recall/page items are

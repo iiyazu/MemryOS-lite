@@ -1546,3 +1546,40 @@ def test_cli_roommem_split_errors(tmp_path, rooms_dir):
     )
     assert unknown.exit_code == 1
     assert "unknown split" in unknown.output
+
+
+def test_curated_evidence_modes_share_one_curation(tmp_path, rooms_dir):
+    rooms = load_rooms(rooms_dir, room_ids=["rm91"])
+    summary = run_roommem(
+        rooms,
+        out_dir=tmp_path / "out",
+        arms=["curated"],
+        fake_llm=True,
+        scratch_root=tmp_path / "scratch",
+        curated_evidence=("plain", "demote", "agentic"),
+    )
+
+    assert {"curated", "curated+demote", "curated+agentic"} <= set(summary["read_side"])
+    assert summary["run"]["curated_evidence"] == ["plain", "demote", "agentic"]
+    rows = _read_results(tmp_path / "out")
+    agentic = [row for row in rows if row["arm"] == "curated+agentic"]
+    assert agentic and all(row["ask"]["retrievals"] >= 1 for row in agentic)
+    probes = {(row["room"], row["probe"]) for row in rows if row["arm"] == "curated"}
+    assert probes == {(row["room"], row["probe"]) for row in agentic}
+    oracle = run_roommem(
+        rooms,
+        out_dir=tmp_path / "oracle",
+        arms=["oracle"],
+        fake_llm=True,
+        scratch_root=tmp_path / "scratch-oracle",
+        curated_evidence=("plain", "demote", "agentic"),
+    )
+    assert {"oracle", "oracle+demote", "oracle+agentic"} <= set(oracle["read_side"])
+    with pytest.raises(RoomMemConfigError, match="unknown curated evidence mode"):
+        run_roommem(
+            rooms,
+            out_dir=tmp_path / "bad",
+            arms=["curated"],
+            fake_llm=True,
+            curated_evidence=("telepathy",),
+        )
