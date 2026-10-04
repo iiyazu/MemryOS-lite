@@ -122,7 +122,6 @@ SPLIT_PRESETS: dict[str, tuple[str, ...]] = {
     # Old values are mentioned again after they changed ("we used to use X").
     "trap": tuple(f"rm{index:02d}" for index in range(13, 17)),
 }
-CONSOLIDATION_VALUES: tuple[str, ...] = ("deterministic", "llm")
 #: Cosine thresholds reported for FastEmbed "possible conflict" flags.
 CONFLICT_THRESHOLDS: tuple[float, ...] = (0.75, 0.8, 0.85, 0.9)
 
@@ -550,7 +549,6 @@ class CuratedSourceContext:
     llm_factory: Callable[[Settings], CuratorLLM] | None = None
     usage: LLMUsageTracker | None = None
     llm_spec: str | None = None
-    consolidation: str | None = None
 
 
 class CuratedMemorySource(Protocol):
@@ -706,35 +704,33 @@ def _first_sentence(text: str) -> str:
 
 
 class FakeCuratorLLM:
-    """Deterministic curator LLM for ``--fake-llm``: one add per human message.
+    """Deterministic curator LLM for ``--fake-llm``: one fact per human message.
 
-    Each operation quotes the first sentence of a human message (skipping
+    Each memory quotes the first sentence of a human message (skipping
     messages whose first sentence is shorter than the curator's minimum quote
     length), so CI exercises the full Curator run without a provider.
     """
 
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
         window = user.split("Messages to curate:\n", 1)[-1]
-        operations: list[dict[str, Any]] = []
+        memories: list[dict[str, Any]] = []
         for line in window.splitlines():
-            match = re.match(r"\[([^\]]+)\] (.+?) \((human|agent)\): (.*)$", line)
+            match = re.match(r"\[([^\]]+)\] (.+?), (human|agent) \([a-z_]+\): (.*)$", line)
             if match is None or match.group(3) != "human":
                 continue
             message_id = match.group(1)
             quote = _first_sentence(match.group(4))
             if len(quote) < MIN_QUOTE_CHARS:
                 continue
-            operations.append(
+            memories.append(
                 {
-                    "op": "add",
                     "kind": "fact",
                     "topic_key": f"roommem.{message_id}",
                     "statement": quote,
-                    "sources": [{"message_id": message_id, "quote": quote}],
-                    "supersedes": None,
+                    "sources": [{"activity_id": message_id, "quote": quote}],
                 }
             )
-        return {"operations": operations}
+        return {"memories": memories}
 
 
 class FakeRewriteLLM:
@@ -852,7 +848,6 @@ class CuratorMemorySource:
         llm_factory: Callable[[Settings], CuratorLLM] | None = None,
         usage: LLMUsageTracker | None = None,
         llm_spec: str | None = None,
-        consolidation: str | None = None,
     ) -> None:
         self._window = window
         self._fake_llm = fake_llm
@@ -861,7 +856,6 @@ class CuratorMemorySource:
         self._llm_factory = llm_factory
         self._usage = usage
         self._llm_spec = llm_spec
-        self._consolidation = consolidation
         self._last_counts: dict[str, int] = {}
 
     @property
@@ -876,8 +870,6 @@ class CuratorMemorySource:
         }
         if not self._fake_llm:
             overrides["memoryos_llm_provider"] = base.memoryos_llm_provider
-        if self._consolidation is not None:
-            overrides["memoryos_curator_consolidation"] = self._consolidation
         settings = Settings(**overrides)
         return settings if self._fake_llm else settings_for_llm_spec(settings, self._llm_spec)
 
@@ -958,7 +950,6 @@ def _default_curated_source(
         llm_factory=context.llm_factory,
         usage=context.usage,
         llm_spec=context.llm_spec,
-        consolidation=context.consolidation,
     )
 
 
@@ -3457,7 +3448,6 @@ def run_roommem(
     answerer_llm: str | None = None,
     judge_llm: str | None = None,
     curator_llm: str | None = None,
-    curator_consolidation: str | None = None,
     merge_project: str | None = None,
     shared_project: bool = False,
     curated_evidence: Sequence[str] = ("plain",),
@@ -3472,7 +3462,6 @@ def run_roommem(
     ``answerer_llm``/``judge_llm``/``curator_llm`` are optional
     ``provider:model[@wire]`` role specs (see :func:`settings_for_llm_spec`)
     so one variable can change while the others stay fixed.
-    ``curator_consolidation`` selects ``deterministic`` or ``llm``.
     ``merge_project`` puts every selected room into one project (the scale
     experiment); ``shared_project`` makes the curated and oracle arms deliver
     project/user-scope memories of every room to every room of the project,
@@ -3508,11 +3497,6 @@ def run_roommem(
             raise RoomMemConfigError(
                 f"unknown curated evidence mode {mode!r}; valid: {', '.join(EVIDENCE_MODES)}"
             )
-    if curator_consolidation is not None and curator_consolidation not in CONSOLIDATION_VALUES:
-        raise RoomMemConfigError(
-            f"unknown curator consolidation {curator_consolidation!r}; "
-            f"valid: {', '.join(CONSOLIDATION_VALUES)}"
-        )
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -3565,7 +3549,6 @@ def run_roommem(
                             llm_factory=curated_llm_factory,
                             usage=tracker,
                             llm_spec=curator_llm,
-                            consolidation=curator_consolidation,
                         ),
                     )
                 rewrite_llm: CuratorLLM | None = None
@@ -3674,9 +3657,6 @@ def run_roommem(
             evidence_modes if {"curated", "oracle"} & set(selected_arms) else None
         ),
         "curator_window": curator_window if "curated" in selected_arms else None,
-        "curator_consolidation": (
-            (curator_consolidation or "deterministic") if "curated" in selected_arms else None
-        ),
         "merge_project": merge_project,
         "shared_project": shared_project,
     }
