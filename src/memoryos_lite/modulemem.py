@@ -820,7 +820,9 @@ short lines of notes. Do not ask questions."""
 
 TASK_JUDGE_SYSTEM_PROMPT = """You grade a code change against requirements of the module it \
 changes. Each requirement has a check, the module's current rule it comes from, and old values \
-that are no longer in force. Label every requirement:
+that are no longer in force. The current rule is authoritative; the check only explains how it \
+applies to this task, so do not require details the current rule does not state. Label every \
+requirement:
 - "satisfied": the code clearly follows the requirement;
 - "violated": the code contradicts it, for example a wrong name, value, field or helper, an old \
 value, or the mistake the requirement warns about;
