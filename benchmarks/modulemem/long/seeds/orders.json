@@ -1,6 +1,35 @@
 {
  "module_id": "orders",
- "source": "Drafted by OpenCode muse-spark-1.3-contributor from the activity history only (oc_seed_data.sh, 2026-10-04) and reviewed for leaked rules. Technical debt added by hand, each grounded in the history: an admin export that still uses per-order fetch_items/fetch_refunds with its own unclamped limit (a58, a98, a105); the SQLite dev fallback and rollback snapshot script with naive datetime.now() (a48, a63 checked src only, a112).",
+ "source": "Drafted by OpenCode muse-spark-1.3-contributor from the activity history only (oc_seed_data.sh, 2026-10-04) and reviewed for leaked rules. Debt added by hand: an admin export that still uses per-order fetch_items/fetch_refunds with its own unclamped limit (a58, a98, a105); the SQLite dev fallback and rollback snapshot script with naive datetime.now() (a48, a63 checked src only, a112).",
+ "debt": [
+  {
+   "id": "n_plus_one_helpers",
+   "ref": "l2",
+   "patterns": [
+    "\\bfetch_items\\(",
+    "\\bfetch_refunds\\("
+   ]
+  },
+  {
+   "id": "sqlite_fallback",
+   "ref": "d15",
+   "patterns": [
+    "get_fallback_session",
+    "fallback_sessions\\(",
+    "sqlite\\+aiosqlite"
+   ]
+  },
+  {
+   "id": "naive_datetime",
+   "ref": "l3",
+   "patterns": [
+    "datetime\\.now\\(\\)"
+   ]
+  }
+ ],
+ "exclude_tasks": {
+  "t7": "the seed already reads from the Postgres backend, so 'move history reads to the new storage backend' can only point at the SQLite fallback (pilot 2, 9.22b)"
+ },
  "files": {
   "README.md": "# orbit orders-api\n\nOnline shop orders service: create, pay, cancel and refund orders.\n\n## Run\n\n```sh\npip install -e .\nalembic upgrade head\nuvicorn app.main:app --host 0.0.0.0 --port 8000\n```\n\nConfig via environment: `DATABASE_URL`, `JWKS_URL`, `WEBHOOK_SECRET`, `VERSION`.\n\n## Test\n\n```sh\npytest -q\n```\n",
   "alembic/env.py": "from logging.config import fileConfig\nfrom alembic import context\nfrom app.models import Base\nfrom app.config import settings\n\nconfig = context.config\nconfig.set_main_option(\"sqlalchemy.url\", settings.database_url_sync)\ntarget_metadata = Base.metadata\n\n\ndef run_migrations_offline():\n    context.configure(url=config.get_main_option(\"sqlalchemy.url\"), target_metadata=target_metadata, literal_binds=True)\n    with context.begin_transaction():\n        context.run_migrations()\n\n\ndef run_migrations_online():\n    from sqlalchemy import create_engine\n\n    engine = create_engine(config.get_main_option(\"sqlalchemy.url\"))\n    with engine.connect() as connection:\n        context.configure(connection=connection, target_metadata=target_metadata)\n        with context.begin_transaction():\n            context.run_migrations()\n\n\nif context.is_offline_mode():\n    run_migrations_offline()\nelse:\n    run_migrations_online()\n",

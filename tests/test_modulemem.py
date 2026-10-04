@@ -21,6 +21,7 @@ from memoryos_lite.modulemem import (
     current_contracts,
     load_modules,
     load_seed,
+    load_seed_spec,
     render_module_memory,
     run_modulemem,
 )
@@ -198,7 +199,8 @@ with open(args[0], "a", encoding="utf-8") as calls:
     calls.write(sys.stdin.read().splitlines()[0] + "\\n")
 memory = (workspace / "AGENTS.md").read_text(encoding="utf-8")
 _, _, body = memory.partition("## Module memory from the host")
-body = body.strip() or "NO_MEMORY"
+body = body.strip() or "NO_MEMORY\\nrows = fetch_legacy(order)"
+body += "\\n# fetch_legacy(order) is not used here"
 (workspace / "app").mkdir(exist_ok=True)
 (workspace / "app" / "change.py").write_text(body + "\\n", encoding="utf-8")
 print("done")
@@ -206,7 +208,7 @@ print("done")
 
 
 def test_agent_coder_edits_the_seed_repo_and_the_judge_grades_its_diff(tmp_path):
-    _, _, contract = _mm01_task_refs()
+    lesson, _, contract = _mm01_task_refs()
     data = _module_with_tasks(
         tmp_path,
         [
@@ -221,16 +223,24 @@ def test_agent_coder_edits_the_seed_repo_and_the_judge_grades_its_diff(tmp_path)
                         "violation_patterns": ["NO_MEMORY"],
                     }
                 ],
-            }
+            },
+            {
+                "id": "t2",
+                "prompt": "Move sessions to the new store.",
+                "requirements": [{"id": "r1", "ref": contract, "check": "Matches the contract."}],
+            },
         ],
     )
     module = load_modules(data)[0]
     seeds = tmp_path / "seeds"
     seeds.mkdir()
-    # The seed itself contains the pattern: only lines the agent adds may count as a violation.
-    (seeds / f"{module.module_id}.json").write_text(
-        json.dumps({"files": {"app/main.py": "MODE = 'NO_MEMORY'\n"}}), encoding="utf-8"
-    )
+    # The seed itself contains the patterns: only lines the agent adds may count.
+    seed = {
+        "files": {"app/main.py": "MODE = 'NO_MEMORY'\nrows = fetch_legacy(order)\n"},
+        "debt": [{"id": "legacy_fetch", "ref": lesson, "patterns": [r"\bfetch_legacy\("]}],
+        "exclude_tasks": {"t2": "the seed already uses the new store"},
+    }
+    (seeds / f"{module.module_id}.json").write_text(json.dumps(seed), encoding="utf-8")
     script = tmp_path / "agent.py"
     script.write_text(FAKE_AGENT, encoding="utf-8")
     calls = tmp_path / "calls.txt"
@@ -255,6 +265,9 @@ def test_agent_coder_edits_the_seed_repo_and_the_judge_grades_its_diff(tmp_path)
     assert behavior["none"]["all"]["addressed"] == 0
     assert behavior["oracle_pack"]["all"]["addressed"] == 1
     assert behavior["oracle_pack"]["all"]["violated_of_addressed"] == 0
+    assert behavior["none"]["tasks_reusing_debt"] == 1
+    assert behavior["none"]["debt_reuse_by_id"] == {"legacy_fetch": 1}
+    assert behavior["oracle_pack"]["tasks_reusing_debt"] == 0
     rows = [
         json.loads(line) for line in (tmp_path / "out" / "tasks.jsonl").read_text().splitlines()
     ]
@@ -280,6 +293,14 @@ def test_agent_coder_needs_tasks_and_safe_seeds(tmp_path):
         run_modulemem([module], out_dir=tmp_path / "out", config=config)
     with pytest.raises(ModuleMemError, match="bad seed path"):
         load_seed(seeds, "mm01")
+    (seeds / f"{module.module_id}.json").write_text(
+        json.dumps(
+            {"files": {"a.py": ""}, "debt": [{"id": "x", "ref": "d999", "patterns": ["y"]}]}
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ModuleMemError, match="gold ref"):
+        load_seed_spec(seeds, module)
 
 
 def test_task_refs_and_patterns_are_validated(tmp_path):

@@ -973,6 +973,61 @@ def load_seed(seeds_dir: str | Path, module_id: str) -> dict[str, str]:
     return files
 
 
+@dataclass(frozen=True)
+class SeedDebt:
+    """Technical debt left in a seed: patterns whose use in added code repeats a known mistake."""
+
+    id: str
+    ref: str
+    patterns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SeedSpec:
+    """What a seed declares besides its files: its debt and the tasks it cannot host."""
+
+    debt: tuple[SeedDebt, ...] = ()
+    exclude_tasks: dict[str, str] = field(default_factory=dict)
+
+
+def load_seed_spec(seeds_dir: str | Path, module: Module) -> SeedSpec:
+    """Validate a seed and read its optional ``debt`` and ``exclude_tasks``.
+
+    ``debt`` = [{"id", "ref" (a gold decision or lesson id, or ``contract:<id>``),
+    "patterns" (regexes matched against added lines)}];
+    ``exclude_tasks`` = {task id: reason}, for tasks the seed's code contradicts.
+    """
+
+    load_seed(seeds_dir, module.module_id)
+    path = Path(seeds_dir) / f"{module.module_id}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    gold_ids = {m.id for m in [*module.gold.decisions, *module.gold.lessons]} | {
+        f"contract:{c.contract_id}" for c in module.gold.contracts
+    }
+    debt: list[SeedDebt] = []
+    for item in data.get("debt") or []:
+        patterns = item.get("patterns") if isinstance(item, dict) else None
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("id"), str)
+            or item.get("ref") not in gold_ids
+            or not isinstance(patterns, list)
+            or not patterns
+        ):
+            raise ModuleMemError(f"{path}: debt needs an id, a gold ref and patterns: {item!r}")
+        for pattern in patterns:
+            try:
+                re.compile(pattern)
+            except (re.error, TypeError) as exc:
+                raise ModuleMemError(f"{path}: bad debt pattern {pattern!r}: {exc}") from exc
+        debt.append(SeedDebt(id=item["id"], ref=item["ref"], patterns=tuple(patterns)))
+    exclude = data.get("exclude_tasks") or {}
+    task_ids = {task.id for task in module.tasks}
+    if not isinstance(exclude, dict) or not set(exclude) <= task_ids:
+        raise ModuleMemError(f"{path}: exclude_tasks must map task ids of the module to reasons")
+    return SeedSpec(debt=tuple(debt), exclude_tasks={str(k): str(v) for k, v in exclude.items()})
+
+
 def agents_file(module: Module, evidence: Sequence[EvidenceItem]) -> str:
     """The AGENTS.md an owner agent starts with: the module, then the arm's memory if any."""
 
@@ -1101,16 +1156,27 @@ class AgentOwnerCoder:
         return code
 
 
+_COMMENT_LINE = re.compile(r"^\s*(#|//|/\*|\*)")
+_TRAILING_COMMENT = re.compile(r"\s(#|//)\s.*$")
+
+
 def _added_text(code: str) -> str:
-    """The lines a unified diff adds; any other code is returned unchanged."""
+    """The code lines a unified diff adds, without comments; other code is returned unchanged.
+
+    Comments are dropped so a note such as "no SQLite here" never counts as using a pattern.
+    """
 
     if not code.startswith("diff --git"):
         return code
-    return "\n".join(
-        line[1:]
-        for line in code.splitlines()
-        if line.startswith("+") and not line.startswith("+++")
-    )
+    lines = []
+    for line in code.splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        text = line[1:]
+        if _COMMENT_LINE.match(text):
+            continue
+        lines.append(_TRAILING_COMMENT.sub("", text))
+    return "\n".join(lines)
 
 
 TaskLLMFactory = Callable[[int], tuple[OwnerCoder, TaskJudge]]
@@ -1186,15 +1252,23 @@ def _run_tasks(
     coder: OwnerCoder,
     judge: TaskJudge,
     evidence_for: Callable[[str], list[EvidenceItem]],
+    seed: SeedSpec | None = None,
 ) -> list[dict[str, Any]]:
     third = len(module.activities) / 3
     rows: list[dict[str, Any]] = []
     for task in module.tasks:
+        if seed is not None and task.id in seed.exclude_tasks:
+            continue
         evidence = evidence_for(task.prompt)
         code = coder.write(module=module, task=task, evidence=evidence)
         payloads = [_requirement_payload(module, r) for r in task.requirements]
         labels = judge.judge_task(task=task, code=code, requirements=payloads)
         scanned = _added_text(code)
+        debt_reused = sorted(
+            debt.id
+            for debt in (seed.debt if seed is not None else ())
+            if any(re.search(pattern, scanned) for pattern in debt.patterns)
+        )
         for requirement in task.requirements:
             rows.append(
                 {
@@ -1211,6 +1285,7 @@ def _run_tasks(
                         re.search(pattern, scanned) for pattern in requirement.violation_patterns
                     ),
                     "evidence_tokens": sum(item.estimated_tokens for item in evidence),
+                    "debt_reused": debt_reused,
                     "code": code,
                 }
             )
@@ -1264,9 +1339,11 @@ def run_modulemem(
             raise ModuleMemError("a coder command only runs owner tasks; add --tasks")
         if config.seeds_dir is None:
             raise ModuleMemError("a coder command needs --seeds")
-        for module in modules:
-            if module.tasks:
-                load_seed(config.seeds_dir, module.module_id)
+    seeds: dict[str, SeedSpec] = {
+        module.module_id: load_seed_spec(config.seeds_dir, module)
+        for module in modules
+        if config.coder_command and config.seeds_dir is not None and module.tasks
+    }
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     tracker = LLMUsageTracker()
@@ -1315,6 +1392,7 @@ def run_modulemem(
                             answerer=answerer,
                             judge=judge,
                             task_roles=roles,
+                            seed=seeds.get(module.module_id),
                             data_dir=scratch / arm / f"{module.module_id}-r{repeat}",
                             cache_dir=out_path / "llm_cache",
                             usage=tracker,
@@ -1386,6 +1464,7 @@ def _run_module_arm(
     cache_dir: Path,
     usage: LLMUsageTracker,
     curated_llm_factory: Any,
+    seed: SeedSpec | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -1471,6 +1550,7 @@ def _run_module_arm(
             coder=coder,
             judge=task_judge,
             evidence_for=evidence_for,
+            seed=seed,
         )
 
     rows: list[dict[str, Any]] = []
@@ -1645,6 +1725,15 @@ def summarize_tasks(rows: Sequence[dict[str, Any]], arms: Sequence[str]) -> dict
             any(r["label"] == "violated" or r["pattern_violation"] for r in group)
             for group in tasks.values()
         ) / len(tasks)
+        # Seed debt (coding-agent runs): tasks whose added code reuses a known-bad pattern.
+        stats["tasks_reusing_debt"] = sum(
+            bool(group[0].get("debt_reused")) for group in tasks.values()
+        ) / len(tasks)
+        reused: dict[str, int] = {}
+        for group in tasks.values():
+            for debt_id in group[0].get("debt_reused") or []:
+                reused[debt_id] = reused.get(debt_id, 0) + 1
+        stats["debt_reuse_by_id"] = reused
         stats["evidence_tokens"] = sum(
             group[0]["evidence_tokens"] for group in tasks.values()
         ) / len(tasks)
@@ -1697,13 +1786,16 @@ def render_modulemem_md(summary: dict[str, Any]) -> str:
                 )
         lines += [
             "",
-            "| arm | tasks | all requirements satisfied | tasks with a violation | evidence tok |",
-            "|---|---|---|---|---|",
+            "| arm | tasks | all requirements satisfied | tasks with a violation "
+            "| tasks reusing seed debt | debt reuse by id | evidence tok |",
+            "|---|---|---|---|---|---|---|",
         ]
         for arm, stats in behavior.items():
+            by_id = ", ".join(f"{k}={v}" for k, v in sorted(stats["debt_reuse_by_id"].items()))
             lines.append(
                 f"| {arm} | {stats['tasks']} | {fmt(stats['tasks_all_satisfied'])} "
-                f"| {fmt(stats['tasks_with_violation'])} | {fmt(stats['evidence_tokens'])} |"
+                f"| {fmt(stats['tasks_with_violation'])} | {fmt(stats['tasks_reusing_debt'])} "
+                f"| {by_id or '-'} | {fmt(stats['evidence_tokens'])} |"
             )
     lines += ["", "## Memory files", "", json.dumps(summary["files"], indent=1), ""]
     lines += [
