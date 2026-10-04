@@ -20,22 +20,20 @@ from memoryos_lite.v3_contracts import (
 
 
 class _EchoCuratorLLM:
-    """Returns one grounded add op for the first message of the window prompt."""
+    """Returns one grounded memory for the first message of the window prompt."""
 
     def complete_json(self, system: str, user: str) -> dict[str, object]:
         window = user.split("Messages to curate:\n", 1)[1]
-        match = re.match(r"\[([^\]]+)\] [^:]+: (.+)", window.strip().splitlines()[0])
+        match = re.match(r"\[([^\]]+)\] .+ \(message\): (.+)", window.strip().splitlines()[0])
         assert match is not None
         message_id, content = match.group(1), match.group(2)
         return {
-            "operations": [
+            "memories": [
                 {
-                    "op": "add",
                     "kind": "fact",
                     "topic_key": "api.test",
                     "statement": content,
-                    "sources": [{"message_id": message_id, "quote": content}],
-                    "supersedes": None,
+                    "sources": [{"activity_id": message_id, "quote": content}],
                 }
             ]
         }
