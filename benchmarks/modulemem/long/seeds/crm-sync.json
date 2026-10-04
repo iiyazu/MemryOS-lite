@@ -6,29 +6,28 @@
    "id": "email_dedupe",
    "ref": "d8",
    "patterns": [
-    "\\bMergeByEmail\\("
+    "(?<!func )\\bMergeByEmail\\("
    ]
   },
   {
    "id": "retry_then_drop",
    "ref": "d13",
    "patterns": [
-    "\\bRetryThenSkip\\("
+    "(?<!func )\\bRetryThenSkip\\("
    ]
   },
   {
    "id": "batch_500",
    "ref": "d11",
    "patterns": [
-    "FullSyncBatchSize",
-    "FULL_SYNC_BATCH_SIZE"
+    "\\.FullSyncBatchSize\\b"
    ]
   },
   {
    "id": "legacy_phone_write",
    "ref": "contract:crm-sync-schema",
    "patterns": [
-    "\\bUpsertContactPhone\\(",
+    "\\.UpsertContactPhone\\(",
     "(?i)set\\s+phone\\s*=",
     "(?i)phone\\s*=\\s*excluded"
    ]

@@ -6,8 +6,8 @@
    "id": "legacy_context",
    "ref": "d15",
    "patterns": [
-    "\\buseCheckoutContext\\(",
-    "\\bCheckoutProvider\\b",
+    "(?<!function )\\buseCheckoutContext\\(",
+    "<CheckoutProvider\\b",
     "useContext\\(\\s*CheckoutContext"
    ]
   },

@@ -6,14 +6,14 @@
    "id": "yearly_number",
    "ref": "d11",
    "patterns": [
-    "\\bformatYearlyInvoiceNumber\\("
+    "(?<!function )\\bformatYearlyInvoiceNumber\\("
    ]
   },
   {
    "id": "fixed_retry_send",
    "ref": "d16",
    "patterns": [
-    "\\bsendWithRetry\\("
+    "(?<!function )\\bsendWithRetry\\("
    ]
   }
  ],

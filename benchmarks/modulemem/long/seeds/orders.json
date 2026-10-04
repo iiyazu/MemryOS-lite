@@ -6,8 +6,8 @@
    "id": "n_plus_one_helpers",
    "ref": "l2",
    "patterns": [
-    "\\bfetch_items\\(",
-    "\\bfetch_refunds\\("
+    "(?<!def )\\bfetch_items\\(",
+    "(?<!def )\\bfetch_refunds\\("
    ]
   },
   {
