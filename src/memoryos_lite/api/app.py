@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 
+from memoryos_lite import __version__
 from memoryos_lite.config import Settings as _Settings
 from memoryos_lite.curator import CuratorLLMError
 from memoryos_lite.curator.curate import CURATE_SCHEMA, CurateRequest, CurateResponse
@@ -36,7 +37,7 @@ def get_service() -> MemoryOSService:
 ServiceDep = Annotated[MemoryOSService, Depends(get_service)]
 
 
-app = FastAPI(title="MemoryOS Lite", version="0.2.1")
+app = FastAPI(title="MemoryOS Lite", version=__version__)
 
 # Middleware (registration order is reverse of request processing order)
 _settings = _Settings()
@@ -61,6 +62,7 @@ def health(service: ServiceDep) -> dict[str, object]:
             semantic_ready = False
     return {
         "status": "ok",
+        "version": __version__,
         "capabilities": {
             "build_context_profiles": [
                 BuildContextResponseProfile.FULL.value,

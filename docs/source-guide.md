@@ -81,20 +81,19 @@ Core tables:
 - `messages`
 - `episodes`
 - `trace_events`
-- `core_memory_blocks`
-- `core_memory_history`
 - `archival_documents`
 - `archival_chunks`
 - `archival_passages`
-- `archival_memories`
-- `archival_memory_history`
+- `archive_attachments`
+- `curated_memories`
+- `curator_state`
 
 See `docs/store-interface.md` for the table contract.
 
 ## Benchmark Entry Points
 
 ```bash
-MEMORYOS_RECALL_PIPELINE=v2 uv run python -m memoryos_eval public \
+uv run python -m memoryos_eval public \
   --benchmark longmemeval \
   --data-path benchmarks/longmemeval/longmemeval.json \
   --baseline memoryos_lite \
@@ -102,7 +101,7 @@ MEMORYOS_RECALL_PIPELINE=v2 uv run python -m memoryos_eval public \
   --no-llm-answer \
   --no-llm-judge
 
-MEMORYOS_MEMORY_ARCH=v3 uv run python -m memoryos_eval public \
+uv run python -m memoryos_eval public \
   --benchmark locomo \
   --data-path benchmarks/locomo/locomo10.json \
   --baseline memoryos_lite \

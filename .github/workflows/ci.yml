@@ -60,13 +60,47 @@ jobs:
 
           schema = app.openapi()
           assert schema["openapi"] == "3.1.0"
-          required_paths = {
+          paths = {
               "/health",
+              "/curate",
               "/sessions",
               "/sessions/{session_id}/ingest",
               "/sessions/{session_id}/build-context",
               "/archives/ingest",
               "/archives/attachments",
           }
-          assert required_paths <= schema["paths"].keys()
+          assert set(schema["paths"]) == paths, sorted(schema["paths"])
           PY
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build the image
+        run: docker build -t memoryos-lite:ci .
+
+      - name: Start the container and check /health
+        run: |
+          docker run -d --name memoryos -p 8000:8000 memoryos-lite:ci
+          for _ in $(seq 1 30); do
+            curl -fsS http://localhost:8000/health -o health.json && break
+            sleep 1
+          done
+          python3 - <<'PY'
+          import json
+          import tomllib
+
+          health = json.load(open("health.json"))
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          print(health)
+          assert health["status"] == "ok", health
+          assert health["version"] == version, (health["version"], version)
+          PY
+
+      - name: Container logs
+        if: always()
+        run: docker logs memoryos || true

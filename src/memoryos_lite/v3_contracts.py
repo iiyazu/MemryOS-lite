@@ -158,7 +158,6 @@ class ArchivalDocument(BaseModel):
     producer: Literal["explicit_document", "message", "sleep", "retrieval"] | str = (
         "explicit_document"
     )
-    legacy_page_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -197,7 +196,6 @@ class ArchivalPassage(BaseModel):
     tags: list[str] = Field(default_factory=list)
     score: float | None = None
     source_refs: list[SourceRef] = Field(default_factory=list)
-    legacy_item_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

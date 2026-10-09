@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
 from memoryos_lite.config import Settings
@@ -212,27 +210,3 @@ def test_written_memories_are_traced_with_activity_types_and_source_lag(tmp_path
 )
 def test_topic_keys_are_normalized(raw, expected):
     assert normalize_topic_key(raw) == expected
-
-
-def test_existing_curated_table_gains_version_columns_on_init(tmp_path):
-    settings = Settings(data_dir=tmp_path / "memoryos")
-    settings.data_dir.mkdir(parents=True)
-    with sqlite3.connect(settings.data_dir / "memoryos.db") as conn:
-        conn.execute(
-            "CREATE TABLE curated_memories (id VARCHAR(64) PRIMARY KEY, session_id VARCHAR(64),"
-            " kind VARCHAR(32), topic_key VARCHAR(255), statement TEXT, sources_json TEXT,"
-            " status VARCHAR(16), supersedes_id VARCHAR(64), superseded_by_id VARCHAR(64),"
-            " run_id VARCHAR(64), model VARCHAR(255), created_at DATETIME)"
-        )
-        conn.execute(
-            "CREATE TABLE sessions (id VARCHAR(64) PRIMARY KEY, title VARCHAR(255),"
-            " created_at DATETIME)"
-        )
-
-    create_store(settings).init_db()
-
-    with sqlite3.connect(settings.data_dir / "memoryos.db") as conn:
-        curated = {row[1] for row in conn.execute("PRAGMA table_info(curated_memories)")}
-        sessions = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
-    assert {"version", "occurrences", "scope_type", "scope_id"} <= curated
-    assert {"scope_type", "scope_id"} <= sessions
