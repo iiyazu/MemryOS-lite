@@ -1,8 +1,5 @@
 """Embedding provider facade."""
 
-from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient, FakePageDraftClient
+from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 
-__all__ = [
-    "DeterministicEmbeddingClient",
-    "FakePageDraftClient",
-]
+__all__ = ["DeterministicEmbeddingClient"]

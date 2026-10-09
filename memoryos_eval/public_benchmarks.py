@@ -204,12 +204,10 @@ def run_public_benchmark(
         update={
             "data_dir": run_dir,
             "database_url": None,
-            "memoryos_paging_mode": settings.memoryos_paging_mode,
             "openai_api_key": None,
             "deepseek_api_key": settings.deepseek_api_key,
             "rot_safe_budget": settings.rot_safe_budget,
             "memoryos_embedding_provider": _public_embedding_provider(settings),
-            "memoryos_recall_pipeline": settings.memoryos_recall_pipeline,
         }
     )
     store = create_store(run_settings)
@@ -308,14 +306,6 @@ def run_public_benchmark(
                 reasoning = answer_error or "exact substring match"
                 expected_present = [public_case.expected_answer] if verdict_label == "pass" else []
                 expected_missing = [] if verdict_label == "pass" else [public_case.expected_answer]
-            # Use actual session ID (not case title) for item metrics
-            session_for_items = store.get_session_by_title(public_case.case.case_id)
-            actual_session_id = (
-                session_for_items.id if session_for_items else public_case.case.case_id
-            )
-            item_metrics = _extract_item_metrics(
-                store, actual_session_id, public_case.expected_source_ids
-            )
             results.append(
                 _to_public_result(
                     public_case,
@@ -329,7 +319,6 @@ def run_public_benchmark(
                     expected_missing,
                     output,
                     latency_ms,
-                    item_metrics,
                     answer_evidence=answer_evidence,
                 )
             )
@@ -593,51 +582,6 @@ def _with_case_message_ids(case_id: str, messages: list[Message]) -> list[Messag
     ]
 
 
-def _extract_item_metrics(
-    store: Any, session_id: str, expected_source_ids: list[str]
-) -> dict[str, Any]:
-    """Extract item-level retrieval metrics from traces."""
-    all_items = store.list_items(session_id)
-    item_count_in_session = len(all_items)
-
-    traces = store.list_traces(session_id)
-    item_trace = next((t for t in traces if t.event_type == "item_retrieval"), None)
-    if item_trace is None:
-        return {
-            "item_source_overlap_at_k": None,
-            "item_promoted_evidence_count": 0,
-            "item_evidence_budget_dropped": 0,
-            "source_not_indexed": False,
-            "item_hit_item_ids": [],
-            "item_hit_source_ids": [],
-            "item_count_in_session": item_count_in_session,
-        }
-    payload = item_trace.payload
-    hit_source_ids = payload.get("promoted_source_message_ids", [])
-    item_hit_ids = payload.get("item_hit_ids", hit_source_ids)
-    promoted_count = payload.get("promoted_evidence_count", 0)
-    budget_dropped = payload.get("item_evidence_budget_dropped", 0)
-
-    overlap = bool(set(hit_source_ids) & set(expected_source_ids))
-
-    all_indexed_sources: set[str] = set()
-    for page in store.list_pages(session_id):
-        all_indexed_sources.update(page.source_message_ids)
-    for item in all_items:
-        all_indexed_sources.update(item.source_message_ids)
-    source_not_indexed = not bool(set(expected_source_ids) & all_indexed_sources)
-
-    return {
-        "item_source_overlap_at_k": overlap,
-        "item_promoted_evidence_count": promoted_count,
-        "item_evidence_budget_dropped": budget_dropped,
-        "source_not_indexed": source_not_indexed,
-        "item_hit_item_ids": item_hit_ids,
-        "item_hit_source_ids": hit_source_ids,
-        "item_count_in_session": item_count_in_session,
-    }
-
-
 def _to_public_result(
     public_case: PublicBenchmarkCase,
     baseline: str,
@@ -650,7 +594,6 @@ def _to_public_result(
     expected_missing: list[str],
     output: BaselineOutput,
     latency_ms: int,
-    item_metrics: dict[str, Any] | None = None,
     answer_evidence: list[AnswerEvidence] | None = None,
 ) -> PublicBenchmarkResult:
     source_set = set(source_ids)
@@ -775,19 +718,11 @@ def _to_public_result(
         item_source_hit_at_10=output.item_source_hit_at_10,
         planned_evidence_source_hit_at_5=output.planned_evidence_source_hit_at_5,
         budget_dropped_relevant=output.budget_dropped_relevant,
-        source_not_indexed=(
-            output.source_not_indexed or (item_metrics or {}).get("source_not_indexed", False)
-        ),
+        source_not_indexed=output.source_not_indexed,
         indexed_source_ids=output.indexed_source_ids,
         item_candidate_source_ids=output.item_candidate_source_ids,
         episode_candidate_message_ids=output.episode_candidate_message_ids,
         planned_evidence_message_ids=output.planned_evidence_message_ids,
-        item_source_overlap_at_k=(item_metrics or {}).get("item_source_overlap_at_k"),
-        item_promoted_evidence_count=(item_metrics or {}).get("item_promoted_evidence_count", 0),
-        item_evidence_budget_dropped=(item_metrics or {}).get("item_evidence_budget_dropped", 0),
-        item_hit_item_ids=(item_metrics or {}).get("item_hit_item_ids", []),
-        item_hit_source_ids=(item_metrics or {}).get("item_hit_source_ids", []),
-        item_count_in_session=(item_metrics or {}).get("item_count_in_session", 0),
         memory_arch=output.memory_arch,
         v3_context=output.v3_context,
         v3_layer_counts=output.v3_layer_counts,

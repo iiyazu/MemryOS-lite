@@ -2174,9 +2174,6 @@ def _room_settings(
 ) -> Settings:
     kwargs: dict[str, Any] = {
         "data_dir": data_dir,
-        "memoryos_memory_arch": "v3",
-        "memoryos_recall_pipeline": "v2",
-        "memoryos_paging_mode": "off",
         "memoryos_embedding_provider": "fastembed" if embedding == "fastembed" else "none",
     }
     return Settings(**kwargs)

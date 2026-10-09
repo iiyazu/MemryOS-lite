@@ -1,5 +1,3 @@
-import pytest
-
 from memoryos_lite.config import Settings
 from memoryos_lite.context_composer import V3ContextComposer
 from memoryos_lite.engine import MemoryOSService
@@ -59,23 +57,6 @@ def _vector_searcher(
 
 def _ref(source_id: str = "msg_1") -> SourceRef:
     return SourceRef(source_type="message", source_id=source_id, session_id="ses_1")
-
-
-def test_settings_default_to_v3_composer(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-
-    assert settings.resolved_memory_arch == "v3"
-    assert settings.memoryos_archival_vector_enabled is True
-
-
-def test_settings_resolve_v3_composer_flag(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
-
-    assert settings.resolved_memory_arch == "v3"
-
-    with pytest.raises(ValueError):
-        bad_memory_arch = Settings(memoryos_memory_arch="bad")
-        _ = bad_memory_arch.resolved_memory_arch
 
 
 def test_v3_composer_builds_layered_context_package(tmp_path):

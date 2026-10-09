@@ -7,11 +7,9 @@ import pytest
 
 from memoryos_eval.public_benchmarks import (
     PublicBenchmarkResult,
-    _extract_item_metrics,
     run_public_benchmark,
 )
 from memoryos_lite.config import Settings
-from memoryos_lite.schemas import TraceEvent, utc_now
 from memoryos_lite.store import create_store
 
 
@@ -99,65 +97,9 @@ def test_public_benchmark_result_has_item_fields():
 # ---------------------------------------------------------------------------
 
 
-def test_extract_item_metrics_no_trace(tmp_path):
-    store = _make_store(tmp_path)
-    metrics = _extract_item_metrics(store, "session_x", ["msg_001"])
-    assert metrics["item_source_overlap_at_k"] is None
-    assert metrics["item_promoted_evidence_count"] == 0
-    assert metrics["item_evidence_budget_dropped"] == 0
-    assert metrics["source_not_indexed"] is False
-    assert metrics["item_hit_item_ids"] == []
-    assert metrics["item_hit_source_ids"] == []
-
-
 # ---------------------------------------------------------------------------
 # _extract_item_metrics — item_retrieval trace with hits
 # ---------------------------------------------------------------------------
-
-
-def test_extract_item_metrics_with_trace_overlap(tmp_path):
-    store = _make_store(tmp_path)
-    session_id = "session_y"
-    trace = TraceEvent(
-        session_id=session_id,
-        event_type="item_retrieval",
-        payload={
-            "item_hit_ids": ["item_001", "item_002"],
-            "promoted_source_message_ids": ["msg_001", "msg_003"],
-            "promoted_evidence_count": 2,
-            "item_evidence_budget_dropped": 1,
-        },
-        created_at=utc_now(),
-    )
-    store.add_trace(trace)
-
-    metrics = _extract_item_metrics(store, session_id, ["msg_001"])
-    assert metrics["item_source_overlap_at_k"] is True
-    assert metrics["item_promoted_evidence_count"] == 2
-    assert metrics["item_evidence_budget_dropped"] == 1
-    assert metrics["item_hit_item_ids"] == ["item_001", "item_002"]
-    assert metrics["item_hit_source_ids"] == ["msg_001", "msg_003"]
-
-
-def test_extract_item_metrics_with_trace_no_overlap(tmp_path):
-    store = _make_store(tmp_path)
-    session_id = "session_z"
-    trace = TraceEvent(
-        session_id=session_id,
-        event_type="item_retrieval",
-        payload={
-            "item_hit_ids": ["item_010"],
-            "promoted_source_message_ids": ["msg_999"],
-            "promoted_evidence_count": 1,
-            "item_evidence_budget_dropped": 0,
-        },
-        created_at=utc_now(),
-    )
-    store.add_trace(trace)
-
-    metrics = _extract_item_metrics(store, session_id, ["msg_001"])
-    assert metrics["item_source_overlap_at_k"] is False
-    assert metrics["item_hit_source_ids"] == ["msg_999"]
 
 
 # ---------------------------------------------------------------------------

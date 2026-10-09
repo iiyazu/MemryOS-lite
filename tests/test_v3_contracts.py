@@ -4,20 +4,11 @@ from pydantic import ValidationError
 import memoryos_lite.v3_contracts as contracts
 from memoryos_lite.schemas import (
     Episode,
-    MemoryItem,
-    MemoryItemType,
-    MemoryPage,
     Message,
-    PageType,
     Role,
 )
 from memoryos_lite.v3_contracts import (
-    REQUIRED_V3_ADAPTERS,
-    V3_FUTURE_TABLES,
-    V3_KEEP_TABLES,
-    V3_NO_NEW_TARGETS,
     ArchivalChunk,
-    ArchivalDocument,
     ArchivalPassage,
     ArchiveAttachment,
     ContextComposerRequest,
@@ -32,9 +23,7 @@ from memoryos_lite.v3_contracts import (
     SourceSpan,
     ensure_persisted_identity_scope,
     episode_to_recall_entry,
-    item_to_archival_passage,
     message_to_log_entry,
-    page_to_archival_document,
 )
 
 
@@ -139,36 +128,6 @@ def test_legacy_message_and_episode_adapt_to_v3_layer_contracts():
     assert recall_entry.source_refs[0].source_type == "message"
 
 
-def test_page_and_item_are_legacy_inputs_not_archival_targets():
-    page = MemoryPage(
-        id="page_1",
-        session_id="ses_1",
-        page_type=PageType.SOURCE_SUMMARY,
-        title="Trip summary",
-        summary="Alice discussed Shanghai.",
-        source_message_ids=["msg_1"],
-    )
-    item = MemoryItem(
-        id="item_1",
-        page_id="page_1",
-        session_id="ses_1",
-        item_type=MemoryItemType.PROFILE,
-        content="Alice lives in Shanghai.",
-        source_message_ids=["msg_1"],
-    )
-
-    document = page_to_archival_document(page)
-    passage = item_to_archival_passage(item, document_id=document.id)
-
-    assert isinstance(document, ArchivalDocument)
-    assert document.legacy_page_id == "page_1"
-    assert isinstance(passage, ArchivalPassage)
-    assert passage.document_id == document.id
-    assert passage.legacy_item_id == "item_1"
-    assert document.id.startswith("adoc_")
-    assert passage.id.startswith("apsg_")
-
-
 def test_archival_contracts_include_chunk_attachment_and_first_class_metadata():
     ref = SourceRef(source_type="message", source_id="msg_1", session_id="ses_1")
     chunk = ArchivalChunk(
@@ -236,28 +195,6 @@ def test_context_package_v3_groups_layer_items_and_budget_decisions():
     assert request.budget == 1000
 
 
-def test_v3_table_boundary_keeps_legacy_tables_and_defers_recall_split():
-    assert V3_KEEP_TABLES == {
-        "sessions",
-        "messages",
-        "episodes",
-        "memory_pages",
-        "memory_items",
-        "memory_patches",
-        "trace_events",
-        "alembic_version",
-    }
-    assert "recall_memory_entries" not in V3_FUTURE_TABLES
-    assert "archival_documents" in V3_FUTURE_TABLES
-    assert "kernel_traces" in V3_FUTURE_TABLES
-
-
-def test_page_and_item_are_declared_legacy_adapter_inputs_only():
-    assert V3_NO_NEW_TARGETS == {"MemoryPage", "MemoryItem"}
-    assert REQUIRED_V3_ADAPTERS["MemoryPage"] == "ArchivalDocument migration input"
-    assert REQUIRED_V3_ADAPTERS["MemoryItem"] == "ArchivalMemory or ArchivalPassage adapter"
-
-
 def test_v3_contract_module_exports_expected_public_names():
     expected = {
         "SourceRef",
@@ -269,9 +206,6 @@ def test_v3_contract_module_exports_expected_public_names():
         "ArchivalPassage",
         "ContextComposer",
         "ensure_persisted_identity_scope",
-        "V3_KEEP_TABLES",
-        "V3_FUTURE_TABLES",
-        "REQUIRED_V3_ADAPTERS",
     }
 
     assert expected.issubset(set(contracts.__all__))
