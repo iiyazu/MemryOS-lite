@@ -608,138 +608,7 @@ REQUIRED_V3_ADAPTERS: dict[str, str] = {
 }
 
 
-ToolPolicyEffect = Literal["allow", "deny", "require_approval"]
-ToolSelectionOrigin = Literal["deterministic", "llm", "fallback"]
-
-
-class ToolPolicyRule(BaseModel):
-    id: str
-    tool_name: str
-    scope: IdentityScope | None = None
-    effect: ToolPolicyEffect
-    reason: str = Field(min_length=1)
-    priority: int = 0
-    source_refs: list[SourceRef] = Field(default_factory=list)
-
-
-class ToolPolicyDecision(BaseModel):
-    tool_name: str
-    effect: ToolPolicyEffect
-    matched_rule_ids: list[str] = Field(default_factory=list)
-    requires_approval: bool = False
-    reason: str = Field(min_length=1)
-    diagnostics: list[DiagnosticEvent] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def forbid_implicit_allow(self) -> ToolPolicyDecision:
-        if self.effect == "allow" and not self.matched_rule_ids:
-            raise ValueError("allow decisions require an explicit matched rule")
-        if self.effect == "require_approval" and not self.requires_approval:
-            raise ValueError("require_approval decisions must set requires_approval")
-        return self
-
-
-class ToolCandidate(BaseModel):
-    tool_call_id: str = Field(min_length=1)
-    session_id: str = Field(min_length=1)
-    tool_name: str = Field(min_length=1)
-    arguments: dict[str, Any]
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_id: str | None = None
-    candidate_reason: str = Field(min_length=1)
-    constraints: dict[str, Any] = Field(default_factory=dict)
-
-
-class ToolSelectionChoice(BaseModel):
-    tool_call_id: str | None = None
-    selection_origin: ToolSelectionOrigin
-    reason: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def require_noop_reason(self) -> ToolSelectionChoice:
-        if self.tool_call_id is None and not self.reason.strip():
-            raise ValueError("no-op selections require a reason")
-        return self
-
-
-class KernelTraceEvent(BaseModel):
-    id: str = Field(default_factory=lambda: new_id("ktrace"))
-    step_id: str
-    session_id: str
-    sequence: int = Field(gt=0)
-    event_type: str = Field(min_length=1)
-    payload: dict[str, Any]
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_id: str | None = None
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class AgentStepRequest(BaseModel):
-    session_id: str
-    input_messages: list[MessageLogEntry] = Field(default_factory=list)
-    context: ContextPackageV3
-    identity_scope: IdentityScope | None = None
-
-
-class AgentStepResult(BaseModel):
-    session_id: str
-    step_id: str
-    messages: list[MessageLogEntry] = Field(default_factory=list)
-    trace: list[KernelTraceEvent] = Field(default_factory=list)
-    continuation: str
-
-
-class ToolExecutionRequest(BaseModel):
-    session_id: str
-    tool_name: str
-    arguments: dict[str, Any]
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_id: str | None = None
-    tool_call_id: str | None = None
-    selection_origin: ToolSelectionOrigin | None = None
-    candidate_reason: str | None = None
-
-
-class ToolExecutionResult(BaseModel):
-    tool_name: str
-    ok: bool
-    result: dict[str, Any] = Field(default_factory=dict)
-    error: str | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    verification: dict[str, Any] = Field(default_factory=dict)
-
-
-class ContinuationDecision(BaseModel):
-    action: Literal["continue", "stop", "pause", "compact", "escalate"]
-    reason: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class AgentStepRunner(Protocol):
-    def run_step(self, request: AgentStepRequest) -> AgentStepResult: ...
-
-
-class ToolPolicyEngine(Protocol):
-    def decide(self, request: ToolExecutionRequest) -> ToolPolicyDecision: ...
-
-
-class ApprovalGate(Protocol):
-    def request_or_resume(self, request: ToolExecutionRequest) -> ApprovalState: ...
-
-
-class ToolExecutionManager(Protocol):
-    def execute(self, request: ToolExecutionRequest) -> ToolExecutionResult: ...
-
-
-class ContinuationController(Protocol):
-    def decide(self, result: AgentStepResult) -> ContinuationDecision: ...
-
-
 __all__ = [
-    "AgentStepRequest",
-    "AgentStepResult",
-    "AgentStepRunner",
-    "ApprovalGate",
     "ApprovalState",
     "ArchiveAttachment",
     "ArchivalChunk",
@@ -750,8 +619,6 @@ __all__ = [
     "ContextComposerRequest",
     "ContextLayerItem",
     "ContextPackageV3",
-    "ContinuationController",
-    "ContinuationDecision",
     "ContextPolicyCandidate",
     "ContextPolicyCandidateStatus",
     "ContextPolicyFeedbackType",
@@ -760,7 +627,6 @@ __all__ = [
     "CoreMemoryUpdate",
     "DiagnosticEvent",
     "IdentityScope",
-    "KernelTraceEvent",
     "LayerBudgetDecision",
     "MemoryWriteSource",
     "MemoryHistoryEvent",
@@ -771,15 +637,6 @@ __all__ = [
     "RecallMemoryEntry",
     "SourceRef",
     "SourceSpan",
-    "ToolExecutionManager",
-    "ToolExecutionRequest",
-    "ToolExecutionResult",
-    "ToolCandidate",
-    "ToolPolicyDecision",
-    "ToolPolicyEngine",
-    "ToolPolicyRule",
-    "ToolSelectionChoice",
-    "ToolSelectionOrigin",
     "V3_FUTURE_TABLES",
     "V3_KEEP_TABLES",
     "V3_NO_NEW_TARGETS",

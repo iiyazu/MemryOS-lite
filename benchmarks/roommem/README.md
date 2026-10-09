@@ -23,8 +23,7 @@ uv run memoryos eval roommem --data benchmarks/roommem/rooms --arm raw --arm ora
 is what CI runs; `--arm curated` needs a `CuratedMemorySource` registered via
 `memoryos_lite.roommem.register_curated_source` and fails with a clear message
 otherwise. Reports land in `--out` as `results.jsonl`, `write_side.json`,
-`summary.json`, and `summary.md`. Use `--heuristic-advisories` for the raw-arm
-kernel advisory baseline and `--repeats N` for run-to-run spread (LLM responses
+`summary.json`, and `summary.md`. Use `--repeats N` for run-to-run spread (LLM responses
 are disk-cached per repeat under `--out/llm_cache`).
 
 ## Schema (JSON, UTF-8, 2-space indent)

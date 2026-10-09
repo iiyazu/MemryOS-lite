@@ -12,9 +12,7 @@ does not provide a complete remote authentication, tenancy, rate-limit, or
 ownership model.
 
 Defaults are `memory_arch=v3` and `recall_pipeline=v2`. Legacy `v1` memory and
-recall paths may be selected explicitly. The agent kernel is off by default;
-`external` mode only emits source-attributed advisories for a host process. The
-memory curator is likewise off by default.
+recall paths may be selected explicitly. The memory curator is off by default.
 
 ## HTTP surface
 
@@ -38,9 +36,8 @@ Pydantic models they reference.
 
 ## Advisories and the memory curator
 
-`GET /sessions/{id}/advisories` without a `version` parameter (or with
-`version=1`) keeps the original `memoryos_external_advisories/v1` response
-unchanged. `version=2` serves curated-memory advisories:
+`GET /sessions/{id}/advisories?version=2` serves curated-memory advisories; any
+other `version` (or none) answers `400`:
 
 ```json
 {
@@ -94,9 +91,7 @@ it sends each window with the session's active memories under
 }
 ```
 
-The block never contains provider keys or provider error text. While the curator
-is enabled, the heuristic agent-kernel maintenance advisories are suppressed so
-the two advisory producers do not compete.
+The block never contains provider keys or provider error text.
 
 ## Module memory: `POST /curate`
 

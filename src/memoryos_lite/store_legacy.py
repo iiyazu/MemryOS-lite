@@ -3,7 +3,7 @@
 import json
 import re
 from contextlib import AbstractContextManager
-from datetime import UTC, datetime
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,7 +23,6 @@ from memoryos_lite.schemas import (
 from memoryos_lite.store_models import (
     Base,
     ItemRecord,
-    MaintenanceAdvisoryRecord,
     PageRecord,
     PatchRecord,
     TraceRecord,
@@ -42,92 +41,6 @@ class LegacyStoreMixin:
     _COMPACT_TRACE_SESSION_LIMIT = 2_048
     _COMPACT_TRACE_TOTAL_LIMIT = 16_384
     _COMPACT_TRACE_FIELD_LIMIT = 64
-
-    @staticmethod
-    def _advisory_timestamp(value: datetime) -> str:
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
-        return value.isoformat()
-
-    def add_maintenance_advisory(
-        self,
-        *,
-        session_id: str,
-        proposal_type: str,
-        content: str,
-        source_refs: list[dict[str, str]],
-    ) -> dict[str, object]:
-        """Persist one bounded external-governance advisory idempotently."""
-
-        canonical = json.dumps(
-            {
-                "session_id": session_id,
-                "proposal_type": proposal_type,
-                "content": content,
-                "source_refs": source_refs,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        fingerprint = sha256(canonical.encode("utf-8")).hexdigest()
-        advisory_id = f"advisory_{fingerprint[:40]}"
-        with self.db() as db:
-            existing = db.scalar(
-                select(MaintenanceAdvisoryRecord).where(
-                    MaintenanceAdvisoryRecord.session_id == session_id,
-                    MaintenanceAdvisoryRecord.fingerprint == fingerprint,
-                )
-            )
-            if existing is None:
-                existing = MaintenanceAdvisoryRecord(
-                    id=advisory_id,
-                    session_id=session_id,
-                    fingerprint=fingerprint,
-                    proposal_type=proposal_type,
-                    content=content,
-                    source_refs_json=json.dumps(source_refs, ensure_ascii=False),
-                    created_at=utc_now(),
-                )
-                db.add(existing)
-        return {
-            "advisory_id": advisory_id,
-            "session_id": session_id,
-            "fingerprint": fingerprint,
-            "proposal_type": proposal_type,
-            "content": content,
-            "source_refs": source_refs,
-            "created_at": self._advisory_timestamp(existing.created_at),
-        }
-
-    def list_maintenance_advisories(
-        self, session_id: str, *, limit: int = 32
-    ) -> list[dict[str, object]]:
-        clean_limit = max(1, min(int(limit), 64))
-        with self.db() as db:
-            rows = list(
-                db.scalars(
-                    select(MaintenanceAdvisoryRecord)
-                    .where(MaintenanceAdvisoryRecord.session_id == session_id)
-                    .order_by(
-                        MaintenanceAdvisoryRecord.created_at.asc(),
-                        MaintenanceAdvisoryRecord.id.asc(),
-                    )
-                    .limit(clean_limit)
-                )
-            )
-        return [
-            {
-                "advisory_id": row.id,
-                "session_id": row.session_id,
-                "fingerprint": row.fingerprint,
-                "proposal_type": row.proposal_type,
-                "content": row.content,
-                "source_refs": json.loads(row.source_refs_json),
-                "created_at": self._advisory_timestamp(row.created_at),
-            }
-            for row in rows
-        ]
 
     engine: Engine
 

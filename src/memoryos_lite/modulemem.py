@@ -1523,9 +1523,7 @@ def _run_module_arm(
     elif arm == "full_history":
         evidence = _activities_evidence(module, module.activities)
     elif arm == "retrieval":
-        service = MemoryOSService(
-            settings=_room_settings(data_dir, embedding=config.embedding, kernel_external=False)
-        )
+        service = MemoryOSService(settings=_room_settings(data_dir, embedding=config.embedding))
         session_id = _retrieval_service(module, service)
 
     def evidence_for(query: str) -> list[EvidenceItem]:
