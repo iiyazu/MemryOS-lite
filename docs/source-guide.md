@@ -32,7 +32,7 @@ MemoryOSService
 | `retrieval/` | Search primitives and v2 recall helpers. |
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
-| `curator/` | LLM curator: session worker and v2 advisories; stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`). |
+| `curator/` | Stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`); the in-process session curator RoomMem runs (`runner.py`). |
 | `cli.py` | Typer CLI entrypoint (`api`, `demo`). |
 | `api/app.py` | FastAPI REST API. |
 

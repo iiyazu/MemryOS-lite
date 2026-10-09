@@ -28,8 +28,8 @@ Arms
 ``curated``
     Runs a :class:`CuratedMemorySource` registered by name through
     :func:`register_curated_source`.  The built-in ``default`` source runs the
-    real :class:`memoryos_lite.curator.Curator` on the room session (opt-in
-    ``memoryos_curator_enabled``, one window of ``--curator-window`` messages,
+    real :class:`memoryos_lite.curator.Curator` on the room session (one window
+    of ``--curator-window`` messages,
     ``force=True`` for the tail) and maps its rows to
     :class:`CuratedMemoryView`.  With ``--fake-llm`` it uses a deterministic
     fake curator LLM; otherwise it requires ``MEMORYOS_LLM_PROVIDER`` set to
@@ -863,7 +863,6 @@ class CuratorMemorySource:
     def _curator_settings(self, base: Settings) -> Settings:
         overrides: dict[str, Any] = {
             "data_dir": base.data_dir,
-            "memoryos_curator_enabled": True,
             "memoryos_curator_window_messages": self._window,
         }
         if not self._fake_llm:

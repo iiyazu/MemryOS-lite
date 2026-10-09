@@ -1,13 +1,14 @@
 """Session curator: the stateful host of the curate graph for MemoryOS sessions.
 
-``Curator.run_session`` is the single entry point used by the background
-worker, the eval harness, and tests. It processes only messages after the
-stored watermark, one window of ``memoryos_curator_window_messages`` at a
-time: each window is one room-profile curate request (the same LangGraph loop
-as ``POST /curate``: extract, check quotes, repair, deterministic
-consolidation) built from the session's active memories, and the returned
-memory versions are written in one transaction. The watermark advances only
-for windows whose reply was usable.
+``Curator.run_session`` is the single entry point, used in process by the
+RoomMem evaluation and by tests; the service itself runs no curator. It
+processes only messages after the stored watermark, one window of
+``memoryos_curator_window_messages`` at a time: each window is one
+room-profile curate request (the same LangGraph loop as ``POST /curate``:
+extract, check quotes, repair, deterministic consolidation) built from the
+session's active memories, and the returned memory versions are written in
+one transaction. The watermark advances only for windows whose reply was
+usable.
 """
 
 from __future__ import annotations
@@ -132,29 +133,6 @@ class Curator:
         self.llm = llm
         self.model = model or settings.chat_model
         self._window_failures: dict[tuple[str, int], int] = {}
-        self._last_llm_ok: bool | None = None
-        self._last_error_code: str | None = None
-
-    # -- status -----------------------------------------------------------
-
-    def status(self) -> dict[str, object]:
-        counters = self.store.curator_counter_totals()
-        if self.llm is None:
-            if not self.settings.chat_api_key:
-                state, reason = "degraded", REASON_KEY_MISSING
-            else:
-                state, reason = "degraded", REASON_INIT_ERROR
-        elif self._last_llm_ok is False:
-            state, reason = "degraded", (self._last_error_code or REASON_LLM_ERROR)
-        else:
-            state, reason = "ready", None
-        return {
-            "enabled": True,
-            "state": state,
-            "reason_code": reason,
-            "model": self.model,
-            "counters": counters,
-        }
 
     # -- run --------------------------------------------------------------
 
@@ -217,7 +195,6 @@ class Curator:
             try:
                 counts = self._curate_window(session_id, context, window, active, infos)
             except ImportError:
-                self._mark_llm_call(False, REASON_REQUIRES_LANGGRAPH)
                 result.status = "llm_unavailable"
                 result.error_code = REASON_REQUIRES_LANGGRAPH
                 result.llm_errors += 1
@@ -298,13 +275,6 @@ class Curator:
         waited_s = (utc_now() - created).total_seconds()
         return waited_s >= self.settings.memoryos_curator_idle_flush_s
 
-    def _mark_llm_call(self, ok: bool, error_code: str | None) -> None:
-        self._last_llm_ok = ok
-        if ok:
-            self._last_error_code = None
-        elif error_code is not None:
-            self._last_error_code = error_code
-
     def _curate_window(
         self,
         session_id: str,
@@ -332,18 +302,12 @@ class Curator:
         )
         try:
             response = run_curate(request, llm)
-        except CuratorLLMError:
-            self._mark_llm_call(False, REASON_LLM_ERROR)
-            raise
-        except ImportError:
+        except (CuratorLLMError, ImportError):
             raise
         except Exception as exc:
-            self._mark_llm_call(False, REASON_LLM_ERROR)
             raise CuratorLLMError(f"provider call failed: {type(exc).__name__}") from exc
         if REPLY_NOT_JSON in response.diagnostics.final_violations:
-            self._mark_llm_call(False, REASON_SCHEMA_ERROR)
             raise _UnusableReply
-        self._mark_llm_call(True, None)
         return _window_writes(response, active)
 
     def _trace_written(

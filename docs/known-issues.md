@@ -63,7 +63,7 @@ production agent runtime.
 Current constraints:
 
 - Real agent execution belongs to the host process (`/curate` only returns memory
-  versions; curated advisories are suggestions the host may adopt).
+  versions for the host to store).
 - Real LLM usage is optional and requires explicit API keys.
 - `/curate` keeps no state and no checkpoint: a request that times out on the
   caller side is simply sent again. Curation quality (missed lessons,

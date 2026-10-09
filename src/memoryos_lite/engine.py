@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Sequence
 from functools import wraps
 from typing import Any
 
@@ -17,12 +16,7 @@ from memoryos_lite.archive_rag import (
 from memoryos_lite.budget import DynamicBudget
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.context_composer import V3ContextComposer
-from memoryos_lite.curator import (
-    Curator,
-    CuratorLLM,
-    build_advisory_v2_items,
-    build_curator_llm,
-)
+from memoryos_lite.curator import CuratorLLM, build_curator_llm
 from memoryos_lite.curator.curate import CurateRequest, CurateResponse
 from memoryos_lite.observability import (
     current_observability_context,
@@ -114,7 +108,6 @@ class MemoryOSService:
         store: MemoryStore | None = None,
         settings: Settings | None = None,
         embedding_client: EmbeddingClient | None = None,
-        curator: Curator | None = None,
         curate_llm: CuratorLLM | None = None,
     ) -> None:
         self.settings = settings or get_settings()
@@ -160,19 +153,6 @@ class MemoryOSService:
             recall_pipeline=self.recall_pipeline,
             archival_searcher=self.archival_searcher,
         )
-        if curator is not None:
-            self.curator: Curator | None = curator
-        elif self.settings.memoryos_curator_enabled:
-            llm = None
-            try:
-                llm = build_curator_llm(self.settings)
-            except Exception:
-                # A missing optional remote stack degrades the curator; the
-                # service keeps its non-curator behavior.
-                llm = None
-            self.curator = Curator(store=self.store, settings=self.settings, llm=llm)
-        else:
-            self.curator = None
 
     def _archive_rag(self) -> MemoryOSArchiveRAG:
         return MemoryOSArchiveRAG(self.store)
@@ -354,39 +334,16 @@ class MemoryOSService:
             )
             return session
 
-    def list_curated_advisories(self, session_id: str) -> list[dict[str, object]]:
-        """Project curated memories into advisory v2 items for the host."""
-
-        self._require_session(session_id)
-        rows = self.store.list_curated_memories(session_id, limit=32)
-        superseded_ids = sorted({row.supersedes_id for row in rows if row.supersedes_id})
-        superseded_rows = self.store.get_curated_memories_by_ids(superseded_ids)
-        return build_advisory_v2_items(rows, superseded_rows)
-
     def superseded_marks(self, session_id: str) -> list[SupersededQuote]:
         """Quotes that ground only superseded curated memories of this session."""
 
         self._require_session(session_id)
         return superseded_quotes(self.store.list_curated_memories(session_id, limit=64))
 
-    def evidence_marks(
-        self,
-        session_id: str,
-        requested: Sequence[SupersededQuote] = (),
-    ) -> list[SupersededQuote]:
-        """Host-sent marks plus, when enabled, this session's own superseded quotes."""
-
-        marks = list(requested)
-        if self.settings.memoryos_demote_superseded:
-            marks.extend(self.superseded_marks(session_id))
-        return marks
-
     def _json_llm(self) -> CuratorLLM:
         """The JSON-mode LLM for ``/curate``, built on first use."""
 
         llm = self._curate_llm
-        if llm is None and self.curator is not None:
-            llm = self.curator.llm
         if llm is None:
             if not self.settings.chat_api_key:
                 raise CurateUnavailableError("curator_llm_key_missing")
@@ -424,26 +381,6 @@ class MemoryOSService:
             repairs=response.diagnostics.repairs,
         )
         return response
-
-    def curator_status(self) -> dict[str, object]:
-        """Report curator state without ever exposing provider secrets."""
-
-        if self.curator is not None:
-            return self.curator.status()
-        return {
-            "enabled": False,
-            "state": "disabled",
-            "reason_code": "curator_disabled",
-            "model": self.settings.chat_model,
-            "counters": {
-                "sessions": 0,
-                "runs": 0,
-                "proposals": 0,
-                "rejected_grounding": 0,
-                "rejected_schema": 0,
-                "llm_errors": 0,
-            },
-        }
 
     def _ensure_recall_index(self, session_id: str) -> None:
         """Backfill derived recall rows after an ingest or its replay.
