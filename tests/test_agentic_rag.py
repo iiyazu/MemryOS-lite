@@ -233,9 +233,10 @@ def test_ask_with_marks_the_session_outdated_item(tmp_path):
     assert flags.get(OLD) is True and flags.get(NEW) is False
 
 
-def test_demote_setting_ranks_the_superseded_message_last(tmp_path):
-    service = _service(tmp_path, memoryos_demote_superseded=True)
+def test_host_marks_rank_the_superseded_message_last(tmp_path):
+    service = _service(tmp_path)
     session_id = _seed(service)
+    marks = [{"quote": m.quote, "current": m.current} for m in service.superseded_marks(session_id)]
     client = TestClient(app)
     try:
         app.dependency_overrides[get_service] = lambda: service
@@ -245,6 +246,7 @@ def test_demote_setting_ranks_the_superseded_message_last(tmp_path):
                 "task": "launch",
                 "retrieval_query": "Where does Helios launch?",
                 "response_profile": "source_evidence/v2",
+                "superseded": marks,
             },
         ).json()
         texts = [item["text"] for item in envelope["items"]]

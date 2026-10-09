@@ -1,11 +1,10 @@
-from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 
 from memoryos_lite.config import Settings as _Settings
-from memoryos_lite.curator import ADVISORY_SCHEMA_V2, CuratorLLMError, CuratorWorker
+from memoryos_lite.curator import CuratorLLMError
 from memoryos_lite.curator.curate import CURATE_SCHEMA, CurateRequest, CurateResponse
 from memoryos_lite.engine import CurateUnavailableError, MemoryOSService
 from memoryos_lite.middleware import (
@@ -37,29 +36,7 @@ def get_service() -> MemoryOSService:
 ServiceDep = Annotated[MemoryOSService, Depends(get_service)]
 
 
-def _resolved_service() -> MemoryOSService:
-    # Dependency overrides (tests, embedders) win over the cached default.
-    return app.dependency_overrides.get(get_service, get_service)()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    service = _resolved_service()
-    worker: CuratorWorker | None = None
-    curator = service.curator
-    if curator is not None and curator.llm is not None:
-        worker = CuratorWorker(curator, poll_s=service.settings.memoryos_curator_poll_s)
-        worker.start()
-    app.state.curator_worker = worker
-    try:
-        yield
-    finally:
-        if worker is not None:
-            worker.stop()
-        app.state.curator_worker = None
-
-
-app = FastAPI(title="MemoryOS Lite", version="0.2.1", lifespan=lifespan)
+app = FastAPI(title="MemoryOS Lite", version="0.2.1")
 
 # Middleware (registration order is reverse of request processing order)
 _settings = _Settings()
@@ -98,7 +75,6 @@ def health(service: ServiceDep) -> dict[str, object]:
             "message_ingest": True,
             "curate": CURATE_SCHEMA,
         },
-        "curator": service.curator_status(),
     }
 
 
@@ -148,10 +124,9 @@ def build_context(
     }:
         try:
             if request.response_profile is BuildContextResponseProfile.SOURCE_EVIDENCE_V2:
-                marks = service.evidence_marks(
-                    session_id,
-                    [SupersededQuote(quote=m.quote, current=m.current) for m in request.superseded],
-                )
+                marks = [
+                    SupersededQuote(quote=m.quote, current=m.current) for m in request.superseded
+                ]
                 return build_source_evidence(package, schema_version="v2", superseded=marks)
             return build_source_evidence(package)
         except ValueError as exc:
@@ -181,26 +156,6 @@ def attach_archive(
         return service.attach_archive(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/sessions/{session_id}/advisories")
-def advisories(
-    session_id: str,
-    service: ServiceDep,
-    version: int | None = None,
-) -> dict[str, object]:
-    """Curated-memory advisories (``memoryos_external_advisories/v2``); needs ``version=2``."""
-
-    if version != 2:
-        raise HTTPException(
-            status_code=400,
-            detail=f"unsupported advisories version: {version}",
-        )
-    try:
-        items = service.list_curated_advisories(session_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"schema": ADVISORY_SCHEMA_V2, "items": items}
 
 
 @app.post("/curate", response_model=CurateResponse)

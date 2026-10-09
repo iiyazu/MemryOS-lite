@@ -11,7 +11,7 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 
 - 上下文只有一条路径：v3 layered context composer 组装，v2 episode-first evidence recall 取证据。
   v1 记忆架构（page、item、分页、冲突检测）已删除。
-- 记忆策展（curator）默认关闭；`MEMORYOS_CURATOR_ENABLED=true` 时后台 worker 从消息流抽取带来源证明的持久记忆，并通过 `/sessions/{id}/advisories?version=2`（`memoryos_external_advisories/v2`）暴露，由宿主决定是否采纳。worker 是 `/curate` 图的有状态宿主：每一窗消息连同会话现有记忆按 `profile=room` 走同一张图，引文必须是原消息的逐字子串，按 `topic_key` + 版本号确定性汇总新旧版本。
+- 服务不运行后台策展，也没有 advisories 接口；需要持久记忆的宿主调用 `/curate`，自己保存记忆。会话策展器（`Curator.run_session`，`/curate` 图按 `profile=room` 的有状态宿主）只在 RoomMem 评测里进程内运行。
 - 模块记忆走无状态的 `POST /curate`（`memoryos_curate/v1`）：宿主（如 xmuse）带上模块现有记忆和一窗新活动，MemoryOS 返回新的记忆版本，自己不存状态。错题本采用闭合记账：每条复核打回和门禁失败都必须归到一条教训或写明理由排除。提炼过程是一张 LangGraph 图（抽取 → 校验 → 修复 → 汇总），见下文"模块记忆"。
 - SQLite 是权威存储；trace 文件和进程内向量索引都是派生数据。
 - 以新鲜命令结果而不是文档中的历史通过数判断状态。
@@ -120,14 +120,13 @@ HTTP 接口：
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| `GET` | `/health` | 能力与 curator 状态 |
+| `GET` | `/health` | 存活与能力 |
 | `POST` | `/sessions` | 创建会话 |
 | `POST` | `/sessions/{id}/ingest` | 摄入消息 |
 | `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
 | `POST` | `/curate` | 无状态模块记忆提炼（`memoryos_curate/v1`） |
 | `POST` | `/archives/ingest` | 摄入可归因归档文档 |
 | `POST` | `/archives/attachments` | 将归档关联到会话 |
-| `GET` | `/sessions/{id}/advisories` | 维护建议；`?version=2` 返回策展记忆（v2） |
 
 ### 模块记忆：无状态 `/curate`
 
@@ -162,9 +161,8 @@ HTTP 接口：
 `agentic` 证据模式）和 `python -m memoryos_eval ask-demo` 中运行，服务不提供 ask 路由。
 
 - **已取代判定**：证据原文包含某条已被取代记忆的逐字引文，且不包含任何有效记忆的引文，
-  就视为陈述了过时的值。按引文文本匹配，不依赖消息或文档 id。标记来源有两种：宿主在请求里
-  带上 `superseded: [{quote, current}]`（PO 模式，状态在宿主）；或开启
-  `MEMORYOS_DEMOTE_SUPERSEDED` 后，从本会话自己的 curated 记忆推导（Room 模式）。
+  就视为陈述了过时的值。按引文文本匹配，不依赖消息或文档 id。标记由宿主在请求里带上
+  `superseded: [{quote, current}]`，记忆状态在宿主。
 - **`source_evidence/v2` 降权**：带标记时，过时条目排到最后，信封装满时先被丢弃。条目原文
   不改，因为消费方会按 `content_sha256` 复证原文。
 - **`ask` 图**（LangGraph）：`retrieve → grade → (rewrite → retrieve)* → finalize`。
@@ -178,12 +176,9 @@ HTTP 接口：
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `DATA_DIR` | `.memoryos` | SQLite 与派生调试文件目录 |
-| `MEMORYOS_CURATOR_ENABLED` | `false` | 启用 LLM 记忆策展与后台 worker |
-| `MEMORYOS_CURATOR_WINDOW_MESSAGES` | `12` | 每次策展窗口的消息数 |
+| `MEMORYOS_CURATOR_WINDOW_MESSAGES` | `12` | 会话策展器（RoomMem）每窗消息数 |
 | `MEMORYOS_CURATOR_IDLE_FLUSH_S` | `20.0` | 不足一窗时的空闲刷新等待秒数 |
-| `MEMORYOS_CURATOR_POLL_S` | `2.0` | 后台 worker 轮询间隔 |
 | `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |
-| `MEMORYOS_DEMOTE_SUPERSEDED` | `false` | 用本会话 curated 记忆推导已取代标记，用于 `source_evidence/v2` 降权 |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENCODE_API_KEY` | unset | 可选真实模型提供方；`MEMORYOS_LLM_PROVIDER=opencode` 走 OpenCode Go（默认 `muse-spark-1.3-contributor`，Responses API），目前只用于 curator 与 RoomMem |
 
 完整设置以 `src/memoryos_lite/config.py` 为准。

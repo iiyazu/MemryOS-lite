@@ -41,15 +41,10 @@ class Settings(BaseSettings):
     memoryos_llm_timeout_s: float = 60.0
     memoryos_archival_vector_enabled: bool = True
 
-    # Curator (LLM-extracted durable memories; opt-in)
-    memoryos_curator_enabled: bool = False
+    # Session curator (run in process by RoomMem; the service hosts none)
     memoryos_curator_window_messages: int = 12
     memoryos_curator_idle_flush_s: float = 20.0
-    memoryos_curator_poll_s: float = 2.0
     memoryos_curator_max_active_in_prompt: int = 40
-    # source_evidence/v2 ranks raw evidence that states a superseded curated
-    # value (by verbatim quote) behind the rest. Off until RoomMem shows a gain.
-    memoryos_demote_superseded: bool = False
 
     # Middleware
     memoryos_api_key: str | None = None
@@ -71,13 +66,6 @@ class Settings(BaseSettings):
     def validate_curator_idle_flush_s(cls, value: float) -> float:
         if value < 0:
             raise ValueError("MEMORYOS_CURATOR_IDLE_FLUSH_S must be non-negative")
-        return value
-
-    @field_validator("memoryos_curator_poll_s")
-    @classmethod
-    def validate_curator_poll_s(cls, value: float) -> float:
-        if value <= 0:
-            raise ValueError("MEMORYOS_CURATOR_POLL_S must be positive")
         return value
 
     @property

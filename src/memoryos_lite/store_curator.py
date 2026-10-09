@@ -119,15 +119,6 @@ class CuratorStoreMixin:
             record = db.get(CuratedMemoryRecord, memory_id)
             return self._curated_memory_row(record) if record is not None else None
 
-    def get_curated_memories_by_ids(self, memory_ids: list[str]) -> dict[str, CuratedMemoryRow]:
-        if not memory_ids:
-            return {}
-        with self.db() as db:
-            records = db.scalars(
-                select(CuratedMemoryRecord).where(CuratedMemoryRecord.id.in_(memory_ids))
-            )
-            return {record.id: self._curated_memory_row(record) for record in records}
-
     def list_active_curated_memories(
         self,
         session_id: str,
@@ -230,25 +221,6 @@ class CuratorStoreMixin:
             )
             for row in records
         ]
-
-    def curator_counter_totals(self) -> dict[str, int]:
-        with self.db() as db:
-            rows = list(db.scalars(select(CuratorStateRecord)))
-        totals = {
-            "sessions": len(rows),
-            "runs": 0,
-            "proposals": 0,
-            "rejected_grounding": 0,
-            "rejected_schema": 0,
-            "llm_errors": 0,
-        }
-        for row in rows:
-            totals["runs"] += row.runs
-            totals["proposals"] += row.proposals
-            totals["rejected_grounding"] += row.rejected_grounding
-            totals["rejected_schema"] += row.rejected_schema
-            totals["llm_errors"] += row.llm_errors
-        return totals
 
     def apply_curator_window(
         self,

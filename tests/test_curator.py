@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import re
-from hashlib import sha256
-
-import pytest
-
 from memoryos_lite.config import Settings
 from memoryos_lite.curator import Curator, CuratorLLMError, CuratorSchemaError
 from memoryos_lite.curator.grounding import repair_quote
@@ -35,38 +29,17 @@ class FakeLLM:
         return response
 
 
-class WindowEchoLLM:
-    """Builds one memory from the first message line of each window prompt."""
-
-    def complete_json(self, system: str, user: str) -> dict[str, object]:
-        window = user.split("Messages to curate:\n", 1)[1]
-        match = re.match(r"\[([^\]]+)\] .+ \(message\): (.+)", window.strip().splitlines()[0])
-        assert match is not None
-        message_id, content = match.group(1), match.group(2)
-        return {
-            "memories": [
-                {
-                    "kind": "fact",
-                    "topic_key": "test.worker",
-                    "statement": content,
-                    "sources": [{"activity_id": message_id, "quote": content}],
-                }
-            ]
-        }
-
-
 def _service(tmp_path, llm, **overrides) -> tuple[MemoryOSService, Curator]:
     settings = Settings(
         data_dir=tmp_path / "memoryos",
         rot_safe_budget=1_000,
         recent_message_limit=2,
-        memoryos_curator_enabled=True,
         **overrides,
     )
     store = create_store(settings)
     store.reset()
     curator = Curator(store=store, settings=settings, llm=llm)
-    service = MemoryOSService(store=store, settings=settings, curator=curator)
+    service = MemoryOSService(store=store, settings=settings)
     return service, curator
 
 
@@ -94,10 +67,6 @@ def _mem(
     }
 
 
-def _advisories_v2(service: MemoryOSService, session_id: str) -> list[dict[str, object]]:
-    return service.list_curated_advisories(session_id)
-
-
 # -- grounding ---------------------------------------------------------------
 
 
@@ -119,7 +88,7 @@ def test_repair_quote_rejects_short_absent_and_ambiguous_quotes() -> None:
 # -- extraction and grounding ------------------------------------------------
 
 
-def test_add_writes_grounded_memory_and_advisory_v2(tmp_path):
+def test_add_writes_grounded_memory(tmp_path):
     statement = "Project Helios launches in Lisbon."
     fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
@@ -140,43 +109,6 @@ def test_add_writes_grounded_memory_and_advisory_v2(tmp_path):
     state = service.store.get_curator_state(session.id)
     assert state is not None
     assert (state.last_message_seq, state.runs, state.proposals) == (1, 1, 1)
-
-    items = _advisories_v2(service, session.id)
-    assert len(items) == 1
-    item = items[0]
-    assert set(item) == {
-        "advisory_id",
-        "fingerprint",
-        "proposal_type",
-        "kind",
-        "topic_key",
-        "content",
-        "source_refs",
-        "supersedes_advisory_id",
-    }
-    assert item["proposal_type"] == "curated_memory"
-    assert item["kind"] == "room_fact"
-    assert item["content"] == statement
-    assert item["supersedes_advisory_id"] is None
-    assert item["source_refs"] == [
-        {
-            "source_type": "message",
-            "source_id": message_id,
-            "session_id": session.id,
-            "quote": statement,
-        }
-    ]
-    canonical = json.dumps(
-        {"kind": "fact", "content": statement, "sources": rows[0].sources},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    expected_fingerprint = sha256(canonical.encode("utf-8")).hexdigest()
-    assert item["fingerprint"] == expected_fingerprint
-    assert len(expected_fingerprint) == 64
-    assert item["advisory_id"] == f"advisory_{expected_fingerprint[:40]}"
-    assert _advisories_v2(service, session.id)[0]["advisory_id"] == item["advisory_id"]
 
 
 def test_ungrounded_and_short_quotes_are_rejected_but_window_advances(tmp_path):
@@ -268,7 +200,7 @@ def test_memory_schema_violations_are_rejected(tmp_path):
 # -- consolidation -----------------------------------------------------------
 
 
-def test_update_supersedes_in_one_transaction_and_advisory_carries_link(tmp_path):
+def test_update_supersedes_in_one_transaction(tmp_path):
     fake = FakeLLM([{"memories": []}])
     service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
     session = service.create_session("curator-supersede")
@@ -308,13 +240,6 @@ def test_update_supersedes_in_one_transaction_and_advisory_carries_link(tmp_path
     assert superseded.superseded_by_id == new_row.id
     all_rows = service.store.list_curated_memories(session.id, limit=32)
     assert [row.id for row in all_rows] == [old.id, new_row.id]
-
-    items = _advisories_v2(service, session.id)
-    assert len(items) == 2
-    old_item, new_item = items
-    assert new_item["content"] == new_content
-    assert new_item["supersedes_advisory_id"] == old_item["advisory_id"]
-    assert old_item["supersedes_advisory_id"] is None
 
 
 def test_one_window_supersedes_a_memory_once_and_drops_duplicate_writes(tmp_path):
@@ -526,86 +451,16 @@ def test_prompt_renders_ids_speakers_and_bounded_context(tmp_path):
     assert f"[{third_id}] user, human (message): Carol confirms the timeline." in third_user
 
 
-# -- health ------------------------------------------------------------------
+# -- missing LLM -------------------------------------------------------------
 
 
-def test_health_state_machine_for_llm_failures_and_recovery(tmp_path):
-    fake = FakeLLM([CuratorLLMError("boom")])
-    service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
-    session = service.create_session("curator-health")
-    message_id = _ingest(service, session.id, "A fact for the health state machine.")
-
-    assert curator.status()["state"] == "ready"
-    assert curator.status()["reason_code"] is None
-
-    failed = curator.run_session(session.id)
-
-    assert failed.llm_errors == 1
-    degraded = curator.status()
-    assert degraded["state"] == "degraded"
-    assert degraded["reason_code"] == "curator_llm_error"
-    assert degraded["enabled"] is True
-    assert degraded["model"] == service.settings.chat_model
-    counters = degraded["counters"]
-    assert counters["llm_errors"] == 1
-    assert counters["sessions"] == 1
-
-    fake.responses = [{"memories": [_mem(message_id, "A fact for the health state machine.")]}]
-    recovered = curator.run_session(session.id)
-
-    assert recovered.windows == 1
-    assert curator.status()["state"] == "ready"
-    assert curator.status()["counters"]["runs"] == 2
-
-
-def test_missing_key_degrades_health_and_run_session_without_watermark_change(tmp_path):
-    settings = Settings(
-        data_dir=tmp_path / "memoryos",
-        rot_safe_budget=1_000,
-        memoryos_curator_enabled=True,
-    )
-    store = create_store(settings)
-    store.reset()
-    curator = Curator(store=store, settings=settings, llm=None)
-    service = MemoryOSService(store=store, settings=settings, curator=curator)
+def test_missing_llm_leaves_the_watermark_unchanged(tmp_path):
+    service, curator = _service(tmp_path, None)
     session = service.create_session("curator-no-key")
     _ingest(service, session.id, "Pending until a key is configured.")
-
-    status = curator.status()
-
-    assert status["state"] == "degraded"
-    assert status["reason_code"] == "curator_llm_key_missing"
 
     result = curator.run_session(session.id)
 
     assert result.status == "llm_unavailable"
+    assert result.error_code == "curator_llm_key_missing"
     assert service.store.get_curator_state(session.id) is None
-
-
-# -- integration -------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("kind", "advisory_kind"),
-    [
-        ("fact", "room_fact"),
-        ("lesson", "room_fact"),
-        ("decision", "room_decision"),
-        ("rule", "project_rule"),
-        ("preference", "user_preference"),
-    ],
-)
-def test_memory_kind_maps_to_advisory_kind(tmp_path, kind, advisory_kind):
-    statement = f"A durable {kind} statement for mapping."
-    fake = FakeLLM([{"memories": []}])
-    service, curator = _service(tmp_path, fake, memoryos_curator_window_messages=1)
-    session = service.create_session(f"curator-kind-{kind}")
-    message_id = _ingest(service, session.id, statement)
-    fake.responses = [
-        {"memories": [_mem(message_id, statement, kind=kind, topic_key=f"test.{kind}")]}
-    ]
-
-    assert curator.run_session(session.id).added == 1
-    items = _advisories_v2(service, session.id)
-
-    assert items[0]["kind"] == advisory_kind
