@@ -1,5 +1,9 @@
 from unittest.mock import patch
 
+import pytest
+from fastapi.testclient import TestClient
+
+from memoryos_lite.api.app import app, get_service
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.archival_vector import LocalArchivalVectorStore
@@ -14,7 +18,7 @@ from memoryos_lite.store import create_store
 def test_v3_build_context_trace_includes_component_accounting_and_final_context_trace(
     tmp_path,
 ):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
+    settings = Settings(data_dir=tmp_path / ".memoryos")
     service = MemoryOSService(settings=settings)
     session = service.create_session("v3-accounting")
     service.ingest(
@@ -71,34 +75,36 @@ def test_service_uses_local_archival_vectors_without_qdrant(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Error recovery mechanisms (evbundle_6ef398723414454ba7212973e08e05f5)
-# Tests: retry logic, graceful degradation, state preservation under failure.
+# Failures are not degraded inside the service: build-context answers a plain
+# 500 (no exception text) and the next request is unaffected.
 # ---------------------------------------------------------------------------
 
 
-def test_v3_context_composer_retry_then_degrades_to_recall_pipeline(tmp_path):
-    settings = Settings(
-        data_dir=tmp_path / ".memoryos",
-        memoryos_memory_arch="v3",
-        memoryos_recovery_max_attempts=2,
-        memoryos_recovery_initial_delay_s=0,
-    )
-    store = create_store(settings)
-    store.reset()
-    service = MemoryOSService(store=store, settings=settings)
-    service.recovery._sleep = lambda _delay: None
-    session = service.create_session("v3-recovery")
+@pytest.mark.parametrize(
+    ("target", "method"),
+    [
+        ("v3_context_composer", "build"),
+        ("recall_pipeline", "build_context"),
+        ("store", "list_episodes"),
+    ],
+)
+def test_build_context_failure_is_a_plain_500_and_leaves_no_state(tmp_path, target, method):
+    service = MemoryOSService(settings=Settings(data_dir=tmp_path / ".memoryos"))
+    session = service.create_session("fault-injection")
     service.ingest(session.id, MessageCreate(role=Role.USER, content="Alice lives in Shanghai."))
+    request = {"task": "Where does Alice live?", "budget": 200}
+    app.dependency_overrides[get_service] = lambda: service
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        with patch.object(
+            getattr(service, target), method, side_effect=RuntimeError("secret /data/path")
+        ):
+            failed = client.post(f"/sessions/{session.id}/build-context", json=request)
+        recovered = client.post(f"/sessions/{session.id}/build-context", json=request)
+    finally:
+        app.dependency_overrides.clear()
 
-    with patch.object(
-        service.v3_context_composer,
-        "build",
-        side_effect=TimeoutError("temporary composer outage"),
-    ):
-        context = service.build_context(session.id, "Where does Alice live?", budget=200)
-
-    assert context.session_id == session.id
-    traces = service.store.list_traces(session.id)
-    recovery_events = [t for t in traces if t.event_type == "recovery_event"]
-    assert any(t.payload["kind"] == "retry_scheduled" for t in recovery_events)
-    assert any(t.event_type == "context_degraded" for t in traces)
+    assert failed.status_code == 500
+    assert "secret" not in failed.text
+    assert recovered.status_code == 200
+    assert "Shanghai" in str(recovered.json()["retrieved_evidence"])

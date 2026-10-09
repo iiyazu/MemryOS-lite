@@ -40,14 +40,6 @@ class Settings(BaseSettings):
     opencode_session_id: str | None = None
     memoryos_llm_timeout_s: float = 60.0
     memoryos_archival_vector_enabled: bool = True
-    memoryos_recovery_enabled: bool = True
-    memoryos_recovery_max_attempts: int = 3
-    memoryos_recovery_initial_delay_s: float = 0.05
-    memoryos_recovery_max_delay_s: float = 2.0
-    memoryos_recovery_backoff_multiplier: float = 2.0
-    memoryos_recovery_circuit_failure_threshold: int = 5
-    memoryos_recovery_circuit_recovery_timeout_s: float = 60.0
-    memoryos_recovery_graceful_degradation: bool = True
 
     # Curator (LLM-extracted durable memories; opt-in)
     memoryos_curator_enabled: bool = False
@@ -61,32 +53,8 @@ class Settings(BaseSettings):
 
     # Middleware
     memoryos_api_key: str | None = None
-    memoryos_cors_origins: str = "*"
-    memoryos_log_format: str = "text"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
-
-    @field_validator(
-        "memoryos_recovery_max_attempts",
-        "memoryos_recovery_circuit_failure_threshold",
-    )
-    @classmethod
-    def validate_recovery_positive_ints(cls, value: int) -> int:
-        if value <= 0:
-            raise ValueError("recovery attempt and circuit threshold settings must be positive")
-        return value
-
-    @field_validator(
-        "memoryos_recovery_initial_delay_s",
-        "memoryos_recovery_max_delay_s",
-        "memoryos_recovery_backoff_multiplier",
-        "memoryos_recovery_circuit_recovery_timeout_s",
-    )
-    @classmethod
-    def validate_recovery_non_negative_floats(cls, value: float) -> float:
-        if value < 0:
-            raise ValueError("recovery timing settings must be non-negative")
-        return value
 
     @field_validator(
         "memoryos_curator_window_messages",
