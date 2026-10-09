@@ -1,4 +1,4 @@
-"""Retrieval layer: BM25 lexical + embedding cosine + RRF hybrid fusion + LLM rewrite/rerank."""
+"""Retrieval layer: BM25 lexical + embedding cosine + RRF hybrid fusion."""
 
 from memoryos_lite.retrieval.archival_searcher import (
     ArchivalPassageHit,
@@ -25,8 +25,6 @@ from memoryos_lite.retrieval.query_analyzer import (
     QueryAnalyzer,
     QueryKind,
 )
-from memoryos_lite.retrieval.query_rewriter import QueryRewriter
-from memoryos_lite.retrieval.reranker import LLMReranker
 
 try:
     from memoryos_lite.retrieval.item_searcher import ItemSearcher, ItemSearchHit
@@ -56,12 +54,10 @@ __all__ = [
     "HybridSearcher",
     "ItemSearchHit",
     "ItemSearcher",
-    "LLMReranker",
     "LexicalSearcher",
     "QueryAnalysis",
     "QueryAnalyzer",
     "QueryKind",
-    "QueryRewriter",
     "SearchHit",
     "Searcher",
     "RecallMemorySearcher",

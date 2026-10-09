@@ -7,16 +7,7 @@ from pydantic import ValidationError
 from memoryos_lite.config import Settings
 
 
-def test_redis_cache_config_defaults_to_disabled() -> None:
-    settings = Settings()
-
-    assert settings.memoryos_redis_url is None
-    assert settings.memoryos_recall_cache_enabled is False
-    assert settings.memoryos_cache_namespace == "memoryos:v1"
-    assert settings.memoryos_cache_default_ttl_s == 300
-
-
-def test_redis_cache_config_preserves_memory_defaults() -> None:
+def test_config_memory_defaults() -> None:
     settings = Settings()
 
     assert settings.resolved_memory_arch == "v3"
@@ -30,33 +21,6 @@ def test_redis_is_not_a_core_dependency() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert "redis" not in "\n".join(pyproject["project"]["dependencies"])
-
-
-def test_redis_cache_ttl_must_be_positive() -> None:
-    with pytest.raises(ValidationError):
-        Settings(memoryos_cache_default_ttl_s=0)
-
-
-def test_derived_cache_scope_ttl_defaults_are_positive() -> None:
-    settings = Settings()
-
-    assert settings.memoryos_cache_query_analysis_ttl_s == 3600
-    assert settings.memoryos_cache_recall_candidates_ttl_s == 300
-    assert settings.memoryos_cache_context_package_ttl_s == 300
-
-
-def test_derived_cache_scope_ttls_must_be_positive() -> None:
-    with pytest.raises(ValidationError):
-        Settings(memoryos_cache_query_analysis_ttl_s=0)
-    with pytest.raises(ValidationError):
-        Settings(memoryos_cache_recall_candidates_ttl_s=0)
-    with pytest.raises(ValidationError):
-        Settings(memoryos_cache_context_package_ttl_s=0)
-
-
-def test_redis_cache_namespace_must_not_be_empty() -> None:
-    with pytest.raises(ValidationError):
-        Settings(memoryos_cache_namespace=":")
 
 
 def test_curator_defaults_to_disabled_with_bounded_windows() -> None:

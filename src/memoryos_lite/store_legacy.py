@@ -3,12 +3,11 @@
 import json
 import re
 from contextlib import AbstractContextManager
-from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Engine, delete, func, select
+from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session as DbSession
 
 from memoryos_lite.schemas import (
@@ -401,58 +400,6 @@ class LegacyStoreMixin:
                 return False
             record.content = content
         return True
-
-    @staticmethod
-    def _watermark_part(
-        db: DbSession,
-        name: str,
-        id_column: Any,
-        timestamp_column: Any,
-        predicate: Any | None,
-    ) -> str:
-        stmt = select(func.count(id_column), func.max(timestamp_column))
-        if predicate is not None:
-            stmt = stmt.where(predicate)
-        count, latest = db.execute(stmt).one()
-        if isinstance(latest, datetime):
-            latest_text = latest.isoformat()
-        else:
-            latest_text = "none"
-        return f"{name}:{int(count or 0)}:{latest_text}"
-
-    @staticmethod
-    def _item_watermark_part(db: DbSession, session_id: str) -> str:
-        rows = list(
-            db.execute(
-                select(
-                    ItemRecord.id,
-                    ItemRecord.content,
-                    ItemRecord.source_message_ids_json,
-                    ItemRecord.created_at,
-                )
-                .where(ItemRecord.session_id == session_id)
-                .order_by(ItemRecord.id.asc())
-            )
-        )
-        latest = max((row.created_at for row in rows), default=None)
-        latest_text = latest.isoformat() if isinstance(latest, datetime) else "none"
-        digest_payload = [
-            {
-                "id": row.id,
-                "content": row.content,
-                "source_message_ids": row.source_message_ids_json,
-            }
-            for row in rows
-        ]
-        digest = sha256(
-            json.dumps(
-                digest_payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        return f"items:{len(rows)}:{latest_text}:{digest}"
 
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)

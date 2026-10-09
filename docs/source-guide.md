@@ -23,7 +23,7 @@ MemoryOSService
 
 | Path | Responsibility |
 |---|---|
-| `config.py` | Runtime settings, feature flags, LLM/Qdrant configuration. |
+| `config.py` | Runtime settings, feature flags, LLM configuration. |
 | `schemas.py` | Pydantic models for messages, episodes, pages, items, traces, context, evals. |
 | `store.py` | Thin public `MemoryStore` composition root and stable imports. |
 | `store_models.py` / `store_runtime.py` | SQLite schema, engine lifecycle, migrations, and transactions. |
