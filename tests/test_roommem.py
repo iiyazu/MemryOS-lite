@@ -476,7 +476,6 @@ def test_raw_arm_end_to_end_and_new_room_isolation(tmp_path, rooms_dir):
         out_dir=tmp_path / "out",
         arms=["raw"],
         fake_llm=True,
-        heuristic_advisories=True,
         scratch_root=tmp_path / "scratch",
     )
     rows = _read_results(tmp_path / "out")
@@ -504,11 +503,7 @@ def test_raw_arm_end_to_end_and_new_room_isolation(tmp_path, rooms_dir):
     read_side = summary["read_side"]["raw"]
     assert read_side["same_room"]["hit_at_8"]["mean"] == 1.0
     assert read_side["new_room_same_project"]["hit_at_8"]["mean"] == 0.0
-
-    heuristic = summary["write_side"]["raw"]["heuristic"]
-    assert heuristic["advisories"] >= 0
-    assert "gold_match_rate" in heuristic["rates"]
-    assert "noise_rate" in heuristic["rates"]
+    assert "raw" not in summary["write_side"]
 
 
 def test_substring_scoring_uses_probe_constraints(tmp_path, rooms_dir):

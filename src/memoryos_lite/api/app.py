@@ -83,7 +83,6 @@ def health(service: ServiceDep) -> dict[str, object]:
             semantic_ready = service.embedding_client.dim > 0
         except Exception:
             semantic_ready = False
-    external_governance = service.settings.resolved_agent_kernel == "external"
     return {
         "status": "ok",
         "capabilities": {
@@ -99,7 +98,6 @@ def health(service: ServiceDep) -> dict[str, object]:
             },
             "message_ingest": True,
             "curate": CURATE_SCHEMA,
-            "agentic_advisory": external_governance,
             "paging": service.settings.resolved_paging_mode != "off",
         },
         "curator": service.curator_status(),
@@ -193,27 +191,18 @@ def advisories(
     service: ServiceDep,
     version: int | None = None,
 ) -> dict[str, object]:
-    """Expose only bounded external-governance candidates to the Room host.
+    """Curated-memory advisories (``memoryos_external_advisories/v2``); needs ``version=2``."""
 
-    ``version`` omitted or ``1`` keeps the original deterministic v1 response;
-    ``version=2`` serves curated-memory advisories.
-    """
-
+    if version != 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported advisories version: {version}",
+        )
     try:
-        if version == 2:
-            return {
-                "schema": ADVISORY_SCHEMA_V2,
-                "items": service.list_curated_advisories(session_id),
-            }
-        if version not in (None, 1):
-            raise HTTPException(
-                status_code=400,
-                detail=f"unsupported advisories version: {version}",
-            )
-        items = service.list_external_advisories(session_id)
+        items = service.list_curated_advisories(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"schema": "memoryos_external_advisories/v1", "items": items}
+    return {"schema": ADVISORY_SCHEMA_V2, "items": items}
 
 
 @app.post("/sessions/{session_id}/ask", response_model=AskResponse)

@@ -11,22 +11,12 @@ Default behavior now uses `v3`.
   `MEMORYOS_RECALL_PIPELINE=v2`; `v1` remains an explicit compatibility path.
 - The v3 layered composer is the default memory architecture.
 - `MEMORYOS_MEMORY_ARCH=v1` remains available as an explicit fallback.
-- The kernel is `off` by default. `external` runs maintenance analysis in
-  advisory-only mode, exposing source-backed proposals through
-  `/sessions/{id}/advisories` for a host (such as xmuse) to accept or ignore
-  without MemoryOS mutating its own authority. The in-process kernel
-  execution stack was removed.
 
 Why this is acceptable:
 
 - Existing API/eval behavior stays stable when callers pin `v1`.
 - v1 compatibility can still be evaluated explicitly without changing the default route.
 - v3 public smoke now emits layered diagnostics and is the default path.
-
-Future direction:
-
-- Keep the kernel advisory-only; any broader adoption should wait for larger
-  LongMemEval/LoCoMo slices and a host process that owns execution.
 
 ## 2. LoCoMo Remains Hard
 
@@ -95,8 +85,8 @@ production agent runtime.
 
 Current constraints:
 
-- Real agent execution belongs to the host process (`MEMORYOS_AGENT_KERNEL=external`
-  only emits advisories; `/curate` only returns memory versions).
+- Real agent execution belongs to the host process (`/curate` only returns memory
+  versions; curated advisories are suggestions the host may adopt).
 - Real LLM usage is optional and requires explicit API keys.
 - `/curate` keeps no state and no checkpoint: a request that times out on the
   caller side is simply sent again. Curation quality (missed lessons,

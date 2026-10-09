@@ -34,7 +34,6 @@ class Settings(BaseSettings):
     memoryos_item_evidence_max: int = 3
     memoryos_evidence_representation: str = "legacy"
     memoryos_memory_arch: str = "v3"
-    memoryos_agent_kernel: str = "off"
     memoryos_recall_pipeline: str = "v2"
     memoryos_trace_mode: str = "verbose"
     memoryos_evidence_direct_raw_fallback: bool = True
@@ -179,13 +178,6 @@ class Settings(BaseSettings):
         val = self.memoryos_memory_arch.strip().lower()
         if val not in {"v1", "v3"}:
             raise ValueError("MEMORYOS_MEMORY_ARCH must be 'v1' or 'v3'")
-        return val
-
-    @property
-    def resolved_agent_kernel(self) -> str:
-        val = self.memoryos_agent_kernel.strip().lower()
-        if val not in {"off", "external"}:
-            raise ValueError("MEMORYOS_AGENT_KERNEL must be 'off' or 'external'")
         return val
 
     @property

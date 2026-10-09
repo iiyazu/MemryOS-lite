@@ -405,7 +405,7 @@ def test_api_compact_source_evidence_uses_real_v3_archive(tmp_path):
         app.dependency_overrides.clear()
 
 
-def test_api_advisories_routes_v1_default_and_v2_schema(service):
+def test_api_advisories_serves_v2_only(service):
     session = service.create_session("advisories-routing")
     statement = "Helios launches in Lisbon."
     service.store.apply_curator_window(
@@ -425,12 +425,9 @@ def test_api_advisories_routes_v1_default_and_v2_schema(service):
     app.dependency_overrides[get_service] = lambda: service
     client = TestClient(app)
     try:
-        default = client.get(f"/sessions/{session.id}/advisories")
-        assert default.status_code == 200
-        assert default.json()["schema"] == "memoryos_external_advisories/v1"
-
-        explicit_v1 = client.get(f"/sessions/{session.id}/advisories", params={"version": 1})
-        assert explicit_v1.json() == default.json()
+        for params in ({}, {"version": 1}):
+            v1 = client.get(f"/sessions/{session.id}/advisories", params=params)
+            assert v1.status_code == 400
 
         v2 = client.get(f"/sessions/{session.id}/advisories", params={"version": 2})
         assert v2.status_code == 200

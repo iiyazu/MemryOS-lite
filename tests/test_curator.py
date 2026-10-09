@@ -585,58 +585,6 @@ def test_missing_key_degrades_health_and_run_session_without_watermark_change(tm
 # -- integration -------------------------------------------------------------
 
 
-def test_curator_suppresses_heuristic_maintenance_advisories(tmp_path):
-    message = "Alice prefers concise status updates."
-
-    heuristic_settings = Settings(
-        data_dir=tmp_path / "heuristic",
-        rot_safe_budget=1_000,
-        memoryos_agent_kernel="external",
-    )
-    heuristic_store = create_store(heuristic_settings)
-    heuristic_store.reset()
-    heuristic_service = MemoryOSService(
-        store=heuristic_store,
-        settings=heuristic_settings,
-    )
-    heuristic_session = heuristic_service.create_session("heuristic")
-    heuristic_service.ingest(
-        heuristic_session.id,
-        MessageCreate(role=Role.USER, content=message),
-    )
-    heuristic_service.build_context(heuristic_session.id, "What does Alice prefer?", budget=300)
-
-    assert heuristic_service.list_external_advisories(heuristic_session.id)
-
-    curated_settings = Settings(
-        data_dir=tmp_path / "curated",
-        rot_safe_budget=1_000,
-        memoryos_agent_kernel="external",
-        memoryos_curator_enabled=True,
-    )
-    curated_store = create_store(curated_settings)
-    curated_store.reset()
-    curated_service = MemoryOSService(
-        store=curated_store,
-        settings=curated_settings,
-        curator=Curator(
-            store=curated_store,
-            settings=curated_settings,
-            llm=FakeLLM(),
-        ),
-    )
-    curated_session = curated_service.create_session("curated")
-    curated_service.ingest(
-        curated_session.id,
-        MessageCreate(role=Role.USER, content=message),
-    )
-    curated_service.build_context(curated_session.id, "What does Alice prefer?", budget=300)
-
-    assert curated_service.list_external_advisories(curated_session.id) == []
-    trace_types = [trace.event_type for trace in curated_store.list_traces(curated_session.id)]
-    assert not any(event_type.startswith("maintenance_") for event_type in trace_types)
-
-
 @pytest.mark.parametrize(
     ("kind", "advisory_kind"),
     [

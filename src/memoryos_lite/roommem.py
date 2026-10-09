@@ -14,9 +14,7 @@ Arms
 ----
 ``raw``
     Mirrors the xmuse Room host today: session messages plus one archive
-    document per message (the document outbox), archive-only retrieval, and
-    optionally ``MEMORYOS_AGENT_KERNEL=external`` advisories as the write-side
-    heuristic baseline (``--heuristic-advisories``).
+    document per message (the document outbox) and archive-only retrieval.
 ``raw_project``
     Like ``raw``, but every probe session also gets the per-message archive
     documents of all rooms in the same project attached (own-room documents
@@ -2173,14 +2171,12 @@ def _room_settings(
     data_dir: Path,
     *,
     embedding: str,
-    kernel_external: bool,
 ) -> Settings:
     kwargs: dict[str, Any] = {
         "data_dir": data_dir,
         "memoryos_memory_arch": "v3",
         "memoryos_recall_pipeline": "v2",
         "memoryos_paging_mode": "off",
-        "memoryos_agent_kernel": "external" if kernel_external else "off",
         "memoryos_embedding_provider": "fastembed" if embedding == "fastembed" else "none",
     }
     return Settings(**kwargs)
@@ -2294,101 +2290,6 @@ def _raw_project_id_selector(room: Room) -> Callable[[RoomMessage], str]:
     return lambda message: _raw_project_document_id(room, message)
 
 
-def _advisory_message_ids(
-    advisory: Mapping[str, Any],
-    message_id_map: Mapping[str, str],
-) -> set[str]:
-    reverse = {memoryos_id: dataset_id for dataset_id, memoryos_id in message_id_map.items()}
-    message_ids: set[str] = set()
-    refs = advisory.get("source_refs")
-    if not isinstance(refs, list):
-        return message_ids
-    for ref in refs:
-        if not isinstance(ref, dict):
-            continue
-        source_id = str(ref.get("source_id", ""))
-        if ref.get("source_type") == "message" and source_id in reverse:
-            message_ids.add(reverse[source_id])
-        elif source_id.startswith(XMUSE_ACTIVITY_DOC_PREFIX):
-            message_ids.add(source_id[len(XMUSE_ACTIVITY_DOC_PREFIX) :])
-    return message_ids
-
-
-def _score_heuristic_advisories(
-    room: Room,
-    advisories: Sequence[Mapping[str, Any]],
-    message_id_map: Mapping[str, str],
-) -> dict[str, Any]:
-    gold_with_match: set[str] = set()
-    matched_advisories = 0
-    cited_noise: dict[str, int] = {}
-    noise_ids = room.noise_message_ids()
-    noise_types = room.noise_type_by_message()
-    for advisory in advisories:
-        source_ids = _advisory_message_ids(advisory, message_id_map)
-        matched = False
-        for memory in room.gold_memories:
-            if source_ids & {source.message_id for source in memory.sources}:
-                gold_with_match.add(memory.id)
-                matched = True
-        if matched:
-            matched_advisories += 1
-        for message_id in source_ids:
-            if message_id in noise_ids:
-                noise_type = noise_types.get(message_id, "unknown")
-                cited_noise[noise_type] = cited_noise.get(noise_type, 0) + 1
-    total = len(advisories)
-    return {
-        "advisories": total,
-        "matched": matched_advisories,
-        "gold": len(room.gold_memories),
-        "golds_with_matches": len(gold_with_match),
-        "noise_types": {
-            name: {"cited_as_source": cited_noise[name]} for name in sorted(cited_noise)
-        },
-        "rates": {
-            "gold_match_rate": len(gold_with_match) / len(room.gold_memories),
-            "noise_rate": ((total - matched_advisories) / total) if total else None,
-        },
-    }
-
-
-def _pool_heuristic(per_room: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    totals = {
-        "advisories": 0,
-        "matched": 0,
-        "gold": 0,
-        "golds_with_matches": 0,
-    }
-    noise_types: dict[str, dict[str, int]] = {}
-    for payload in per_room:
-        for key in totals:
-            value = payload.get(key)
-            if isinstance(value, int) and not isinstance(value, bool):
-                totals[key] += value
-        for name, stats in (payload.get("noise_types") or {}).items():
-            if not isinstance(stats, dict):
-                continue
-            merged = noise_types.setdefault(name, {"cited_as_source": 0})
-            value = stats.get("cited_as_source")
-            if isinstance(value, int) and not isinstance(value, bool):
-                merged["cited_as_source"] += value
-    return {
-        **totals,
-        "noise_types": {name: noise_types[name] for name in sorted(noise_types)},
-        "rates": {
-            "gold_match_rate": (
-                totals["golds_with_matches"] / totals["gold"] if totals["gold"] else None
-            ),
-            "noise_rate": (
-                ((totals["advisories"] - totals["matched"]) / totals["advisories"])
-                if totals["advisories"]
-                else None
-            ),
-        },
-    }
-
-
 @dataclass(frozen=True)
 class _RawProject:
     """Shared raw-archive state for one project, built once per repeat.
@@ -2436,7 +2337,6 @@ def _build_raw_project_context(
         settings=_room_settings(
             scratch_dir / "raw_project" / f"{project or 'default'}-r{repeat}",
             embedding=embedding,
-            kernel_external=False,
         )
     )
     sessions: dict[str, str] = {}
@@ -2557,7 +2457,6 @@ def _build_shared_memory_project(
         settings=_room_settings(
             scratch_dir / f"{arm}_shared" / f"{project or 'default'}-r{repeat}",
             embedding=embedding,
-            kernel_external=False,
         )
     )
     sessions: dict[str, str] = {}
@@ -2672,7 +2571,6 @@ def _run_room_arm(
     judge: RoomMemJudge,
     scratch_dir: Path,
     embedding: str,
-    heuristic_advisories: bool,
     curated_source: CuratedMemorySource | None,
     raw_project: _RawProject | None = None,
     shared_memory: _SharedMemoryProject | None = None,
@@ -2680,7 +2578,6 @@ def _run_room_arm(
     evidence_modes: Sequence[str] = ("plain",),
     rewrite_llm: CuratorLLM | None = None,
 ) -> _RoomArmResult:
-    kernel_external = heuristic_advisories and arm == "raw"
     views: list[CuratedMemoryView] = []
     curator_counts: dict[str, int] = {}
     cross_scope_docs: dict[str, str] = {}
@@ -2709,7 +2606,6 @@ def _run_room_arm(
             settings=_room_settings(
                 scratch_dir / arm / f"{room.room_id}-r{repeat}",
                 embedding=embedding,
-                kernel_external=kernel_external,
             )
         )
         session = service.create_session(f"roommem {room.room_id} ({arm})")
@@ -2778,7 +2674,6 @@ def _run_room_arm(
             matched_by_gold=matched_by_gold,
             write_side=write_side,
         )
-    advisories: dict[str, Mapping[str, Any]] = {}
 
     # The oracle arm derives marks from the gold supersede chain: the ceiling of
     # demotion/annotation when every supersede is known.
@@ -2843,10 +2738,6 @@ def _run_room_arm(
                     superseded=marks if mode == "demote" else (),
                 )
                 variants.append((label, _evidence_items(envelope), envelope))
-        if kernel_external and service is not None:
-            for advisory in service.list_external_advisories(target_session):
-                advisory_id = str(advisory.get("advisory_id", ""))
-                advisories.setdefault(advisory_id, advisory)
 
         for label, evidence, envelope in variants:
             results.append(
@@ -2865,12 +2756,6 @@ def _run_room_arm(
                 )
             )
 
-    if kernel_external:
-        write_side = _score_heuristic_advisories(
-            room,
-            list(advisories.values()),
-            message_id_map,
-        )
     return _RoomArmResult(results=results, write_side=write_side, memories=memories)
 
 
@@ -3146,13 +3031,12 @@ def render_summary_md(summary: Mapping[str, Any]) -> str:
     lines: list[str] = ["# RoomMem evaluation summary", ""]
     lines.append(
         "Run: arms={arms}; rooms={rooms}; repeats={repeats}; embedding={embedding}; "
-        "llm={llm}; heuristic_advisories={heuristic}; curator_window={curator_window}.".format(
+        "llm={llm}; curator_window={curator_window}.".format(
             arms=",".join(run.get("arms", [])),
             rooms=",".join(run.get("rooms", [])),
             repeats=run.get("repeats"),
             embedding=run.get("embedding"),
             llm=run.get("llm"),
-            heuristic=str(bool(run.get("heuristic_advisories"))).lower(),
             curator_window=run.get("curator_window", "-"),
         )
     )
@@ -3209,19 +3093,6 @@ def render_summary_md(summary: Mapping[str, Any]) -> str:
     write_side = summary.get("write_side") or {}
     for arm in sorted(write_side):
         payload = write_side[arm]
-        if arm == "raw":
-            heuristic = payload.get("heuristic") or {}
-            rates = heuristic.get("rates") or {}
-            lines.append(
-                "| raw (heuristic advisories) | {advisories} | {matched} | - | {gold_rate} | "
-                "- | {noise_rate} | - | - | - | - | - | - |".format(
-                    advisories=heuristic.get("advisories", 0),
-                    matched=heuristic.get("matched", 0),
-                    gold_rate=_format_number(rates.get("gold_match_rate")),
-                    noise_rate=_format_number(rates.get("noise_rate")),
-                )
-            )
-            continue
         rates = payload.get("rates") or {}
         judged = payload.get("unmatched_judged") or {}
         lines.append(
@@ -3433,7 +3304,6 @@ def run_roommem(
     arms: Sequence[str] = ("raw", "oracle"),
     repeats: int = 1,
     embedding: str = "none",
-    heuristic_advisories: bool = False,
     curated_source_name: str = "default",
     curator_window: int = 12,
     curated_llm_factory: Callable[[Settings], CuratorLLM] | None = None,
@@ -3599,7 +3469,6 @@ def run_roommem(
                             judge=judge,
                             scratch_dir=scratch_dir,
                             embedding=embedding,
-                            heuristic_advisories=heuristic_advisories,
                             curated_source=curated_source,
                             raw_project=raw_project_contexts.get(room.project),
                             shared_memory=shared_contexts.get(room.project),
@@ -3618,19 +3487,7 @@ def run_roommem(
     write_side: dict[str, Any] = {}
     for arm in selected_arms:
         payloads = write_side_per_room[arm]
-        if arm == "raw":
-            heuristic = _pool_heuristic(
-                [payload for payload in payloads if payload.get("advisories") is not None]
-            )
-            write_side[arm] = {
-                "heuristic": heuristic,
-                "note": (
-                    "Heuristic baseline: MEMORYOS_AGENT_KERNEL=external advisories collected "
-                    "after each probe's build-context; only present with "
-                    "--heuristic-advisories."
-                ),
-            }
-        elif payloads:
+        if payloads:
             pooled = pool_write_side(payloads)
             if arm == "curated":
                 pooled["curator_rooms"] = _curator_counters_by_room(payloads)
@@ -3650,7 +3507,6 @@ def run_roommem(
         "rooms": [room.room_id for room in rooms],
         "repeats": repeats,
         "embedding": embedding,
-        "heuristic_advisories": heuristic_advisories,
         "llm": llm_label or ("fake" if fake_llm else "custom"),
         "curated_source": curated_source_name if "curated" in selected_arms else None,
         "curated_evidence": (
