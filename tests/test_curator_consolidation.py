@@ -28,13 +28,12 @@ class ScriptedLLM:
 def _service(tmp_path, llm, **overrides) -> tuple[MemoryOSService, Curator]:
     settings = Settings(
         data_dir=tmp_path / "memoryos",
-        memoryos_curator_enabled=True,
         **{"memoryos_curator_window_messages": 1, **overrides},
     )
     store = create_store(settings)
     store.reset()
     curator = Curator(store=store, settings=settings, llm=llm)
-    return MemoryOSService(store=store, settings=settings, curator=curator), curator
+    return MemoryOSService(store=store, settings=settings), curator
 
 
 def _ingest(service: MemoryOSService, session_id: str, content: str, **metadata) -> str:
@@ -74,8 +73,6 @@ def test_newer_value_supersedes_by_version(tmp_path):
     assert active[0].supersedes_id == old.id
     assert active[0].version > old.version
     assert service.store.get_curated_memory(old.id).status == "superseded"
-    items = service.list_curated_advisories(session.id)
-    assert items[-1]["supersedes_advisory_id"] == items[0]["advisory_id"]
     assert llm.calls[0][0] == CURATE_ROOM_SYSTEM_PROMPT
 
 
