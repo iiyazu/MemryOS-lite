@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from memoryos_lite import __version__
 from memoryos_lite.api import app as api_app_module
 from memoryos_lite.api.app import app, get_service
 from memoryos_lite.config import Settings
@@ -219,6 +220,7 @@ def test_health_advertises_build_context_profiles():
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ok"
+    assert payload["version"] == __version__ == app.version
     assert payload["capabilities"]["build_context_profiles"] == [
         "full",
         "source_evidence/v1",
