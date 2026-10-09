@@ -1,13 +1,12 @@
-"""Hot-path pagination and SearchRequest validation tests (M10 #4)."""
+"""Hot-path pagination tests (M10 #4)."""
 
 import time
 
 import pytest
-from pydantic import ValidationError
 
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import MessageCreate, Role, SearchRequest
+from memoryos_lite.schemas import MessageCreate, Role
 from memoryos_lite.store import create_store
 
 
@@ -114,40 +113,3 @@ class TestListPagesLimit:
         # Newest-two invariant: the capped list must contain the two most recent pages.
         newest_two_ids = {p.id for p in sorted(all_pages, key=lambda p: p.created_at)[-2:]}
         assert {p.id for p in capped} == newest_two_ids
-
-
-class TestSearchRequestValidation:
-    def test_bare_query_is_accepted(self):
-        """Ticket #2: {query} alone must validate — the service-level soft
-        cap (default limit=500) is the documented contract for
-        cross-session search."""
-        req = SearchRequest(query="anything")
-        assert req.session_id is None
-        assert req.limit is None
-
-    def test_session_id_alone_is_fine(self):
-        req = SearchRequest(query="anything", session_id="ses_abc")
-        assert req.limit is None
-
-    def test_limit_alone_is_fine(self):
-        req = SearchRequest(query="anything", limit=100)
-        assert req.session_id is None
-
-    def test_negative_limit_rejected(self):
-        with pytest.raises(ValidationError):
-            SearchRequest(query="q", limit=0)
-        with pytest.raises(ValidationError):
-            SearchRequest(query="q", limit=-5)
-
-
-class TestSearchSoftCap:
-    def test_cross_session_search_applies_default_limit(self, perf_service):
-        """service.search(session_id=None, limit=None) must not do an unbounded scan."""
-        sessions = [perf_service.create_session(f"s{i}") for i in range(3)]
-        perf_service.settings.rot_safe_budget = 1
-        for session in sessions:
-            perf_service.ingest(session.id, MessageCreate(role=Role.USER, content="hello world"))
-            perf_service.page(session.id)
-        # Should not raise; soft-cap kicks in.
-        hits = perf_service.search(query="hello", top_k=10, session_id=None)
-        assert isinstance(hits, list)

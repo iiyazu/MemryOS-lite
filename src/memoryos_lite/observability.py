@@ -1,8 +1,7 @@
 """Prometheus business metrics for MemoryOS Lite.
 
 All metrics are defined at module level. Engine code imports and
-increments them at relevant call sites. The /metrics endpoint is
-exposed via prometheus_client ASGI app mounted in api/app.py.
+increments them at relevant call sites. No route exposes them.
 """
 
 from __future__ import annotations
