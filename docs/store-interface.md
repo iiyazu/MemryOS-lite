@@ -191,39 +191,5 @@ uv run alembic upgrade head
 
 ## Embeddings
 
-Embeddings are stored as JSON text in SQLite via `EmbeddingType`. Qdrant can be
-enabled for ANN/vector experiments with `QDRANT_URL`, but SQLite remains the
-relational source of truth.
-
-## Derived Cache Watermarks
-
-`session_memory_watermark(session_id)` returns a compact revision marker for
-derived cache keys. It is not authoritative state. Cache users include it in
-Redis keys so message, episode, page, item, core-memory, or archival mutations
-select a new key and force recomputation from SQLite.
-
-## Derived Cache Semantics
-
-Derived cache is optional and never authoritative. SQLite remains the source of
-truth for memory state and source references; cached values are accelerators for
-recomputable retrieval products.
-
-The current derived cache may store query analysis results, recall candidate
-lists, and recall context packages. Query-analysis keys include the memory
-architecture, recall pipeline, settings fingerprint, query hash, and scope
-parameters. Recall-candidate and context-package keys additionally include a
-watermark derived from SQLite state. When the watermark changes, callers select
-a new key and recompute from SQLite. TTLs remain a fallback stale guard for
-entries that are otherwise well-formed.
-
-Redis read/write failures, corrupt entries, stale entries, and validation
-failures fall back to SQLite recomputation. Cache diagnostics are surfaced in
-`ContextPackage.metadata` and in v3 context layer metadata so callers can audit
-hit, miss, stale, corrupt, invalid, disabled, and write-status behavior without
-treating cache contents as state.
-
-For the v3 composer path, the recall layer may reuse `RecallPipeline` internally
-even when the top-level `MEMORYOS_RECALL_PIPELINE` route is `v1`. Derived cache
-I/O is still gated by `MEMORYOS_RECALL_CACHE_ENABLED`; with that flag disabled,
-the internal recall layer reports disabled cache diagnostics and performs no
-cache reads or writes.
+Embeddings are stored as JSON text in SQLite via `EmbeddingType`; archival vectors are
+kept in a process-local index rebuilt from SQLite.

@@ -56,22 +56,8 @@ class Settings(BaseSettings):
     opencode_wire_api: str = "responses"
     # Sent as x-opencode-session; unset means one generated id per client.
     opencode_session_id: str | None = None
-    memoryos_rewrite_enabled: bool = False
-    memoryos_rerank_enabled: bool = False
     memoryos_llm_timeout_s: float = 60.0
-    memoryos_qdrant_timeout_s: float = 10.0
-    memoryos_redis_url: str | None = None
-    memoryos_recall_cache_enabled: bool = False
-    memoryos_cache_namespace: str = "memoryos:v1"
-    memoryos_cache_default_ttl_s: int = 300
-    memoryos_cache_query_analysis_ttl_s: int = 3600
-    memoryos_cache_recall_candidates_ttl_s: int = 300
-    memoryos_cache_context_package_ttl_s: int = 300
-    qdrant_url: str | None = None
-    qdrant_collection: str = "memoryos_pages"
     memoryos_archival_vector_enabled: bool = True
-    memoryos_archival_qdrant_url: str | None = None
-    memoryos_archival_qdrant_collection: str = "memoryos_archival_passages"
     memoryos_recovery_enabled: bool = True
     memoryos_recovery_max_attempts: int = 3
     memoryos_recovery_initial_delay_s: float = 0.05
@@ -97,25 +83,6 @@ class Settings(BaseSettings):
     memoryos_log_format: str = "text"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
-
-    @field_validator(
-        "memoryos_cache_default_ttl_s",
-        "memoryos_cache_query_analysis_ttl_s",
-        "memoryos_cache_recall_candidates_ttl_s",
-        "memoryos_cache_context_package_ttl_s",
-    )
-    @classmethod
-    def validate_cache_ttl(cls, value: int) -> int:
-        if value <= 0:
-            raise ValueError("cache TTL settings must be positive")
-        return value
-
-    @field_validator("memoryos_cache_namespace")
-    @classmethod
-    def validate_cache_namespace(cls, value: str) -> str:
-        if not value.strip(":").strip():
-            raise ValueError("MEMORYOS_CACHE_NAMESPACE must not be empty")
-        return value
 
     @field_validator(
         "memoryos_recovery_max_attempts",

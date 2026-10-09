@@ -8,7 +8,7 @@ Current defaults are `MEMORYOS_MEMORY_ARCH=v3`, `MEMORYOS_RECALL_PIPELINE=v2`, a
 
 ## Runtime boundaries
 
-- SQLite is authoritative. Page mirrors, trace JSONL, Redis cache, Qdrant indexes, and benchmark reports are derived or experimental.
+- SQLite is authoritative. Page mirrors, trace JSONL, the in-process vector index, and benchmark reports are derived or experimental.
 - v3 composes task, recall, archival, and recent layers. Source references and bounded context are part of the contract.
 - v2 recall uses episode-first evidence retrieval. `v1` memory and recall paths remain explicit compatibility choices, not defaults.
 - Stateless `/curate` uses a LangGraph repair loop (remote extra) and keeps no state; it is not an agent runtime.
@@ -61,7 +61,7 @@ Use Git history for superseded plans and implementation chronology; do not recre
 
 - Preserve source attribution, bounded context, SQLite authority, migration compatibility, and deterministic offline fallbacks.
 - Keep optional integrations behind explicit settings and fail safely when an external dependency is absent.
-- Do not make Redis, Qdrant, an LLM provider, or an agent runtime authoritative.
+- Do not make a vector index, an LLM provider, or an agent runtime authoritative.
 - Test behavior and interfaces; avoid tests that freeze file inventories, documentation wording, timings, or total passing counts.
 - Do not commit databases, caches, benchmark datasets, API keys, traces, or generated runtime files.
 - Preserve unrelated changes and never use `git reset --hard`.

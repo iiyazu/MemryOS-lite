@@ -6,7 +6,7 @@ different subspaces via a simple PRNG-per-chunk scheme, so cosine between
 dissimilar strings averages near zero as expected.
 
 Not meant for production retrieval quality — use
-``OpenAIEmbeddingClient`` or another real provider for that.
+``FastEmbedClient`` (``MEMORYOS_EMBEDDING_PROVIDER=fastembed``) for that.
 """
 
 from __future__ import annotations

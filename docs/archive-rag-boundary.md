@@ -36,7 +36,7 @@ but injected external hit IDs are dropped and recorded with
 ## Vector Boundary
 
 `ArchivalVectorIndex.index_passages()` exposes explicit indexing for archival
-passages. Qdrant stores passage IDs and lookup metadata only. SQLite remains
+passages. The vector store keeps passage IDs and lookup metadata only. SQLite remains
 authoritative for text, source refs, and eligibility.
 
 ## Service/API Boundary
