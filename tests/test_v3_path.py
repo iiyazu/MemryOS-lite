@@ -1,11 +1,5 @@
-"""Tests for the v3 context path (core-recall-archive).
-
-Verifies that with the new defaults (paging_mode=off, recall_pipeline=v2,
-memory_arch=v3), the system correctly:
-- Skips auto-paging on ingest
-- Creates episodes for recall
-- Routes build_context through V3ContextComposer
-"""
+"""Tests for the v3 context path: ingest creates episodes for recall, and
+build_context routes through V3ContextComposer."""
 
 from pathlib import Path
 
@@ -27,21 +21,6 @@ def v3_service(tmp_path: Path) -> MemoryOSService:
     store = create_store(settings)
     store.reset()
     return MemoryOSService(store=store, settings=settings)
-
-
-def test_v3_defaults(v3_service):
-    assert v3_service.settings.memoryos_paging_mode == "off"
-    assert v3_service.settings.memoryos_recall_pipeline == "v2"
-    assert v3_service.settings.memoryos_memory_arch == "v3"
-
-
-def test_ingest_does_not_auto_page(v3_service):
-    session = v3_service.create_session("test")
-    for i in range(10):
-        v3_service.ingest(session.id, MessageCreate(role=Role.USER, content=f"msg {i}"))
-
-    pages = v3_service.store.list_pages(session.id)
-    assert pages == []
 
 
 def test_ingest_creates_episodes(v3_service):

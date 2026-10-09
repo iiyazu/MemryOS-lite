@@ -7,16 +7,6 @@ from pydantic import ValidationError
 from memoryos_lite.config import Settings
 
 
-def test_config_memory_defaults() -> None:
-    settings = Settings()
-
-    assert settings.resolved_memory_arch == "v3"
-    assert Settings(memoryos_memory_arch="v1").resolved_memory_arch == "v1"
-    assert settings.resolved_recall_pipeline == "v2"
-    assert Settings(memoryos_recall_pipeline="v1").resolved_recall_pipeline == "v1"
-    assert settings.resolved_paging_mode == "off"
-
-
 def test_redis_is_not_a_core_dependency() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 

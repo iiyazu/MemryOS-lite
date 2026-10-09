@@ -53,20 +53,6 @@ class Role(StrEnum):
     TOOL = "tool"
 
 
-class PageType(StrEnum):
-    CORE_PROFILE = "core_profile_page"
-    TASK_STATE = "task_state_page"
-    DECISION = "decision_page"
-    SOURCE_SUMMARY = "source_summary_page"
-    TOOL_OBSERVATION = "tool_observation_page"
-
-
-class PatchOperation(StrEnum):
-    ADD = "add"
-    REPLACE = "replace"
-    DELETE = "delete"
-
-
 class MessageCreate(BaseModel):
     role: Role
     content: str
@@ -98,63 +84,6 @@ class Episode(BaseModel):
 class Session(BaseModel):
     id: str = Field(default_factory=lambda: new_id("ses"))
     title: str = "Untitled session"
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class MemoryPageDraft(BaseModel):
-    page_type: PageType = PageType.SOURCE_SUMMARY
-    title: str
-    summary: str
-    facts: list[str] = Field(default_factory=list)
-    decisions: list[str] = Field(default_factory=list)
-    open_questions: list[str] = Field(default_factory=list)
-    discarded_noise: list[str] = Field(default_factory=list)
-    source_message_ids: list[str] = Field(default_factory=list)
-    confidence: float = 0.8
-
-
-class MemoryPage(MemoryPageDraft):
-    id: str = Field(default_factory=lambda: new_id("page"))
-    session_id: str
-    version: int = 1
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-    superseded_by: str | None = None
-    """ID of a newer page that has replaced this one via conflict detection.
-
-    When set, retrieval and context-building skip this page by default.
-    The field is advisory — raw ``list_pages`` still returns it so callers
-    can audit the history of a session's memory.
-    """
-
-
-class MemoryItemType(StrEnum):
-    PROFILE = "profile"
-    EVENT = "event"
-    KNOWLEDGE = "knowledge"
-    BEHAVIOR = "behavior"
-
-
-class MemoryItem(BaseModel):
-    id: str = Field(default_factory=lambda: new_id("item"))
-    page_id: str
-    session_id: str
-    item_type: MemoryItemType = MemoryItemType.KNOWLEDGE
-    content: str
-    source_message_ids: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=utc_now)
-
-
-class MemoryPatch(BaseModel):
-    id: str = Field(default_factory=lambda: new_id("patch"))
-    operation: PatchOperation
-    target_page_id: str | None = None
-    old_text: str | None = None
-    new_text: str | None = None
-    reason: str
-    source_refs: list[str] = Field(default_factory=list)
-    verified: bool = False
-    errors: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
 
 

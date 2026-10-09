@@ -32,15 +32,10 @@ class StoreRuntimeMixin:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
-        self.pages_dir.mkdir(parents=True, exist_ok=True)
         self.traces_dir.mkdir(parents=True, exist_ok=True)
         dsn = self.settings.sqlite_url
         self.engine = create_engine(dsn, connect_args={"check_same_thread": False})
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False)
-
-    @property
-    def pages_dir(self) -> Path:
-        return self.settings.data_dir / "pages"
 
     @property
     def traces_dir(self) -> Path:

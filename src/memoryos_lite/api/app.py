@@ -97,7 +97,6 @@ def health(service: ServiceDep) -> dict[str, object]:
             },
             "message_ingest": True,
             "curate": CURATE_SCHEMA,
-            "paging": service.settings.resolved_paging_mode != "off",
         },
         "curator": service.curator_status(),
     }
