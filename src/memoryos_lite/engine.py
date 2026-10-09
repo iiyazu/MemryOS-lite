@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import time
 from collections.abc import Sequence
 from functools import wraps
 from typing import Any
@@ -26,16 +25,11 @@ from memoryos_lite.curator import (
 )
 from memoryos_lite.curator.curate import CurateRequest, CurateResponse
 from memoryos_lite.observability import (
-    CONTEXT_BUDGET_USED_RATIO,
-    CONTEXT_BUILD_SECONDS,
-    CONTEXT_TOKENS,
-    INGEST_TOTAL,
     current_observability_context,
     log_event,
     observability_context,
     timed_core_operation,
 )
-from memoryos_lite.recovery import RecoveryConfig, RecoveryEvent, RecoveryManager
 from memoryos_lite.retrieval import EmbeddingClient
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
@@ -127,10 +121,6 @@ class MemoryOSService:
         self._curate_llm = curate_llm
         self.store = store or create_store(self.settings)
         self.tokenizer = TokenEstimator()
-        self.recovery = RecoveryManager(
-            self._recovery_config_from_settings(),
-            observer=self._observe_recovery_event,
-        )
         self.embedding_client = embedding_client or self._default_embedding_client()
         archival_vector_index: ArchivalVectorIndex | None = None
         embedding_client_for_archival = self.embedding_client
@@ -183,38 +173,6 @@ class MemoryOSService:
             self.curator = Curator(store=self.store, settings=self.settings, llm=llm)
         else:
             self.curator = None
-
-    def _recovery_config_from_settings(self) -> RecoveryConfig:
-        return RecoveryConfig(
-            enabled=self.settings.memoryos_recovery_enabled,
-            max_attempts=self.settings.memoryos_recovery_max_attempts,
-            initial_delay_s=self.settings.memoryos_recovery_initial_delay_s,
-            max_delay_s=self.settings.memoryos_recovery_max_delay_s,
-            backoff_multiplier=self.settings.memoryos_recovery_backoff_multiplier,
-            circuit_failure_threshold=(self.settings.memoryos_recovery_circuit_failure_threshold),
-            circuit_recovery_timeout_s=(self.settings.memoryos_recovery_circuit_recovery_timeout_s),
-            graceful_degradation=self.settings.memoryos_recovery_graceful_degradation,
-        )
-
-    def _observe_recovery_event(self, event: RecoveryEvent) -> None:
-        log_event(
-            logger,
-            logging.INFO,
-            "memoryos_recovery_event",
-            recovery_event=event.to_payload(),
-        )
-
-    def _trace_recovery_event(self, session_id: str, event: RecoveryEvent) -> None:
-        try:
-            self.trace(session_id, "recovery_event", event.to_payload())
-        except Exception:
-            log_event(
-                logger,
-                logging.DEBUG,
-                "recovery_trace_persist_failed",
-                session_id=session_id,
-                component=event.component,
-            )
 
     def _archive_rag(self) -> MemoryOSArchiveRAG:
         return MemoryOSArchiveRAG(self.store)
@@ -510,7 +468,6 @@ class MemoryOSService:
             ),
         ):
             self._require_session(session_id)
-            INGEST_TOTAL.inc()
             if request.external_id is not None:
                 existing = self.store.get_message_by_external_id(
                     session_id,
@@ -625,92 +582,24 @@ class MemoryOSService:
         """Compose bounded context with the v3 composer over v2 recall.
 
         ``include_global_core`` is accepted for request compatibility; there is
-        no global core layer.
+        no global core layer. Failures propagate; the host decides how to degrade.
         """
         self._require_session(session_id)
-        t0 = time.perf_counter()
         effective_budget = (
             min(budget, self.settings.hard_limit)
             if budget is not None
             else self.dynamic_budget.compute(self.store.list_messages(session_id), task)
         )
-        request = ContextComposerRequest(
-            session_id=session_id,
-            task=task,
-            budget=effective_budget,
-            retrieval_query=retrieval_query,
-            identity_scope=IdentityScope(session_id=session_id),
-        )
-        try:
-            v3_package = self.recovery.execute(
-                "engine.v3_context_composer",
-                "build_context",
-                lambda: self.v3_context_composer.build(request),
-                critical=True,
-                observer=lambda event: self._trace_recovery_event(session_id, event),
-            )
-        except Exception as exc:
-            self.trace(
-                session_id,
-                "context_degraded",
-                {
-                    "component": "v3_context_composer",
-                    "reason": str(exc),
-                    "fallback": "recall_pipeline",
-                },
-            )
-        else:
-            package = self._context_package_from_v3(v3_package)
-            elapsed = time.perf_counter() - t0
-            CONTEXT_BUILD_SECONDS.observe(elapsed)
-            CONTEXT_TOKENS.observe(package.estimated_tokens)
-            if effective_budget > 0:
-                CONTEXT_BUDGET_USED_RATIO.observe(package.estimated_tokens / effective_budget)
-            self.trace(
-                session_id,
-                "context_built",
-                {
-                    "task": task,
-                    "budget": effective_budget,
-                    "budget_source": "explicit" if budget is not None else "dynamic",
-                    "estimated_tokens": package.estimated_tokens,
-                    "memory_arch": "v3",
-                    "v3_layer_counts": package.metadata["v3_layer_counts"],
-                    "v3_budget_decisions": package.metadata["v3_budget_decisions"],
-                    "v3_component_accounting": package.metadata["v3_component_accounting"],
-                    "v3_final_context_trace": package.metadata["v3_final_context_trace"],
-                    "v3_component_token_totals": package.metadata["v3_component_token_totals"],
-                    "v3_component_drop_counts": package.metadata["v3_component_drop_counts"],
-                    "locomo_neighbor_diagnostics": package.metadata["locomo_neighbor_diagnostics"],
-                },
-            )
-            return package
-        package = self.recovery.execute(
-            "engine.recall_pipeline",
-            "build_context",
-            lambda: self.recall_pipeline.build_context(
+        v3_package = self.v3_context_composer.build(
+            ContextComposerRequest(
                 session_id=session_id,
                 task=task,
                 budget=effective_budget,
                 retrieval_query=retrieval_query,
-            ),
-            fallback=lambda _exc: ContextPackage(
-                session_id=session_id,
-                task=task,
-                task_tokens=self.tokenizer.count(task),
-                metadata={
-                    "degraded": True,
-                    "degraded_component": "recall_pipeline",
-                },
-            ),
-            critical=False,
-            observer=lambda event: self._trace_recovery_event(session_id, event),
+                identity_scope=IdentityScope(session_id=session_id),
+            )
         )
-        elapsed = time.perf_counter() - t0
-        CONTEXT_BUILD_SECONDS.observe(elapsed)
-        CONTEXT_TOKENS.observe(package.estimated_tokens)
-        if effective_budget > 0:
-            CONTEXT_BUDGET_USED_RATIO.observe(package.estimated_tokens / effective_budget)
+        package = self._context_package_from_v3(v3_package)
         self.trace(
             session_id,
             "context_built",
@@ -719,14 +608,14 @@ class MemoryOSService:
                 "budget": effective_budget,
                 "budget_source": "explicit" if budget is not None else "dynamic",
                 "estimated_tokens": package.estimated_tokens,
-                "task_tokens": package.task_tokens,
-                "task_truncated": package.task_truncated,
-                "retrieved_evidence": [
-                    evidence.model_dump() for evidence in package.retrieved_evidence
-                ],
-                "candidate_budget_dropped": package.candidate_budget_dropped,
-                "recall_pipeline": "v2",
-                **package.metadata,
+                "memory_arch": "v3",
+                "v3_layer_counts": package.metadata["v3_layer_counts"],
+                "v3_budget_decisions": package.metadata["v3_budget_decisions"],
+                "v3_component_accounting": package.metadata["v3_component_accounting"],
+                "v3_final_context_trace": package.metadata["v3_final_context_trace"],
+                "v3_component_token_totals": package.metadata["v3_component_token_totals"],
+                "v3_component_drop_counts": package.metadata["v3_component_drop_counts"],
+                "locomo_neighbor_diagnostics": package.metadata["locomo_neighbor_diagnostics"],
             },
         )
         return package

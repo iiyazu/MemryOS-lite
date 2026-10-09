@@ -2,18 +2,14 @@
 
 Covers:
 - Structured log fields emitted by StructuredLoggingMiddleware
-- Prometheus metrics accuracy (INGEST_TOTAL, PAGE_TOTAL, PAGE_ERRORS_TOTAL,
-  CONTEXT_BUILD_SECONDS, CONTEXT_TOKENS, CONTEXT_BUDGET_USED_RATIO,
-  RETRIEVAL_HITS, EMBEDDING_SECONDS)
 - Trace-ID (request_id) propagation through RequestIdMiddleware
 - TraceEvent payloads contain required fields for each engine operation
 - Instrumentation does not break existing service functionality
-- ContextVar isolation and scoping (observability_context, bind_observability_context)
+- ContextVar isolation and scoping (observability_context)
 - current_trace_id auto-generation and stability
 - current_observability_context field filtering (None values excluded)
 - log_event level gating and structured field merging
-- record_core_operation Prometheus counter/histogram increments
-- timed_core_operation success and error paths
+- timed_core_operation success and error logging
 - _instrument_agent_node wrapper (success + error + observability context propagation)
 - Nested observability_context restores outer values on exit
 - Thread / asyncio task isolation via ContextVar
@@ -24,36 +20,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from prometheus_client import REGISTRY
 
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.observability import (
-    _GRAPH_ID,
-    _LANE_ID,
     _REQUEST_ID,
     _SESSION_ID,
     _TRACE_ID,
-    CONTEXT_BUDGET_USED_RATIO,
-    CONTEXT_BUILD_SECONDS,
-    CONTEXT_TOKENS,
-    CORE_OPERATION_ERRORS_TOTAL,
-    CORE_OPERATION_SECONDS,
-    CORE_OPERATION_TOTAL,
-    INGEST_TOTAL,
-    bind_observability_context,
     current_observability_context,
-    current_request_id,
     current_trace_id,
     log_event,
     observability_context,
-    record_core_operation,
     timed_core_operation,
 )
 from memoryos_lite.schemas import (
@@ -72,9 +54,6 @@ def _make_service(tmp_path: Path, **extra) -> MemoryOSService:
         data_dir=tmp_path / ".memoryos",
         rot_safe_budget=12,
         recent_message_limit=2,
-        memoryos_memory_arch="v1",
-        memoryos_paging_mode="heuristic",
-        memoryos_recall_pipeline="v1",
         **extra,
     )
     store = create_store(settings)
@@ -87,8 +66,6 @@ def _reset_context_vars() -> None:
     _TRACE_ID.set(None)
     _REQUEST_ID.set(None)
     _SESSION_ID.set(None)
-    _LANE_ID.set(None)
-    _GRAPH_ID.set(None)
 
 
 @pytest.fixture()
@@ -97,29 +74,6 @@ def _isolated_context():
     _reset_context_vars()
     yield
     _reset_context_vars()
-
-
-def _metric_value(metric, labels: dict[str, str] | None = None) -> float:
-    """Read the current value of a prometheus Counter (total sample).
-
-    Uses REGISTRY.get_sample_value which is the official prometheus_client
-    test API and works across all metric types.
-    """
-    name = metric._name + "_total"
-    value = REGISTRY.get_sample_value(name, labels or {})
-    if value is None:
-        # Counter may not have been incremented yet — treat as 0
-        return 0.0
-    return value
-
-
-def _histogram_count(metric, labels: dict[str, str] | None = None) -> float:
-    """Return the observation count of a Histogram."""
-    name = metric._name + "_count"
-    value = REGISTRY.get_sample_value(name, labels or {})
-    if value is None:
-        return 0.0
-    return value
 
 
 # ---------------------------------------------------------------------------
@@ -223,104 +177,6 @@ class TestRequestIdPropagation:
         id1 = r1.headers.get("X-Request-Id")
         id2 = r2.headers.get("X-Request-Id")
         assert id1 != id2, "Each request should receive a unique request_id"
-
-
-# ---------------------------------------------------------------------------
-# Prometheus metrics — INGEST_TOTAL
-# ---------------------------------------------------------------------------
-
-
-class TestIngestTotalMetric:
-    def test_ingest_increments_counter(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("ingest-metric-test")
-
-        before = _metric_value(INGEST_TOTAL)
-        svc.ingest(session.id, MessageCreate(role=Role.USER, content="hello world"))
-        after = _metric_value(INGEST_TOTAL)
-
-        assert after == before + 1
-
-    def test_ingest_increments_once_per_call(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("ingest-multi-metric")
-
-        before = _metric_value(INGEST_TOTAL)
-        for i in range(5):
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=f"msg {i}"))
-        after = _metric_value(INGEST_TOTAL)
-
-        assert after == before + 5
-
-
-# ---------------------------------------------------------------------------
-# Prometheus metrics — PAGE_TOTAL and PAGE_ERRORS_TOTAL
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Prometheus metrics — CONTEXT_BUILD_SECONDS, CONTEXT_TOKENS, CONTEXT_BUDGET_USED_RATIO
-# ---------------------------------------------------------------------------
-
-
-class TestContextBuildMetrics:
-    def test_context_build_seconds_observed_on_build_context(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("ctx-build-seconds-test")
-        svc.ingest(session.id, MessageCreate(role=Role.USER, content="test message"))
-
-        before = _histogram_count(CONTEXT_BUILD_SECONDS)
-        svc.build_context(session.id, "test query", budget=500)
-        after = _histogram_count(CONTEXT_BUILD_SECONDS)
-
-        assert after == before + 1
-
-    def test_context_tokens_observed_on_build_context(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("ctx-tokens-test")
-        svc.ingest(session.id, MessageCreate(role=Role.USER, content="test message"))
-
-        before = _histogram_count(CONTEXT_TOKENS)
-        svc.build_context(session.id, "test query", budget=500)
-        after = _histogram_count(CONTEXT_TOKENS)
-
-        assert after == before + 1
-
-    def test_context_budget_used_ratio_observed_on_build_context(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("ctx-budget-ratio-test")
-        svc.ingest(session.id, MessageCreate(role=Role.USER, content="test message"))
-
-        before = _histogram_count(CONTEXT_BUDGET_USED_RATIO)
-        svc.build_context(session.id, "test query", budget=500)
-        after = _histogram_count(CONTEXT_BUDGET_USED_RATIO)
-
-        assert after == before + 1
-
-    def test_context_budget_ratio_is_between_zero_and_one(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("ctx-budget-ratio-range-test")
-        svc.ingest(session.id, MessageCreate(role=Role.USER, content="test message"))
-
-        # Capture the ratio by patching the observe call
-        observed_ratios: list[float] = []
-        original_observe = CONTEXT_BUDGET_USED_RATIO.observe
-
-        def capturing_observe(value):
-            observed_ratios.append(value)
-            return original_observe(value)
-
-        with patch.object(CONTEXT_BUDGET_USED_RATIO, "observe", side_effect=capturing_observe):
-            svc.build_context(session.id, "test query", budget=500)
-
-        assert observed_ratios, "CONTEXT_BUDGET_USED_RATIO.observe was not called"
-        for ratio in observed_ratios:
-            assert 0.0 <= ratio <= 1.0, f"Budget ratio {ratio} out of [0, 1] range"
-
-
-# ---------------------------------------------------------------------------
-# Prometheus metrics — EMBEDDING_SECONDS
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -485,20 +341,6 @@ class TestCurrentTraceId:
 
 
 # ---------------------------------------------------------------------------
-# ContextVar primitives — current_request_id
-# ---------------------------------------------------------------------------
-
-
-class TestCurrentRequestId:
-    def test_returns_none_when_unset(self, _isolated_context):
-        assert current_request_id() is None
-
-    def test_returns_set_value(self, _isolated_context):
-        _REQUEST_ID.set("req-123")
-        assert current_request_id() == "req-123"
-
-
-# ---------------------------------------------------------------------------
 # ContextVar primitives — current_observability_context
 # ---------------------------------------------------------------------------
 
@@ -510,65 +352,22 @@ class TestCurrentObservabilityContext:
         assert "trace_id" in ctx
         assert "request_id" not in ctx
         assert "session_id" not in ctx
-        assert "lane_id" not in ctx
-        assert "graph_id" not in ctx
 
     def test_includes_all_set_values(self, _isolated_context):
         _TRACE_ID.set("t1")
         _REQUEST_ID.set("r1")
         _SESSION_ID.set("s1")
-        _LANE_ID.set("l1")
-        _GRAPH_ID.set("g1")
         ctx = current_observability_context()
         assert ctx == {
             "trace_id": "t1",
             "request_id": "r1",
             "session_id": "s1",
-            "lane_id": "l1",
-            "graph_id": "g1",
         }
 
     def test_always_contains_trace_id(self, _isolated_context):
         ctx = current_observability_context()
         assert "trace_id" in ctx
         assert ctx["trace_id"]
-
-
-# ---------------------------------------------------------------------------
-# ContextVar primitives — bind_observability_context
-# ---------------------------------------------------------------------------
-
-
-class TestBindObservabilityContext:
-    def test_sets_provided_fields(self, _isolated_context):
-        bind_observability_context(
-            trace_id="t-bind",
-            request_id="r-bind",
-            session_id="s-bind",
-            lane_id="l-bind",
-            graph_id="g-bind",
-        )
-        assert _TRACE_ID.get() == "t-bind"
-        assert _REQUEST_ID.get() == "r-bind"
-        assert _SESSION_ID.get() == "s-bind"
-        assert _LANE_ID.get() == "l-bind"
-        assert _GRAPH_ID.get() == "g-bind"
-
-    def test_auto_generates_trace_id_when_not_provided_and_unset(self, _isolated_context):
-        bind_observability_context(session_id="s-auto")
-        trace_id = _TRACE_ID.get()
-        assert trace_id is not None
-        assert len(trace_id) == 32
-
-    def test_does_not_overwrite_existing_trace_id_when_not_provided(self, _isolated_context):
-        _TRACE_ID.set("existing-trace")
-        bind_observability_context(session_id="s-keep")
-        assert _TRACE_ID.get() == "existing-trace"
-
-    def test_none_fields_are_not_written(self, _isolated_context):
-        _SESSION_ID.set("original-session")
-        bind_observability_context(trace_id="t-partial")
-        assert _SESSION_ID.get() == "original-session"
 
 
 # ---------------------------------------------------------------------------
@@ -607,13 +406,6 @@ class TestObservabilityContextManager:
             with observability_context(trace_id="transient-trace"):
                 raise ValueError("boom")
         assert _TRACE_ID.get() == "stable-trace"
-
-    def test_lane_and_graph_ids_are_scoped(self, _isolated_context):
-        with observability_context(lane_id="lane-1", graph_id="graph-1"):
-            assert _LANE_ID.get() == "lane-1"
-            assert _GRAPH_ID.get() == "graph-1"
-        assert _LANE_ID.get() is None
-        assert _GRAPH_ID.get() is None
 
     def test_asyncio_tasks_have_independent_context(self, _isolated_context):
         async def run():
@@ -704,105 +496,6 @@ class TestLogEvent:
 
 
 # ---------------------------------------------------------------------------
-# record_core_operation
-# ---------------------------------------------------------------------------
-
-
-class TestRecordCoreOperation:
-    def _counter_value(self, counter, **labels) -> float:
-        return counter.labels(**labels)._value.get()
-
-    def _histogram_count(self, histogram, **labels) -> int:
-        return int(_histogram_count(histogram, labels))
-
-    def test_increments_total_counter_on_success(self):
-        before = self._counter_value(
-            CORE_OPERATION_TOTAL,
-            component="rco_comp",
-            operation="rco_op_ok",
-            status="ok",
-        )
-        record_core_operation(
-            component="rco_comp",
-            operation="rco_op_ok",
-            elapsed_s=0.01,
-            status="ok",
-        )
-        after = self._counter_value(
-            CORE_OPERATION_TOTAL,
-            component="rco_comp",
-            operation="rco_op_ok",
-            status="ok",
-        )
-        assert after == before + 1
-
-    def test_increments_error_counter_when_error_type_provided(self):
-        before = self._counter_value(
-            CORE_OPERATION_ERRORS_TOTAL,
-            component="rco_comp_err",
-            operation="rco_op_err",
-            error_type="ValueError",
-        )
-        record_core_operation(
-            component="rco_comp_err",
-            operation="rco_op_err",
-            elapsed_s=0.05,
-            status="error",
-            error_type="ValueError",
-        )
-        after = self._counter_value(
-            CORE_OPERATION_ERRORS_TOTAL,
-            component="rco_comp_err",
-            operation="rco_op_err",
-            error_type="ValueError",
-        )
-        assert after == before + 1
-
-    def test_does_not_increment_error_counter_when_no_error_type(self):
-        before = self._counter_value(
-            CORE_OPERATION_ERRORS_TOTAL,
-            component="rco_no_err",
-            operation="rco_no_err_op",
-            error_type="RuntimeError",
-        )
-        record_core_operation(
-            component="rco_no_err",
-            operation="rco_no_err_op",
-            elapsed_s=0.01,
-            status="ok",
-            error_type=None,
-        )
-        after = self._counter_value(
-            CORE_OPERATION_ERRORS_TOTAL,
-            component="rco_no_err",
-            operation="rco_no_err_op",
-            error_type="RuntimeError",
-        )
-        assert after == before
-
-    def test_observes_histogram_on_success(self):
-        before = self._histogram_count(
-            CORE_OPERATION_SECONDS,
-            component="rco_hist",
-            operation="rco_hist_op",
-            status="ok",
-        )
-        record_core_operation(
-            component="rco_hist",
-            operation="rco_hist_op",
-            elapsed_s=0.1,
-            status="ok",
-        )
-        after = self._histogram_count(
-            CORE_OPERATION_SECONDS,
-            component="rco_hist",
-            operation="rco_hist_op",
-            status="ok",
-        )
-        assert after == before + 1
-
-
-# ---------------------------------------------------------------------------
 # timed_core_operation
 # ---------------------------------------------------------------------------
 
@@ -810,55 +503,6 @@ class TestRecordCoreOperation:
 class TestTimedCoreOperation:
     def _counter_value(self, counter, **labels) -> float:
         return counter.labels(**labels)._value.get()
-
-    def test_records_ok_on_success(self):
-        before = self._counter_value(
-            CORE_OPERATION_TOTAL,
-            component="tco_comp",
-            operation="tco_op_ok",
-            status="ok",
-        )
-        with timed_core_operation(component="tco_comp", operation="tco_op_ok"):
-            pass
-        after = self._counter_value(
-            CORE_OPERATION_TOTAL,
-            component="tco_comp",
-            operation="tco_op_ok",
-            status="ok",
-        )
-        assert after == before + 1
-
-    def test_records_error_and_reraises_on_exception(self):
-        before_err = self._counter_value(
-            CORE_OPERATION_TOTAL,
-            component="tco_comp",
-            operation="tco_op_err",
-            status="error",
-        )
-        before_err_counter = self._counter_value(
-            CORE_OPERATION_ERRORS_TOTAL,
-            component="tco_comp",
-            operation="tco_op_err",
-            error_type="RuntimeError",
-        )
-        with pytest.raises(RuntimeError, match="timed failure"):
-            with timed_core_operation(component="tco_comp", operation="tco_op_err"):
-                raise RuntimeError("timed failure")
-
-        after_err = self._counter_value(
-            CORE_OPERATION_TOTAL,
-            component="tco_comp",
-            operation="tco_op_err",
-            status="error",
-        )
-        after_err_counter = self._counter_value(
-            CORE_OPERATION_ERRORS_TOTAL,
-            component="tco_comp",
-            operation="tco_op_err",
-            error_type="RuntimeError",
-        )
-        assert after_err == before_err + 1
-        assert after_err_counter == before_err_counter + 1
 
     def test_logs_success_when_log_success_true(self):
         logger = MagicMock(spec=logging.Logger)
@@ -902,21 +546,3 @@ class TestTimedCoreOperation:
         assert args[0] == logging.ERROR
         assert args[1] == "core_operation_failed"
         assert kwargs["exc_info"] is True
-
-    def test_elapsed_time_is_positive(self):
-        captured: list[float] = []
-        original_record = record_core_operation
-
-        def capturing_record(**kwargs):
-            captured.append(kwargs["elapsed_s"])
-            original_record(**kwargs)
-
-        with patch(
-            "memoryos_lite.observability.record_core_operation",
-            side_effect=capturing_record,
-        ):
-            with timed_core_operation(component="tco_timing", operation="tco_sleep_op"):
-                time.sleep(0.01)
-
-        assert captured
-        assert captured[0] >= 0.005
