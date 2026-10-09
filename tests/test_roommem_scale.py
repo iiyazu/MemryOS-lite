@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memoryos_lite.roommem import (
+from memoryos_eval.roommem import (
     XMUSE_ACTIVITY_DOC_PREFIX,
     XMUSE_MEMORY_DOC_PREFIX,
     _build_shared_memory_project,

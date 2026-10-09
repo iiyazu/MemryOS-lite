@@ -15,7 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from memoryos_eval.cli import app
-from memoryos_lite.roommem import (
+from memoryos_eval.roommem import (
     LIMITATIONS_ZH,
     SPLIT_PRESETS,
     XMUSE_ACTIVITY_DOC_PREFIX,

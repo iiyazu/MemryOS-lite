@@ -63,18 +63,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from memoryos_lite.config import Settings, get_settings
-from memoryos_lite.curator import CuratorLLM, build_curator_llm
-from memoryos_lite.curator.curate import (
-    FAILURE_TYPES,
-    CurateActivity,
-    CurateAssignment,
-    CurateMemory,
-    CurateRequest,
-)
-from memoryos_lite.curator.graph import run_curate
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.roommem import (
+from memoryos_eval.roommem import (
     XMUSE_ACTIVITY_DOC_PREFIX,
     XMUSE_MESSAGE_ID_PREFIX,
     XMUSE_TASK,
@@ -98,6 +87,17 @@ from memoryos_lite.roommem import (
     match_curated_to_gold,
     settings_for_llm_spec,
 )
+from memoryos_lite.config import Settings, get_settings
+from memoryos_lite.curator import CuratorLLM, build_curator_llm
+from memoryos_lite.curator.curate import (
+    FAILURE_TYPES,
+    CurateActivity,
+    CurateAssignment,
+    CurateMemory,
+    CurateRequest,
+)
+from memoryos_lite.curator.graph import run_curate
+from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,

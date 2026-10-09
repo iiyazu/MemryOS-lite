@@ -311,7 +311,7 @@ def eval_roommem(
     ] = "artifacts/roommem",
 ) -> None:
     """Run the RoomMem multi-room memory evaluation."""
-    from memoryos_lite.roommem import RoomMemError, load_rooms, resolve_split, run_roommem
+    from memoryos_eval.roommem import RoomMemError, load_rooms, resolve_split, run_roommem
 
     if split is not None and rooms is not None:
         console.print("[red]RoomMem error:[/red] --split and --rooms are mutually exclusive")
@@ -407,7 +407,7 @@ def eval_modulemem(
         load_modules,
         run_modulemem,
     )
-    from memoryos_lite.roommem import RoomMemError
+    from memoryos_eval.roommem import RoomMemError
 
     try:
         if split is not None:
