@@ -20,7 +20,7 @@ All request and response bodies are JSON.
 
 | Method | Path | Contract |
 |---|---|---|
-| `GET` | `/health` | Process liveness and safe capability metadata. |
+| `GET` | `/health` | Liveness, package `version`, and safe capability metadata. |
 | `POST` | `/sessions` | Create a server-identified session. |
 | `POST` | `/sessions/{id}/ingest` | Persist one message. |
 | `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context. |

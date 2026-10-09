@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text
+from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -83,52 +83,6 @@ class EpisodeRecord(Base):
     )
 
 
-class PageRecord(Base):
-    __tablename__ = "memory_pages"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    page_type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    path: Mapped[str] = mapped_column(Text, nullable=False)
-    content_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_message_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=80)
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType, nullable=True)
-    superseded_by: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        Index("ix_memory_pages_session_type", "session_id", "page_type"),
-        Index("ix_memory_pages_created", "created_at"),
-    )
-
-
-class ItemRecord(Base):
-    __tablename__ = "memory_items"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    page_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    item_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    source_message_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType, nullable=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class PatchRecord(Base):
-    __tablename__ = "memory_patches"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    target_page_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
-    verified: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
 class TraceRecord(Base):
     __tablename__ = "trace_events"
 
@@ -141,72 +95,6 @@ class TraceRecord(Base):
     __table_args__ = (
         Index("ix_trace_events_session_type_created", "session_id", "event_type", "created_at"),
     )
-
-
-class MaintenanceAdvisoryRecord(Base):
-    """Durable, source-referenced external-governance suggestions.
-
-    This is deliberately separate from trace retention: compact traces may
-    discard payloads, while the host still needs to reconcile a bounded,
-    idempotent advisory into its own approval ledger.
-    """
-
-    __tablename__ = "maintenance_advisories"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
-    proposal_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        Index(
-            "uq_maintenance_advisories_session_fingerprint",
-            "session_id",
-            "fingerprint",
-            unique=True,
-        ),
-        Index("ix_maintenance_advisories_session_created", "session_id", "created_at"),
-    )
-
-
-class CoreMemoryBlockRecord(Base):
-    __tablename__ = "core_memory_blocks"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    label: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    limit_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
-    read_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    deleted_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    deleted_by_event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (Index("ix_core_memory_blocks_created", "created_at"),)
-
-
-class CoreMemoryHistoryRecord(Base):
-    __tablename__ = "core_memory_history"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    memory_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    operation: Mapped[str] = mapped_column(String(32), nullable=False)
-    actor: Mapped[str] = mapped_column(String(16), nullable=False)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (Index("ix_core_memory_history_memory_created", "memory_id", "created_at"),)
 
 
 class ArchivalDocumentRecord(Base):
@@ -222,7 +110,6 @@ class ArchivalDocumentRecord(Base):
     tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     producer: Mapped[str] = mapped_column(String(32), nullable=False, default="explicit_document")
-    legacy_page_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -262,7 +149,6 @@ class ArchivalPassageRecord(Base):
     tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     score: Mapped[float | None] = mapped_column(nullable=True)
     source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    legacy_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -270,48 +156,6 @@ class ArchivalPassageRecord(Base):
     __table_args__ = (
         Index("ix_archival_passages_archive_source", "archive_id", "source_id"),
         Index("ix_archival_passages_archive_file", "archive_id", "file_id"),
-    )
-
-
-class ArchivalMemoryRecord(Base):
-    __tablename__ = "archival_memories"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    archive_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
-    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    identity_scope_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    file_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    history_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    entity_links_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    legacy_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    __table_args__ = (Index("ix_archival_memories_archive_type", "archive_id", "memory_type"),)
-
-
-class ArchivalMemoryHistoryRecord(Base):
-    __tablename__ = "archival_memory_history"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    memory_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    operation: Mapped[str] = mapped_column(String(32), nullable=False)
-    actor: Mapped[str] = mapped_column(String(16), nullable=False)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        Index("ix_archival_memory_history_memory_created", "memory_id", "created_at"),
     )
 
 
@@ -327,27 +171,6 @@ class ArchiveAttachmentRecord(Base):
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (Index("ix_archive_attachments_scope", "scope_type", "scope_id"),)
-
-
-class PromotionCandidateRecord(Base):
-    __tablename__ = "promotion_candidates"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    source_layer: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    target_layer: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    operation: Mapped[str] = mapped_column(String(32), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    identity_scope_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    reason: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence: Mapped[float] = mapped_column(nullable=False)
-    status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    write_source: Mapped[str] = mapped_column(String(32), nullable=False)
-    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (Index("ix_promotion_candidates_status_created", "status", "created_at"),)
 
 
 class CuratedMemoryRecord(Base):
@@ -401,24 +224,6 @@ class CuratorStateRecord(Base):
     llm_errors: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
-class ContextPolicyCandidateRecord(Base):
-    __tablename__ = "context_policy_candidates"
-
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    policy_type: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    feedback_type: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
-    suggested_action: Mapped[str] = mapped_column(Text, nullable=False)
-    source_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
-    fingerprint: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
-    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (Index("ix_context_policy_candidates_status_created", "status", "created_at"),)
-
-
 # These types were historically defined by ``memoryos_lite.store``.  Keep their
 # public identity stable while the implementation lives in this focused module;
 # the composition root continues to re-export every name below.
@@ -428,21 +233,11 @@ for _compat_type in (
     SessionRecord,
     MessageRecord,
     EpisodeRecord,
-    PageRecord,
-    ItemRecord,
-    PatchRecord,
     TraceRecord,
-    MaintenanceAdvisoryRecord,
-    CoreMemoryBlockRecord,
-    CoreMemoryHistoryRecord,
     ArchivalDocumentRecord,
     ArchivalChunkRecord,
     ArchivalPassageRecord,
-    ArchivalMemoryRecord,
-    ArchivalMemoryHistoryRecord,
     ArchiveAttachmentRecord,
-    PromotionCandidateRecord,
-    ContextPolicyCandidateRecord,
     CuratedMemoryRecord,
     CuratorStateRecord,
 ):

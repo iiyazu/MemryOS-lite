@@ -30,8 +30,6 @@ class LegacyStoreMixin:
         @property
         def traces_dir(self) -> Path: ...
 
-        def _stamp_alembic_head(self) -> None: ...
-
     def add_trace(self, event: TraceEvent) -> TraceEvent:
         with self.db() as db:
             db.add(
@@ -70,7 +68,6 @@ class LegacyStoreMixin:
     def reset(self) -> None:
         Base.metadata.drop_all(self.engine)
         Base.metadata.create_all(self.engine)
-        self._stamp_alembic_head()
         if self.traces_dir.exists():
             for path in self.traces_dir.rglob("*.jsonl"):
                 path.unlink()

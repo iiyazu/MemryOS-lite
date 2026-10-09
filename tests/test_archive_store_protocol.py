@@ -85,15 +85,16 @@ def test_archive_replay_and_conflict_leave_existing_rows_intact(tmp_path) -> Non
     )
 
 
-def test_protocol_keeps_store_base_and_alembic_head_compatible(tmp_path) -> None:
+def test_init_db_creates_exactly_the_current_model_tables(tmp_path) -> None:
     store = MemoryStore(Settings(data_dir=tmp_path / "data"))
     store.init_db()
 
-    assert {"archival_documents", "archival_chunks", "archival_passages"} <= set(
-        Base.metadata.tables
-    )
     with store.engine.connect() as connection:
-        assert (
-            connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-            == "0011_curated_memory_versions"
+        tables = set(
+            connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'table'")
+            ).scalars()
         )
+    assert tables == set(Base.metadata.tables)
+    assert {"archival_documents", "archival_chunks", "archival_passages"} <= tables
+    assert "alembic_version" not in tables

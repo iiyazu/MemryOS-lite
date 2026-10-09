@@ -7,10 +7,12 @@ from pydantic import ValidationError
 from memoryos_lite.config import Settings
 
 
-def test_redis_is_not_a_core_dependency() -> None:
+def test_redis_and_alembic_are_not_core_dependencies() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
-    assert "redis" not in "\n".join(pyproject["project"]["dependencies"])
+    dependencies = "\n".join(pyproject["project"]["dependencies"])
+    assert "redis" not in dependencies
+    assert "alembic" not in dependencies
 
 
 def test_curator_positive_settings_are_validated() -> None:

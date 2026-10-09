@@ -1,0 +1,11 @@
+# Only pyproject.toml, uv.lock, .python-version, README.md and src/ are copied.
+.git
+.venv
+.memoryos
+.mypy_cache
+.pytest_cache
+.ruff_cache
+artifacts
+benchmarks
+dist
+**/__pycache__

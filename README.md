@@ -103,6 +103,14 @@ uv run --no-sync python -m memoryos_eval ask-demo --mermaid
 `/curate`、`demo curate` 和 `ask-demo` 依赖 `remote` extra 里的 LangGraph 与 LangChain；缺少时 `/curate`
 返回 503（`curate_requires_langgraph`），不影响 SQLite authority 或离线 API 行为。
 
+`Dockerfile` 是部署样例：只装核心依赖（不含 `full-local` 和 `remote`），以非 root 用户在 8000 端口
+启动 API。CI 会构建镜像、启动容器并检查 `/health` 的 `version`。
+
+```bash
+docker build -t memoryos-lite .
+docker run --rm -p 8000:8000 memoryos-lite
+```
+
 ### 分发边界
 
 `memoryos-lite` 核心包只包含 API、SQLite/BM25 和基础存储。`full-local` 是 xmuse
@@ -120,7 +128,7 @@ HTTP 接口：
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| `GET` | `/health` | 存活与能力 |
+| `GET` | `/health` | 存活、版本号（`version`）与能力 |
 | `POST` | `/sessions` | 创建会话 |
 | `POST` | `/sessions/{id}/ingest` | 摄入消息 |
 | `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
