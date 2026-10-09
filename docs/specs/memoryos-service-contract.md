@@ -25,6 +25,7 @@ All request and response bodies are JSON.
 | `POST` | `/sessions/{id}/ingest` | Persist one message. |
 | `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context. |
 | `POST` | `/curate` | Stateless module memory curation (`memoryos_curate/v1`). |
+| `POST` | `/recall` | Stateless, deterministic ranking of caller-supplied items (`memoryos_recall/v1`). |
 | `POST` | `/archives/ingest` | Idempotently ingest a source document. |
 | `POST` | `/archives/attachments` | Attach an archive document to a session. |
 
@@ -38,6 +39,88 @@ The service runs no background curator and serves no advisories. A host that
 wants durable memories calls `POST /curate` and keeps them itself. The
 stateful room-profile host of the same graph (`Curator.run_session`) runs in
 process only in the RoomMem evaluation.
+
+## Ranking: `POST /recall`
+
+A host (the xmuse 2 hub) sends the candidate items of one over-budget view
+layer; MemoryOS ranks and truncates them. There is no LLM and no database read
+or write. The only state is an in-process embedding cache keyed by the SHA-256
+of the text: derived, rebuildable, and an LRU of 8192 entries.
+
+Request (`RecallRequest`):
+
+```json
+{
+  "schema": "memoryos_recall/v1",
+  "query": "Decimal amounts",
+  "items": [
+    {"id": "E12", "text": "Amounts are Decimal strings", "kind": "decision",
+     "thread_id": "task", "roles": ["impl"], "seq": 57}
+  ],
+  "hints": {"thread_id": "task", "role": "impl"},
+  "budget_tokens": 1000,
+  "k": 40
+}
+```
+
+- `schema` must be `memoryos_recall/v1`; `query` may be empty (up to 4000
+  characters). `items` holds up to 500 entries, each with a unique `id` (1-128
+  characters), `text` (1-2000 characters), an optional free-label `kind` (up to
+  32 characters, unused for scoring), optional `thread_id`, `roles` (up to 16),
+  and `seq` (the host's monotonic version, 0 or greater; larger is newer).
+- `hints` carries an optional `thread_id` and `role`. `budget_tokens` is
+  1-200000, and `k` is 1-500, default 40.
+
+`score` is the sum of the terms below.
+
+| Constant | Value | Term |
+|---|---|---|
+| `RRF_K` | 60 | Reciprocal-rank fusion over the BM25 and dense cosine ranks. |
+| `THREAD_BONUS` | 0.02 | The item's `thread_id` equals `hints.thread_id`. |
+| `ROLE_BONUS` | 0.01 | `hints.role` is one of the item's `roles`. |
+| `RECENCY_MAX` | 0.005 | Newest `seq`; oldest gets 0, linear in the rank of the item's `seq` among the distinct seqs. |
+
+An item enters the BM25 ranking only when it shares a non-stopword token with
+the query, and the dense ranking only when its cosine is greater than 0. Scores
+are rounded to 6 decimals. Ordering is deterministic: score descending, then
+`seq` descending, then `id` ascending, so identical input gives a byte-identical
+response.
+
+Budget: walk the ranking and include an item when it fits in the remaining
+`budget_tokens` and fewer than `k` items are included; otherwise put its id in
+`dropped` (in rank order) and continue. `tokens_used` is the sum over the
+included items. Token counts come from the service's `TokenEstimator`;
+`diagnostics.token_estimator` names it (`tiktoken:cl100k_base`, or
+`regex:word_or_punct` when tiktoken has no encoding).
+
+`why` lists the signals that contributed, in this order: `bm25`, `dense`,
+`thread`, `role`. Recency always applies and is not listed.
+
+Degrade: without an embedding provider, or when embedding fails, ranking is
+BM25-only and `diagnostics.dense` is false. The response reports this rather
+than staying silent. With an empty query no dense scores are needed, so `dense`
+then only says whether the provider is configured.
+
+Cost: BM25-only ranking of 500 items takes about 20-30 ms. Dense scoring embeds
+each text once and then hits the cache: with FastEmbed on a 16-core CPU, 500
+cached items take under 100 ms (p95), while 500 never-seen statement-sized
+texts take about 5 s. The request still completes and fills the cache, so a
+host that times out falls back once and is fast on the next call.
+
+Response (`RecallResponse`):
+
+```json
+{
+  "schema": "memoryos_recall/v1",
+  "ranked": [{"id": "E12", "score": 0.046393, "why": ["bm25", "thread", "role"]}],
+  "dropped": [],
+  "tokens_used": 5,
+  "diagnostics": {"dense": false, "token_estimator": "tiktoken:cl100k_base"}
+}
+```
+
+Errors: 422 for an invalid request (wrong schema, too many items, text too long,
+duplicate ids, or `budget_tokens`/`k` out of range).
 
 ## Module memory: `POST /curate`
 
