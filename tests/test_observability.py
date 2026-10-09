@@ -33,7 +33,6 @@ from memoryos_lite.observability import (
     EMBEDDING_SECONDS,
     INGEST_TOTAL,
     PAGE_ERRORS_TOTAL,
-    PAGE_TOTAL,
     RETRIEVAL_HITS,
     bind_observability_context,
     current_observability_context,
@@ -494,29 +493,6 @@ def test_ingest_increments_counter(service):
     service.ingest(session.id, MessageCreate(role=Role.USER, content="hello"))
     after = _counter_value(INGEST_TOTAL)
     assert after == before + 1
-
-
-def test_page_increments_counter(legacy_service):
-    service = legacy_service  # heuristic paging opt-in
-    session = service.create_session("test")
-    for content in [
-        "用户目标是在 20 天内完成 Agent infra 项目。",
-        "最终决定不做 Runbook Oncall Agent，改做 MemoryOS Lite。",
-        "技术栈选择 LangGraph 和 FastAPI。",
-        "需要 benchmark 对比 Sliding Window 和 Vector RAG。",
-    ]:
-        service.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-    before_heuristic = _counter_value(PAGE_TOTAL, {"mode": "heuristic"})
-    before_agentic = _counter_value(PAGE_TOTAL, {"mode": "agentic"})
-    before_fallback = _counter_value(PAGE_TOTAL, {"mode": "heuristic_fallback"})
-    page = service.page(session.id)
-    assert page is not None
-    after_heuristic = _counter_value(PAGE_TOTAL, {"mode": "heuristic"})
-    after_agentic = _counter_value(PAGE_TOTAL, {"mode": "agentic"})
-    after_fallback = _counter_value(PAGE_TOTAL, {"mode": "heuristic_fallback"})
-    before_total = before_heuristic + before_agentic + before_fallback
-    after_total = after_heuristic + after_agentic + after_fallback
-    assert after_total == before_total + 1
 
 
 def test_build_context_observes_metrics(service):

@@ -94,22 +94,3 @@ class TestIngestScaleConstantTime:
             f"(early={early_avg * 1000:.2f}ms late={late_avg * 1000:.2f}ms); "
             "hot path may have regressed to O(N)"
         )
-
-
-class TestListPagesLimit:
-    def test_limit_caps_rows(self, perf_service):
-        session = perf_service.create_session("pages")
-        # Heuristic paging needs ≥2 unpaged messages; call page() after every
-        # pair so we end up with multiple distinct pages.
-        perf_service.settings.rot_safe_budget = 1
-        for i in range(0, 10, 2):
-            perf_service.ingest(session.id, MessageCreate(role=Role.USER, content=f"fact {i}"))
-            perf_service.ingest(session.id, MessageCreate(role=Role.USER, content=f"fact {i + 1}"))
-            perf_service.page(session.id)
-        all_pages = perf_service.store.list_pages(session.id)
-        assert len(all_pages) >= 3  # some paging actually happened
-        capped = perf_service.store.list_pages(session.id, limit=2)
-        assert len(capped) == 2
-        # Newest-two invariant: the capped list must contain the two most recent pages.
-        newest_two_ids = {p.id for p in sorted(all_pages, key=lambda p: p.created_at)[-2:]}
-        assert {p.id for p in capped} == newest_two_ids

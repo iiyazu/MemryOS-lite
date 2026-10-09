@@ -10,13 +10,10 @@ MemoryOSService
   create_session()
   ingest()
     -> MessageRecord
-    -> optional v2 Episode backfill/indexing
-  page()
-    -> MemoryPage / MemoryItem / trace
+    -> v2 Episode backfill/indexing
   build_context()
-    -> v3 ContextComposer by default
-    -> v1 ContextBuilder when MEMORYOS_MEMORY_ARCH=v1
-    -> v2 RecallPipeline by default
+    -> v3 ContextComposer
+    -> v2 RecallPipeline (also the fallback if the composer fails)
 ```
 
 ## Important Modules
@@ -31,7 +28,7 @@ MemoryOSService
 | `store_archive.py` | Core/archive documents, passages, attachments, and governed-memory persistence. |
 | `store_legacy.py` | Page/item indexes, patches, traces, debug mirrors, and maintenance. |
 | `store_protocols.py` | Consumer-specific structural persistence contracts. |
-| `engine.py` | Application facade and v1 context/paging orchestration. |
+| `engine.py` | Application facade: ingest, context building, archives, `/curate`. |
 | `retrieval/` | Search primitives and v2 recall helpers. |
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
@@ -47,10 +44,9 @@ historical, no longer maintained) and `cli.py` (`uv run python -m memoryos_eval 
 
 ## Retrieval Paths
 
-### v3 Default
+### v3 Composer
 
-The default path now uses the layered v3 composer while preserving `v1`
-as an explicit fallback:
+Context building uses the layered v3 composer:
 
 ```text
 Message Log
@@ -60,15 +56,10 @@ Message Log
   -> ContextPackage-compatible payload
 ```
 
-Pin `MEMORYOS_MEMORY_ARCH=v1` to recover the legacy path.
-
 ### v2 Episode-First Recall
 
-The v2 path is the default:
-
 ```text
-MEMORYOS_RECALL_PIPELINE=v2
-  -> ensure_episodes_for_session()
+ensure_episodes_for_session()
   -> QueryAnalyzer
   -> EpisodeSearcher
   -> RecallPipeline
@@ -78,18 +69,6 @@ MEMORYOS_RECALL_PIPELINE=v2
 `Episode` is one row per raw message. `text` is the evidence shown to the
 answering layer; `index_text` adds deterministic context such as role, date,
 benchmark session, and neighboring turns for retrieval.
-
-### v1 Legacy Fallback
-
-```text
-MEMORYOS_MEMORY_ARCH=v1
-  -> ContextBuilder
-  -> MemoryPage / MemoryItem via paging
-  -> ContextPackage
-```
-
-`MEMORYOS_RECALL_PIPELINE=v2` still enables the separate episode-first recall
-path.
 
 ## Storage Model
 

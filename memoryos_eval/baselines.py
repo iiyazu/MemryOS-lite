@@ -197,19 +197,11 @@ def _run_baseline(
                 service.store.add_message(
                     message.model_copy(update={"session_id": source_session.id})
                 )
-            service.page(source_session.id)
+            # The service no longer pages; page counts below stay zero.
             all_pages = service.store.list_pages(source_session.id)
-            candidate_pages = [page for page in all_pages if page.superseded_by is None]
             candidate_top_k = 5
-            candidate_hits = service.searcher.search(
-                candidate_pages,
-                query=case.question,
-                top_k=candidate_top_k,
-            )
-            page_candidate_source_ids = _dedupe_source_ids(
-                source_id for hit in candidate_hits for source_id in hit.page.source_message_ids
-            )
-            page_candidate_page_ids = [hit.page.id for hit in candidate_hits]
+            page_candidate_source_ids: list[str] = []
+            page_candidate_page_ids: list[str] = []
             context = service.build_context(
                 context_session.id,
                 case.question,
