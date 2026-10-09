@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from memoryos_lite.config import Settings
-from memoryos_lite.roommem import (
+from memoryos_eval.roommem import (
     CuratedMemoryView,
     FakeJudge,
     GoldMemorySource,
@@ -21,6 +20,7 @@ from memoryos_lite.roommem import (
     score_write_side,
     settings_for_llm_spec,
 )
+from memoryos_lite.config import Settings
 
 ROOMS = Path(__file__).resolve().parents[1] / "benchmarks" / "roommem" / "rooms"
 

@@ -36,14 +36,13 @@ MemoryOSService
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
 | `curator/` | LLM curator: session worker and v2 advisories; stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`). |
-| `roommem.py` | RoomMem curation evaluation (used by `memoryos_eval`). |
 | `cli.py` | Typer CLI entrypoint (`api`, `demo`). |
 | `api/app.py` | FastAPI REST API. |
 
 The evaluation harnesses live in the repo-root `memoryos_eval/` package, which the
 wheel does not ship: `evals.py` (built-in deterministic evals), `public_benchmarks.py`
-(LongMemEval/LoCoMo), `llm_judge.py`, `longmemeval_manifest.py`, `modulemem.py`
-(ModuleMem) and `cli.py` (`uv run python -m memoryos_eval --help`).
+(LongMemEval/LoCoMo), `llm_judge.py`, `longmemeval_manifest.py`, `roommem.py` (RoomMem),
+`modulemem.py` (ModuleMem) and `cli.py` (`uv run python -m memoryos_eval --help`).
 
 ## Retrieval Paths
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memoryos_lite.roommem import load_rooms, run_roommem
+from memoryos_eval.roommem import load_rooms, run_roommem
 from memoryos_lite.schemas import deterministic_ids, new_id
 
 ROOMS = Path(__file__).resolve().parents[1] / "benchmarks" / "roommem" / "rooms"
