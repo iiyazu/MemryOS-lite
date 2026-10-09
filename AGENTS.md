@@ -40,7 +40,6 @@ uv run ruff check .
 uv run mypy src memoryos_eval
 uv run memoryos api --reload
 uv run memoryos demo curate
-uv run python -m memoryos_eval run --case-set hard --baseline memoryos_lite
 ```
 
 ## Stable documentation

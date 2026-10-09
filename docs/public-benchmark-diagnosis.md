@@ -1,7 +1,13 @@
 # Public Benchmark Diagnosis
 
-This document records the current benchmark interpretation for MemoryOS Lite.
+This document records the benchmark interpretation for MemoryOS Lite.
 It is a baseline note, not a full history log.
+
+**Status: historical results, no longer maintained.** The LongMemEval/LoCoMo
+adapter stays in `memoryos_eval/` so the numbers below can be traced, but it
+is not kept up to date with the service. The built-in deterministic benchmark
+(`eval run`, `evals*.py`) that carried the v1-versus-v3 comparison has been
+removed, so that comparison cannot be re-run.
 
 ## Current Positioning
 
@@ -36,8 +42,6 @@ v3 public smoke, no LLM answer/judge:
 Commands:
 
 ```bash
-uv run python -m memoryos_eval run --case-set hard --baseline memoryos_lite
-
 MEMORYOS_RECALL_PIPELINE=v2 uv run python -m memoryos_eval public \
   --benchmark longmemeval \
   --data-path benchmarks/longmemeval/longmemeval.json \

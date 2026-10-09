@@ -1,19 +1,19 @@
-"""``memoryos demo ask``: the scripted ask graph example (no network)."""
+"""``python -m memoryos_eval ask-demo``: the scripted ask graph example (no network)."""
 
 from __future__ import annotations
 
 import pytest
 from typer.testing import CliRunner
 
-from memoryos_lite.cli import app
-from memoryos_lite.retrieval.agentic import run_ask
-from memoryos_lite.retrieval.demo import (
+from memoryos_eval.ask import run_ask
+from memoryos_eval.ask_demo import (
     DEMO_MARKS,
     DEMO_REQUEST,
     DEMO_REWRITE,
     DemoRewriteLLM,
     demo_retrieve,
 )
+from memoryos_eval.cli import app
 
 pytest.importorskip("langgraph")
 
@@ -36,8 +36,8 @@ def test_demo_rewrites_once_and_puts_the_current_value_first():
     assert outdated[0].current == DEMO_MARKS[0].current
 
 
-def test_cli_demo_ask_shows_the_loop_and_the_outdated_note():
-    result = CliRunner().invoke(app, ["demo", "ask", "--mermaid"])
+def test_cli_ask_demo_shows_the_loop_and_the_outdated_note():
+    result = CliRunner().invoke(app, ["ask-demo", "--mermaid"])
 
     assert result.exit_code == 0, result.output
     assert "not enough evidence" in result.output

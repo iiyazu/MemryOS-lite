@@ -14,8 +14,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
+from memoryos_eval.baselines import EvalCase
 from memoryos_lite.config import Settings
-from memoryos_lite.schemas import EvalCase
 
 _SYSTEM_PROMPT = """\
 You are an evaluation judge. Given a question, an answer, expected facts, \

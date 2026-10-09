@@ -3,8 +3,8 @@ import json
 import pytest
 
 import memoryos_eval.public_benchmarks as public_benchmarks
+from memoryos_eval.baselines import BaselineOutput
 from memoryos_eval.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
-from memoryos_eval.evals import BaselineOutput
 from memoryos_eval.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
 from memoryos_lite.config import Settings
 from memoryos_lite.v3_contracts import (
@@ -2169,13 +2169,12 @@ def test_public_benchmark_reports_v3_component_accounting_append_only(tmp_path):
 
 
 def test_public_result_reports_answer_evidence_handoff_metadata():
-    from memoryos_eval.evals import BaselineOutput
+    from memoryos_eval.baselines import BaselineOutput, EvalCase
     from memoryos_eval.public_benchmarks import (
         PublicBenchmarkCase,
         _answer_evidence_from_output,
         _to_public_result,
     )
-    from memoryos_lite.schemas import EvalCase
 
     output = BaselineOutput(
         answer="NeverReturnedExpectedToken",

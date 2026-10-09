@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 
-.PHONY: help install test lint fmt typecheck eval api clean
+.PHONY: help install test lint fmt typecheck api clean
 
 help: ## 显示可用 target
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -22,9 +22,6 @@ fmt: ## 格式化 + 自动修复
 
 typecheck: ## 只跑 mypy
 	uv run mypy src memoryos_eval
-
-eval: ## 跑内置确定性 benchmark
-	uv run python -m memoryos_eval run --baseline all
 
 api: ## 本机跑 API（热重载）
 	uv run memoryos api --reload

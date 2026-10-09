@@ -40,9 +40,10 @@ MemoryOSService
 | `api/app.py` | FastAPI REST API. |
 
 The evaluation harnesses live in the repo-root `memoryos_eval/` package, which the
-wheel does not ship: `evals.py` (built-in deterministic evals), `public_benchmarks.py`
-(LongMemEval/LoCoMo), `llm_judge.py`, `longmemeval_manifest.py`, `roommem.py` (RoomMem),
-`modulemem.py` (ModuleMem) and `cli.py` (`uv run python -m memoryos_eval --help`).
+wheel does not ship: `roommem.py` (RoomMem), `modulemem.py` (ModuleMem), `ask.py`
+and `ask_demo.py` (the agentic `ask` graph and its offline demo), `public_benchmarks.py`
+with `baselines.py`, `llm_judge.py` and `longmemeval_manifest.py` (LongMemEval/LoCoMo;
+historical, no longer maintained) and `cli.py` (`uv run python -m memoryos_eval --help`).
 
 ## Retrieval Paths
 
@@ -117,8 +118,6 @@ See `docs/store-interface.md` for the table contract.
 ## Benchmark Entry Points
 
 ```bash
-uv run python -m memoryos_eval run --case-set hard --baseline memoryos_lite
-
 MEMORYOS_RECALL_PIPELINE=v2 uv run python -m memoryos_eval public \
   --benchmark longmemeval \
   --data-path benchmarks/longmemeval/longmemeval.json \
