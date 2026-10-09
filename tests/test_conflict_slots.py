@@ -25,10 +25,8 @@ from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
     MemoryPage,
     MemoryPatch,
-    MessageCreate,
     PageType,
     PatchOperation,
-    Role,
 )
 from memoryos_lite.store import create_store
 
@@ -159,63 +157,3 @@ def supersede_service(tmp_path):
     store = create_store(settings)
     store.reset()
     return MemoryOSService(store=store, settings=settings)
-
-
-class TestPagingSupersedes:
-    def test_conflicting_second_page_marks_first_superseded(self, supersede_service):
-        """Two pages, second contradicts the first → first.superseded_by set."""
-        session = supersede_service.create_session("arch review")
-        # Page 1: database choice = PostgreSQL. Needs ≥3 messages because the
-        # heuristic pager holds the last `recent_message_limit=1` back and
-        # requires ≥2 page_messages to commit.
-        for text in (
-            "项目技术选型：数据库选 PostgreSQL",
-            "PostgreSQL 团队熟悉",
-            "运维成本已评估",
-        ):
-            supersede_service.ingest(session.id, MessageCreate(role=Role.USER, content=text))
-        page_one = supersede_service.page(session.id)
-        assert page_one is not None
-
-        # Page 2: contradicts page 1 by swapping DB to MySQL.
-        for text in (
-            "评审会后结论：数据库改用 MySQL",
-            "MySQL 更契合运维工具链",
-            "下周开始迁移",
-        ):
-            supersede_service.ingest(session.id, MessageCreate(role=Role.USER, content=text))
-        page_two = supersede_service.page(session.id)
-        assert page_two is not None
-        assert page_two.id != page_one.id
-
-        # Reload page_one from store; its superseded_by must now point at page_two.
-        reloaded = supersede_service.store.load_page(page_one.id)
-        assert reloaded is not None
-        assert reloaded.superseded_by == page_two.id, (
-            f"expected page_one.superseded_by == {page_two.id}, got {reloaded.superseded_by!r}"
-        )
-
-    def test_no_conflict_does_not_mark_anything(self, supersede_service):
-        """Second unrelated page does NOT mark first as superseded."""
-        session = supersede_service.create_session("unrelated topics")
-        for text in (
-            "用户想做 Runbook Oncall Agent",
-            "已明确 Oncall 范围",
-            "下周开工",
-        ):
-            supersede_service.ingest(session.id, MessageCreate(role=Role.USER, content=text))
-        page_one = supersede_service.page(session.id)
-        assert page_one is not None
-
-        for text in (
-            "用户计划下月去东京",
-            "已预订酒店",
-            "行程三天",
-        ):
-            supersede_service.ingest(session.id, MessageCreate(role=Role.USER, content=text))
-        page_two = supersede_service.page(session.id)
-        assert page_two is not None
-
-        reloaded = supersede_service.store.load_page(page_one.id)
-        assert reloaded is not None
-        assert reloaded.superseded_by is None

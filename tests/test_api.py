@@ -8,7 +8,7 @@ from memoryos_lite.api.app import app, get_service
 from memoryos_lite.config import Settings
 from memoryos_lite.curator import Curator
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import ContextPackage, MemoryPage, PageType, Role
+from memoryos_lite.schemas import ContextPackage, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.store_curator import CuratedMemoryWrite
 from memoryos_lite.v3_contracts import (
@@ -59,41 +59,6 @@ def test_api_smoke(service):
         )
         assert response.status_code == 200
         assert response.json()["session_id"] == session_id
-    finally:
-        app.dependency_overrides.clear()
-
-
-def test_api_build_context_passes_include_global_core(legacy_service):
-    service = legacy_service  # legacy ContextBuilder opt-in
-    source = service.create_session("profile-source")
-    summary = "用户职业背景是后端工程师，专注分布式系统。"
-    service.store.save_page(
-        MemoryPage(
-            session_id=source.id,
-            page_type=PageType.CORE_PROFILE,
-            title="Global profile",
-            summary=summary,
-        )
-    )
-
-    app.dependency_overrides[get_service] = lambda: service
-    client = TestClient(app)
-    try:
-        response = client.post("/sessions", json={"title": "api-target"})
-        assert response.status_code == 200
-        target_session_id = response.json()["id"]
-
-        response = client.post(
-            f"/sessions/{target_session_id}/build-context",
-            json={
-                "task": "我的职业背景是什么？",
-                "budget": 500,
-                "include_global_core": True,
-            },
-        )
-
-        assert response.status_code == 200
-        assert summary in response.json()["pinned_core"]
     finally:
         app.dependency_overrides.clear()
 

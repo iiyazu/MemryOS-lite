@@ -11,8 +11,8 @@ are derived. The FastAPI surface is suitable for trusted local integrations; it
 does not provide a complete remote authentication, tenancy, rate-limit, or
 ownership model.
 
-Defaults are `memory_arch=v3` and `recall_pipeline=v2`. Legacy `v1` memory and
-recall paths may be selected explicitly. The memory curator is off by default.
+Context is built by the v3 composer over v2 recall; there is no v1 memory or
+recall path. The memory curator is off by default.
 
 ## HTTP surface
 

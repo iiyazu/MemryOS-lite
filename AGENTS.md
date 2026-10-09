@@ -4,13 +4,13 @@
 
 MemoryOS Lite is an eval-driven, source-attributed Agent/RAG memory prototype. Do not describe it as production-ready. Implementation and fresh tests are authoritative; documentation is descriptive.
 
-Current defaults are `MEMORYOS_MEMORY_ARCH=v3`, `MEMORYOS_RECALL_PIPELINE=v2`, and `MEMORYOS_PAGING_MODE=off`. Do not freeze test counts, passing counts, or timings in docs.
+Context has one path: the v3 composer over v2 episode-first recall. Do not freeze test counts, passing counts, or timings in docs.
 
 ## Runtime boundaries
 
-- SQLite is authoritative. Page mirrors, trace JSONL, the in-process vector index, and benchmark reports are derived or experimental.
+- SQLite is authoritative. Trace JSONL, the in-process vector index, and benchmark reports are derived or experimental.
 - v3 composes task, recall, archival, and recent layers. Source references and bounded context are part of the contract.
-- v2 recall uses episode-first evidence retrieval. `v1` memory and recall paths remain explicit compatibility choices, not defaults.
+- v2 recall uses episode-first evidence retrieval. The v1 memory architecture (pages, items, paging, conflict detection) was removed.
 - Stateless `/curate` uses a LangGraph repair loop (remote extra) and keeps no state; it is not an agent runtime.
 - The HTTP API is a local prototype surface without complete remote authentication, tenancy, rate limiting, or ownership controls.
 - Optional consumers such as xmuse must use the public loopback HTTP contract; do not couple this package to a consumer repository.
