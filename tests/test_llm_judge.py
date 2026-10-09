@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
+from memoryos_eval.llm_judge import LLMJudge
 from memoryos_lite.config import Settings
-from memoryos_lite.llm_judge import LLMJudge
 from memoryos_lite.schemas import EvalCase, MessageCreate, Role
 
 
@@ -120,7 +120,7 @@ def test_judge_retries_once_after_empty_response(monkeypatch):
                 },
             )()
 
-    monkeypatch.setattr("memoryos_lite.llm_judge.ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr("memoryos_eval.llm_judge.ChatOpenAI", FakeChatOpenAI)
     judge = LLMJudge(Settings(openai_api_key="sk-fake"))
 
     verdict = judge.judge(_make_case(), "fact_a")
@@ -138,7 +138,7 @@ def test_init_requires_api_key():
 def test_init_uses_deepseek_settings():
     settings = Settings(memoryos_llm_provider="deepseek", deepseek_api_key="sk-deepseek-test")
 
-    with patch("memoryos_lite.llm_judge.ChatOpenAI") as chat_cls:
+    with patch("memoryos_eval.llm_judge.ChatOpenAI") as chat_cls:
         LLMJudge(settings)
 
     kwargs = chat_cls.call_args.kwargs

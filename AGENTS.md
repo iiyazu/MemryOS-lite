@@ -37,10 +37,10 @@ uv sync --frozen --all-groups
 TMPDIR=/tmp uv run pytest -q
 TMPDIR=/tmp uv run pytest -m "not slow" -q
 uv run ruff check .
-uv run mypy src
+uv run mypy src memoryos_eval
 uv run memoryos api --reload
 uv run memoryos demo curate
-uv run memoryos eval run --case-set hard --baseline memoryos_lite
+uv run python -m memoryos_eval run --case-set hard --baseline memoryos_lite
 ```
 
 ## Stable documentation

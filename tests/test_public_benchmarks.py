@@ -2,11 +2,11 @@ import json
 
 import pytest
 
-import memoryos_lite.public_benchmarks as public_benchmarks
-from memoryos_lite.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
+import memoryos_eval.public_benchmarks as public_benchmarks
+from memoryos_eval.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
+from memoryos_eval.evals import BaselineOutput
+from memoryos_eval.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
 from memoryos_lite.config import Settings
-from memoryos_lite.evals import BaselineOutput
-from memoryos_lite.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
 from memoryos_lite.v3_contracts import (
     ArchivalPassage,
     ArchiveAttachment,
@@ -2169,8 +2169,8 @@ def test_public_benchmark_reports_v3_component_accounting_append_only(tmp_path):
 
 
 def test_public_result_reports_answer_evidence_handoff_metadata():
-    from memoryos_lite.evals import BaselineOutput
-    from memoryos_lite.public_benchmarks import (
+    from memoryos_eval.evals import BaselineOutput
+    from memoryos_eval.public_benchmarks import (
         PublicBenchmarkCase,
         _answer_evidence_from_output,
         _to_public_result,

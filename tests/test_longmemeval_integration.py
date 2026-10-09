@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from memoryos_eval.longmemeval_manifest import create_manifest, load_manifest
+from memoryos_eval.public_benchmarks import run_public_benchmark
 from memoryos_lite.config import Settings
-from memoryos_lite.longmemeval_manifest import create_manifest, load_manifest
-from memoryos_lite.public_benchmarks import run_public_benchmark
 
 
 @pytest.fixture(autouse=True)

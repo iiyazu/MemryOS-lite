@@ -14,7 +14,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from memoryos_lite.cli import app
+from memoryos_eval.cli import app
 from memoryos_lite.roommem import (
     LIMITATIONS_ZH,
     SPLIT_PRESETS,
@@ -1448,7 +1448,6 @@ def test_cli_roommem_fake_llm_writes_reports(tmp_path, rooms_dir):
     result = runner.invoke(
         app,
         [
-            "eval",
             "roommem",
             "--data",
             str(rooms_dir),
@@ -1495,7 +1494,6 @@ def test_cli_roommem_unknown_curated_source_fails(tmp_path, rooms_dir):
     result = runner.invoke(
         app,
         [
-            "eval",
             "roommem",
             "--data",
             str(rooms_dir),
@@ -1527,14 +1525,14 @@ def test_cli_roommem_split_errors(tmp_path, rooms_dir):
 
     both = runner.invoke(
         app,
-        ["eval", "roommem", "--data", str(rooms_dir), "--split", "dev", "--rooms", "rm01"],
+        ["roommem", "--data", str(rooms_dir), "--split", "dev", "--rooms", "rm01"],
     )
     assert both.exit_code == 1
     assert "mutually exclusive" in both.output
 
     unknown = runner.invoke(
         app,
-        ["eval", "roommem", "--data", str(rooms_dir), "--split", "bogus"],
+        ["roommem", "--data", str(rooms_dir), "--split", "bogus"],
     )
     assert unknown.exit_code == 1
     assert "unknown split" in unknown.output
