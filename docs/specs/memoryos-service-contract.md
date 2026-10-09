@@ -216,6 +216,9 @@ items.
 - Unknown resources and invalid requests fail explicitly; clients must not
   infer success from transport completion alone.
 - Optional LLM and vector-index failures must not silently become authority.
+- `build-context` does not retry or degrade inside the service. A failure is an
+  HTTP 500 without exception text, and the host decides how to degrade (for
+  example, answer without memory).
 
 ## Integration guidance
 
