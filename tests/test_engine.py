@@ -15,10 +15,8 @@ from memoryos_lite.schemas import (
     MemoryItemType,
     MemoryPage,
     MemoryPageDraft,
-    MemoryPatch,
     MessageCreate,
     PageType,
-    PatchOperation,
     Role,
 )
 from memoryos_lite.store import create_store
@@ -611,31 +609,6 @@ def test_context_builder_counts_over_budget_task_truthfully(legacy_service):
     assert context_built.payload["task_truncated"] is True
 
 
-def test_patch_verifier_rejects_missing_old_text(legacy_service):
-    service = legacy_service  # legacy ContextBuilder opt-in
-    session = service.create_session("test")
-    service.ingest(session.id, MessageCreate(role=Role.USER, content="用户想做 MemoryOS Lite。"))
-    service.ingest(session.id, MessageCreate(role=Role.USER, content="技术栈选择 LangGraph。"))
-    service.ingest(session.id, MessageCreate(role=Role.USER, content="需要 source trace。"))
-    service.ingest(session.id, MessageCreate(role=Role.USER, content="需要 Context Builder。"))
-    page = service.page(session.id)
-    assert page is not None
-
-    patch = MemoryPatch(
-        operation=PatchOperation.REPLACE,
-        target_page_id=page.id,
-        old_text="不存在的旧内容",
-        new_text="用户不想做 Oncall Agent",
-        reason="测试 verifier",
-        source_refs=[page.source_message_ids[0]],
-    )
-
-    verified = service.commit_patch(session.id, patch)
-
-    assert verified.verified is False
-    assert any("old_text" in error for error in verified.errors)
-
-
 class FakeDraftClient:
     def create_draft(self, messages, context_pages=None):
         return MemoryPageDraft(
@@ -906,84 +879,6 @@ def test_embedding_client_failure_does_not_corrupt_page_store(tmp_path):
     loaded = service.store.load_page("stable_page")
     assert loaded is not None
     assert loaded.summary == "Alice lives in Shanghai."
-
-
-def test_patch_verifier_rejects_and_preserves_page_on_bad_old_text(tmp_path):
-    """A failed patch (bad old_text) must not modify the page content."""
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-    store = create_store(settings)
-    store.reset()
-    service = MemoryOSService(store=store, settings=settings)
-    session = service.create_session("patch-recovery")
-    service.ingest(
-        session.id,
-        MessageCreate(role=Role.USER, content="Database is PostgreSQL."),
-    )
-    page = MemoryPage(
-        id="patch_recovery_page",
-        session_id=session.id,
-        page_type=PageType.SOURCE_SUMMARY,
-        title="DB page",
-        summary="Database is PostgreSQL.",
-        facts=["Database is PostgreSQL."],
-    )
-    service.store.save_page(page)
-
-    patch = MemoryPatch(
-        operation=PatchOperation.REPLACE,
-        target_page_id=page.id,
-        old_text="Database is MySQL.",  # wrong — does not exist
-        new_text="Database is SQLite.",
-        reason="test bad patch",
-        source_refs=[],
-    )
-    result = service.commit_patch(session.id, patch)
-
-    assert result.verified is False
-    # Page content must be unchanged
-    loaded = service.store.load_page(page.id)
-    assert loaded is not None
-    assert "PostgreSQL" in loaded.summary
-    assert "SQLite" not in loaded.summary
-
-
-def test_multiple_failed_patches_do_not_accumulate_corruption(tmp_path):
-    """Repeated failed patches must not corrupt the page incrementally."""
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-    store = create_store(settings)
-    store.reset()
-    service = MemoryOSService(store=store, settings=settings)
-    session = service.create_session("multi-patch-recovery")
-    service.ingest(
-        session.id,
-        MessageCreate(role=Role.USER, content="Stack is LangGraph."),
-    )
-    page = MemoryPage(
-        id="multi_patch_page",
-        session_id=session.id,
-        page_type=PageType.SOURCE_SUMMARY,
-        title="Stack page",
-        summary="Stack is LangGraph.",
-        facts=["Stack is LangGraph."],
-    )
-    service.store.save_page(page)
-
-    for _ in range(3):
-        bad_patch = MemoryPatch(
-            operation=PatchOperation.REPLACE,
-            target_page_id=page.id,
-            old_text="nonexistent text",
-            new_text="corrupted content",
-            reason="repeated bad patch",
-            source_refs=[],
-        )
-        result = service.commit_patch(session.id, bad_patch)
-        assert result.verified is False
-
-    loaded = service.store.load_page(page.id)
-    assert loaded is not None
-    assert loaded.summary == "Stack is LangGraph."
-    assert "corrupted content" not in loaded.summary
 
 
 def test_store_allows_embeddings_from_different_providers(service):

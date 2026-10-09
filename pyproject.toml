@@ -37,12 +37,6 @@ remote = [
 benchmark = [
     "memoryos-lite[full-local,remote]",
 ]
-redis = [
-    "redis>=5.0.0",
-]
-ray = [
-    "ray[default]>=2.55.1",
-]
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

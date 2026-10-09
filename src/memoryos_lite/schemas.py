@@ -229,23 +229,6 @@ class BuildContextRequest(BaseModel):
     superseded: list[SupersededQuotePayload] = Field(default_factory=list, max_length=64)
 
 
-class SearchRequest(BaseModel):
-    query: str
-    top_k: int = Field(default=5, gt=0)
-    session_id: str | None = None
-    limit: int | None = None
-
-    @model_validator(mode="after")
-    def validate_limit(self) -> "SearchRequest":
-        # When both ``session_id`` and ``limit`` are omitted, the service layer
-        # applies a default soft cap (see ``MemoryOSService.search``). That
-        # default is the documented ``memory_search(query, top_k)`` contract,
-        # so we do NOT require one of session_id / limit at the API layer.
-        if self.limit is not None and self.limit <= 0:
-            raise ValueError("SearchRequest.limit must be positive")
-        return self
-
-
 class ArchiveSourceSpanPayload(BaseModel):
     start: int = Field(ge=0)
     end: int = Field(ge=0)
@@ -363,27 +346,6 @@ class ArchiveAttachmentResponse(BaseModel):
     scope_id: str
     passage_count: int
     diagnostics: list[ArchiveDiagnosticResponse] = Field(default_factory=list)
-
-
-class ArchivePassageResponse(BaseModel):
-    id: str
-    document_id: str | None = None
-    chunk_id: str | None = None
-    archive_id: str | None = None
-    source_id: str | None = None
-    file_id: str | None = None
-    text: str
-    citation: ArchiveSourceSpanPayload | None = None
-    source_refs: list[ArchiveSourceRefPayload] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ArchivePassageListResponse(BaseModel):
-    passages: list[ArchivePassageResponse]
-    limit: int
-    offset: int
-    total: int
 
 
 class CreateSessionRequest(BaseModel):

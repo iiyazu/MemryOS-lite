@@ -145,7 +145,7 @@ def test_service_archive_ingest_rejects_conflicting_document_id(tmp_path):
         )
 
 
-def test_service_file_only_archive_ingest_can_be_listed(tmp_path):
+def test_service_file_only_archive_ingest(tmp_path):
     service = _service(tmp_path)
     ref = {"source_type": "document", "source_id": "doc_file"}
 
@@ -159,18 +159,13 @@ def test_service_file_only_archive_ingest_can_be_listed(tmp_path):
             producer="xmuse_review_agent",
         )
     )
-    page = service.list_archive_passages(
-        file_id="file_1",
-        producer="xmuse_review_agent",
-        limit=10,
-        offset=0,
-    )
+    passages = service.store.list_archival_passages(file_id="file_1")
 
     assert len(ingest.passage_ids) == 1
     assert ingest.passage_ids[0].startswith("apsg_")
-    assert page.total == 1
-    assert page.passages[0].file_id == "file_1"
-    assert page.passages[0].metadata["producer"] == "xmuse_review_agent"
+    assert [passage.id for passage in passages] == ingest.passage_ids
+    assert passages[0].file_id == "file_1"
+    assert passages[0].metadata["producer"] == "xmuse_review_agent"
 
 
 def test_service_archive_context_reports_lexical_fallback_without_qdrant(tmp_path):

@@ -195,40 +195,6 @@ class TestPagingSupersedes:
             f"expected page_one.superseded_by == {page_two.id}, got {reloaded.superseded_by!r}"
         )
 
-    def test_retrieval_skips_superseded_pages(self, supersede_service):
-        """``search`` must not return pages marked as superseded."""
-        session = supersede_service.create_session("retrieval test")
-        for text in (
-            "架构评审：缓存层选 Redis",
-            "Redis 是当前行业默认选择",
-            "有现成的运维脚本",
-        ):
-            supersede_service.ingest(session.id, MessageCreate(role=Role.USER, content=text))
-        page_one = supersede_service.page(session.id)
-        assert page_one is not None
-
-        for text in (
-            "压测结果出来，缓存层切换到 Memcached",
-            "Memcached 延迟更低",
-            "已评估迁移工作量",
-        ):
-            supersede_service.ingest(session.id, MessageCreate(role=Role.USER, content=text))
-        page_two = supersede_service.page(session.id)
-        assert page_two is not None
-
-        # With filter on (default): only the newest page surfaces.
-        hits = supersede_service.search(query="缓存层", session_id=session.id, top_k=10)
-        returned_ids = {hit.page.id for hit in hits}
-        assert page_one.id not in returned_ids
-        assert page_two.id in returned_ids
-
-        # Escape hatch: include_superseded=True gives the full history.
-        hits_all = supersede_service.search(
-            query="缓存层", session_id=session.id, top_k=10, include_superseded=True
-        )
-        returned_all = {hit.page.id for hit in hits_all}
-        assert page_one.id in returned_all
-
     def test_no_conflict_does_not_mark_anything(self, supersede_service):
         """Second unrelated page does NOT mark first as superseded."""
         session = supersede_service.create_session("unrelated topics")

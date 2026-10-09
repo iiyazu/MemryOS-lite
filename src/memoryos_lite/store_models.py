@@ -1,12 +1,9 @@
 import json
-from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
-
-from memoryos_lite.v3_contracts import ArchivalPassage
 
 EMBEDDING_DIM = 1536
 
@@ -422,14 +419,6 @@ class ContextPolicyCandidateRecord(Base):
     __table_args__ = (Index("ix_context_policy_candidates_status_created", "status", "created_at"),)
 
 
-@dataclass(frozen=True)
-class ArchivalPassagePage:
-    passages: list[ArchivalPassage]
-    total: int
-    limit: int
-    offset: int
-
-
 # These types were historically defined by ``memoryos_lite.store``.  Keep their
 # public identity stable while the implementation lives in this focused module;
 # the composition root continues to re-export every name below.
@@ -456,7 +445,6 @@ for _compat_type in (
     ContextPolicyCandidateRecord,
     CuratedMemoryRecord,
     CuratorStateRecord,
-    ArchivalPassagePage,
 ):
     _compat_type.__module__ = "memoryos_lite.store"
 

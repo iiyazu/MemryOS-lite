@@ -18,7 +18,6 @@ from memoryos_lite.store_models import (
     ArchivalDocumentRecord,
     ArchivalMemoryHistoryRecord,
     ArchivalMemoryRecord,
-    ArchivalPassagePage,
     ArchivalPassageRecord,
     ArchiveAttachmentRecord,
     ContextPolicyCandidateRecord,
@@ -779,37 +778,6 @@ class ArchiveStoreMixin:
                 stmt = stmt.where(ArchivalPassageRecord.file_id == file_id)
             records = list(db.scalars(stmt))
         return [self._passage_from_record(record) for record in records]
-
-    def list_archival_passages_page(
-        self,
-        archive_id: str | None = None,
-        source_id: str | None = None,
-        file_id: str | None = None,
-        producer: str | None = None,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> ArchivalPassagePage:
-        normalized_limit = min(max(limit, 1), 500)
-        normalized_offset = max(offset, 0)
-        passages = self.list_archival_passages(
-            archive_id=archive_id,
-            source_id=source_id,
-            file_id=file_id,
-        )
-        if producer is not None:
-            passages = [
-                passage
-                for passage in passages
-                if str(passage.metadata.get("producer") or "") == producer
-            ]
-        total = len(passages)
-        return ArchivalPassagePage(
-            passages=passages[normalized_offset : normalized_offset + normalized_limit],
-            total=total,
-            limit=normalized_limit,
-            offset=normalized_offset,
-        )
 
     def get_archival_passages_by_ids(
         self,

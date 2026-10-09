@@ -22,9 +22,6 @@ from memoryos_lite.store_models import (
     ArchivalMemoryRecord as ArchivalMemoryRecord,
 )
 from memoryos_lite.store_models import (
-    ArchivalPassagePage as ArchivalPassagePage,
-)
-from memoryos_lite.store_models import (
     ArchivalPassageRecord as ArchivalPassageRecord,
 )
 from memoryos_lite.store_models import (

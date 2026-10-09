@@ -18,27 +18,19 @@ memory curator is likewise off by default.
 
 ## HTTP surface
 
-All request and response bodies are JSON except `/metrics`.
+All request and response bodies are JSON.
 
 | Method | Path | Contract |
 |---|---|---|
 | `GET` | `/health` | Process liveness and safe capability metadata. |
 | `POST` | `/sessions` | Create a server-identified session. |
 | `POST` | `/sessions/{id}/ingest` | Persist one message. |
-| `POST` | `/sessions/{id}/ingest-batch` | Persist a bounded message batch. |
-| `POST` | `/sessions/{id}/page` | Explicitly produce a page when eligible. |
 | `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context. |
-| `GET` | `/sessions/{id}/summary` | Return safe session summary data. |
-| `GET` | `/sessions/{id}/trace` | Return diagnostic trace events. |
 | `GET` | `/sessions/{id}/advisories` | Host-facing advisories; `?version=2` selects curated-memory advisories. |
 | `POST` | `/curate` | Stateless module memory curation (`memoryos_curate/v1`). |
 | `POST` | `/sessions/{id}/ask` | Agentic retrieval with superseded marks (`memoryos_memory_ask/v1`). |
 | `POST` | `/archives/ingest` | Idempotently ingest a source document. |
 | `POST` | `/archives/attachments` | Attach an archive document to a session. |
-| `GET` | `/archives/passages` | List bounded archive passages. |
-| `POST` | `/memory/search` | Search memory, optionally within a session. |
-| `GET` | `/memory/pages/{id}` | Read a persisted page. |
-| `GET` | `/metrics` | Prometheus exposition. |
 
 The exact request and response fields are defined by
 `src/memoryos_lite/api/app.py`, `src/memoryos_lite/api/schemas.py`, and the

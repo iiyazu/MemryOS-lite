@@ -50,7 +50,6 @@ from memoryos_lite.observability import (
     INGEST_TOTAL,
     PAGE_ERRORS_TOTAL,
     PAGE_TOTAL,
-    RETRIEVAL_HITS,
     bind_observability_context,
     current_observability_context,
     current_request_id,
@@ -63,9 +62,7 @@ from memoryos_lite.observability import (
 from memoryos_lite.schemas import (
     MemoryPage,
     MemoryPageDraft,
-    MemoryPatch,
     MessageCreate,
-    PatchOperation,
     Role,
 )
 from memoryos_lite.store import create_store
@@ -370,54 +367,6 @@ class TestContextBuildMetrics:
 
 
 # ---------------------------------------------------------------------------
-# Prometheus metrics — RETRIEVAL_HITS
-# ---------------------------------------------------------------------------
-
-
-class TestRetrievalHitsMetric:
-    def test_retrieval_hits_observed_on_search(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("retrieval-hits-test")
-        svc.settings.rot_safe_budget = 1
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-        svc.page(session.id)
-
-        before = _histogram_count(RETRIEVAL_HITS)
-        svc.search("Agent infra", session_id=session.id)
-        after = _histogram_count(RETRIEVAL_HITS)
-
-        assert after == before + 1
-
-    def test_retrieval_hits_value_matches_actual_hits(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("retrieval-hits-value-test")
-        svc.settings.rot_safe_budget = 1
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-        svc.page(session.id)
-
-        observed_values: list[float] = []
-        original_observe = RETRIEVAL_HITS.observe
-
-        def capturing_observe(value):
-            observed_values.append(value)
-            return original_observe(value)
-
-        with patch.object(RETRIEVAL_HITS, "observe", side_effect=capturing_observe):
-            hits = svc.search("Agent infra", session_id=session.id)
-
-        assert observed_values, "RETRIEVAL_HITS.observe was not called"
-        assert observed_values[-1] == len(hits)
-
-
-# ---------------------------------------------------------------------------
 # Prometheus metrics — EMBEDDING_SECONDS
 # ---------------------------------------------------------------------------
 
@@ -574,35 +523,6 @@ class TestTraceEventPayloads:
         payload = next(t.payload for t in traces if t.event_type == "page_committed")
         assert isinstance(payload["source_message_ids"], list)
 
-    def test_patch_verified_trace_has_required_fields(self, tmp_path):
-        svc = _make_service(tmp_path)
-        svc.settings.rot_safe_budget = 1
-        session = svc.create_session("trace-patch-verified-test")
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-            "技术栈选择 LangGraph 和 FastAPI。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-        page = svc.page(session.id)
-        assert page is not None
-
-        patch = MemoryPatch(
-            operation=PatchOperation.ADD,
-            target_page_id=page.id,
-            new_text="新增事实：用户偏好 Python。",
-            reason="test patch",
-        )
-        svc.commit_patch(session.id, patch)
-
-        traces = svc.store.list_traces(session.id)
-        patch_traces = [t for t in traces if t.event_type in ("patch_verified", "patch_rejected")]
-        assert patch_traces, "Expected patch trace event"
-
-        payload = patch_traces[-1].payload
-        for field in ("patch_id", "errors", "conflicts"):
-            assert field in payload, f"Patch trace missing field: {field}"
-
     def test_session_created_trace_has_title(self, tmp_path):
         svc = _make_service(tmp_path)
         session = svc.create_session("my-session-title")
@@ -611,27 +531,6 @@ class TestTraceEventPayloads:
         created_traces = [t for t in traces if t.event_type == "session_created"]
         assert created_traces, "Expected 'session_created' trace event"
         assert created_traces[0].payload["title"] == "my-session-title"
-
-    def test_memory_searched_trace_has_required_fields(self, tmp_path):
-        svc = _make_service(tmp_path)
-        svc.settings.rot_safe_budget = 1
-        session = svc.create_session("trace-search-test")
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-        svc.page(session.id)
-        svc.search("Agent infra", session_id=session.id)
-
-        traces = svc.store.list_traces(session.id)
-        search_traces = [t for t in traces if t.event_type == "memory_searched"]
-        assert search_traces, "Expected 'memory_searched' trace event"
-
-        payload = search_traces[-1].payload
-        assert "query" in payload
-        assert "hits" in payload
-        assert isinstance(payload["hits"], list)
 
 
 # ---------------------------------------------------------------------------
@@ -662,20 +561,6 @@ class TestInstrumentationDoesNotBreakFunctionality:
         assert pkg.session_id == session.id
         assert pkg.estimated_tokens >= 0
 
-    def test_search_returns_hits_with_metrics_active(self, tmp_path):
-        svc = _make_service(tmp_path)
-        svc.settings.rot_safe_budget = 1
-        session = svc.create_session("smoke-search")
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-        svc.page(session.id)
-
-        hits = svc.search("Agent infra", session_id=session.id)
-        assert isinstance(hits, list)
-
     def test_page_returns_memory_page_with_metrics_active(self, tmp_path):
         svc = _make_service(tmp_path)
         svc.settings.rot_safe_budget = 1
@@ -698,15 +583,6 @@ class TestInstrumentationDoesNotBreakFunctionality:
 
         traces = svc.store.list_traces(session.id)
         assert len(traces) >= 2  # session_created + message_ingested
-
-    def test_metrics_endpoint_returns_prometheus_text(self):
-        from memoryos_lite.api.app import app
-
-        client = TestClient(app, raise_server_exceptions=False)
-        resp = client.get("/metrics")
-        assert resp.status_code == 200
-        # Prometheus text format always starts with "# HELP" or metric lines
-        assert b"memoryos_" in resp.content or b"# HELP" in resp.content
 
 
 # ---------------------------------------------------------------------------
