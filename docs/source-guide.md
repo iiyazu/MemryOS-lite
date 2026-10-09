@@ -35,12 +35,15 @@ MemoryOSService
 | `retrieval/` | Search primitives and v2 recall helpers. |
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
-| `public_benchmarks.py` | LongMemEval/LoCoMo loading, baseline execution, report fields. |
-| `evals.py` | Built-in deterministic evals and baseline output structure. |
 | `curator/` | LLM curator: session worker and v2 advisories; stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`). |
-| `roommem.py` / `modulemem.py` | RoomMem and ModuleMem curation evaluations. |
-| `cli.py` | Typer CLI entrypoint. |
+| `roommem.py` | RoomMem curation evaluation (used by `memoryos_eval`). |
+| `cli.py` | Typer CLI entrypoint (`api`, `demo`). |
 | `api/app.py` | FastAPI REST API. |
+
+The evaluation harnesses live in the repo-root `memoryos_eval/` package, which the
+wheel does not ship: `evals.py` (built-in deterministic evals), `public_benchmarks.py`
+(LongMemEval/LoCoMo), `llm_judge.py`, `longmemeval_manifest.py`, `modulemem.py`
+(ModuleMem) and `cli.py` (`uv run python -m memoryos_eval --help`).
 
 ## Retrieval Paths
 
@@ -115,9 +118,9 @@ See `docs/store-interface.md` for the table contract.
 ## Benchmark Entry Points
 
 ```bash
-uv run memoryos eval run --case-set hard --baseline memoryos_lite
+uv run python -m memoryos_eval run --case-set hard --baseline memoryos_lite
 
-MEMORYOS_RECALL_PIPELINE=v2 uv run memoryos eval public \
+MEMORYOS_RECALL_PIPELINE=v2 uv run python -m memoryos_eval public \
   --benchmark longmemeval \
   --data-path benchmarks/longmemeval/longmemeval.json \
   --baseline memoryos_lite \
@@ -125,7 +128,7 @@ MEMORYOS_RECALL_PIPELINE=v2 uv run memoryos eval public \
   --no-llm-answer \
   --no-llm-judge
 
-MEMORYOS_MEMORY_ARCH=v3 uv run memoryos eval public \
+MEMORYOS_MEMORY_ARCH=v3 uv run python -m memoryos_eval public \
   --benchmark locomo \
   --data-path benchmarks/locomo/locomo10.json \
   --baseline memoryos_lite \

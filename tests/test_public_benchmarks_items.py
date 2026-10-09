@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from memoryos_lite.config import Settings
-from memoryos_lite.public_benchmarks import (
+from memoryos_eval.public_benchmarks import (
     PublicBenchmarkResult,
     _extract_item_metrics,
     run_public_benchmark,
 )
+from memoryos_lite.config import Settings
 from memoryos_lite.schemas import TraceEvent, utc_now
 from memoryos_lite.store import create_store
 

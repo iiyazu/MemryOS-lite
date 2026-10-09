@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from memoryos_lite.longmemeval_manifest import create_manifest, load_manifest
+from memoryos_eval.longmemeval_manifest import create_manifest, load_manifest
 
 # ---------------------------------------------------------------------------
 # Fixtures

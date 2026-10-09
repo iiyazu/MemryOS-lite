@@ -15,7 +15,7 @@ Purpose: measure a "memory curator" that reads multi-agent chat-room transcripts
 ## Running the harness
 
 ```
-uv run memoryos eval roommem --data benchmarks/roommem/rooms --arm raw --arm oracle --fake-llm --out /tmp/roommem
+uv run python -m memoryos_eval roommem --data benchmarks/roommem/rooms --arm raw --arm oracle --fake-llm --out /tmp/roommem
 ```
 
 `--arm raw` replays the xmuse Room host (session + per-message archive outbox);

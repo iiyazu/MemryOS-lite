@@ -3,10 +3,8 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from memoryos_lite.cli import _llm_judge_table_rows
-from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.evals import (
+from memoryos_eval.cli import _llm_judge_table_rows
+from memoryos_eval.evals import (
     BaselineOutput,
     EvidenceItem,
     _baseline_from_evidence,
@@ -18,7 +16,9 @@ from memoryos_lite.evals import (
     builtin_cases,
     run_eval,
 )
-from memoryos_lite.llm_judge import JudgeVerdict
+from memoryos_eval.llm_judge import JudgeVerdict
+from memoryos_lite.config import Settings
+from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import EvalCase, MessageCreate, Role
 from memoryos_lite.store import create_store
 

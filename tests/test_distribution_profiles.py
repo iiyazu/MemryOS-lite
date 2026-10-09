@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
+from memoryos_eval.cli import eval_public
 from memoryos_lite import __version__
 from memoryos_lite.api.app import app
 from memoryos_lite.capabilities import (
     MissingOptionalCapabilityError,
     require_remote_capability,
 )
-from memoryos_lite.cli import eval_public
 
 ROOT = Path(__file__).resolve().parents[1]
 
