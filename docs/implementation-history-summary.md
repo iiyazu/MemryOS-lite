@@ -8,7 +8,7 @@ The live implementation has since converged on these durable decisions:
 
 - SQLite is the authority; filesystem mirrors, caches, vectors, and reports are derived.
 - v3 layered composition and v2 episode-first recall are the defaults.
-- v1 composer and recall paths remain explicit compatibility choices.
+- The v1 composer, recall, paging and item paths were removed (architecture audit 2026-10).
 - Core and archival memory require source-backed contracts.
 - The agent kernel stays advisory-only (`external`); the LangGraph demo, external LLMs, Redis, and Qdrant remain optional experiments.
 - Retrieval/source diagnostics are reported separately from final answer/source projection.

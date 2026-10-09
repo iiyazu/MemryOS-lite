@@ -12,8 +12,8 @@ removed, so that comparison cannot be re-run.
 ## Current Positioning
 
 MemoryOS Lite is an eval-driven, source-attributed Agent/RAG memory prototype.
-The current defaults are v3 composition and v2 episode-first recall; `v1`
-remains an explicit compatibility choice for each setting.
+The service runs v3 composition over v2 episode-first recall; the v1 memory
+architecture has been removed.
 
 The benchmark goal for the current phase is evidence recall and diagnostic
 clarity. Answer pass rate is tracked separately because answer quality can fail
@@ -42,7 +42,7 @@ v3 public smoke, no LLM answer/judge:
 Commands:
 
 ```bash
-MEMORYOS_RECALL_PIPELINE=v2 uv run python -m memoryos_eval public \
+uv run python -m memoryos_eval public \
   --benchmark longmemeval \
   --data-path benchmarks/longmemeval/longmemeval.json \
   --baseline memoryos_lite \
@@ -50,7 +50,7 @@ MEMORYOS_RECALL_PIPELINE=v2 uv run python -m memoryos_eval public \
   --no-llm-answer \
   --no-llm-judge
 
-MEMORYOS_MEMORY_ARCH=v3 uv run python -m memoryos_eval public \
+uv run python -m memoryos_eval public \
   --benchmark locomo \
   --data-path benchmarks/locomo/locomo10.json \
   --baseline memoryos_lite \
@@ -58,7 +58,7 @@ MEMORYOS_MEMORY_ARCH=v3 uv run python -m memoryos_eval public \
   --no-llm-answer \
   --no-llm-judge
 
-MEMORYOS_RECALL_PIPELINE=v2 uv run python -m memoryos_eval public \
+uv run python -m memoryos_eval public \
   --benchmark locomo \
   --data-path benchmarks/locomo/locomo10.json \
   --baseline memoryos_lite \
@@ -91,9 +91,8 @@ progress, prefer `episode_source_hit_at_10`,
 
 - The smoke results are only 10-case checks. Larger fixed slices are needed
   before claiming benchmark improvement.
-- `item_source_hit_at_10` is currently zero in the smoke runs because Phase 1
-  treats existing page-derived items as supporting diagnostics, not the success
-  gate.
+- `item_source_hit_at_10` was zero in these smoke runs; page-derived items no
+  longer exist, so the column stays empty.
 - LoCoMo remains harder than LongMemEval. Current work improves raw evidence
   access, but answer quality and multi-hop reasoning still need later phases.
 - Real LLM answer/judge runs are optional and should be reported separately

@@ -3,20 +3,12 @@
 This file tracks current limitations that are intentionally left for later
 work. Historical phase notes have been removed from this baseline document.
 
-## 1. v2 Recall and v3 Composer Are Defaults
+## 1. One Context Path: v3 Composer Over v2 Recall
 
-Default behavior now uses `v3`.
-
-- Episode indexing and v2 recall are enabled by default through
-  `MEMORYOS_RECALL_PIPELINE=v2`; `v1` remains an explicit compatibility path.
-- The v3 layered composer is the default memory architecture.
-- `MEMORYOS_MEMORY_ARCH=v1` remains available as an explicit fallback.
-
-Why this is acceptable:
-
-- Existing API/eval behavior stays stable when callers pin `v1`.
-- v1 compatibility can still be evaluated explicitly without changing the default route.
-- v3 public smoke now emits layered diagnostics and is the default path.
+- Episode indexing and v2 recall always run; the v3 layered composer builds
+  every context package.
+- The v1 architecture (pages, items, paging, conflict detection) was removed,
+  so v1 results recorded earlier cannot be re-run.
 
 ## 2. LoCoMo Remains Hard
 
@@ -38,22 +30,7 @@ Future direction:
 - Improve evidence planner ordering and context packing before adding broader
   memory layers.
 
-## 3. Items Are Supporting Diagnostics In Phase 1
-
-`MemoryItem` exists, but current v2 success is gated on raw episode/planned
-evidence metrics. In the latest smoke, `item_source_hit_at_10 = 0/10`.
-
-Why this is acceptable:
-
-- Phase 1 deliberately prioritizes source-grounded raw evidence.
-- Page-derived items remain useful for support and future semantic retrieval.
-
-Future direction:
-
-- Revisit item extraction/search after episode recall and context packing are
-  stable.
-
-## 4. Public `source_hit` Is Not Pure Retrieval Localization
+## 3. Public `source_hit` Is Not Pure Retrieval Localization
 
 Public benchmark reports include several source metrics. Final `source_hit` can
 mix projected answer/source attribution with context evidence, so it should not
@@ -77,7 +54,7 @@ Future direction:
 
 - Keep final answer/source projection separate from retrieval-only diagnostics.
 
-## 5. Curation Is Not an Agent Runtime
+## 4. Curation Is Not an Agent Runtime
 
 `/curate` runs a small LangGraph graph (extract, check, repair, consolidate)
 for one request; `demo curate` runs it offline with a scripted LLM. It is not a

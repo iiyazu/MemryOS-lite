@@ -9,17 +9,17 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 
 ## 当前基线
 
-- 默认 `MEMORYOS_MEMORY_ARCH=v3`，使用 layered context composer；`v1` 仅作为显式兼容路径。
-- 默认 `MEMORYOS_RECALL_PIPELINE=v2`，使用 episode-first evidence recall；可显式选择 `v1`。
+- 上下文只有一条路径：v3 layered context composer 组装，v2 episode-first evidence recall 取证据。
+  v1 记忆架构（page、item、分页、冲突检测）已删除。
 - 记忆策展（curator）默认关闭；`MEMORYOS_CURATOR_ENABLED=true` 时后台 worker 从消息流抽取带来源证明的持久记忆，并通过 `/sessions/{id}/advisories?version=2`（`memoryos_external_advisories/v2`）暴露，由宿主决定是否采纳。worker 是 `/curate` 图的有状态宿主：每一窗消息连同会话现有记忆按 `profile=room` 走同一张图，引文必须是原消息的逐字子串，按 `topic_key` + 版本号确定性汇总新旧版本。
 - 模块记忆走无状态的 `POST /curate`（`memoryos_curate/v1`）：宿主（如 xmuse）带上模块现有记忆和一窗新活动，MemoryOS 返回新的记忆版本，自己不存状态。错题本采用闭合记账：每条复核打回和门禁失败都必须归到一条教训或写明理由排除。提炼过程是一张 LangGraph 图（抽取 → 校验 → 修复 → 汇总），见下文"模块记忆"。
-- SQLite 是权威存储；page/trace 文件和进程内向量索引都是派生数据。
+- SQLite 是权威存储；trace 文件和进程内向量索引都是派生数据。
 - 以新鲜命令结果而不是文档中的历史通过数判断状态。
 
 ```text
 ingest(message)
   -> authoritative Message
-  -> episode / page / item / archival derivatives
+  -> episode / archival derivatives
 
 build_context(task)
   -> v3 ContextComposer
@@ -27,7 +27,7 @@ build_context(task)
   -> bounded ContextPackage with source evidence and diagnostics
 ```
 
-主要对象包括 `Message`、`Episode`、`MemoryPage`、`MemoryItem`、`ArchivalDocument` / `ArchivalPassage` 和 `ContextPackage`。
+主要对象包括 `Message`、`Episode`、`ArchivalDocument` / `ArchivalPassage` 和 `ContextPackage`。
 
 ## 架构：推送端与拉取端
 
@@ -88,7 +88,7 @@ uv sync --frozen --no-dev --extra full-local
 uv run --no-sync memoryos api --reload
 ```
 
-`full-local` 保留 SQLite、BM25、FastEmbed、RRF 和 paging，且不安装
+`full-local` 保留 SQLite、BM25、FastEmbed 和 RRF，且不安装
 远程 provider/graph stack。需要 LLM curator、`/curate`、远程 LLM 或公开 benchmark 时
 显式安装：
 
@@ -106,7 +106,7 @@ uv run --no-sync python -m memoryos_eval ask-demo --mermaid
 ### 分发边界
 
 `memoryos-lite` 核心包只包含 API、SQLite/BM25 和基础存储。`full-local` 是 xmuse
-companion 使用的离线完整能力：FastEmbed、ONNX、RRF 和 paging；
+companion 使用的离线完整能力：FastEmbed、ONNX 和 RRF；
 模型缓存由 companion 单独证明，不混入 Python 依赖包。`remote` 与 `benchmark` 则显式
 安装 LangChain、LangGraph 和远程 provider 相关依赖。
 
@@ -178,9 +178,6 @@ HTTP 接口：
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `DATA_DIR` | `.memoryos` | SQLite 与派生调试文件目录 |
-| `MEMORYOS_MEMORY_ARCH` | `v3` | `v3` 或兼容 `v1` composer |
-| `MEMORYOS_RECALL_PIPELINE` | `v2` | `v2` 或兼容 `v1` recall |
-| `MEMORYOS_PAGING_MODE` | `off` | 显式启用分页策略 |
 | `MEMORYOS_CURATOR_ENABLED` | `false` | 启用 LLM 记忆策展与后台 worker |
 | `MEMORYOS_CURATOR_WINDOW_MESSAGES` | `12` | 每次策展窗口的消息数 |
 | `MEMORYOS_CURATOR_IDLE_FLUSH_S` | `20.0` | 不足一窗时的空闲刷新等待秒数 |

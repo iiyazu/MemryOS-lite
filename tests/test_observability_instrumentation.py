@@ -46,10 +46,7 @@ from memoryos_lite.observability import (
     CORE_OPERATION_ERRORS_TOTAL,
     CORE_OPERATION_SECONDS,
     CORE_OPERATION_TOTAL,
-    EMBEDDING_SECONDS,
     INGEST_TOTAL,
-    PAGE_ERRORS_TOTAL,
-    PAGE_TOTAL,
     bind_observability_context,
     current_observability_context,
     current_request_id,
@@ -60,8 +57,6 @@ from memoryos_lite.observability import (
     timed_core_operation,
 )
 from memoryos_lite.schemas import (
-    MemoryPage,
-    MemoryPageDraft,
     MessageCreate,
     Role,
 )
@@ -263,49 +258,6 @@ class TestIngestTotalMetric:
 # ---------------------------------------------------------------------------
 
 
-class TestPageMetrics:
-    def test_page_total_increments_on_successful_page(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("page-metric-test")
-        # Force paging threshold to be very low
-        svc.settings.rot_safe_budget = 1
-
-        before = _metric_value(PAGE_TOTAL, {"mode": "heuristic"})
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-            "技术栈选择 LangGraph 和 FastAPI。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-        svc.page(session.id)
-        after = _metric_value(PAGE_TOTAL, {"mode": "heuristic"})
-
-        assert after >= before + 1
-
-    def test_page_errors_total_increments_on_verify_failure(self, tmp_path):
-        svc = _make_service(tmp_path)
-        session = svc.create_session("page-error-metric-test")
-
-        before = _metric_value(PAGE_ERRORS_TOTAL, {"stage": "verify"})
-
-        # Inject a draft with an invalid source_message_id to trigger verify failure
-        bad_draft = MemoryPageDraft(
-            title="Bad Draft",
-            summary="This draft has an invalid source ref.",
-            facts=["some fact"],
-            source_message_ids=["nonexistent_msg_id"],
-        )
-        with patch.object(
-            svc.paging_agent,
-            "create_drafts",
-            return_value=([bad_draft], "heuristic", None),
-        ):
-            svc.page(session.id)
-
-        after = _metric_value(PAGE_ERRORS_TOTAL, {"stage": "verify"})
-        assert after >= before + 1
-
-
 # ---------------------------------------------------------------------------
 # Prometheus metrics — CONTEXT_BUILD_SECONDS, CONTEXT_TOKENS, CONTEXT_BUDGET_USED_RATIO
 # ---------------------------------------------------------------------------
@@ -369,44 +321,6 @@ class TestContextBuildMetrics:
 # ---------------------------------------------------------------------------
 # Prometheus metrics — EMBEDDING_SECONDS
 # ---------------------------------------------------------------------------
-
-
-class TestEmbeddingSecondsMetric:
-    def test_embedding_seconds_observed_when_embedding_client_present(self, tmp_path):
-        from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
-
-        svc = _make_service(tmp_path)
-        svc.embedding_client = DeterministicEmbeddingClient()
-        svc.settings.rot_safe_budget = 1
-        session = svc.create_session("embedding-seconds-test")
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-
-        before = _histogram_count(EMBEDDING_SECONDS)
-        svc.page(session.id)
-        after = _histogram_count(EMBEDDING_SECONDS)
-
-        assert after >= before + 1
-
-    def test_embedding_seconds_not_observed_without_embedding_client(self, tmp_path):
-        svc = _make_service(tmp_path)
-        svc.embedding_client = None
-        svc.settings.rot_safe_budget = 1
-        session = svc.create_session("no-embedding-test")
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-
-        before = _histogram_count(EMBEDDING_SECONDS)
-        svc.page(session.id)
-        after = _histogram_count(EMBEDDING_SECONDS)
-
-        assert after == before
 
 
 # ---------------------------------------------------------------------------
@@ -487,42 +401,6 @@ class TestTraceEventPayloads:
         dynamic_trace = next(t for t in reversed(traces) if t.event_type == "context_built")
         assert dynamic_trace.payload["budget_source"] == "dynamic"
 
-    def test_page_committed_trace_has_required_fields(self, tmp_path):
-        svc = _make_service(tmp_path)
-        svc.settings.rot_safe_budget = 1
-        session = svc.create_session("trace-page-committed-test")
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-            "技术栈选择 LangGraph 和 FastAPI。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-        svc.page(session.id)
-
-        traces = svc.store.list_traces(session.id)
-        page_traces = [t for t in traces if t.event_type == "page_committed"]
-        assert page_traces, "Expected 'page_committed' trace event"
-
-        payload = page_traces[-1].payload
-        for field in ("page_id", "source_message_ids", "paging_mode"):
-            assert field in payload, f"'page_committed' trace missing field: {field}"
-
-    def test_page_committed_trace_source_message_ids_is_list(self, tmp_path):
-        svc = _make_service(tmp_path)
-        svc.settings.rot_safe_budget = 1
-        session = svc.create_session("trace-source-ids-list-test")
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-            "技术栈选择 LangGraph 和 FastAPI。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-        svc.page(session.id)
-
-        traces = svc.store.list_traces(session.id)
-        payload = next(t.payload for t in traces if t.event_type == "page_committed")
-        assert isinstance(payload["source_message_ids"], list)
-
     def test_session_created_trace_has_title(self, tmp_path):
         svc = _make_service(tmp_path)
         session = svc.create_session("my-session-title")
@@ -560,21 +438,6 @@ class TestInstrumentationDoesNotBreakFunctionality:
 
         assert pkg.session_id == session.id
         assert pkg.estimated_tokens >= 0
-
-    def test_page_returns_memory_page_with_metrics_active(self, tmp_path):
-        svc = _make_service(tmp_path)
-        svc.settings.rot_safe_budget = 1
-        session = svc.create_session("smoke-page")
-        for content in [
-            "用户目标是完成 Agent infra 项目。",
-            "最终决定做 MemoryOS Lite。",
-            "技术栈选择 LangGraph 和 FastAPI。",
-        ]:
-            svc.ingest(session.id, MessageCreate(role=Role.USER, content=content))
-
-        page = svc.page(session.id)
-        assert page is not None
-        assert isinstance(page, MemoryPage)
 
     def test_trace_events_are_stored_and_retrievable(self, tmp_path):
         svc = _make_service(tmp_path)

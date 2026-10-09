@@ -54,6 +54,6 @@ enter normal context through `build_context()`.
 
 ## Non-Claims
 
-This feature does not change default v3 routing, v1 fallback, external
-advisory behavior, or benchmark scores. Public benchmark movement must be evaluated by a
+This feature does not change v3 routing, external advisory behavior, or
+benchmark scores. Public benchmark movement must be evaluated by a
 separate held-out or milestone process.
