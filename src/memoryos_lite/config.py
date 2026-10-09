@@ -17,27 +17,9 @@ WIRE_APIS = ("chat", "responses")
 class Settings(BaseSettings):
     data_dir: Path = Path(".memoryos")
     memoryos_eval_data_dir: Path | None = None
-    model_max_context: int = 128_000
     rot_safe_budget: int = 2_400
     hard_limit: int = 8_000
     recent_message_limit: int = 8
-    memoryos_page_window_max_messages: int = 24
-    memoryos_page_window_max_tokens: int = 5_000
-    memoryos_evidence_max_tokens: int = 48
-    memoryos_evidence_reserve_ratio: float = 0.6
-    # 0 means "no absolute token cap"; the ratio still controls the reserve.
-    memoryos_evidence_reserve_tokens: int = 512
-    memoryos_evidence_reserve_min_pages: int = 8
-    memoryos_paging_mode: str = "off"
-    memoryos_paging_context_pages: int = 10
-    memoryos_item_extraction: bool = True
-    memoryos_item_evidence_max: int = 3
-    memoryos_evidence_representation: str = "legacy"
-    memoryos_memory_arch: str = "v3"
-    memoryos_recall_pipeline: str = "v2"
-    memoryos_trace_mode: str = "verbose"
-    memoryos_evidence_direct_raw_fallback: bool = True
-    memoryos_evidence_candidate_top_k: int = 5
     memoryos_evidence_context_neighbors_before: int = 2
     memoryos_evidence_context_neighbors_after: int = 1
     memoryos_llm_provider: str = "auto"
@@ -129,44 +111,6 @@ class Settings(BaseSettings):
         if value <= 0:
             raise ValueError("MEMORYOS_CURATOR_POLL_S must be positive")
         return value
-
-    @property
-    def resolved_evidence_representation(self) -> str:
-        val = self.memoryos_evidence_representation.strip().lower()
-        valid = {"legacy", "raw", "deterministic_context", "page_context_plus_raw"}
-        if val not in valid:
-            raise ValueError(
-                f"MEMORYOS_EVIDENCE_REPRESENTATION={val!r} invalid. Valid: {sorted(valid)}"
-            )
-        return val
-
-    @property
-    def resolved_memory_arch(self) -> str:
-        val = self.memoryos_memory_arch.strip().lower()
-        if val not in {"v1", "v3"}:
-            raise ValueError("MEMORYOS_MEMORY_ARCH must be 'v1' or 'v3'")
-        return val
-
-    @property
-    def resolved_paging_mode(self) -> str:
-        val = self.memoryos_paging_mode.strip().lower()
-        if val not in {"off", "heuristic", "llm"}:
-            raise ValueError("MEMORYOS_PAGING_MODE must be 'off', 'heuristic', or 'llm'")
-        return val
-
-    @property
-    def resolved_recall_pipeline(self) -> str:
-        val = self.memoryos_recall_pipeline.strip().lower()
-        if val not in {"v1", "v2"}:
-            raise ValueError("MEMORYOS_RECALL_PIPELINE must be 'v1' or 'v2'")
-        return val
-
-    @property
-    def resolved_trace_mode(self) -> str:
-        val = self.memoryos_trace_mode.strip().lower()
-        if val not in {"verbose", "compact"}:
-            raise ValueError("MEMORYOS_TRACE_MODE must be 'verbose' or 'compact'")
-        return val
 
     @property
     def resolved_llm_provider(self) -> str:

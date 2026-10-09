@@ -21,12 +21,12 @@ MemoryOSService
 | Path | Responsibility |
 |---|---|
 | `config.py` | Runtime settings, feature flags, LLM configuration. |
-| `schemas.py` | Pydantic models for messages, episodes, pages, items, traces, context, evals. |
+| `schemas.py` | Pydantic models for messages, episodes, traces, context and the HTTP API. |
 | `store.py` | Thin public `MemoryStore` composition root and stable imports. |
 | `store_models.py` / `store_runtime.py` | SQLite schema, engine lifecycle, migrations, and transactions. |
 | `store_sessions.py` | Session, message, episode, and recall-watermark persistence. |
 | `store_archive.py` | Core/archive documents, passages, attachments, and governed-memory persistence. |
-| `store_legacy.py` | Page/item indexes, patches, traces, debug mirrors, and maintenance. |
+| `store_legacy.py` | Traces, their JSONL debug mirror, and store reset. |
 | `store_protocols.py` | Consumer-specific structural persistence contracts. |
 | `engine.py` | Application facade: ingest, context building, archives, `/curate`. |
 | `retrieval/` | Search primitives and v2 recall helpers. |
@@ -72,17 +72,14 @@ benchmark session, and neighboring turns for retrieval.
 
 ## Storage Model
 
-SQLite is the authoritative store. Page JSON files and trace JSONL files are
-debug mirrors for human inspection.
+SQLite is the authoritative store. Trace JSONL files are debug mirrors for
+human inspection.
 
 Core tables:
 
 - `sessions`
 - `messages`
 - `episodes`
-- `memory_pages`
-- `memory_items`
-- `memory_patches`
 - `trace_events`
 - `core_memory_blocks`
 - `core_memory_history`

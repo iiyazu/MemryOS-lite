@@ -6,7 +6,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, model_validator
 
-from memoryos_lite.schemas import Episode, MemoryItem, MemoryPage, Message, Role, utc_now
+from memoryos_lite.schemas import Episode, Message, Role, utc_now
 
 
 class SourceType(StrEnum):
@@ -350,87 +350,6 @@ def episode_to_recall_entry(episode: Episode) -> RecallMemoryEntry:
     )
 
 
-def page_to_archival_document(page: MemoryPage) -> ArchivalDocument:
-    return ArchivalDocument(
-        id=f"adoc_{page.id}",
-        title=page.title,
-        text=page.summary,
-        version=page.version,
-        source_refs=[
-            SourceRef(
-                source_type=SourceType.MESSAGE,
-                source_id=source_id,
-                session_id=page.session_id,
-            )
-            for source_id in page.source_message_ids
-        ],
-        legacy_page_id=page.id,
-        metadata={"legacy_page_type": page.page_type.value},
-        created_at=page.created_at,
-    )
-
-
-def item_to_archival_passage(
-    item: MemoryItem,
-    document_id: str | None = None,
-) -> ArchivalPassage:
-    source_id = item.source_message_ids[0] if item.source_message_ids else None
-    return ArchivalPassage(
-        id=f"apsg_{item.id}",
-        document_id=document_id,
-        text=item.content,
-        source_id=source_id,
-        source_refs=[
-            SourceRef(
-                source_type=SourceType.MESSAGE,
-                source_id=source_id,
-                session_id=item.session_id,
-            )
-            for source_id in item.source_message_ids
-        ],
-        legacy_item_id=item.id,
-        metadata={"legacy_page_id": item.page_id, "legacy_item_type": item.item_type.value},
-    )
-
-
-V3_KEEP_TABLES: set[str] = {
-    "sessions",
-    "messages",
-    "episodes",
-    "memory_pages",
-    "memory_items",
-    "memory_patches",
-    "trace_events",
-    "alembic_version",
-}
-
-V3_FUTURE_TABLES: set[str] = {
-    "archival_documents",
-    "archival_chunks",
-    "archival_passages",
-    "archival_memories",
-    "archival_memory_history",
-    "archive_attachments",
-    "core_memory_blocks",
-    "core_memory_history",
-    "promotion_candidates",
-    "context_policy_candidates",
-    "tool_policy_rules",
-    "approval_states",
-    "kernel_traces",
-}
-
-V3_NO_NEW_TARGETS: set[str] = {"MemoryPage", "MemoryItem"}
-
-REQUIRED_V3_ADAPTERS: dict[str, str] = {
-    "Message": "MessageLogEntry adapter",
-    "Episode": "RecallMemoryEntry adapter over episodes table",
-    "MemoryPage": "ArchivalDocument migration input",
-    "MemoryItem": "ArchivalMemory or ArchivalPassage adapter",
-    "ContextPackage": "ContextPackageV3 compatibility payload",
-}
-
-
 __all__ = [
     "ArchiveAttachment",
     "ArchivalChunk",
@@ -444,16 +363,10 @@ __all__ = [
     "IdentityScope",
     "LayerBudgetDecision",
     "MessageLogEntry",
-    "REQUIRED_V3_ADAPTERS",
     "RecallMemoryEntry",
     "SourceRef",
     "SourceSpan",
-    "V3_FUTURE_TABLES",
-    "V3_KEEP_TABLES",
-    "V3_NO_NEW_TARGETS",
     "ensure_persisted_identity_scope",
     "episode_to_recall_entry",
-    "item_to_archival_passage",
     "message_to_log_entry",
-    "page_to_archival_document",
 ]

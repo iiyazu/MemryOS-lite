@@ -1,7 +1,7 @@
 # Store Interface
 
-Storage is SQLite-first and DB-authoritative. Filesystem page and trace files
-are debug mirrors, not the primary state.
+Storage is SQLite-first and DB-authoritative. Filesystem trace files are debug
+mirrors, not the primary state.
 
 ## Authority
 
@@ -10,9 +10,7 @@ are debug mirrors, not the primary state.
 | Sessions | `sessions` | none | DB |
 | Messages | `messages` | none | DB |
 | Episodes | `episodes` | none | DB |
-| Pages | `memory_pages.content_json` | `.memoryos/pages/.../*.json` | DB |
-| Items | `memory_items` | none | DB |
-| Patches | `memory_patches` | none | DB |
+| Pages, items, patches (v1, no longer written) | `memory_pages`, `memory_items`, `memory_patches` | none | DB |
 | Traces | `trace_events` | `.memoryos/traces/*.jsonl` | DB |
 | Core memory (unused) | `core_memory_blocks`, `core_memory_history` | none | DB |
 | Archival memory | `archival_documents`, `archival_chunks`, `archival_passages`, `archival_memories`, `archival_memory_history` | none | DB |

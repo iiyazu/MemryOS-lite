@@ -5,8 +5,6 @@ from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.archival_vector import LocalArchivalVectorStore
 from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 from memoryos_lite.schemas import (
-    MemoryItem,
-    MemoryItemType,
     MessageCreate,
     Role,
 )
@@ -39,19 +37,6 @@ def test_v3_build_context_trace_includes_component_accounting_and_final_context_
         context_built.payload["v3_final_context_trace"]
         == context.metadata["v3_final_context_trace"]
     )
-
-
-def test_recall_pipeline_defaults_to_v2(tmp_path, monkeypatch):
-    from memoryos_lite.config import Settings
-    from memoryos_lite.engine import MemoryOSService
-
-    monkeypatch.delenv("MEMORYOS_RECALL_PIPELINE", raising=False)
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-    service = MemoryOSService(settings=settings)
-    session = service.create_session("test")
-    service.ingest(session.id, MessageCreate(role=Role.USER, content="事实 A"))
-
-    assert service.settings.memoryos_recall_pipeline == "v2"
 
 
 def test_fastembed_provider_falls_back_to_no_embedding_when_unavailable(tmp_path):
@@ -117,29 +102,3 @@ def test_v3_context_composer_retry_then_degrades_to_recall_pipeline(tmp_path):
     recovery_events = [t for t in traces if t.event_type == "recovery_event"]
     assert any(t.payload["kind"] == "retry_scheduled" for t in recovery_events)
     assert any(t.event_type == "context_degraded" for t in traces)
-
-
-def test_store_allows_embeddings_from_different_providers(service):
-    session = service.create_session("mixed-embedding-dims")
-    first = MemoryItem(
-        page_id="page_test",
-        session_id=session.id,
-        item_type=MemoryItemType.KNOWLEDGE,
-        content="OpenAI sized vector",
-        source_message_ids=["msg_001"],
-    )
-    second = MemoryItem(
-        page_id="page_test",
-        session_id=session.id,
-        item_type=MemoryItemType.KNOWLEDGE,
-        content="fastembed sized vector",
-        source_message_ids=["msg_002"],
-    )
-    service.store.save_items([first, second])
-
-    service.store.set_item_embedding(first.id, [0.1] * 1536)
-    service.store.set_item_embedding(second.id, [0.2] * 384)
-
-    embeddings = service.store.get_item_embeddings([first.id, second.id])
-    assert len(embeddings[first.id]) == 1536
-    assert len(embeddings[second.id]) == 384

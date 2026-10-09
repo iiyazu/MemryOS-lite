@@ -15,7 +15,7 @@ from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.schemas import MemoryPage, Message, MessageCreate, PageType, Role
+from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
 
@@ -197,11 +197,7 @@ def _run_baseline(
                 service.store.add_message(
                     message.model_copy(update={"session_id": source_session.id})
                 )
-            # The service no longer pages; page counts below stay zero.
-            all_pages = service.store.list_pages(source_session.id)
             candidate_top_k = 5
-            page_candidate_source_ids: list[str] = []
-            page_candidate_page_ids: list[str] = []
             context = service.build_context(
                 context_session.id,
                 case.question,
@@ -211,37 +207,6 @@ def _run_baseline(
         finally:
             service.settings.rot_safe_budget = original_budget
             service.settings.recent_message_limit = original_recent
-        pages = [service.store.load_page(item.page_id) for item in context.retrieved_pages]
-        pages.extend(service.store.load_page(item.page_id) for item in context.active_task_pages)
-        retrieved_page_ids = [
-            item.page_id for item in [*context.retrieved_pages, *context.active_task_pages]
-        ]
-        if context.pinned_core:
-            pages_by_id = {page.id: page for page in all_pages}
-            if case.include_global_core:
-                pages_by_id.update(
-                    {page.id: page for page in service.store.list_global_core_pages()}
-                )
-            loaded_page_ids = {page.id for page in pages if page is not None}
-            for summary in context.pinned_core:
-                pinned_page = next(
-                    (
-                        page
-                        for page in sorted(
-                            pages_by_id.values(),
-                            key=lambda item: (item.superseded_by is not None, item.created_at),
-                        )
-                        if page.page_type == PageType.CORE_PROFILE
-                        and page.summary == summary
-                        and page.superseded_by is None
-                        and page.id not in loaded_page_ids
-                    ),
-                    None,
-                )
-                if pinned_page is not None:
-                    pages.append(pinned_page)
-                    loaded_page_ids.add(pinned_page.id)
-                    retrieved_page_ids.append(pinned_page.id)
         # For temporal questions, include recent messages directly so budget
         # pressure in build_context cannot drop the latest-state messages.
         raw_recent = messages[-service.settings.recent_message_limit :]
@@ -250,7 +215,6 @@ def _run_baseline(
         else:
             recent_evidence = _message_evidence(context.recent_messages)
         memory_evidence: list[EvidenceItem] = []
-        messages_by_id = {message.id: message for message in messages}
         for context_evidence in context.retrieved_evidence:
             retrieved_origin = context_evidence.metadata.get("origin")
             memory_evidence.append(
@@ -266,22 +230,7 @@ def _run_baseline(
                     superseded=context_evidence.superseded,
                 )
             )
-        for page in pages:
-            if page is not None:
-                memory_evidence.extend(_page_evidence(page, messages_by_id))
         memory_evidence.extend(recent_evidence)
-        page_type_counts: dict[str, int] = {}
-        pages_by_id = {page.id: page for page in all_pages}
-        for page in all_pages:
-            page_type_counts[page.page_type.value] = (
-                page_type_counts.get(page.page_type.value, 0) + 1
-            )
-        dropped_page_reasons = {item.page_id: item.reason for item in context.dropped_pages}
-        dropped_page_source_ids = {
-            item.page_id: pages_by_id[item.page_id].source_message_ids
-            for item in context.dropped_pages
-            if item.page_id in pages_by_id
-        }
         context_evidence_source_ids = _dedupe_source_ids(
             [evidence.message_id for evidence in context.retrieved_evidence[:candidate_top_k]]
             + [m.id for m in context.recent_messages]
@@ -309,17 +258,12 @@ def _run_baseline(
             primary_key="recall_planned_message_ids",
             fallback_key="planned_evidence_message_ids",
         )
-        all_item_indexed_source_ids = _dedupe_source_ids(
-            source_id
-            for item in service.store.list_items(source_session.id)
-            for source_id in item.source_message_ids
-        )
         required_source_ids = _case_required_source_ids(case)
         required_source_set = set(required_source_ids)
         item_candidate_set = set(item_candidate_source_ids[:10])
         episode_candidate_set = set(episode_candidate_message_ids[:10])
         planned_evidence_set = set(planned_evidence_message_ids[:5])
-        indexed_source_set = set(indexed_source_ids) | set(all_item_indexed_source_ids)
+        indexed_source_set = set(indexed_source_ids)
         has_v2_index_diagnostics = (
             "recall_indexed_source_ids" in context.metadata
             or "indexed_source_ids" in context.metadata
@@ -352,23 +296,10 @@ def _run_baseline(
             case.question,
             memory_evidence,
             context.estimated_tokens,
-            page_count=len(all_pages),
-            loaded_pages=len(pages),
-            dropped_pages=len(context.dropped_pages),
-            dropped_page_details=[item.model_dump() for item in context.dropped_pages],
-            page_type_counts=page_type_counts,
-            page_source_counts=[len(page.source_message_ids) for page in all_pages],
-            page_summary_token_counts=[service.tokenizer.count(page.summary) for page in all_pages],
-            retrieved_page_ids=retrieved_page_ids,
-            dropped_page_reasons=dropped_page_reasons,
-            dropped_page_source_ids=dropped_page_source_ids,
             retrieval_candidate_top_k=candidate_top_k,
             retrieval_candidate_unit="message",
             retrieval_candidate_source_ids=context_evidence_source_ids,
             retrieval_candidate_page_ids=context_evidence_page_ids,
-            page_candidate_top_k=candidate_top_k,
-            page_candidate_source_ids=page_candidate_source_ids,
-            page_candidate_page_ids=page_candidate_page_ids,
             superseded_source_recovered=context.superseded_source_recovered,
             candidate_budget_dropped=context.candidate_budget_dropped,
             active_overlap_not_top5=context.active_overlap_not_top5,
@@ -853,25 +784,3 @@ def _message_evidence(messages: list[Message]) -> list[EvidenceItem]:
         for message in messages
         if not (message.role == Role.ASSISTANT and is_generic_ack(message.content))
     ]
-
-
-def _page_evidence(page: MemoryPage, messages_by_id: dict[str, Message]) -> list[EvidenceItem]:
-    source_texts = _page_fact_sources(page.source_message_ids, messages_by_id)
-    evidence: list[EvidenceItem] = []
-    for text in (*page.decisions, *page.facts, *page.open_questions):
-        if text and not is_generic_ack(text):
-            evidence.append(EvidenceItem(text=text, source_texts=source_texts, origin="page"))
-    if not evidence and page.summary:
-        evidence.append(EvidenceItem(text=page.summary, source_texts=source_texts, origin="page"))
-    return evidence
-
-
-def _page_fact_sources(
-    source_message_ids: list[str],
-    messages_by_id: dict[str, Message],
-) -> dict[str, str]:
-    return {
-        source_id: messages_by_id[source_id].content
-        for source_id in source_message_ids
-        if source_id in messages_by_id
-    }
