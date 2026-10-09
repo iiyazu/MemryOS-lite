@@ -1,12 +1,10 @@
 import pytest
 
 from memoryos_lite.config import Settings
-from memoryos_lite.schemas import Message, Role
 from memoryos_lite.store import MemoryStore
 from memoryos_lite.v3_contracts import (
     ArchivalChunk,
     ArchivalDocument,
-    ArchivalMemory,
     ArchivalPassage,
     ArchiveAttachment,
     ArchiveEligibilityScope,
@@ -110,108 +108,6 @@ def test_archival_store_batch_lookup_rehydrates_passages_by_id(tmp_path):
     assert passages["apsg_first"] == first
     assert passages["apsg_second"] == second
     assert "apsg_missing" not in passages
-
-
-def test_archival_memory_crud_records_history_and_rejects_sourceless_writes(tmp_path):
-    store = _store(tmp_path)
-    ref = _ref()
-
-    with pytest.raises(ValueError):
-        store.add_archival_memory(
-            ArchivalMemory(
-                id="amem_bad",
-                memory_type="fact",
-                content="No provenance.",
-            ),
-            actor="agent",
-            reason="bad write",
-        )
-
-    memory = store.add_archival_memory(
-        ArchivalMemory(
-            id="amem_1",
-            archive_id="archive_1",
-            memory_type="fact",
-            content="Alice lives in Shanghai.",
-            source_refs=[ref],
-        ),
-        actor="agent",
-        reason="message extraction",
-    )
-    updated = store.update_archival_memory(
-        memory.id,
-        content="Alice lives in Suzhou.",
-        source_refs=[ref],
-        actor="agent",
-        reason="user correction",
-    )
-    deleted = store.delete_archival_memory(
-        memory.id,
-        source_refs=[ref],
-        actor="agent",
-        reason="obsolete",
-    )
-    history = store.list_archival_memory_history(memory.id)
-
-    assert updated is not None
-    assert updated.content == "Alice lives in Suzhou."
-    assert deleted is not None
-    assert deleted.deleted_at is not None
-    assert [event.operation for event in history] == ["add", "update", "delete"]
-
-
-def test_archival_producer_helpers_preserve_message_source_refs(tmp_path):
-    store = _store(tmp_path)
-    message = Message(
-        id="msg_1",
-        session_id="ses_1",
-        role=Role.USER,
-        content="Alice moved to Shanghai.",
-    )
-
-    document = store.create_archival_document_from_message(
-        message,
-        archive_id="archive_1",
-        title="message extract",
-    )
-    passage = store.create_archival_passage_from_document(
-        document,
-        text="Alice moved to Shanghai.",
-        source_refs=document.source_refs,
-    )
-    memory = store.create_archival_memory_from_consolidation(
-        content="Alice moved to Shanghai.",
-        memory_type="event",
-        archive_id="archive_1",
-        source_refs=passage.source_refs,
-    )
-
-    assert document.producer == "message"
-    assert passage.source_refs[0].source_id == "msg_1"
-    assert memory.source_refs[0].source_id == "msg_1"
-
-
-def test_archival_passage_from_document_uses_text_offset_for_citation(tmp_path):
-    store = _store(tmp_path)
-    message = Message(
-        id="msg_1",
-        session_id="ses_1",
-        role=Role.USER,
-        content="prefix Alice moved to Shanghai suffix",
-    )
-    document = store.create_archival_document_from_message(
-        message,
-        archive_id="archive_1",
-        title="message extract",
-    )
-
-    passage = store.create_archival_passage_from_document(
-        document,
-        text="Alice moved to Shanghai",
-        source_refs=document.source_refs,
-    )
-
-    assert passage.citation == SourceSpan(start=7, end=30)
 
 
 def test_archival_passage_invariants_and_attachment_scope_helper(tmp_path):

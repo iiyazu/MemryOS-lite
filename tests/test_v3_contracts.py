@@ -16,28 +16,22 @@ from memoryos_lite.v3_contracts import (
     V3_FUTURE_TABLES,
     V3_KEEP_TABLES,
     V3_NO_NEW_TARGETS,
-    ApprovalState,
     ArchivalChunk,
     ArchivalDocument,
-    ArchivalMemory,
     ArchivalPassage,
     ArchiveAttachment,
     ContextComposerRequest,
     ContextLayerItem,
     ContextPackageV3,
-    CoreMemoryBlock,
-    CoreMemoryUpdate,
     DiagnosticEvent,
     IdentityScope,
     LayerBudgetDecision,
-    MemoryHistoryEvent,
     MessageLogEntry,
     RecallMemoryEntry,
     SourceRef,
     SourceSpan,
     ensure_persisted_identity_scope,
     episode_to_recall_entry,
-    item_to_archival_memory,
     item_to_archival_passage,
     message_to_log_entry,
     page_to_archival_document,
@@ -92,18 +86,8 @@ def test_identity_scope_allows_ephemeral_values_but_persisted_scope_is_guarded()
     assert ensure_persisted_identity_scope(scope) is scope
 
 
-def test_history_diagnostics_and_budget_decisions_share_source_refs():
+def test_diagnostics_and_budget_decisions_share_source_refs():
     ref = SourceRef(source_type="message", source_id="msg_1", session_id="ses_1")
-    history = MemoryHistoryEvent(
-        memory_id="mem_1",
-        memory_type="core_block",
-        operation="replace",
-        actor="agent",
-        reason="newer user correction",
-        before={"value": "old"},
-        after={"value": "new"},
-        source_refs=[ref],
-    )
     diagnostic = DiagnosticEvent(
         layer="recall",
         event_type="rank",
@@ -122,20 +106,8 @@ def test_history_diagnostics_and_budget_decisions_share_source_refs():
         reason_code="budget_limit",
     )
 
-    assert history.source_refs == [ref]
     assert diagnostic.layer == "recall"
     assert decision.dropped_item_ids == ["passage_2"]
-
-    with pytest.raises(ValidationError):
-        MemoryHistoryEvent(
-            memory_id="mem_2",
-            memory_type="archival_memory",
-            operation="replace",
-            actor="agent",
-            reason="bad replace",
-            after={"value": "new"},
-            source_refs=[ref],
-        )
 
 
 def test_legacy_message_and_episode_adapt_to_v3_layer_contracts():
@@ -186,18 +158,14 @@ def test_page_and_item_are_legacy_inputs_not_archival_targets():
     )
 
     document = page_to_archival_document(page)
-    memory = item_to_archival_memory(item)
     passage = item_to_archival_passage(item, document_id=document.id)
 
     assert isinstance(document, ArchivalDocument)
     assert document.legacy_page_id == "page_1"
-    assert isinstance(memory, ArchivalMemory)
-    assert memory.legacy_item_id == "item_1"
     assert isinstance(passage, ArchivalPassage)
     assert passage.document_id == document.id
     assert passage.legacy_item_id == "item_1"
     assert document.id.startswith("adoc_")
-    assert memory.id.startswith("amem_")
     assert passage.id.startswith("apsg_")
 
 
@@ -237,107 +205,6 @@ def test_archival_contracts_include_chunk_attachment_and_first_class_metadata():
     assert passage.file_id == "file_1"
     assert passage.updated_at is not None
     assert attachment.scope_type == "agent"
-
-
-def test_core_memory_update_requires_source_refs_or_approval():
-    block = CoreMemoryBlock(
-        id="core_1",
-        label="human",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=200,
-        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-    )
-
-    update = CoreMemoryUpdate(
-        block_id=block.id,
-        operation="append",
-        content="Alice prefers rail travel.",
-        source_refs=[SourceRef(source_type="message", source_id="msg_2")],
-    )
-
-    assert update.source_refs[0].source_id == "msg_2"
-
-    with pytest.raises(ValidationError):
-        CoreMemoryUpdate(block_id=block.id, operation="append", content="source-less")
-
-    approved_state = ApprovalState(
-        id="appr_1",
-        session_id="ses_1",
-        tool_name="memory_core_append",
-        requested_action={"block": "human", "content": "manually approved"},
-        status="approved",
-        requested_by="agent",
-        approved_by="user",
-        resolved_at=block.created_at,
-    )
-    approved = CoreMemoryUpdate(
-        block_id=block.id,
-        operation="append",
-        content="manually approved",
-        approval_state=approved_state,
-    )
-    assert approved.approval_state is approved_state
-
-    with pytest.raises(ValidationError):
-        CoreMemoryUpdate(
-            block_id=block.id,
-            operation="append",
-            content="pending approval cannot write",
-            approval_state=ApprovalState(
-                id="appr_2",
-                session_id="ses_1",
-                tool_name="memory_core_append",
-                requested_action={"block": "human", "content": "pending"},
-                status="pending",
-                requested_by="agent",
-            ),
-        )
-
-
-def test_core_memory_block_defaults_soft_delete_fields():
-    block = CoreMemoryBlock(
-        id="core_2",
-        label="profile",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=200,
-        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-    )
-
-    assert block.deleted_at is None
-    assert block.deleted_by_event_id is None
-
-
-def test_core_memory_block_has_letta_style_defaults_and_serialization():
-    block = CoreMemoryBlock(
-        id="core_1",
-        label="human",
-        description="Stable user facts",
-        value="Alice lives in Shanghai.",
-        limit_tokens=200,
-        source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-        metadata={"priority": "stable"},
-        tags=["profile", "benchmark"],
-    )
-
-    assert block.read_only is False
-    assert block.tags == ["profile", "benchmark"]
-    data = block.model_dump(mode="json")
-    assert data["read_only"] is False
-    assert data["tags"] == ["profile", "benchmark"]
-    assert data["source_refs"][0]["source_id"] == "msg_1"
-    assert data["metadata"] == {"priority": "stable"}
-
-
-def test_core_memory_replace_requires_old_value():
-    with pytest.raises(ValidationError):
-        CoreMemoryUpdate(
-            block_id="core_1",
-            operation="replace",
-            content="Alice lives in Suzhou.",
-            source_refs=[SourceRef(source_type="message", source_id="msg_2")],
-        )
 
 
 def test_context_package_v3_groups_layer_items_and_budget_decisions():
@@ -391,53 +258,15 @@ def test_page_and_item_are_declared_legacy_adapter_inputs_only():
     assert REQUIRED_V3_ADAPTERS["MemoryItem"] == "ArchivalMemory or ArchivalPassage adapter"
 
 
-def test_approval_state_requires_resolution_metadata_when_approved():
-    pending = ApprovalState(
-        id="appr_1",
-        session_id="ses_1",
-        tool_name="memory_core_append",
-        requested_action={"block": "human", "content": "Alice likes rail."},
-        status="pending",
-        requested_by="agent",
-    )
-    approved = ApprovalState(
-        id="appr_1",
-        session_id="ses_1",
-        tool_name="memory_core_append",
-        requested_action={"block": "human", "content": "Alice likes rail."},
-        status="approved",
-        requested_by="agent",
-        approved_by="user",
-        resolved_at=pending.created_at,
-    )
-
-    assert pending.status == "pending"
-    assert approved.approved_by == "user"
-
-    with pytest.raises(ValidationError):
-        ApprovalState(
-            id="appr_2",
-            session_id="ses_1",
-            tool_name="memory_core_append",
-            requested_action={"block": "human"},
-            status="approved",
-            requested_by="agent",
-        )
-
-
 def test_v3_contract_module_exports_expected_public_names():
     expected = {
         "SourceRef",
         "IdentityScope",
-        "MemoryHistoryEvent",
         "DiagnosticEvent",
         "MessageLogEntry",
         "RecallMemoryEntry",
         "ArchivalDocument",
         "ArchivalPassage",
-        "ArchivalMemory",
-        "CoreMemoryBlock",
-        "CoreMemoryUpdate",
         "ContextComposer",
         "ensure_persisted_identity_scope",
         "V3_KEEP_TABLES",

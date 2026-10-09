@@ -2,7 +2,6 @@ import pytest
 
 from memoryos_lite.config import Settings
 from memoryos_lite.context_composer import V3ContextComposer
-from memoryos_lite.core_memory import CoreMemoryService
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
@@ -16,13 +15,10 @@ from memoryos_lite.schemas import ContextEvidence, ContextPackage, Message, Mess
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
-    ApprovalState,
     ArchivalPassage,
     ArchiveAttachment,
     ContextComposerRequest,
-    ContextPolicyCandidate,
     IdentityScope,
-    PromotionCandidate,
     SourceRef,
 )
 
@@ -102,15 +98,6 @@ def test_v3_composer_builds_layered_context_package(tmp_path):
     )
     store.add_message(message)
     store.ensure_episodes_for_session("ses_1")
-    CoreMemoryService(store, WordTokenizer()).create_block(
-        label="human",
-        description="stable user facts",
-        value="Alice prefers rail travel.",
-        limit_tokens=20,
-        source_refs=[ref],
-        actor="user",
-        reason="explicit user instruction",
-    )
     store.create_archival_passage(
         ArchivalPassage(
             id="apsg_1",
@@ -142,7 +129,7 @@ def test_v3_composer_builds_layered_context_package(tmp_path):
     )
 
     layers = [item.layer for item in package.items]
-    assert layers[:2] == ["task", "core"]
+    assert layers[0] == "task"
     assert "recall" in layers
     assert "archival" in layers
     assert "recent" in layers
@@ -931,223 +918,6 @@ def test_v3_composer_records_locomo_neighbor_budget_drop(tmp_path):
     assert dropped["included"] is False
     assert dropped["dropped"] is True
     assert dropped["reason_code"] == "budget_drop"
-
-
-def test_v3_composer_core_items_use_structured_render_and_diagnostics(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos")
-    store = create_store(settings)
-    store.reset()
-    ref = _ref()
-    CoreMemoryService(store, WordTokenizer()).create_block(
-        label="human",
-        description="Stable user facts",
-        value="Alice prefers rail travel.",
-        limit_tokens=20,
-        source_refs=[ref],
-        actor="user",
-        reason="explicit user instruction",
-        tags=["profile"],
-        metadata={"scope": "benchmark"},
-    )
-
-    package = V3ContextComposer(
-        store=store,
-        settings=settings,
-        tokenizer=WordTokenizer(),
-    ).build(
-        ContextComposerRequest(
-            session_id="ses_1",
-            task="What does Alice prefer?",
-            budget=120,
-        )
-    )
-
-    core_items = [item for item in package.items if item.layer == "core"]
-    assert len(core_items) == 1
-    core_item = core_items[0]
-    assert "<memory_blocks>" in core_item.text
-    assert "<human>" in core_item.text
-    assert core_item.metadata["label"] == "human"
-    assert core_item.metadata["tags"] == ["profile"]
-    assert core_item.metadata["metadata"] == {"scope": "benchmark"}
-    assert core_item.metadata["tokens_limit"] == 20
-    assert core_item.source_refs[0].source_id == "msg_1"
-    core_diagnostics = [d for d in package.diagnostics if d.layer == "core"]
-    assert core_diagnostics
-    assert core_diagnostics[0].budget_tokens == core_item.estimated_tokens
-    assert core_diagnostics[0].metadata["source_ref_count"] == 1
-
-
-def test_v3_composer_renders_approved_core_promotion_with_provenance(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
-    store = create_store(settings)
-    store.reset()
-    ref = _ref()
-    core = CoreMemoryService(store, TokenEstimator())
-
-    candidate = store.create_promotion_candidate(
-        PromotionCandidate(
-            id="pcand_promotion",
-            source_layer="archival",
-            target_layer="core",
-            operation="promote",
-            content="Alice prefers rail travel.",
-            source_refs=[ref],
-            reason="promote stable preference",
-            confidence=0.95,
-            write_source="sleep_consolidation",
-            metadata={"label": "human", "limit_tokens": 40},
-        )
-    )
-    approved = ApprovalState(
-        id="appr_1",
-        session_id="ses_1",
-        tool_name="memory_core_update",
-        requested_action={"content": candidate.content},
-        status="approved",
-        requested_by="agent",
-        approved_by="user",
-        resolved_at=candidate.created_at,
-    )
-    core.create_block(
-        label="human",
-        description=candidate.reason,
-        value=candidate.content,
-        limit_tokens=40,
-        source_refs=list(candidate.source_refs),
-        actor="agent",
-        reason=candidate.reason,
-        approval_state=approved,
-        metadata={
-            **candidate.metadata,
-            "promotion_candidate_id": candidate.id,
-            "approval_id": approved.id,
-        },
-    )
-    store.update_promotion_candidate_status(
-        candidate.id,
-        status="applied",
-        metadata={**candidate.metadata, "applied_by": "agent"},
-    )
-
-    package = V3ContextComposer(
-        store=store,
-        settings=settings,
-        tokenizer=TokenEstimator(),
-    ).build(
-        ContextComposerRequest(
-            session_id="ses_1",
-            task="What does Alice prefer?",
-            budget=120,
-        )
-    )
-
-    core_items = [item for item in package.items if item.layer == "core"]
-    assert len(core_items) == 1
-    assert "Alice prefers rail travel." in core_items[0].text
-    assert core_items[0].source_refs[0].source_id == "msg_1"
-    assert core_items[0].metadata["metadata"]["promotion_candidate_id"] == candidate.id
-    assert core_items[0].metadata["metadata"]["approval_id"] == approved.id
-    assert core_items[0].metadata["tokens_current"] > 0
-
-
-def test_context_policy_candidate_status_update_persists_metadata(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
-    store = create_store(settings)
-    store.reset()
-    candidate = store.create_context_policy_candidate(
-        ContextPolicyCandidate(
-            id="cpcand_recent_budget",
-            session_id="ses_1",
-            feedback_type="layer_budget_pressure",
-            suggested_action="record_budget_pressure_for_future_context",
-            source_refs=[_ref("msg_recent_dropped")],
-            fingerprint="fp_recent_budget",
-            metadata={"layer": "recent"},
-        )
-    )
-
-    updated = store.update_context_policy_candidate_status(
-        candidate.id,
-        status="applied",
-        metadata={**candidate.metadata, "applied_by": "test"},
-    )
-
-    assert updated is not None
-    assert updated.status == "applied"
-    assert updated.metadata["layer"] == "recent"
-    assert updated.metadata["applied_by"] == "test"
-    assert store.get_context_policy_candidate(candidate.id).status == "applied"
-
-
-def test_v3_composer_reads_applied_context_policy_state_without_changing_items(
-    tmp_path,
-):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
-    store = create_store(settings)
-    store.reset()
-    store.add_message(
-        Message(
-            id="msg_1",
-            session_id="ses_1",
-            role=Role.USER,
-            content="Alice moved to Shanghai.",
-            token_count=4,
-        )
-    )
-    pending = store.create_context_policy_candidate(
-        ContextPolicyCandidate(
-            id="cpcand_pending",
-            session_id="ses_1",
-            feedback_type="layer_budget_pressure",
-            suggested_action="record_budget_pressure_for_future_context",
-            source_refs=[_ref("msg_pending")],
-            fingerprint="fp_pending",
-            metadata={"layer": "recent"},
-        )
-    )
-    applied = store.create_context_policy_candidate(
-        ContextPolicyCandidate(
-            id="cpcand_applied",
-            session_id="ses_1",
-            feedback_type="layer_budget_pressure",
-            suggested_action="record_budget_pressure_for_future_context",
-            source_refs=[_ref("msg_recent_dropped")],
-            fingerprint="fp_applied",
-            metadata={"layer": "recent", "dropped_item_ids": ["msg_recent_dropped"]},
-        )
-    )
-    store.update_context_policy_candidate_status(applied.id, status="applied")
-
-    package = V3ContextComposer(
-        store=store,
-        settings=settings,
-        tokenizer=WordTokenizer(),
-    ).build(
-        ContextComposerRequest(
-            session_id="ses_1",
-            task="Where did Alice move?",
-            budget=80,
-        )
-    )
-
-    assert [item.item_id for item in package.items] == [
-        "task_ses_1",
-        "msg_1",
-        "msg_1",
-    ]
-    policy_state = package.metadata["context_policy_state"]
-    assert policy_state["applied_candidate_count"] == 1
-    assert [candidate["id"] for candidate in policy_state["applied_candidates"]] == [applied.id]
-    assert pending.id not in {candidate["id"] for candidate in policy_state["applied_candidates"]}
-    assert policy_state["applied_candidates"][0]["source_ids"] == ["msg_recent_dropped"]
-    assert any(
-        diagnostic.layer == "kernel"
-        and diagnostic.event_type == "context_policy_state_read"
-        and diagnostic.item_id == applied.id
-        and diagnostic.source_refs[0].source_id == "msg_recent_dropped"
-        for diagnostic in package.diagnostics
-    )
 
 
 def test_service_build_context_routes_to_v3_when_opted_in(tmp_path):

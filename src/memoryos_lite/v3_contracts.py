@@ -6,7 +6,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, model_validator
 
-from memoryos_lite.schemas import Episode, MemoryItem, MemoryPage, Message, Role, new_id, utc_now
+from memoryos_lite.schemas import Episode, MemoryItem, MemoryPage, Message, Role, utc_now
 
 
 class SourceType(StrEnum):
@@ -94,27 +94,6 @@ HistoryOperation = Literal[
     "attach",
     "detach",
 ]
-
-
-class MemoryHistoryEvent(BaseModel):
-    id: str = Field(default_factory=lambda: new_id("hist"))
-    memory_id: str = Field(min_length=1)
-    memory_type: MemoryType
-    operation: HistoryOperation
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    actor: Literal["system", "user", "agent", "tool"]
-    reason: str = Field(min_length=1)
-    before: dict[str, Any] | None = None
-    after: dict[str, Any] | None = None
-    created_at: datetime = Field(default_factory=utc_now)
-
-    @model_validator(mode="after")
-    def require_replace_before_state(self) -> MemoryHistoryEvent:
-        if self.operation != "delete" and self.after is None:
-            raise ValueError("non-delete memory history events require after")
-        if self.operation == "replace" and self.before is None:
-            raise ValueError("replace memory history events require before")
-        return self
 
 
 class DiagnosticEvent(BaseModel):
@@ -224,25 +203,6 @@ class ArchivalPassage(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
-class ArchivalMemory(BaseModel):
-    id: str
-    archive_id: str | None = None
-    memory_type: Literal["fact", "preference", "event", "procedure", "knowledge"]
-    content: str
-    identity_scope: IdentityScope | None = None
-    source_id: str | None = None
-    file_id: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    history: list[MemoryHistoryEvent] = Field(default_factory=list)
-    entity_links: list[str] = Field(default_factory=list)
-    legacy_item_id: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-    deleted_at: datetime | None = None
-
-
 class ArchiveAttachment(BaseModel):
     id: str
     archive_id: str
@@ -304,120 +264,7 @@ class ArchiveEligibilityResult(BaseModel):
         }
 
 
-class CoreMemoryBlock(BaseModel):
-    id: str
-    label: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-    value: str = ""
-    limit_tokens: int = Field(gt=0)
-    read_only: bool = False
-    tags: list[str] = Field(default_factory=list)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-    deleted_at: datetime | None = None
-    deleted_by_event_id: str | None = None
-
-
 ApprovalStatus = Literal["pending", "approved", "rejected", "expired", "cancelled"]
-
-
-class ApprovalState(BaseModel):
-    id: str
-    session_id: str
-    tool_name: str
-    requested_action: dict[str, Any]
-    status: ApprovalStatus
-    requested_by: str
-    approved_by: str | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=utc_now)
-    resolved_at: datetime | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_resolution(self) -> ApprovalState:
-        if self.status == "approved" and (not self.approved_by or self.resolved_at is None):
-            raise ValueError("approved approval states require approved_by and resolved_at")
-        if self.status in {"rejected", "expired", "cancelled"} and self.resolved_at is None:
-            raise ValueError("resolved non-approved approval states require resolved_at")
-        return self
-
-
-class CoreMemoryUpdate(BaseModel):
-    block_id: str = Field(min_length=1)
-    operation: Literal["append", "replace", "update", "delete"]
-    content: str
-    old: str | None = None
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    approval_state: ApprovalState | None = None
-
-    @model_validator(mode="after")
-    def require_source_or_approval(self) -> CoreMemoryUpdate:
-        if not self.source_refs:
-            if self.approval_state is None or self.approval_state.status != "approved":
-                raise ValueError(
-                    "core memory updates require source_refs or approved approval_state"
-                )
-        if self.operation == "replace" and not self.old:
-            raise ValueError("replace core memory updates require old")
-        return self
-
-
-MemoryWriteSource = Literal[
-    "explicit_instruction",
-    "message_extraction",
-    "sleep_consolidation",
-]
-PromotionStatus = Literal["pending", "approved", "applied", "rejected", "deferred"]
-
-
-class PromotionCandidate(BaseModel):
-    id: str = Field(default_factory=lambda: new_id("pcand"))
-    source_layer: Literal["recall", "archival", "document", "message_log"]
-    target_layer: Literal["archival", "core"]
-    operation: Literal["add", "update", "delete", "promote"]
-    content: str = Field(min_length=1)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    identity_scope: IdentityScope | None = None
-    reason: str = Field(min_length=1)
-    confidence: float = Field(ge=0.0, le=1.0)
-    status: PromotionStatus = "pending"
-    write_source: MemoryWriteSource
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-
-
-ContextPolicyCandidateStatus = Literal["pending", "applied", "rejected", "deferred"]
-ContextPolicyType = Literal["context_quality"]
-ContextPolicyFeedbackType = Literal[
-    "dropped_high_value_evidence",
-    "layer_budget_pressure",
-    "recall_archive_quality_issue",
-    "recall_budget_pressure",
-]
-
-
-class ContextPolicyCandidate(BaseModel):
-    id: str = Field(default_factory=lambda: new_id("cpcand"))
-    session_id: str = Field(min_length=1)
-    policy_type: ContextPolicyType = "context_quality"
-    feedback_type: ContextPolicyFeedbackType
-    suggested_action: str = Field(min_length=1)
-    source_refs: list[SourceRef] = Field(default_factory=list)
-    status: ContextPolicyCandidateStatus = "pending"
-    fingerprint: str = Field(min_length=1)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=utc_now)
-    updated_at: datetime = Field(default_factory=utc_now)
-
-    @model_validator(mode="after")
-    def require_source_refs(self) -> ContextPolicyCandidate:
-        if not self.source_refs:
-            raise ValueError("context policy candidates require source_refs")
-        return self
 
 
 class ContextLayerItem(BaseModel):
@@ -523,30 +370,6 @@ def page_to_archival_document(page: MemoryPage) -> ArchivalDocument:
     )
 
 
-def item_to_archival_memory(item: MemoryItem) -> ArchivalMemory:
-    type_map: dict[str, Literal["fact", "preference", "event", "procedure", "knowledge"]] = {
-        "profile": "fact",
-        "event": "event",
-        "knowledge": "knowledge",
-        "behavior": "procedure",
-    }
-    return ArchivalMemory(
-        id=f"amem_{item.id}",
-        memory_type=type_map.get(item.item_type.value, "knowledge"),
-        content=item.content,
-        source_refs=[
-            SourceRef(
-                source_type=SourceType.MESSAGE,
-                source_id=source_id,
-                session_id=item.session_id,
-            )
-            for source_id in item.source_message_ids
-        ],
-        legacy_item_id=item.id,
-        created_at=item.created_at,
-    )
-
-
 def item_to_archival_passage(
     item: MemoryItem,
     document_id: str | None = None,
@@ -609,30 +432,18 @@ REQUIRED_V3_ADAPTERS: dict[str, str] = {
 
 
 __all__ = [
-    "ApprovalState",
     "ArchiveAttachment",
     "ArchivalChunk",
     "ArchivalDocument",
-    "ArchivalMemory",
     "ArchivalPassage",
     "ContextComposer",
     "ContextComposerRequest",
     "ContextLayerItem",
     "ContextPackageV3",
-    "ContextPolicyCandidate",
-    "ContextPolicyCandidateStatus",
-    "ContextPolicyFeedbackType",
-    "ContextPolicyType",
-    "CoreMemoryBlock",
-    "CoreMemoryUpdate",
     "DiagnosticEvent",
     "IdentityScope",
     "LayerBudgetDecision",
-    "MemoryWriteSource",
-    "MemoryHistoryEvent",
     "MessageLogEntry",
-    "PromotionCandidate",
-    "PromotionStatus",
     "REQUIRED_V3_ADAPTERS",
     "RecallMemoryEntry",
     "SourceRef",
@@ -642,7 +453,6 @@ __all__ = [
     "V3_NO_NEW_TARGETS",
     "ensure_persisted_identity_scope",
     "episode_to_recall_entry",
-    "item_to_archival_memory",
     "item_to_archival_passage",
     "message_to_log_entry",
     "page_to_archival_document",
