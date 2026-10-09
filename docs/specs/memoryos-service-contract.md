@@ -26,7 +26,6 @@ All request and response bodies are JSON.
 | `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context. |
 | `GET` | `/sessions/{id}/advisories` | Host-facing advisories; `?version=2` selects curated-memory advisories. |
 | `POST` | `/curate` | Stateless module memory curation (`memoryos_curate/v1`). |
-| `POST` | `/sessions/{id}/ask` | Agentic retrieval with superseded marks (`memoryos_memory_ask/v1`). |
 | `POST` | `/archives/ingest` | Idempotently ingest a source document. |
 | `POST` | `/archives/attachments` | Attach an archive document to a session. |
 
@@ -177,7 +176,7 @@ run, and 502 with `curator_llm_error` when the provider call fails. No error
 carries provider text. `/health` reports `capabilities.curate` as
 `memoryos_curate/v1`.
 
-## Pull side: superseded marks and `POST /sessions/{id}/ask`
+## Pull side: superseded marks
 
 A superseded mark is the verbatim quote that grounded a now-superseded memory,
 with the current statement when known. Evidence whose text contains such a
@@ -191,8 +190,11 @@ request, for hosts that keep memories themselves) and, when
 are ranked after the others, so a full envelope drops them first. Item text
 and fields are unchanged; consumers keep re-proving text by `content_sha256`.
 
-`POST /sessions/{id}/ask` (`AskRequest`: `question`, optional `task`,
-`budget` up to 800, `max_rounds` 0-2, `superseded`) runs a LangGraph graph:
+The service has no ask route. The agentic `ask` graph (`memoryos_memory_ask/v1`)
+lives in the evaluation package (`memoryos_eval/ask.py`: RoomMem's `agentic`
+evidence mode and `python -m memoryos_eval ask-demo`). Given an `AskRequest`
+(`question`, optional `task`, `budget` up to 800, `max_rounds` 0-2, `superseded`)
+it runs a LangGraph graph:
 `retrieve` (one `build-context` + v2 projection, new items merged) → `grade`
 (deterministic: enough when a current item covers at least half of the
 question's keywords) → `rewrite` (the LLM proposes one new query) → `retrieve`
@@ -201,8 +203,7 @@ first retrieval. The response (`memoryos_memory_ask/v1`) lists `queries` and
 `items` (current items first, outdated last, within `budget`), each with
 `text`, `source_refs`, the `query` that found it, `outdated`, and `current`;
 `diagnostics` reports retrievals, LLM calls, the stop reason, and omitted
-items. 404 for an unknown session, 503 `ask_requires_langgraph` when the
-graph runtime is missing.
+items.
 
 ## Behavioral guarantees
 

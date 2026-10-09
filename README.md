@@ -33,7 +33,7 @@ build_context(task)
 
 状态归宿主（如 xmuse 的 `chat.db`），MemoryOS 只做计算。推送端把一窗新活动提炼成带引文的记忆，
 宿主把它们渲染成负责人常驻上下文里的记忆文件；拉取端在负责人追问历史时按需检索，旧值带着现值标注
-排在后面。
+排在后面。拉取端的 `ask` 图目前只在评测和演示里运行，服务没有对应路由。
 
 ```mermaid
 flowchart TB
@@ -50,7 +50,7 @@ flowchart TB
     C -- 有违规 --> R[repair] --> C
     C -- 通过 --> K[consolidate<br/>topic_key 版本化]
   end
-  subgraph Pull["拉取端 POST /sessions/{id}/ask"]
+  subgraph Pull["拉取端 ask 图（评测与演示）"]
     direction TB
     Q[retrieve<br/>BM25 + FastEmbed] --> G{grade}
     G -- 不够 --> W[rewrite] --> Q
@@ -62,7 +62,8 @@ flowchart TB
   Z -- source_evidence/v2 --> O
 ```
 
-两张图都是 LangGraph，可以离线演示：`memoryos demo curate --mermaid`、`memoryos demo ask --mermaid`。
+两张图都是 LangGraph，可以离线演示：`memoryos demo curate --mermaid`、
+`uv run python -m memoryos_eval ask-demo --mermaid`（后者需要源码 checkout）。
 
 ## 评测结论
 
@@ -95,11 +96,11 @@ uv run --no-sync memoryos api --reload
 uv sync --frozen --no-dev --extra remote
 # 离线演示 curate 图：第一次回复故意违规，展示修复循环；--mermaid 打印图结构
 uv run --no-sync memoryos demo curate --mermaid
-# 离线演示 ask 图：第一轮只找到旧值，改写查询后找到现值，旧值附现值标注排在后面
-uv run --no-sync memoryos demo ask --mermaid
+# 离线演示 ask 图（评测包，需源码 checkout）：第一轮只找到旧值，改写查询后找到现值
+uv run --no-sync python -m memoryos_eval ask-demo --mermaid
 ```
 
-`/curate`、`demo curate` 和 `demo ask` 依赖 `remote` extra 里的 LangGraph 与 LangChain；缺少时 `/curate`
+`/curate`、`demo curate` 和 `ask-demo` 依赖 `remote` extra 里的 LangGraph 与 LangChain；缺少时 `/curate`
 返回 503（`curate_requires_langgraph`），不影响 SQLite authority 或离线 API 行为。
 
 ### 分发边界
@@ -124,7 +125,6 @@ HTTP 接口：
 | `POST` | `/sessions/{id}/ingest` | 摄入消息 |
 | `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
 | `POST` | `/curate` | 无状态模块记忆提炼（`memoryos_curate/v1`） |
-| `POST` | `/sessions/{id}/ask` | 按需 agentic 检索（`memoryos_memory_ask/v1`） |
 | `POST` | `/archives/ingest` | 摄入可归因归档文档 |
 | `POST` | `/archives/attachments` | 将归档关联到会话 |
 | `GET` | `/sessions/{id}/advisories` | 维护建议；`?version=2` 返回策展记忆（v2） |
@@ -155,10 +155,11 @@ HTTP 接口：
   首轮和末轮违规）。无 LLM key 或缺 LangGraph 返回 503，provider 出错返回 502，都不带 provider
   错误原文。
 
-### 拉取端：按需检索 `ask` 与已取代降权
+### 拉取端：`ask` 图（评测与演示）与已取代降权
 
 模块记忆文件常驻负责人的上下文（推送端）。负责人需要追问历史时（"当时为什么这么定"），
-通过 `POST /sessions/{id}/ask`（`memoryos_memory_ask/v1`）按需检索完整历史（拉取端）。
+由 `ask` 图（`memoryos_memory_ask/v1`）按需检索完整历史（拉取端）。它只在评测（RoomMem 的
+`agentic` 证据模式）和 `python -m memoryos_eval ask-demo` 中运行，服务不提供 ask 路由。
 
 - **已取代判定**：证据原文包含某条已被取代记忆的逐字引文，且不包含任何有效记忆的引文，
   就视为陈述了过时的值。按引文文本匹配，不依赖消息或文档 id。标记来源有两种：宿主在请求里
@@ -185,7 +186,7 @@ HTTP 接口：
 | `MEMORYOS_CURATOR_IDLE_FLUSH_S` | `20.0` | 不足一窗时的空闲刷新等待秒数 |
 | `MEMORYOS_CURATOR_POLL_S` | `2.0` | 后台 worker 轮询间隔 |
 | `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |
-| `MEMORYOS_DEMOTE_SUPERSEDED` | `false` | 用本会话 curated 记忆推导已取代标记，用于 `source_evidence/v2` 降权和 `ask` |
+| `MEMORYOS_DEMOTE_SUPERSEDED` | `false` | 用本会话 curated 记忆推导已取代标记，用于 `source_evidence/v2` 降权 |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENCODE_API_KEY` | unset | 可选真实模型提供方；`MEMORYOS_LLM_PROVIDER=opencode` 走 OpenCode Go（默认 `muse-spark-1.3-contributor`，Responses API），目前只用于 curator 与 RoomMem |
 
 完整设置以 `src/memoryos_lite/config.py` 为准。
@@ -196,11 +197,11 @@ HTTP 接口：
 TMPDIR=/tmp uv run pytest -q
 uv run ruff check .
 uv run mypy src memoryos_eval
-uv run python -m memoryos_eval run --case-set hard --baseline memoryos_lite
 ```
 
 评测框架在仓库根目录的 `memoryos_eval/`，不随 wheel 发布，需在源码 checkout 中用
-`uv run python -m memoryos_eval` 运行。公开 benchmark 需要本地数据集；命令和指标解释见 `docs/public-benchmark-diagnosis.md`。
+`uv run python -m memoryos_eval` 运行。公开 benchmark（LongMemEval、LoCoMo）的适配器保留，但只作
+历史结果，不再维护；需要本地数据集，命令和指标解释见 `docs/public-benchmark-diagnosis.md`。
 
 记忆策展有两套自带数据集的评测，默认调用配置的真实模型（`--fake-llm` 用确定性替身跑通流程）：
 

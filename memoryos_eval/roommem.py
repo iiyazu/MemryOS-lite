@@ -69,13 +69,13 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from memoryos_eval.ask import AskRequest, AskResponse, ask_with, render_ask_item
 from memoryos_lite.chat_models import build_chat_openai, message_text
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
 from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
 from memoryos_lite.curator.runner import normalize_topic_key
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.agentic import AskRequest, AskResponse, render_ask_item
 from memoryos_lite.retrieval.supersede import SupersededQuote, superseded_quotes
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
@@ -2709,7 +2709,8 @@ def _run_room_arm(
             for mode in modes:
                 label = arm if mode == "plain" else f"{arm}+{mode}"
                 if mode == "agentic":
-                    asked = service.ask_with(
+                    asked = ask_with(
+                        service,
                         target_session,
                         AskRequest(
                             question=probe.question,

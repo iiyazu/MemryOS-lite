@@ -1,4 +1,4 @@
-"""A small, offline example for ``memoryos demo ask``.
+"""A small, offline example for ``python -m memoryos_eval ask-demo``.
 
 The retriever and the rewrite LLM are scripted. The first search finds only a
 message stating a superseded value (marked outdated, so it does not count as
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from memoryos_lite.retrieval.agentic import AskRequest
+from memoryos_eval.ask import AskRequest
 from memoryos_lite.retrieval.supersede import SupersededQuote
 
 DEMO_QUESTION = "Which gateway runs in front of the public API today?"

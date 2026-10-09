@@ -11,30 +11,14 @@ from rich.console import Console
 from rich.table import Table
 from typer import Exit, Option, Typer
 
-from memoryos_lite.capabilities import require_benchmark_capability, require_remote_capability
+from memoryos_lite.capabilities import require_benchmark_capability
 from memoryos_lite.config import get_settings
 
 if TYPE_CHECKING:
-    from memoryos_eval.evals import EvalResult
-    from memoryos_eval.llm_judge import JudgeVerdict
     from memoryos_eval.public_benchmarks import PublicBenchmarkResult
 
 app = Typer(help="Run benchmark tasks")
 console = Console()
-EVAL_TABLE_COLUMNS = [
-    "baseline",
-    "cases",
-    "accuracy",
-    "source",
-    "avg_tokens",
-    "pages",
-    "loaded",
-    "dropped",
-    "dropped_cases",
-    "sources",
-    "supporting",
-]
-LLM_JUDGE_TABLE_COLUMNS = ["baseline", "cases", "pass_rate", "failed", "errors"]
 ROOMMEM_READ_COLUMNS = [
     "arm",
     "asked_in",
@@ -99,53 +83,56 @@ PUBLIC_TABLE_COLUMNS = [
 ]
 
 
-@app.command("run")
-def eval_run(
-    run_id: str | None = None,
-    baseline: Annotated[list[str] | None, Option("--baseline", "-b")] = None,
-    isolated: bool = True,
-    case_set: Annotated[
-        str, Option("--case-set", "-c", help="builtin | advanced | hard | all")
-    ] = "builtin",
-    llm_judge: Annotated[
-        bool,
-        Option("--llm-judge", help="Score answers with the configured chat LLM judge"),
-    ] = False,
+@app.command("ask-demo")
+def ask_demo(
+    mermaid: Annotated[bool, Option("--mermaid", help="Print the graph as Mermaid")] = False,
 ) -> None:
-    """Run the built-in demo benchmark."""
-    require_remote_capability("eval.run")
-    from memoryos_eval.evals import run_eval, run_eval_llm
+    """Run the ask graph (retrieve -> grade -> rewrite -> retrieve) on a scripted example."""
+    try:
+        from memoryos_eval.ask import build_ask_graph, render_ask_item, run_ask
+        from memoryos_eval.ask_demo import (
+            DEMO_MARKS,
+            DEMO_REQUEST,
+            DemoRewriteLLM,
+            demo_retrieve,
+        )
 
-    settings = get_settings()
-    eval_run_id = run_id or datetime.now(UTC).strftime("run_%Y%m%d_%H%M%S")
-    if llm_judge:
-        verdicts = run_eval_llm(
-            settings,
-            run_id=eval_run_id,
-            baselines=baseline or ["all"],
-            isolated=isolated,
-            case_set=case_set,
+        graph = build_ask_graph(
+            demo_retrieve, DEMO_MARKS, DemoRewriteLLM(), max_rounds=DEMO_REQUEST.max_rounds
         )
-        table = Table(*LLM_JUDGE_TABLE_COLUMNS)
-        for row in _llm_judge_table_rows(verdicts):
-            table.add_row(*(row[column] for column in LLM_JUDGE_TABLE_COLUMNS))
-        console.print(table)
-        console.print(
-            f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}_llm_judge.json'}"
-        )
-        return
-    results = run_eval(
-        settings,
-        run_id=eval_run_id,
-        baselines=baseline or ["all"],
-        isolated=isolated,
-        case_set=case_set,
+    except ImportError as exc:
+        console.print(f"[red]ask-demo needs LangGraph:[/red] {exc}")
+        raise Exit(1) from exc
+    if mermaid:
+        console.print(graph.get_graph().draw_mermaid())
+    console.print(f"[bold]question[/bold] {DEMO_REQUEST.question}")
+    for update in graph.stream(
+        {"question": DEMO_REQUEST.question, "queries": [DEMO_REQUEST.question]},
+        stream_mode="updates",
+    ):
+        for node, state in update.items():
+            state = state or {}
+            if node == "retrieve":
+                outdated = sum(1 for item in state["found"] if item["outdated"])
+                note = f" -> {len(state['found'])} item(s) so far, {outdated} outdated"
+            elif node == "grade":
+                note = " -> enough evidence" if state["enough"] else " -> not enough evidence"
+            elif node == "rewrite":
+                queries = state.get("queries")
+                note = f" -> new query: {queries[-1]}" if queries else f" -> {state['stopped']}"
+            else:
+                note = f" -> stopped: {state.get('stopped', '')}" if state else ""
+            console.print(f"[bold]{node}[/bold]{note}")
+    response = run_ask(
+        session_id="demo",
+        request=DEMO_REQUEST,
+        retrieve=demo_retrieve,
+        marks=DEMO_MARKS,
+        llm=DemoRewriteLLM(),
     )
-    table = Table(*EVAL_TABLE_COLUMNS)
-    for row in _eval_table_rows(results):
-        table.add_row(*(row[column] for column in EVAL_TABLE_COLUMNS))
-    console.print(table)
-    console.print(f"[bold]Report:[/bold] {settings.data_dir / 'evals' / f'{eval_run_id}.json'}")
+    console.print("[bold]evidence for the agent[/bold]")
+    for item in response.items:
+        console.print(f"  {item.rank}. {render_ask_item(item)}", markup=False)
 
 
 @app.command("public")
@@ -449,27 +436,6 @@ def eval_modulemem(
     console.print(f"[bold]Reports:[/bold] {Path(out) / 'summary.md'}")
 
 
-def _llm_judge_table_rows(results: list[JudgeVerdict]) -> list[dict[str, str]]:
-    grouped: dict[str, list[JudgeVerdict]] = {}
-    for result in results:
-        baseline = result.case_id.split("/", 1)[0] if "/" in result.case_id else "unknown"
-        grouped.setdefault(baseline, []).append(result)
-    rows: list[dict[str, str]] = []
-    for name, items in grouped.items():
-        passed = sum(1 for item in items if item.verdict == "pass")
-        errors = sum(1 for item in items if item.verdict == "error")
-        rows.append(
-            {
-                "baseline": name,
-                "cases": str(len(items)),
-                "pass_rate": f"{passed / len(items):.2f}",
-                "failed": str(sum(1 for item in items if item.verdict == "fail")),
-                "errors": str(errors),
-            }
-        )
-    return rows
-
-
 def _public_table_rows(results: list[PublicBenchmarkResult]) -> list[dict[str, str]]:
     grouped: dict[tuple[str, str], list[PublicBenchmarkResult]] = {}
     for result in results:
@@ -532,32 +498,6 @@ def _optional_rate(items: list[PublicBenchmarkResult], field_name: str) -> str:
         return "-"
     hits = sum(1 for item in items if getattr(item, field_name) is True)
     return f"{hits / len(items):.2f}"
-
-
-def _eval_table_rows(results: list[EvalResult]) -> list[dict[str, str]]:
-    grouped: dict[str, list[EvalResult]] = {}
-    for result in results:
-        grouped.setdefault(result.baseline, []).append(result)
-    rows: list[dict[str, str]] = []
-    for name, items in grouped.items():
-        rows.append(
-            {
-                "baseline": name,
-                "cases": str(len(items)),
-                "accuracy": f"{sum(item.answer_accuracy for item in items) / len(items):.2f}",
-                "source": f"{sum(item.source_accuracy for item in items) / len(items):.2f}",
-                "avg_tokens": str(sum(item.context_tokens for item in items) // len(items)),
-                "pages": f"{sum(item.page_count for item in items) / len(items):.1f}",
-                "loaded": f"{sum(item.loaded_pages for item in items) / len(items):.1f}",
-                "dropped": f"{sum(item.dropped_pages for item in items) / len(items):.1f}",
-                "dropped_cases": str(sum(1 for item in items if item.dropped_pages > 0)),
-                "sources": f"{sum(item.source_count for item in items) / len(items):.1f}",
-                "supporting": (
-                    f"{sum(item.supporting_source_count for item in items) / len(items):.1f}"
-                ),
-            }
-        )
-    return rows
 
 
 def _print_roommem_summary(summary: dict[str, object]) -> None:

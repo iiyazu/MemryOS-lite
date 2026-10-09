@@ -6,16 +6,17 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from memoryos_lite.api.app import app, get_service
-from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.agentic import (
+from memoryos_eval.ask import (
     AskRequest,
+    ask_with,
     build_ask_graph,
     coverage,
     render_ask_item,
     run_ask,
 )
+from memoryos_lite.api.app import app, get_service
+from memoryos_lite.config import Settings
+from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.supersede import (
     SupersededQuote,
     demote_superseded,
@@ -215,22 +216,29 @@ def test_coverage_ignores_stopwords_and_handles_cjk():
         assert node in graph
 
 
-def test_ask_endpoint_and_demote_setting(tmp_path):
+def test_ask_with_marks_the_session_outdated_item(tmp_path):
+    service = _service(tmp_path)
+    session_id = _seed(service)
+
+    response = ask_with(
+        service,
+        session_id,
+        AskRequest(question="Which city does Helios launch in?", max_rounds=0),
+        llm=None,
+        marks=service.superseded_marks(session_id),
+    )
+
+    assert response.schema_version == "memoryos_memory_ask/v1"
+    flags = {item.text: item.outdated for item in response.items}
+    assert flags.get(OLD) is True and flags.get(NEW) is False
+
+
+def test_demote_setting_ranks_the_superseded_message_last(tmp_path):
     service = _service(tmp_path, memoryos_demote_superseded=True)
     session_id = _seed(service)
     client = TestClient(app)
     try:
         app.dependency_overrides[get_service] = lambda: service
-        response = client.post(
-            f"/sessions/{session_id}/ask",
-            json={"question": "Which city does Helios launch in?", "max_rounds": 0},
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["schema_version"] == "memoryos_memory_ask/v1"
-        flags = {item["text"]: item["outdated"] for item in body["items"]}
-        assert flags.get(OLD) is True and flags.get(NEW) is False
-
         envelope = client.post(
             f"/sessions/{session_id}/build-context",
             json={
@@ -242,5 +250,6 @@ def test_ask_endpoint_and_demote_setting(tmp_path):
         texts = [item["text"] for item in envelope["items"]]
         assert texts.index(NEW) < texts.index(OLD)
         assert client.post("/sessions/missing/ask", json={"question": "x"}).status_code == 404
+        assert "/sessions/{session_id}/ask" not in app.openapi()["paths"]
     finally:
         app.dependency_overrides.clear()
