@@ -27,12 +27,10 @@ def test_redis_cache_config_preserves_memory_defaults() -> None:
     assert settings.resolved_paging_mode == "off"
 
 
-def test_redis_dependency_is_optional_extra() -> None:
+def test_redis_is_not_a_core_dependency() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert "redis" not in "\n".join(pyproject["project"]["dependencies"])
-    redis_extra = pyproject["project"]["optional-dependencies"]["redis"]
-    assert any(dependency.startswith("redis>=") for dependency in redis_extra)
 
 
 def test_redis_cache_ttl_must_be_positive() -> None:

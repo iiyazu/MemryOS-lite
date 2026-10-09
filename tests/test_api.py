@@ -59,32 +59,6 @@ def test_api_smoke(service):
         )
         assert response.status_code == 200
         assert response.json()["session_id"] == session_id
-
-        response = client.get(f"/sessions/{session_id}/trace")
-        assert response.status_code == 200
-        assert response.json()
-    finally:
-        app.dependency_overrides.clear()
-
-
-def test_api_page_returns_null_when_paging_off(service):
-    app.dependency_overrides[get_service] = lambda: service
-    client = TestClient(app)
-    try:
-        response = client.post("/sessions", json={"title": "paging-off"})
-        session_id = response.json()["id"]
-        for content in ("first fact", "second fact", "third fact"):
-            response = client.post(
-                f"/sessions/{session_id}/ingest",
-                json={"role": Role.USER.value, "content": content},
-            )
-            assert response.status_code == 200
-
-        response = client.post(f"/sessions/{session_id}/page")
-
-        assert response.status_code == 200
-        assert response.json() is None
-        assert service.store.list_pages(session_id) == []
     finally:
         app.dependency_overrides.clear()
 
@@ -315,34 +289,7 @@ def test_health_advertises_build_context_profiles():
     assert payload["capabilities"]["message_ingest"] is True
 
 
-def test_api_search_accepts_bare_query(service):
-    """Ticket #2: POST /memory/search with only {query, top_k} must return
-    200 and use the service-level default soft cap."""
-    session = service.create_session("api-search-src")
-    service.store.save_page(
-        MemoryPage(
-            session_id=session.id,
-            page_type=PageType.SOURCE_SUMMARY,
-            title="cross-session target",
-            summary="后端工程师专注分布式系统",
-        )
-    )
-
-    app.dependency_overrides[get_service] = lambda: service
-    client = TestClient(app)
-    try:
-        # No session_id, no limit — previously rejected with 422.
-        response = client.post(
-            "/memory/search",
-            json={"query": "分布式系统", "top_k": 3},
-        )
-        assert response.status_code == 200, response.text
-        assert isinstance(response.json(), list)
-    finally:
-        app.dependency_overrides.clear()
-
-
-def test_api_archive_ingest_attach_and_list(service):
+def test_api_archive_ingest_and_attach(service):
     app.dependency_overrides[get_service] = lambda: service
     client = TestClient(app)
     try:
@@ -377,15 +324,6 @@ def test_api_archive_ingest_attach_and_list(service):
         )
         assert attach_response.status_code == 200, attach_response.text
         assert attach_response.json()["passage_count"] == 1
-
-        list_response = client.get(
-            "/archives/passages",
-            params={"archive_id": "archive_api", "limit": 10, "offset": 0},
-        )
-        assert list_response.status_code == 200, list_response.text
-        assert list_response.json()["total"] == 1
-        assert list_response.json()["passages"][0]["id"] == passage_ids[0]
-        assert list_response.json()["passages"][0]["source_refs"][0]["quote"]
 
     finally:
         app.dependency_overrides.clear()
@@ -602,7 +540,7 @@ def test_curator_never_exposes_api_key(tmp_path):
         health_body = client.get("/health").text
         v1_body = client.get(f"/sessions/{session_id}/advisories").text
         v2_body = client.get(f"/sessions/{session_id}/advisories", params={"version": 2}).text
-        trace_body = client.get(f"/sessions/{session_id}/trace").text
+        trace_body = str([event.payload for event in service.store.list_traces(session_id)])
 
         assert secret not in health_body
         assert secret not in v1_body

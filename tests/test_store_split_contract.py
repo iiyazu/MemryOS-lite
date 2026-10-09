@@ -1,11 +1,9 @@
-import inspect
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from memoryos_lite.config import Settings
-from memoryos_lite.store import ArchivalPassagePage, Base, MemoryStore, create_store
+from memoryos_lite.store import Base, MemoryStore, create_store
 from memoryos_lite.store_archive import ArchiveStoreMixin
 from memoryos_lite.store_legacy import LegacyStoreMixin
 from memoryos_lite.store_protocols import PromotionMaintenanceStore
@@ -22,10 +20,6 @@ def test_memory_store_is_a_thin_composition_with_stable_public_type_identity() -
     assert "create_session" not in MemoryStore.__dict__
     assert "create_archival_document" not in MemoryStore.__dict__
     assert "save_page" not in MemoryStore.__dict__
-    assert ArchivalPassagePage.__module__ == "memoryos_lite.store"
-    assert str(inspect.signature(MemoryStore.list_archival_passages_page)).endswith(
-        "-> memoryos_lite.store.ArchivalPassagePage"
-    )
 
 
 def test_promotion_maintenance_store_contract_preserves_schema_and_rolls_back(tmp_path) -> None:

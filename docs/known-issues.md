@@ -102,7 +102,7 @@ Current constraints:
   caller side is simply sent again. Curation quality (missed lessons,
   over-merged lessons) is measured by ModuleMem, not guaranteed.
 - The API supports only an optional single shared key (`MEMORYOS_API_KEY`,
-  sent as `X-API-Key`; `/health` and `/metrics` stay open). Without the key it
+  sent as `X-API-Key`; `/health` stays open). Without the key it
   is unauthenticated. There is no per-user identity, rate limiting,
   multi-tenant ownership, or production error model.
 

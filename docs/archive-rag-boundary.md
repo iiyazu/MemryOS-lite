@@ -42,24 +42,15 @@ authoritative for text, source refs, and eligibility.
 ## Service/API Boundary
 
 `MemoryOSService` is the application entry point for archive RAG ingestion.
-FastAPI and CLI commands call service methods instead of manipulating the store
-directly.
+FastAPI routes call service methods instead of manipulating the store directly.
 
-Minimal service-backed surfaces:
+Service-backed surfaces:
 
 - `POST /archives/ingest`
 - `POST /archives/attachments`
-- `GET /archives/passages`
-- `memoryos archive ingest`
-- `memoryos archive attach`
-- `memoryos archive passages`
 
 These surfaces do not bypass v3 archive eligibility. Retrieved archive passages
 enter normal context through `build_context()`.
-
-`GET /archives/passages` uses the current SQLite store listing path and applies
-pagination in memory. This is O(n) for the first service/API slice; SQL-level
-pagination is a later scale-up task, not part of this prototype integration.
 
 ## Non-Claims
 

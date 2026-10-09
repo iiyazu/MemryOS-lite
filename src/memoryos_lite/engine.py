@@ -37,7 +37,6 @@ from memoryos_lite.observability import (
     INGEST_TOTAL,
     PAGE_ERRORS_TOTAL,
     PAGE_TOTAL,
-    RETRIEVAL_HITS,
     current_observability_context,
     log_event,
     observability_context,
@@ -73,28 +72,21 @@ from memoryos_lite.schemas import (
     ArchiveDiagnosticResponse,
     ArchiveDocumentIngestRequest,
     ArchiveDocumentIngestResponse,
-    ArchivePassageListResponse,
-    ArchivePassageResponse,
     ArchiveSourceRefPayload,
-    ArchiveSourceSpanPayload,
     ContextEvidence,
     ContextPackage,
     ContextPage,
     IngestResponse,
     MemoryItem,
-    MemoryItemType,
     MemoryPage,
     MemoryPageDraft,
-    MemoryPatch,
     Message,
     MessageCreate,
     PageType,
-    PatchOperation,
     Role,
     Session,
     TraceEvent,
     new_id,
-    utc_now,
 )
 from memoryos_lite.source_evidence import build_source_evidence
 from memoryos_lite.store import MemoryStore, create_store
@@ -102,7 +94,6 @@ from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
 from memoryos_lite.v3_contracts import (
     AgentStepRequest,
-    ArchivalPassage,
     ArchiveAttachment,
     ContextComposerRequest,
     ContextLayerItem,
@@ -180,45 +171,6 @@ from memoryos_lite.legacy_paging import (  # noqa: E402
 if TYPE_CHECKING:
     from memoryos_lite.retrieval.providers.qdrant import QdrantEmbeddingStore
     from memoryos_lite.retrieval.providers.qdrant_archival import QdrantArchivalPassageStore
-
-
-class PatchVerifier:
-    protected_markers = ("DO NOT EDIT", "PROTECTED")
-
-    def verify(
-        self,
-        patch: MemoryPatch,
-        page: MemoryPage | None,
-        source_messages: list[Message],
-    ) -> MemoryPatch:
-        errors: list[str] = []
-        source_ids = {message.id for message in source_messages}
-        missing_sources = [
-            source_ref for source_ref in patch.source_refs if source_ref not in source_ids
-        ]
-        if missing_sources:
-            errors.append(f"unknown source refs: {', '.join(missing_sources)}")
-        if patch.operation in {PatchOperation.REPLACE, PatchOperation.DELETE}:
-            if not patch.old_text:
-                errors.append("old_text is required for replace/delete")
-            elif page is None:
-                errors.append("target page is required")
-            else:
-                searchable = "\n".join(
-                    [page.summary] + page.facts + page.decisions + page.open_questions
-                )
-                if patch.old_text not in searchable:
-                    errors.append("old_text does not exist in modifiable page fields")
-        elif patch.operation == PatchOperation.ADD:
-            if page is None:
-                errors.append("target page is required")
-            if not patch.new_text:
-                errors.append("new_text is required for add")
-        if patch.new_text and any(marker in patch.new_text for marker in self.protected_markers):
-            errors.append("new_text attempts to modify protected memory block")
-        patch.errors = errors
-        patch.verified = not errors
-        return patch
 
 
 class ContextBuilder:
@@ -901,7 +853,6 @@ class MemoryOSService:
             llm_init_error=llm_init_error,
         )
         self.page_verifier = PageVerifier()
-        self.patch_verifier = PatchVerifier()
         self.embedding_client = embedding_client or self._default_embedding_client()
         lexical = LexicalSearcher()
         qdrant_store: QdrantEmbeddingStore | None = None
@@ -1278,55 +1229,6 @@ class MemoryOSService:
             diagnostics=diagnostics,
         )
 
-    def list_archive_passages(
-        self,
-        *,
-        archive_id: str | None = None,
-        source_id: str | None = None,
-        file_id: str | None = None,
-        producer: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> ArchivePassageListResponse:
-        page = self.store.list_archival_passages_page(
-            archive_id=archive_id,
-            source_id=source_id,
-            file_id=file_id,
-            producer=producer,
-            limit=limit,
-            offset=offset,
-        )
-        return ArchivePassageListResponse(
-            passages=[self._archive_passage_response(passage) for passage in page.passages],
-            total=page.total,
-            limit=page.limit,
-            offset=page.offset,
-        )
-
-    def _archive_passage_response(self, passage: ArchivalPassage) -> ArchivePassageResponse:
-        citation = None
-        if passage.citation is not None:
-            citation = ArchiveSourceSpanPayload(
-                start=passage.citation.start,
-                end=passage.citation.end,
-            )
-        return ArchivePassageResponse(
-            id=passage.id,
-            document_id=passage.document_id,
-            chunk_id=passage.chunk_id,
-            archive_id=passage.archive_id,
-            source_id=passage.source_id,
-            file_id=passage.file_id,
-            text=passage.text,
-            citation=citation,
-            source_refs=[
-                ArchiveSourceRefPayload.model_validate(ref.model_dump(mode="json"))
-                for ref in passage.source_refs
-            ],
-            tags=list(passage.tags),
-            metadata=dict(passage.metadata),
-        )
-
     def _default_embedding_client(self) -> EmbeddingClient | None:
         provider = self.settings.memoryos_embedding_provider.strip().lower()
         if provider == "fastembed":
@@ -1637,13 +1539,6 @@ class MemoryOSService:
                 session_token_count=token_count,
                 replayed=False,
             )
-
-    @_instrument_engine_operation("maybe_page")
-    def maybe_page(self, session_id: str) -> MemoryPage | None:
-        if self.store.session_token_count(session_id) < self.settings.rot_safe_budget:
-            self.trace(session_id, "paging_skipped", {"reason": "below_rot_safe_budget"})
-            return None
-        return self.page(session_id)
 
     @_instrument_engine_operation("page")
     def page(self, session_id: str) -> MemoryPage | None:
@@ -2534,244 +2429,6 @@ class MemoryOSService:
             seen.add(source_id)
             deduped.append(source_id)
         return deduped
-
-    @_instrument_engine_operation("search")
-    def search(
-        self,
-        query: str,
-        top_k: int = 5,
-        session_id: str | None = None,
-        limit: int | None = None,
-        include_superseded: bool = False,
-    ) -> list[SearchHit]:
-        if session_id is None and limit is None:
-            limit = 500
-        pages = self.store.list_pages(session_id, limit=limit)
-        if not include_superseded:
-            pages = [p for p in pages if p.superseded_by is None]
-        hits = self.searcher.search(pages, query, top_k=top_k)
-        RETRIEVAL_HITS.observe(len(hits))
-        if session_id is not None:
-            self.trace(
-                session_id,
-                "memory_searched",
-                {
-                    "query": query,
-                    "hits": [{"page_id": hit.page.id, "score": hit.score} for hit in hits],
-                },
-            )
-        return hits
-
-    @_instrument_engine_operation("commit_patch")
-    def commit_patch(self, session_id: str, patch: MemoryPatch) -> MemoryPatch:
-        self._require_session(session_id)
-        page = self.store.load_page(patch.target_page_id) if patch.target_page_id else None
-        if page is not None and page.session_id != session_id:
-            patch.errors = ["target page belongs to a different session"]
-            patch.verified = False
-            self.store.save_patch(patch)
-            self.trace(
-                session_id,
-                "patch_rejected",
-                {"patch_id": patch.id, "errors": patch.errors, "conflicts": []},
-            )
-            return patch
-        messages = self.store.list_messages(session_id)
-        pages = self.store.list_pages(session_id)
-        conflicts = self.conflict_detector.detect(patch, pages)
-        verified = self.patch_verifier.verify(patch, page, messages)
-        if conflicts:
-            conflict_msgs = [
-                f"[{c.severity}] {c.reason}: '{c.conflicting_text}'" for c in conflicts
-            ]
-            verified.errors.extend(conflict_msgs)
-            if any(c.severity == "error" for c in conflicts):
-                verified.verified = False
-        self.store.save_patch(verified)
-        self.trace(
-            session_id,
-            "patch_verified" if verified.verified else "patch_rejected",
-            {
-                "patch_id": verified.id,
-                "errors": verified.errors,
-                "conflicts": [
-                    {"page_id": c.page_id, "reason": c.reason, "severity": c.severity}
-                    for c in conflicts
-                ],
-            },
-        )
-        return verified
-
-    @_instrument_engine_operation("apply_patch")
-    def apply_patch(self, session_id: str, patch: MemoryPatch) -> bool:
-        """Apply a verified patch to the target page's content. Returns True on success."""
-        if not patch.verified:
-            return False
-        if not patch.target_page_id:
-            return False
-        page = self.store.load_page(patch.target_page_id)
-        if page is None:
-            return False
-        if page.session_id != session_id:
-            return False
-        old = patch.old_text or ""
-        new = patch.new_text or ""
-        if patch.operation in (PatchOperation.REPLACE, PatchOperation.DELETE) and not old:
-            return False
-        if patch.operation == PatchOperation.ADD and not new:
-            return False
-        if patch.operation == PatchOperation.REPLACE:
-            page.summary = page.summary.replace(old, new)
-            page.facts = [f.replace(old, new) for f in page.facts]
-            page.decisions = [d.replace(old, new) for d in page.decisions]
-            page.open_questions = [q.replace(old, new) for q in page.open_questions]
-        elif patch.operation == PatchOperation.ADD:
-            page.facts.append(new)
-        elif patch.operation == PatchOperation.DELETE:
-            page.facts = [f for f in page.facts if old not in f]
-            page.decisions = [d for d in page.decisions if old not in d]
-            page.open_questions = [q for q in page.open_questions if old not in q]
-            page.summary = page.summary.replace(old, "")
-        page.version += 1
-        page.updated_at = utc_now()
-        self.store.update_page(page)
-        self._reindex_page_embedding(session_id, page)
-        return True
-
-    def _reindex_page_embedding(self, session_id: str, page: MemoryPage) -> None:
-        """Recompute embedding for a page after mutation."""
-        if self.embedding_client is None:
-            return
-        text = " ".join(
-            [page.title, page.summary] + page.facts + page.decisions + page.open_questions
-        )
-        try:
-            embedding = self.embedding_client.embed(text)
-            self.store.set_page_embedding(page.id, embedding)
-            if self.qdrant_store is not None:
-                self.qdrant_store.upsert(page.id, embedding)
-        except Exception as exc:
-            PAGE_ERRORS_TOTAL.labels(stage="embed").inc()
-            self.trace(session_id, "embedding_failed", {"page_id": page.id, "error": str(exc)})
-
-    @_instrument_engine_operation("create_item")
-    def create_item(
-        self,
-        session_id: str,
-        content: str,
-        item_type: str = "knowledge",
-        source_message_ids: list[str] | None = None,
-    ) -> MemoryItem | None:
-        self._require_session(session_id)
-        if not self.settings.memoryos_item_extraction:
-            return None
-        try:
-            itype = MemoryItemType(item_type)
-        except ValueError as exc:
-            raise ValueError(
-                f"invalid item_type: {item_type}. "
-                f"Valid: {', '.join(t.value for t in MemoryItemType)}"
-            ) from exc
-        pages = self.store.list_pages(session_id, include_superseded=False)
-        page_id = pages[-1].id if pages else f"orphan_{session_id}"
-        if source_message_ids is None:
-            msgs = self.store.list_messages(session_id, limit=1)
-            source_message_ids = [msgs[0].id] if msgs else []
-        item = MemoryItem(
-            page_id=page_id,
-            session_id=session_id,
-            item_type=itype,
-            content=content,
-            source_message_ids=source_message_ids,
-        )
-        self.store.save_items([item])
-        self._index_item_embedding(item)
-        self.trace(
-            session_id,
-            "item_created",
-            {
-                "item_id": item.id,
-                "item_type": item_type,
-                "content": content,
-            },
-        )
-        return item
-
-    @_instrument_engine_operation("search_items")
-    def search_items(
-        self,
-        session_id: str,
-        query: str,
-        top_k: int = 5,
-        include_superseded: bool = False,
-    ) -> list[dict[str, Any]]:
-        self._require_session(session_id)
-        if not self.settings.memoryos_item_extraction:
-            return []
-        items = self.store.list_items(session_id)
-        if not items:
-            return []
-        if not include_superseded:
-            superseded_page_ids = {
-                p.id
-                for p in self.store.list_pages(session_id, include_superseded=True)
-                if p.superseded_by is not None
-            }
-            items = [it for it in items if it.page_id not in superseded_page_ids]
-        if not items:
-            return []
-        item_ids = [it.id for it in items]
-        embeddings = self.store.get_item_embeddings(item_ids)
-        hits = self.item_searcher.search(items, query, embeddings=embeddings, top_k=top_k)
-        self.trace(
-            session_id,
-            "items_searched",
-            {
-                "query": query,
-                "hit_count": len(hits),
-            },
-        )
-        return [
-            {
-                "item_id": h.item.id,
-                "content": h.item.content,
-                "item_type": h.item.item_type.value,
-                "score": h.score,
-                "source_message_ids": h.item.source_message_ids,
-            }
-            for h in hits
-        ]
-
-    @_instrument_engine_operation("patch_item")
-    def patch_item(
-        self,
-        session_id: str,
-        item_id: str,
-        new_content: str,
-    ) -> str:
-        self._require_session(session_id)
-        if not self.settings.memoryos_item_extraction:
-            return "Item operations are disabled."
-        item = self.store.load_item(item_id)
-        if item is None:
-            return f"Item {item_id} not found."
-        if item.session_id != session_id:
-            return f"Item {item_id} belongs to a different session."
-        old_content = item.content
-        self.store.update_item_content(item_id, new_content)
-        item.content = new_content
-        embedded = self._index_item_embedding(item)
-        self.trace(
-            session_id,
-            "item_patched",
-            {
-                "item_id": item_id,
-                "old_content": old_content,
-                "new_content": new_content,
-                "re_embedded": embedded,
-            },
-        )
-        return f"Item {item_id} updated."
 
     def trace(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
         payload = {**current_observability_context(), **payload}

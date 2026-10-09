@@ -116,22 +116,19 @@ companion 使用的离线完整能力：FastEmbed、ONNX、RRF、paging 和 exte
 没有通过关闭 semantic retrieval 来换取更小资产。后续发行应继续报告组成与实测值，而非
 把这个例外表述成达标。
 
-主要 HTTP 接口：
+HTTP 接口：
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
+| `GET` | `/health` | 能力与 curator 状态 |
 | `POST` | `/sessions` | 创建会话 |
 | `POST` | `/sessions/{id}/ingest` | 摄入消息 |
-| `POST` | `/sessions/{id}/page` | 显式分页 |
 | `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
 | `POST` | `/curate` | 无状态模块记忆提炼（`memoryos_curate/v1`） |
 | `POST` | `/sessions/{id}/ask` | 按需 agentic 检索（`memoryos_memory_ask/v1`） |
 | `POST` | `/archives/ingest` | 摄入可归因归档文档 |
 | `POST` | `/archives/attachments` | 将归档关联到会话 |
-| `POST` | `/memory/search` | 检索记忆 |
-| `GET` | `/sessions/{id}/trace` | 查看调试 trace |
 | `GET` | `/sessions/{id}/advisories` | 维护建议；`?version=2` 返回策展记忆（v2） |
-| `GET` | `/metrics` | Prometheus metrics |
 
 ### 模块记忆：无状态 `/curate`
 
