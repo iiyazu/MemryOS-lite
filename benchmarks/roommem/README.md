@@ -21,7 +21,7 @@ uv run python -m memoryos_eval roommem --data benchmarks/roommem/rooms --arm raw
 `--arm raw` replays the xmuse Room host (session + per-message archive outbox);
 `--arm oracle` uses the gold memories themselves as the curator upper bound and
 is what CI runs; `--arm curated` needs a `CuratedMemorySource` registered via
-`memoryos_lite.roommem.register_curated_source` and fails with a clear message
+`memoryos_eval.roommem.register_curated_source` and fails with a clear message
 otherwise. Reports land in `--out` as `results.jsonl`, `write_side.json`,
 `summary.json`, and `summary.md`. Use `--repeats N` for run-to-run spread (LLM responses
 are disk-cached per repeat under `--out/llm_cache`).

@@ -612,7 +612,7 @@ def build_curated_source(
             f"no curated memory source is registered under {name!r}; "
             f"registered sources: {available}. "
             "A Curator adapter must call "
-            "memoryos_lite.roommem.register_curated_source(name, factory) "
+            "memoryos_eval.roommem.register_curated_source(name, factory) "
             "before running --arm curated."
         )
     if context is not None and _factory_accepts_context(factory):
