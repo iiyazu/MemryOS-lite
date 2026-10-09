@@ -71,35 +71,21 @@ def _ref(source_id: str = "msg_1") -> SourceRef:
     return SourceRef(source_type="message", source_id=source_id, session_id="ses_1")
 
 
-def test_settings_default_to_v3_composer_with_kernel_off(tmp_path):
+def test_settings_default_to_v3_composer(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
 
     assert settings.resolved_memory_arch == "v3"
-    assert settings.resolved_agent_kernel == "off"
     assert settings.memoryos_archival_vector_enabled is True
 
 
-def test_settings_resolve_v3_composer_and_kernel_flags(tmp_path):
-    settings = Settings(
-        data_dir=tmp_path / ".memoryos",
-        memoryos_memory_arch="v3",
-        memoryos_agent_kernel="external",
-    )
+def test_settings_resolve_v3_composer_flag(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
 
     assert settings.resolved_memory_arch == "v3"
-    assert settings.resolved_agent_kernel == "external"
 
     with pytest.raises(ValueError):
         bad_memory_arch = Settings(memoryos_memory_arch="bad")
         _ = bad_memory_arch.resolved_memory_arch
-
-    with pytest.raises(ValueError):
-        removed_kernel = Settings(memoryos_agent_kernel="v1")
-        _ = removed_kernel.resolved_agent_kernel
-
-    with pytest.raises(ValueError):
-        bad_agent_kernel = Settings(memoryos_agent_kernel="bad")
-        _ = bad_agent_kernel.resolved_agent_kernel
 
 
 def test_v3_composer_builds_layered_context_package(tmp_path):

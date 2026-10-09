@@ -75,10 +75,8 @@ with TemporaryDirectory() as temp_dir:
         settings=Settings(
             data_dir=Path(temp_dir),
             memoryos_embedding_provider="none",
-            memoryos_agent_kernel="external",
         )
     )
-assert service.settings.resolved_agent_kernel == "external"
 """
     result = subprocess.run(
         [sys.executable, "-c", code],

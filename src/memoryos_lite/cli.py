@@ -349,13 +349,6 @@ def eval_roommem(
         str,
         Option("--embedding", help="none | fastembed"),
     ] = "none",
-    heuristic_advisories: Annotated[
-        bool,
-        Option(
-            "--heuristic-advisories",
-            help="Raw arm: collect kernel external advisories as a write-side heuristic baseline",
-        ),
-    ] = False,
     fake_llm: Annotated[
         bool,
         Option(
@@ -440,7 +433,6 @@ def eval_roommem(
             out_dir=Path(out),
             repeats=repeats,
             embedding=embedding,
-            heuristic_advisories=heuristic_advisories,
             curated_source_name=curated_source,
             curator_window=curator_window,
             fake_llm=fake_llm,
@@ -793,30 +785,6 @@ def _roommem_write_row(arm: str, payload: dict[str, object]) -> list[str]:
     rates = payload.get("rates")
     if not isinstance(rates, dict):
         rates = {}
-    if arm == "raw":
-        heuristic = payload.get("heuristic")
-        if not isinstance(heuristic, dict):
-            heuristic = {}
-        heuristic_rates = heuristic.get("rates")
-        if not isinstance(heuristic_rates, dict):
-            heuristic_rates = {}
-        advisories = heuristic.get("advisories")
-        matched_advisories = heuristic.get("matched")
-        return [
-            f"{arm} (heuristic)",
-            str(advisories if isinstance(advisories, int) else 0),
-            str(matched_advisories if isinstance(matched_advisories, int) else "-"),
-            "-",
-            _roommem_number(heuristic_rates.get("gold_match_rate")),
-            "-",
-            _roommem_number(heuristic_rates.get("noise_rate")),
-            "-",
-            "-",
-            "-",
-            "-",
-            "-",
-            "-",
-        ]
     unmatched_judged = payload.get("unmatched_judged")
     if not isinstance(unmatched_judged, dict):
         unmatched_judged = {}

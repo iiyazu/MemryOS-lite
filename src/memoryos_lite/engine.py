@@ -28,7 +28,6 @@ from memoryos_lite.curator import (
     build_curator_llm,
 )
 from memoryos_lite.curator.curate import CurateRequest, CurateResponse
-from memoryos_lite.kernel_analyzer import KernelMaintenanceAnalyzer
 from memoryos_lite.observability import (
     CONTEXT_BUDGET_USED_RATIO,
     CONTEXT_BUILD_SECONDS,
@@ -93,14 +92,12 @@ from memoryos_lite.store import MemoryStore, create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
 from memoryos_lite.v3_contracts import (
-    AgentStepRequest,
     ArchiveAttachment,
     ContextComposerRequest,
     ContextLayerItem,
     ContextPackageV3,
     IdentityScope,
     SourceRef,
-    message_to_log_entry,
 )
 
 __all__ = [
@@ -992,11 +989,6 @@ class MemoryOSService:
             recall_pipeline=self.recall_pipeline,
             archival_searcher=self.archival_searcher,
         )
-        self.kernel_maintenance_analyzer = (
-            KernelMaintenanceAnalyzer(self.store)
-            if self.settings.resolved_agent_kernel == "external"
-            else None
-        )
         if curator is not None:
             self.curator: Curator | None = curator
         elif self.settings.memoryos_curator_enabled:
@@ -1267,12 +1259,6 @@ class MemoryOSService:
                 session_id=session.id,
             )
             return session
-
-    def list_external_advisories(self, session_id: str) -> list[dict[str, object]]:
-        """Return bounded source-backed suggestions for the Room host only."""
-
-        self._require_session(session_id)
-        return self.store.list_maintenance_advisories(session_id, limit=32)
 
     def list_curated_advisories(self, session_id: str) -> list[dict[str, object]]:
         """Project curated memories into advisory v2 items for the host."""
@@ -2049,11 +2035,6 @@ class MemoryOSService:
                 )
                 pages = self.store.list_pages(session_id, include_superseded=False)
             else:
-                self._run_kernel_maintenance(
-                    session_id=session_id,
-                    task=task,
-                    v3_package=v3_package,
-                )
                 package = self._context_package_from_v3(v3_package)
                 elapsed = time.perf_counter() - t0
                 CONTEXT_BUILD_SECONDS.observe(elapsed)
@@ -2189,89 +2170,6 @@ class MemoryOSService:
 
     def _should_route_to_v3_context(self) -> bool:
         return self.settings.resolved_memory_arch == "v3"
-
-    def _run_kernel_maintenance(
-        self,
-        *,
-        session_id: str,
-        task: str,
-        v3_package: ContextPackageV3,
-    ) -> None:
-        if self.settings.memoryos_curator_enabled:
-            # The LLM curator owns advisory production; the heuristic
-            # "repeater" proposals must not compete with it.
-            return
-        if self.kernel_maintenance_analyzer is None:
-            return
-        messages = self.store.list_messages(session_id)
-        step_request = AgentStepRequest(
-            session_id=session_id,
-            input_messages=[message_to_log_entry(message) for message in messages],
-            context=v3_package,
-            identity_scope=IdentityScope(session_id=session_id),
-        )
-        try:
-            analysis = self.kernel_maintenance_analyzer.analyze(step_request)
-            # External governance is advisory-only.  The host receives
-            # source-backed proposals and decides whether to create an
-            # xmuse candidate; MemoryOS never mutates its authority here.
-            for proposal in analysis.memory_proposals:
-                source_refs = [
-                    {
-                        "source_type": ref.source_type.value,
-                        "source_id": ref.source_id,
-                        **({"session_id": ref.session_id} if ref.session_id is not None else {}),
-                    }
-                    for ref in proposal.tool_request.source_refs
-                    if ref.source_type.value in {"message", "document"}
-                    and isinstance(ref.source_id, str)
-                    and ref.source_id
-                ]
-                arguments = proposal.tool_request.arguments
-                content = arguments.get("content")
-                if (
-                    isinstance(content, str)
-                    and content.strip()
-                    and len(content.encode("utf-8")) <= 4096
-                    and source_refs
-                ):
-                    self.store.add_maintenance_advisory(
-                        session_id=session_id,
-                        proposal_type=proposal.proposal_type,
-                        content=content.strip(),
-                        source_refs=source_refs,
-                    )
-                self.trace(
-                    session_id,
-                    "maintenance_advisory_proposal",
-                    {
-                        "proposal_type": proposal.proposal_type,
-                        "source_ref_count": len(source_refs),
-                    },
-                )
-        except Exception as exc:
-            self.trace(
-                session_id,
-                "maintenance_kernel_error",
-                {
-                    "task": task,
-                    "error": f"{type(exc).__name__}: {exc}",
-                },
-            )
-            return
-        self.trace(
-            session_id,
-            "maintenance_kernel_ran",
-            {
-                "task": task,
-                "signal_count": len(analysis.signals),
-                "decision_count": len(analysis.decisions),
-                "memory_proposal_count": len(analysis.memory_proposals),
-                "context_feedback_count": len(analysis.context_feedback),
-                "submitted": False,
-                "governance": "external",
-            },
-        )
 
     def _context_package_from_v3(self, v3_package: ContextPackageV3) -> ContextPackage:
         package = ContextPackage(

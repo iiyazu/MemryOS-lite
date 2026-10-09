@@ -29,15 +29,12 @@ from memoryos_lite.v3_contracts import (
     CoreMemoryUpdate,
     DiagnosticEvent,
     IdentityScope,
-    KernelTraceEvent,
     LayerBudgetDecision,
     MemoryHistoryEvent,
     MessageLogEntry,
     RecallMemoryEntry,
     SourceRef,
     SourceSpan,
-    ToolPolicyDecision,
-    ToolPolicyRule,
     ensure_persisted_identity_scope,
     episode_to_recall_entry,
     item_to_archival_memory,
@@ -394,42 +391,6 @@ def test_page_and_item_are_declared_legacy_adapter_inputs_only():
     assert REQUIRED_V3_ADAPTERS["MemoryItem"] == "ArchivalMemory or ArchivalPassage adapter"
 
 
-def test_tool_policy_decision_never_allows_unknown_tool_implicitly():
-    rule = ToolPolicyRule(
-        id="rule_1",
-        tool_name="memory_core_append",
-        effect="require_approval",
-        reason="core memory mutation",
-        priority=10,
-        source_refs=[
-            SourceRef(
-                source_type="manual",
-                source_id="policy",
-                approval_id="appr_policy",
-            )
-        ],
-    )
-    decision = ToolPolicyDecision(
-        tool_name="memory_core_append",
-        effect="require_approval",
-        matched_rule_ids=[rule.id],
-        requires_approval=True,
-        reason=rule.reason,
-    )
-
-    assert decision.effect == "require_approval"
-    assert decision.requires_approval is True
-
-    with pytest.raises(ValidationError):
-        ToolPolicyDecision(
-            tool_name="unknown_tool",
-            effect="allow",
-            matched_rule_ids=[],
-            requires_approval=False,
-            reason="implicit allow is forbidden",
-        )
-
-
 def test_approval_state_requires_resolution_metadata_when_approved():
     pending = ApprovalState(
         id="appr_1",
@@ -464,30 +425,6 @@ def test_approval_state_requires_resolution_metadata_when_approved():
         )
 
 
-def test_kernel_trace_events_are_ordered_and_replayable():
-    event = KernelTraceEvent(
-        step_id="step_1",
-        session_id="ses_1",
-        sequence=1,
-        event_type="tool_policy_decision",
-        payload={"tool_name": "memory_core_append", "effect": "require_approval"},
-        source_refs=[SourceRef(source_type="approval", source_id="appr_1")],
-        approval_id="appr_1",
-    )
-
-    assert event.sequence == 1
-    assert event.payload["effect"] == "require_approval"
-
-    with pytest.raises(ValidationError):
-        KernelTraceEvent(
-            step_id="step_1",
-            session_id="ses_1",
-            sequence=0,
-            event_type="bad",
-            payload={},
-        )
-
-
 def test_v3_contract_module_exports_expected_public_names():
     expected = {
         "SourceRef",
@@ -502,11 +439,6 @@ def test_v3_contract_module_exports_expected_public_names():
         "CoreMemoryBlock",
         "CoreMemoryUpdate",
         "ContextComposer",
-        "AgentStepRunner",
-        "ToolPolicyEngine",
-        "ApprovalGate",
-        "ToolExecutionManager",
-        "ContinuationController",
         "ensure_persisted_identity_scope",
         "V3_KEEP_TABLES",
         "V3_FUTURE_TABLES",

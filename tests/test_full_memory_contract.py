@@ -53,33 +53,6 @@ def test_external_message_id_replay_and_conflict(tmp_path):
         )
 
 
-def test_external_governance_advisory_is_durable_and_idempotent(tmp_path):
-    service = _service(
-        tmp_path,
-        memoryos_memory_arch="v3",
-        memoryos_recall_pipeline="v2",
-        memoryos_agent_kernel="external",
-    )
-    session = service.create_session("advisory")
-    source_refs = [{"source_type": "message", "source_id": "msg-1", "session_id": session.id}]
-
-    first = service.store.add_maintenance_advisory(
-        session_id=session.id,
-        proposal_type="archive_write",
-        content="Keep the Room source proof strict.",
-        source_refs=source_refs,
-    )
-    replay = service.store.add_maintenance_advisory(
-        session_id=session.id,
-        proposal_type="archive_write",
-        content="Keep the Room source proof strict.",
-        source_refs=source_refs,
-    )
-
-    assert replay["advisory_id"] == first["advisory_id"]
-    assert service.list_external_advisories(session.id) == [first]
-
-
 def test_external_message_id_concurrent_first_writers_have_stable_result(tmp_path):
     service = _service(tmp_path)
     session = service.create_session("concurrent-idempotency")
@@ -270,25 +243,3 @@ def test_source_evidence_v2_omits_archival_items_without_document_identity():
 
     assert payload["items"] == []
     assert payload["omitted_count"] == 1
-
-
-def test_external_kernel_mode_is_advisory_only(tmp_path):
-    service = _service(
-        tmp_path,
-        memoryos_memory_arch="v3",
-        memoryos_recall_pipeline="v2",
-        memoryos_agent_kernel="external",
-    )
-
-    assert service.kernel_maintenance_analyzer is not None
-
-
-def test_external_kernel_mode_off_has_no_analyzer(tmp_path):
-    service = _service(
-        tmp_path,
-        memoryos_memory_arch="v3",
-        memoryos_recall_pipeline="v2",
-        memoryos_agent_kernel="off",
-    )
-
-    assert service.kernel_maintenance_analyzer is None
