@@ -14,7 +14,7 @@ are debug mirrors, not the primary state.
 | Items | `memory_items` | none | DB |
 | Patches | `memory_patches` | none | DB |
 | Traces | `trace_events` | `.memoryos/traces/*.jsonl` | DB |
-| Core memory | `core_memory_blocks`, `core_memory_history` | none | DB |
+| Core memory (unused) | `core_memory_blocks`, `core_memory_history` | none | DB |
 | Archival memory | `archival_documents`, `archival_chunks`, `archival_passages`, `archival_memories`, `archival_memory_history` | none | DB |
 
 ## Tables
@@ -112,6 +112,8 @@ Store methods:
 
 ### `core_memory_blocks`
 
+Kept in the schema for existing databases; no code reads or writes it.
+
 - `id`
 - `label`
 - `description`
@@ -144,8 +146,8 @@ to the v3 composer.
 
 ### `archival_memories`, `archival_memory_history`
 
-These tables store source-backed long-term facts/preferences/events and their
-add/update/delete audit history.
+Kept in the schema for existing databases; no code reads or writes them. The
+same holds for `promotion_candidates` and `context_policy_candidates`.
 
 ### `curated_memories`
 

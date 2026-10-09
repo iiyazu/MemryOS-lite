@@ -24,7 +24,6 @@ from memoryos_lite.v3_contracts import (
     ArchivalPassage,
     ArchiveAttachment,
     ContextPackageV3,
-    CoreMemoryBlock,
     SourceRef,
 )
 
@@ -54,33 +53,6 @@ def test_context_builder_retrieves_relevant_page(legacy_service):
     loaded_ids = [item.page_id for item in context.retrieved_pages + context.active_task_pages]
     assert page.id in loaded_ids
     assert context.estimated_tokens <= 800
-
-
-def test_v3_build_context_includes_core_memory_diagnostics(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
-    service = MemoryOSService(settings=settings)
-    session = service.create_session("core-memory-v3")
-    service.store.create_core_memory_block(
-        CoreMemoryBlock(
-            id="core_1",
-            label="profile",
-            description="Stable user facts",
-            value="Alice lives in Shanghai.",
-            limit_tokens=100,
-            source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-            tags=["profile"],
-            metadata={"scope": "human"},
-        )
-    )
-
-    context = service.build_context(session.id, "用户住在哪里？", budget=200)
-
-    assert context.metadata["memory_arch"] == "v3"
-    assert context.metadata["v3_layer_counts"]["core"] == 1
-    assert any("<memory_blocks>" in item for item in context.pinned_core)
-    core_diagnostics = [d for d in context.metadata["v3_diagnostics"] if d["layer"] == "core"]
-    assert core_diagnostics
-    assert core_diagnostics[0]["metadata"]["tags"] == ["profile"]
 
 
 def test_v3_build_context_promotes_cache_diagnostics_to_legacy_metadata(
@@ -172,29 +144,6 @@ def test_v3_internal_recall_cache_remains_disabled_by_cache_flag(tmp_path):
     assert cache.get_calls == 0
     assert cache.set_calls == 0
     assert cache.delete_calls == 0
-
-
-def test_explicit_v1_build_context_excludes_v3_core_memory_blocks(tmp_path):
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v1")
-    service = MemoryOSService(settings=settings)
-    session = service.create_session("core-memory-v1")
-    service.store.create_core_memory_block(
-        CoreMemoryBlock(
-            id="core_1",
-            label="profile",
-            description="Stable user facts",
-            value="Alice lives in Shanghai.",
-            limit_tokens=100,
-            source_refs=[SourceRef(source_type="message", source_id="msg_1")],
-            tags=["profile"],
-        )
-    )
-
-    context = service.build_context(session.id, "用户住在哪里？", budget=200)
-
-    assert context.metadata.get("memory_arch") != "v3"
-    assert "v3_diagnostics" not in context.metadata
-    assert "Alice lives in Shanghai." not in context.model_dump_json()
 
 
 def test_explicit_v1_build_context_excludes_v3_archival_scope_diagnostics(tmp_path):

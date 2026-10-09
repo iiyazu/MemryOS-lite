@@ -9,7 +9,7 @@ Current defaults are `MEMORYOS_MEMORY_ARCH=v3`, `MEMORYOS_RECALL_PIPELINE=v2`, a
 ## Runtime boundaries
 
 - SQLite is authoritative. Page mirrors, trace JSONL, Redis cache, Qdrant indexes, and benchmark reports are derived or experimental.
-- v3 composes core, recall, archival, and recent layers. Source references and bounded context are part of the contract.
+- v3 composes task, recall, archival, and recent layers. Source references and bounded context are part of the contract.
 - v2 recall uses episode-first evidence retrieval. `v1` memory and recall paths remain explicit compatibility choices, not defaults.
 - Stateless `/curate` uses a LangGraph repair loop (remote extra) and keeps no state; it is not an agent runtime.
 - The HTTP API is a local prototype surface without complete remote authentication, tenancy, rate limiting, or ownership controls.

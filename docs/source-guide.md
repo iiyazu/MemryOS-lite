@@ -35,7 +35,6 @@ MemoryOSService
 | `retrieval/` | Search primitives and v2 recall helpers. |
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
-| `core_memory.py` | Source-backed core memory block service. |
 | `public_benchmarks.py` | LongMemEval/LoCoMo loading, baseline execution, report fields. |
 | `evals.py` | Built-in deterministic evals and baseline output structure. |
 | `curator/` | LLM curator: session worker and v2 advisories; stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`). |
@@ -54,7 +53,6 @@ as an explicit fallback:
 Message Log
   -> Recall Memory
   -> Archival Memory
-  -> Core Memory
   -> ContextComposer
   -> ContextPackage-compatible payload
 ```
