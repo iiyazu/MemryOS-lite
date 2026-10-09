@@ -7,11 +7,9 @@ from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
     ArchivalVectorIndex,
+    LocalArchivalVectorStore,
 )
-from memoryos_lite.retrieval.providers.qdrant_archival import (
-    QdrantArchivalPassageStore,
-)
-from memoryos_lite.schemas import ContextEvidence, ContextPackage, Message, MessageCreate, Role
+from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import (
@@ -52,11 +50,7 @@ def _vector_searcher(
     return ArchivalPassageSearcher(
         vector_index=ArchivalVectorIndex(
             embedding_client=TinyEmbeddingClient(),
-            vector_store=QdrantArchivalPassageStore(
-                url=":memory:",
-                collection=collection,
-                dim=3,
-            ),
+            vector_store=LocalArchivalVectorStore(dim=3),
             config=ArchivalEmbeddingConfig(provider="test", model="tiny", dim=3),
         ),
         passage_loader=store.get_archival_passages_by_ids,
@@ -136,105 +130,6 @@ def test_v3_composer_builds_layered_context_package(tmp_path):
     assert package.metadata["memory_arch"] == "v3"
     assert package.budget_decisions
     assert all(item.estimated_tokens > 0 for item in package.items)
-
-
-def test_v3_composer_preserves_cache_diagnostics_metadata(tmp_path):
-    class FakeRecallPipeline:
-        def build_context(
-            self,
-            session_id: str,
-            task: str,
-            budget: int,
-            retrieval_query: str | None = None,
-        ) -> ContextPackage:
-            package = ContextPackage(session_id=session_id, task=task, task_tokens=4)
-            package.retrieved_evidence.append(
-                ContextEvidence(
-                    message_id="msg_bob",
-                    text="Bob moved to Shanghai.",
-                    role=Role.USER,
-                    reason="test recall",
-                    estimated_tokens=4,
-                )
-            )
-            package.metadata.update(
-                {
-                    "cache": {"status": "miss", "scope": "recall_context_package"},
-                    "recall_cache": {"status": "miss", "scope": "recall_context_package"},
-                    "query_analysis_cache": {"status": "hit", "scope": "query_analysis"},
-                    "recall_candidate_cache": {
-                        "status": "hit",
-                        "scope": "recall_candidates",
-                    },
-                    "recall_memory_watermark": "messages:1",
-                }
-            )
-            return package
-
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
-    store = create_store(settings)
-    store.reset()
-    package = V3ContextComposer(
-        store=store,
-        settings=settings,
-        tokenizer=WordTokenizer(),
-        recall_pipeline=FakeRecallPipeline(),
-    ).build(
-        ContextComposerRequest(
-            session_id="ses_1",
-            task="Where did Bob move?",
-            budget=80,
-        )
-    )
-
-    v3_metadata = package.metadata
-    assert v3_metadata["cache"] == {
-        "status": "miss",
-        "scope": "recall_context_package",
-    }
-    assert v3_metadata["recall_cache"] == {
-        "status": "miss",
-        "scope": "recall_context_package",
-    }
-    assert v3_metadata["query_analysis_cache"] == {
-        "status": "hit",
-        "scope": "query_analysis",
-    }
-    assert v3_metadata["recall_candidate_cache"] == {
-        "status": "hit",
-        "scope": "recall_candidates",
-    }
-    assert v3_metadata["recall_memory_watermark"] == "messages:1"
-
-
-def test_v3_composer_omits_missing_recall_memory_watermark(tmp_path):
-    class FakeRecallPipeline:
-        def build_context(
-            self,
-            session_id: str,
-            task: str,
-            budget: int,
-            retrieval_query: str | None = None,
-        ) -> ContextPackage:
-            return ContextPackage(session_id=session_id, task=task, task_tokens=4)
-
-    settings = Settings(data_dir=tmp_path / ".memoryos", memoryos_memory_arch="v3")
-    store = create_store(settings)
-    store.reset()
-    package = V3ContextComposer(
-        store=store,
-        settings=settings,
-        tokenizer=WordTokenizer(),
-        recall_pipeline=FakeRecallPipeline(),
-    ).build(
-        ContextComposerRequest(
-            session_id="ses_1",
-            task="Where did Bob move?",
-            budget=80,
-        )
-    )
-
-    assert "recall_memory_watermark" not in package.metadata
 
 
 def test_v3_composer_filters_archival_passages_by_attached_scope(tmp_path):

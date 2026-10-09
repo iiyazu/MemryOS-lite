@@ -21,7 +21,7 @@ class MissingOptionalCapabilityError(RuntimeError):
 def require_remote_capability(capability: str) -> None:
     missing = [
         package
-        for package in ("langchain_core", "langchain_openai", "langgraph", "qdrant_client")
+        for package in ("langchain_core", "langchain_openai", "langgraph")
         if find_spec(package) is None
     ]
     if missing:
@@ -38,7 +38,6 @@ def require_benchmark_capability(capability: str) -> None:
             "langchain_core",
             "langchain_openai",
             "langgraph",
-            "qdrant_client",
         )
         if find_spec(package) is None
     ]

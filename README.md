@@ -13,7 +13,7 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 - 默认 `MEMORYOS_RECALL_PIPELINE=v2`，使用 episode-first evidence recall；可显式选择 `v1`。
 - 记忆策展（curator）默认关闭；`MEMORYOS_CURATOR_ENABLED=true` 时后台 worker 从消息流抽取带来源证明的持久记忆，并通过 `/sessions/{id}/advisories?version=2`（`memoryos_external_advisories/v2`）暴露，由宿主决定是否采纳。worker 是 `/curate` 图的有状态宿主：每一窗消息连同会话现有记忆按 `profile=room` 走同一张图，引文必须是原消息的逐字子串，按 `topic_key` + 版本号确定性汇总新旧版本。
 - 模块记忆走无状态的 `POST /curate`（`memoryos_curate/v1`）：宿主（如 xmuse）带上模块现有记忆和一窗新活动，MemoryOS 返回新的记忆版本，自己不存状态。错题本采用闭合记账：每条复核打回和门禁失败都必须归到一条教训或写明理由排除。提炼过程是一张 LangGraph 图（抽取 → 校验 → 修复 → 汇总），见下文"模块记忆"。
-- SQLite 是权威存储；page/trace 文件和可选 Redis/Qdrant 都是派生或实验能力。
+- SQLite 是权威存储；page/trace 文件和进程内向量索引都是派生数据。
 - 以新鲜命令结果而不是文档中的历史通过数判断状态。
 
 ```text
@@ -88,7 +88,7 @@ uv run --no-sync memoryos api --reload
 ```
 
 `full-local` 保留 SQLite、BM25、FastEmbed、RRF 和 paging，且不安装
-远程 provider/graph stack。需要 LLM curator、`/curate`、远程 LLM/Qdrant 或公开 benchmark 时
+远程 provider/graph stack。需要 LLM curator、`/curate`、远程 LLM 或公开 benchmark 时
 显式安装：
 
 ```bash
@@ -107,7 +107,7 @@ uv run --no-sync memoryos demo ask --mermaid
 `memoryos-lite` 核心包只包含 API、SQLite/BM25 和基础存储。`full-local` 是 xmuse
 companion 使用的离线完整能力：FastEmbed、ONNX、RRF 和 paging；
 模型缓存由 companion 单独证明，不混入 Python 依赖包。`remote` 与 `benchmark` 则显式
-安装 LangChain、LangGraph、Qdrant 和远程 provider 相关依赖。
+安装 LangChain、LangGraph 和远程 provider 相关依赖。
 
 在 Linux CPython 3.11 的冻结依赖测量中，移除 remote/benchmark 栈后（不含模型）Python
 依赖 payload 从 286,143,166 B 降至 243,892,461 B，减少 42,250,705 B（14.76%）。该结果
@@ -187,7 +187,6 @@ HTTP 接口：
 | `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |
 | `MEMORYOS_DEMOTE_SUPERSEDED` | `false` | 用本会话 curated 记忆推导已取代标记，用于 `source_evidence/v2` 降权和 `ask` |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENCODE_API_KEY` | unset | 可选真实模型提供方；`MEMORYOS_LLM_PROVIDER=opencode` 走 OpenCode Go（默认 `muse-spark-1.3-contributor`，Responses API），目前只用于 curator 与 RoomMem |
-| `QDRANT_URL` | unset | 可选向量检索后端 |
 
 完整设置以 `src/memoryos_lite/config.py` 为准。
 

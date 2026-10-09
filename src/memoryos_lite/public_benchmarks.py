@@ -205,8 +205,6 @@ def run_public_benchmark(
             "rot_safe_budget": settings.rot_safe_budget,
             "memoryos_embedding_provider": _public_embedding_provider(settings),
             "memoryos_recall_pipeline": settings.memoryos_recall_pipeline,
-            "memoryos_rewrite_enabled": settings.memoryos_rewrite_enabled,
-            "memoryos_rerank_enabled": settings.memoryos_rerank_enabled,
         }
     )
     store = create_store(run_settings)

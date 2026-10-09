@@ -8,9 +8,6 @@ from memoryos_lite.retrieval.archival_vector import (
     ArchivalVectorIndex,
     LocalArchivalVectorStore,
 )
-from memoryos_lite.retrieval.providers.qdrant_archival import (
-    QdrantArchivalPassageStore,
-)
 from memoryos_lite.v3_contracts import ArchivalPassage, SourceRef, SourceSpan
 
 
@@ -124,11 +121,7 @@ def _vector_index(
 ) -> ArchivalVectorIndex:
     return ArchivalVectorIndex(
         embedding_client=embedding_client or TinyEmbeddingClient(),
-        vector_store=QdrantArchivalPassageStore(
-            url=":memory:",
-            collection=collection,
-            dim=3,
-        ),
+        vector_store=LocalArchivalVectorStore(dim=3),
         config=ArchivalEmbeddingConfig(provider="test", model="tiny", dim=3),
     )
 

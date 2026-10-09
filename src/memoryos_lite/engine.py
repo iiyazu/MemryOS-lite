@@ -7,7 +7,7 @@ import re
 import time
 from collections.abc import Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 from sqlalchemy.exc import IntegrityError
@@ -48,8 +48,6 @@ from memoryos_lite.retrieval import (
     HybridSearcher,
     ItemSearcher,
     LexicalSearcher,
-    LLMReranker,
-    QueryRewriter,
     Searcher,
     SearchHit,
 )
@@ -164,10 +162,6 @@ from memoryos_lite.legacy_paging import (  # noqa: E402
     PagingAgent,
     _RankedMessageEvidence,
 )
-
-if TYPE_CHECKING:
-    from memoryos_lite.retrieval.providers.qdrant import QdrantEmbeddingStore
-    from memoryos_lite.retrieval.providers.qdrant_archival import QdrantArchivalPassageStore
 
 
 class ContextBuilder:
@@ -852,81 +846,19 @@ class MemoryOSService:
         self.page_verifier = PageVerifier()
         self.embedding_client = embedding_client or self._default_embedding_client()
         lexical = LexicalSearcher()
-        qdrant_store: QdrantEmbeddingStore | None = None
-        qdrant_url = self.settings.qdrant_url
-        embedding_client_for_pages = self.embedding_client
-        if qdrant_url and embedding_client_for_pages is not None:
-            try:
-                from memoryos_lite.retrieval.providers.qdrant import QdrantEmbeddingStore
-
-                qdrant_store = self.recovery.execute(
-                    "engine.qdrant_pages",
-                    "connect",
-                    lambda: QdrantEmbeddingStore(
-                        url=qdrant_url,
-                        collection=self.settings.qdrant_collection,
-                        dim=embedding_client_for_pages.dim,
-                        timeout=self.settings.memoryos_qdrant_timeout_s,
-                    ),
-                    fallback=lambda _exc: None,
-                    critical=False,
-                )
-            except Exception as exc:
-                qdrant_store = None
-                llm_init_error = str(exc)
-        self.qdrant_store = qdrant_store
         embedding = (
-            EmbeddingSearcher(self.store, self.embedding_client, qdrant_store=qdrant_store)
+            EmbeddingSearcher(self.store, self.embedding_client)
             if self.embedding_client is not None
             else None
         )
-        archival_qdrant_store: QdrantArchivalPassageStore | None = None
         archival_vector_index: ArchivalVectorIndex | None = None
-        archival_qdrant_url = self.settings.memoryos_archival_qdrant_url
         embedding_client_for_archival = self.embedding_client
-        if (
-            self.settings.memoryos_archival_vector_enabled
-            and archival_qdrant_url
-            and embedding_client_for_archival is not None
-        ):
-            try:
-                from memoryos_lite.retrieval.providers.qdrant_archival import (
-                    QdrantArchivalPassageStore,
-                )
-
-                archival_qdrant_store = self.recovery.execute(
-                    "engine.qdrant_archival",
-                    "connect",
-                    lambda: QdrantArchivalPassageStore(
-                        url=archival_qdrant_url,
-                        collection=self.settings.memoryos_archival_qdrant_collection,
-                        dim=embedding_client_for_archival.dim,
-                        timeout=self.settings.memoryos_qdrant_timeout_s,
-                    ),
-                    fallback=lambda _exc: None,
-                    critical=False,
-                )
-                if archival_qdrant_store is not None:
-                    archival_vector_index = ArchivalVectorIndex(
-                        embedding_client=embedding_client_for_archival,
-                        vector_store=archival_qdrant_store,
-                        config=ArchivalEmbeddingConfig(
-                            provider=self.settings.memoryos_embedding_provider,
-                            model=self.settings.memoryos_embedding_model,
-                            dim=embedding_client_for_archival.dim,
-                        ),
-                    )
-            except Exception as exc:
-                archival_qdrant_store = None
-                archival_vector_index = None
-                llm_init_error = str(exc)
         archival_embedding_dim = getattr(embedding_client_for_archival, "dim", None)
         if (
             self.settings.memoryos_archival_vector_enabled
             and embedding_client_for_archival is not None
             and isinstance(archival_embedding_dim, int)
             and archival_embedding_dim > 0
-            and archival_vector_index is None
         ):
             archival_vector_index = ArchivalVectorIndex(
                 embedding_client=embedding_client_for_archival,
@@ -939,41 +871,11 @@ class MemoryOSService:
                     dim=archival_embedding_dim,
                 ),
             )
-        self.archival_qdrant_store = archival_qdrant_store
         self.archival_searcher = ArchivalPassageSearcher(
             vector_index=archival_vector_index,
             passage_loader=self.store.get_archival_passages_by_ids,
         )
-        chat_api_key = self.settings.chat_api_key
-        _use_structured = self.settings.resolved_llm_provider != "deepseek"
-        query_rewriter = (
-            QueryRewriter(
-                model=self.settings.chat_model,
-                api_key=chat_api_key,
-                base_url=self.settings.chat_base_url,
-                timeout=self.settings.memoryos_llm_timeout_s,
-                use_structured=_use_structured,
-            )
-            if self.settings.memoryos_rewrite_enabled and chat_api_key
-            else None
-        )
-        reranker = (
-            LLMReranker(
-                model=self.settings.chat_model,
-                api_key=chat_api_key,
-                base_url=self.settings.chat_base_url,
-                timeout=self.settings.memoryos_llm_timeout_s,
-                use_structured=_use_structured,
-            )
-            if self.settings.memoryos_rerank_enabled and chat_api_key
-            else None
-        )
-        self.searcher: Searcher = HybridSearcher(
-            lexical=lexical,
-            embedding=embedding,
-            query_rewriter=query_rewriter,
-            reranker=reranker,
-        )
+        self.searcher: Searcher = HybridSearcher(lexical=lexical, embedding=embedding)
         self.context_builder = ContextBuilder(self.tokenizer, self.searcher, self.settings)
         self.dynamic_budget = DynamicBudget(self.settings, self.tokenizer)
         self.recall_pipeline = RecallPipeline(
@@ -1003,6 +905,8 @@ class MemoryOSService:
         else:
             self.curator = None
         self.conflict_detector = ConflictDetector(lexical)
+        chat_api_key = self.settings.chat_api_key
+        _use_structured = self.settings.resolved_llm_provider != "deepseek"
         item_llm: Any | None = None
         if (
             self.settings.memoryos_item_extraction
@@ -1232,15 +1136,6 @@ class MemoryOSService:
                 return FastEmbedClient()
             except Exception:
                 return None
-        if provider in {"none", "auto"}:
-            return None
-        if provider == "openai" and self.settings.openai_api_key:
-            try:
-                from memoryos_lite.retrieval.providers.openai import OpenAIEmbeddingClient
-
-                return OpenAIEmbeddingClient(self.settings)
-            except Exception:
-                pass
         return None
 
     def create_session(self, title: str) -> Any:
@@ -1795,8 +1690,6 @@ class MemoryOSService:
                 return
             EMBEDDING_SECONDS.observe(time.perf_counter() - t0)
             self.store.set_page_embedding(page.id, vector)
-            if self.qdrant_store is not None:
-                self.qdrant_store.upsert(page.id, vector)
 
         try:
             self.recovery.execute(
@@ -2294,15 +2187,6 @@ class MemoryOSService:
                 "recall_budget_dropped": package.candidate_budget_dropped,
             }
         )
-        for metadata_key in (
-            "cache",
-            "recall_cache",
-            "query_analysis_cache",
-            "recall_candidate_cache",
-            "recall_memory_watermark",
-        ):
-            if metadata_key in v3_package.metadata:
-                package.metadata[metadata_key] = v3_package.metadata[metadata_key]
         return package
 
     @staticmethod

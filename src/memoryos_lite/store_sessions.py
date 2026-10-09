@@ -1,21 +1,15 @@
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
 from memoryos_lite.schemas import Episode, Message, Role, Session
 from memoryos_lite.store_models import (
-    ArchivalChunkRecord,
-    ArchivalDocumentRecord,
-    ArchivalMemoryRecord,
-    ArchivalPassageRecord,
-    CoreMemoryBlockRecord,
     EpisodeRecord,
     MessageRecord,
-    PageRecord,
     SessionRecord,
 )
 
@@ -25,18 +19,6 @@ class SessionStoreMixin:
 
         @contextmanager
         def db(self) -> Iterator[DbSession]: ...
-
-        @staticmethod
-        def _watermark_part(
-            db: DbSession,
-            name: str,
-            id_column: Any,
-            timestamp_column: Any,
-            predicate: Any | None,
-        ) -> str: ...
-
-        @staticmethod
-        def _item_watermark_part(db: DbSession, session_id: str) -> str: ...
 
     def create_session(self, title: str) -> Session:
         session_model = Session(title=title)
@@ -167,79 +149,6 @@ class SessionStoreMixin:
             )
             records = list(db.scalars(stmt))
         return [self._episode_from_record(row) for row in records]
-
-    def session_memory_watermark(self, session_id: str) -> str:
-        """Return a compact revision marker for cache keys.
-
-        SQLite remains authoritative; cache users include this value in derived
-        cache keys so writes naturally select a new key instead of stale data.
-        """
-        with self.db() as db:
-            scoped_parts = [
-                self._watermark_part(
-                    db,
-                    "messages",
-                    MessageRecord.id,
-                    MessageRecord.created_at,
-                    MessageRecord.session_id == session_id,
-                ),
-                self._watermark_part(
-                    db,
-                    "episodes",
-                    EpisodeRecord.id,
-                    EpisodeRecord.created_at,
-                    EpisodeRecord.session_id == session_id,
-                ),
-                self._watermark_part(
-                    db,
-                    "pages",
-                    PageRecord.id,
-                    PageRecord.updated_at,
-                    PageRecord.session_id == session_id,
-                ),
-                self._item_watermark_part(
-                    db,
-                    session_id,
-                ),
-            ]
-            global_parts = [
-                self._watermark_part(
-                    db,
-                    "core",
-                    CoreMemoryBlockRecord.id,
-                    CoreMemoryBlockRecord.updated_at,
-                    None,
-                ),
-                self._watermark_part(
-                    db,
-                    "archive_docs",
-                    ArchivalDocumentRecord.id,
-                    ArchivalDocumentRecord.updated_at,
-                    None,
-                ),
-                self._watermark_part(
-                    db,
-                    "archive_chunks",
-                    ArchivalChunkRecord.id,
-                    ArchivalChunkRecord.updated_at,
-                    None,
-                ),
-                self._watermark_part(
-                    db,
-                    "archive_passages",
-                    ArchivalPassageRecord.id,
-                    ArchivalPassageRecord.updated_at,
-                    None,
-                ),
-                self._watermark_part(
-                    db,
-                    "archive_memories",
-                    ArchivalMemoryRecord.id,
-                    ArchivalMemoryRecord.updated_at,
-                    None,
-                ),
-            ]
-        return "|".join([*scoped_parts, *global_parts])
 
     def ensure_episodes_for_session(self, session_id: str) -> int:
         with self.db() as db:

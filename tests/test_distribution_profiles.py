@@ -33,7 +33,6 @@ def test_full_local_profile_keeps_remote_and_benchmark_stacks_optional() -> None
     extras = project["optional-dependencies"]
     assert any(item.startswith("fastembed") for item in extras["full-local"])
     assert any(item.startswith("langchain-core") for item in extras["remote"])
-    assert any(item.startswith("qdrant-client") for item in extras["remote"])
     assert extras["benchmark"] == ["memoryos-lite[full-local,remote]"]
     assert project["version"] == __version__ == app.version == "0.2.1"
 
@@ -44,7 +43,6 @@ def test_full_local_profile_keeps_remote_and_benchmark_stacks_optional() -> None
         "langchain-core",
         "langchain-openai",
         "langgraph",
-        "qdrant-client",
     )
     for package in packages:
         assert package in development
@@ -97,14 +95,14 @@ def test_remote_capability_error_is_stable(monkeypatch: pytest.MonkeyPatch) -> N
     assert str(raised.value) == (
         "memoryos capability 'eval.public' is unavailable; "
         "install memoryos-lite[remote] "
-        "(missing: langchain_core, langchain_openai, langgraph, qdrant_client)"
+        "(missing: langchain_core, langchain_openai, langgraph)"
     )
 
 
 def test_public_benchmark_requires_fastembed_and_remote_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    installed = {"langchain_core", "langchain_openai", "langgraph", "qdrant_client"}
+    installed = {"langchain_core", "langchain_openai", "langgraph"}
     monkeypatch.setattr(
         "memoryos_lite.capabilities.find_spec",
         lambda name: object() if name in installed else None,

@@ -214,7 +214,7 @@ graph runtime is missing.
 - Context budgets and list limits are enforced server-side.
 - Unknown resources and invalid requests fail explicitly; clients must not
   infer success from transport completion alone.
-- Optional LLM, Redis, and Qdrant failures must not silently become authority.
+- Optional LLM and vector-index failures must not silently become authority.
 
 ## Integration guidance
 

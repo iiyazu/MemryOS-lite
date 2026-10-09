@@ -149,16 +149,7 @@ class V3ContextComposer:
                 "recall_planned_session_ids",
                 [],
             ),
-            "cache": recall.metadata.get("cache", {}),
-            "recall_cache": recall.metadata.get("recall_cache", {}),
-            "query_analysis_cache": recall.metadata.get("query_analysis_cache", {}),
-            "recall_candidate_cache": recall.metadata.get(
-                "recall_candidate_cache",
-                {},
-            ),
         }
-        if "recall_memory_watermark" in recall.metadata:
-            metadata["recall_memory_watermark"] = recall.metadata["recall_memory_watermark"]
         return (
             [
                 ContextLayerItem(
