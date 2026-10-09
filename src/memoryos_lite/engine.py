@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 from functools import wraps
+from importlib.util import find_spec
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -24,7 +25,13 @@ from memoryos_lite.observability import (
     observability_context,
     timed_core_operation,
 )
-from memoryos_lite.recall import Recaller, RecallRequest, RecallResponse
+from memoryos_lite.recall import (
+    Recaller,
+    RecallRequest,
+    RecallResponse,
+    SimilarRequest,
+    SimilarResponse,
+)
 from memoryos_lite.retrieval import EmbeddingClient
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
@@ -384,13 +391,29 @@ class MemoryOSService:
         )
         return response
 
+    @property
+    def recaller(self) -> Recaller:
+        if self._recaller is None:
+            self._recaller = Recaller(self.tokenizer, self.embedding_client)
+        return self._recaller
+
     def recall(self, request: RecallRequest) -> RecallResponse:
         """Stateless, deterministic ranking (``POST /recall``); see ``recall``."""
 
-        if self._recaller is None:
-            self._recaller = Recaller(self.tokenizer, self.embedding_client)
         with timed_core_operation(component="engine", operation="recall", logger=logger):
-            return self._recaller.recall(request)
+            return self.recaller.recall(request)
+
+    def similar(self, request: SimilarRequest) -> SimilarResponse:
+        """Near-duplicate pairs (``POST /similar``); raises ``SimilarUnavailableError``."""
+
+        with timed_core_operation(component="engine", operation="similar", logger=logger):
+            return self.recaller.similar(request)
+
+    def curate_ready(self) -> bool:
+        """Whether ``/curate`` can run: an LLM (or its key) and the LangGraph runtime."""
+
+        has_llm = self._curate_llm is not None or bool(self.settings.chat_api_key)
+        return has_llm and find_spec("langgraph") is not None
 
     def _ensure_recall_index(self, session_id: str) -> None:
         """Backfill derived recall rows after an ingest or its replay.

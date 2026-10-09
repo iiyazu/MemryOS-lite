@@ -20,18 +20,34 @@ All request and response bodies are JSON.
 
 | Method | Path | Contract |
 |---|---|---|
-| `GET` | `/health` | Liveness, package `version`, and safe capability metadata. |
+| `GET` | `/health` | Liveness, package `version`, the `capabilities` list, and safe capability details. |
 | `POST` | `/sessions` | Create a server-identified session. |
 | `POST` | `/sessions/{id}/ingest` | Persist one message. |
 | `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context. |
 | `POST` | `/curate` | Stateless module memory curation (`memoryos_curate/v1`). |
 | `POST` | `/recall` | Stateless, deterministic ranking of caller-supplied items (`memoryos_recall/v1`). |
+| `POST` | `/similar` | Near-duplicate pairs by dense cosine (`memoryos_similar/v1`). |
 | `POST` | `/archives/ingest` | Idempotently ingest a source document. |
 | `POST` | `/archives/attachments` | Attach an archive document to a session. |
 
 The exact request and response fields are defined by
 `src/memoryos_lite/api/app.py`, `src/memoryos_lite/api/schemas.py`, and the
 Pydantic models they reference.
+
+## Health and capabilities
+
+`GET /health` returns `status`, `version` (now `0.4.0`), `capabilities`, and
+`capability_details`.
+
+`capabilities` is the list the hub reads at startup and skips features that are
+missing. In order: `curate` and `curate.collab` when an LLM (or its API key) is
+configured and the LangGraph runtime is installed; `recall` always; `similar`
+when the embedding model loads.
+
+`capability_details` is the former `capabilities` object:
+`build_context_profiles`, `hybrid` (`lexical`, `semantic`, `rrf`),
+`message_ingest`, and `curate` (the curate schema). It serves the stateful
+routes, which are scheduled for removal (MO-10).
 
 ## No session curator
 
@@ -121,6 +137,52 @@ Response (`RecallResponse`):
 
 Errors: 422 for an invalid request (wrong schema, too many items, text too long,
 duplicate ids, or `budget_tokens`/`k` out of range).
+
+## Near-duplicates: `POST /similar`
+
+When one layer of the hub's alignment store is over its limit (the hub's
+trigger is 120 % of the limit), the hub asks for near-duplicate pairs and
+passes them to its next `/curate` call, which may propose a merge. There is no
+LLM and no database. Embeddings use the same in-process cache as `/recall`.
+
+Request (`SimilarRequest`):
+
+```json
+{
+  "schema": "memoryos_similar/v1",
+  "items": [
+    {"id": "E3", "text": "Amounts are Decimal strings"},
+    {"id": "E9", "text": "Amounts are decimal strings."}
+  ],
+  "threshold": 0.88
+}
+```
+
+- `schema` must be `memoryos_similar/v1`. `items` holds up to 500 entries, each
+  with a unique `id` (1-128 characters) and `text` (1-2000 characters).
+- `threshold` is greater than 0 and at most 1, default 0.88.
+
+Response (`SimilarResponse`):
+
+```json
+{
+  "schema": "memoryos_similar/v1",
+  "pairs": [{"a": "E3", "b": "E9", "score": 0.97}],
+  "diagnostics": {"dense": true}
+}
+```
+
+`pairs` holds every pair whose cosine, rounded to 6 decimals, is at least
+`threshold`; each pair names its ids as `a` and `b` with `a < b` in string
+order. Pairs are ordered by score descending, then `(a, b)`. The example score
+is illustrative. `diagnostics.dense` is always true. With FastEmbed on a
+16-core CPU, 500 cached items take about 100 ms and 500 never-seen
+statement-sized texts about 3 s.
+
+Errors: 422 for an invalid request (wrong schema, too many items, text too long,
+duplicate ids, or `threshold` out of range), and 503 with
+`similar_unavailable` when no embedding provider is configured or embedding
+fails. BM25 never stands in for dense similarity.
 
 ## Module memory: `POST /curate`
 
@@ -246,8 +308,9 @@ request yields the same ids. Lessons keep their newest 8 sources while
 Errors: 422 for an invalid request, 503 with `curator_llm_key_missing`,
 `curator_llm_init_error`, or `curate_requires_langgraph` when curation cannot
 run, and 502 with `curator_llm_error` when the provider call fails. No error
-carries provider text. `/health` reports `capabilities.curate` as
-`memoryos_curate/v1`.
+carries provider text. `/health` lists `curate` and `curate.collab` in
+`capabilities` when curation can run, and reports the schema as
+`capability_details.curate`.
 
 ## Pull side: superseded marks
 
