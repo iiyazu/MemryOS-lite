@@ -14,17 +14,17 @@ test: ## 跑单元测试
 
 lint: ## ruff + mypy 检查
 	uv run ruff check .
-	uv run mypy src
+	uv run mypy src memoryos_eval
 
 fmt: ## 格式化 + 自动修复
 	uv run ruff format .
 	uv run ruff check --fix .
 
 typecheck: ## 只跑 mypy
-	uv run mypy src
+	uv run mypy src memoryos_eval
 
 eval: ## 跑内置确定性 benchmark
-	uv run memoryos eval run --baseline all
+	uv run python -m memoryos_eval run --baseline all
 
 api: ## 本机跑 API（热重载）
 	uv run memoryos api --reload

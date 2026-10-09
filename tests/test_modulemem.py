@@ -8,8 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from memoryos_lite.curator.curate import CurateAssignment
-from memoryos_lite.modulemem import (
+from memoryos_eval.modulemem import (
     MODULEMEM_ARMS,
     MODULEMEM_SPLITS,
     FakeModuleCuratorLLM,
@@ -25,6 +24,7 @@ from memoryos_lite.modulemem import (
     render_module_memory,
     run_modulemem,
 )
+from memoryos_lite.curator.curate import CurateAssignment
 
 DATA = Path(__file__).resolve().parents[1] / "benchmarks" / "modulemem" / "modules"
 

@@ -6,9 +6,9 @@ from dataclasses import asdict, dataclass, field
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
+from memoryos_eval.llm_judge import JudgeVerdict, LLMJudge
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.llm_judge import JudgeVerdict, LLMJudge
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.schemas import EvalCase, MemoryPage, Message, MessageCreate, PageType, Role
 from memoryos_lite.store import create_store
@@ -478,16 +478,16 @@ def run_eval_llm(
 def _select_cases(case_set: str) -> list[EvalCase]:
     """Dispatch case_set name to the concrete case list."""
     if case_set == "advanced":
-        from memoryos_lite.evals_advanced import advanced_cases
+        from memoryos_eval.evals_advanced import advanced_cases
 
         return advanced_cases()
     if case_set == "hard":
-        from memoryos_lite.evals_hard import hard_cases
+        from memoryos_eval.evals_hard import hard_cases
 
         return hard_cases()
     if case_set == "all":
-        from memoryos_lite.evals_advanced import advanced_cases
-        from memoryos_lite.evals_hard import hard_cases
+        from memoryos_eval.evals_advanced import advanced_cases
+        from memoryos_eval.evals_hard import hard_cases
 
         return builtin_cases() + advanced_cases() + hard_cases()
     return builtin_cases()

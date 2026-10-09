@@ -195,23 +195,24 @@ HTTP 接口：
 ```bash
 TMPDIR=/tmp uv run pytest -q
 uv run ruff check .
-uv run mypy src
-uv run memoryos eval run --case-set hard --baseline memoryos_lite
+uv run mypy src memoryos_eval
+uv run python -m memoryos_eval run --case-set hard --baseline memoryos_lite
 ```
 
-公开 benchmark 需要本地数据集；命令和指标解释见 `docs/public-benchmark-diagnosis.md`。
+评测框架在仓库根目录的 `memoryos_eval/`，不随 wheel 发布，需在源码 checkout 中用
+`uv run python -m memoryos_eval` 运行。公开 benchmark 需要本地数据集；命令和指标解释见 `docs/public-benchmark-diagnosis.md`。
 
 记忆策展有两套自带数据集的评测，默认调用配置的真实模型（`--fake-llm` 用确定性替身跑通流程）：
 
 ```bash
 # RoomMem：多 Room 记忆。split dev=rm01-06, test=rm07-12, trap=rm13-16
-uv run memoryos eval roommem --split dev --arm raw_project --arm curated --arm oracle \
+uv run python -m memoryos_eval roommem --split dev --arm raw_project --arm curated --arm oracle \
   --embedding fastembed --out artifacts/roommem
 # ModuleMem：模块记忆与错题本。split dev=mm01-04, test=mm05-08
-uv run memoryos eval modulemem --split dev --arm pack --arm raw_log --arm full_history \
+uv run python -m memoryos_eval modulemem --split dev --arm pack --arm raw_log --arm full_history \
   --out artifacts/modulemem
 # 负责人重启后的行为：长模块附带开发任务，被测者只凭记忆写代码改动，评委逐条判定要求
-uv run memoryos eval modulemem --data benchmarks/modulemem/long --tasks --no-probes \
+uv run python -m memoryos_eval modulemem --data benchmarks/modulemem/long --tasks --no-probes \
   --arm none --arm raw_log --arm pack --arm full_history --out artifacts/owner
 ```
 

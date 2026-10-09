@@ -1,9 +1,9 @@
 """Tests for advanced eval cases and cross-session support."""
 
+from memoryos_eval.evals import _materialize_messages, _run_baseline, _score
+from memoryos_eval.evals_advanced import advanced_cases
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.evals import _materialize_messages, _run_baseline, _score
-from memoryos_lite.evals_advanced import advanced_cases
 from memoryos_lite.schemas import MemoryPage, PageType
 from memoryos_lite.store import MemoryStore
 

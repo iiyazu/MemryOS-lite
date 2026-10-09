@@ -1,6 +1,6 @@
 """Well-formedness tests for hard adversarial eval cases."""
 
-from memoryos_lite.evals_hard import HARD_CASE_COUNT, hard_cases
+from memoryos_eval.evals_hard import HARD_CASE_COUNT, hard_cases
 from memoryos_lite.schemas import Role
 
 _NEGATION_MARKERS = (
