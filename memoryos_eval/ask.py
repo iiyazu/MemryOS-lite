@@ -1,5 +1,8 @@
 """``memory_ask``: agentic retrieval over a session's history, as a LangGraph graph.
 
+Evaluation and demo only (RoomMem's ``agentic`` evidence mode, ``python -m
+memoryos_eval ask-demo``); the service has no ask route.
+
 ::
 
     START -> retrieve -> grade --(enough, or no rounds / LLM left)--> finalize -> END
@@ -27,9 +30,11 @@ from typing import Any, TypedDict
 from pydantic import BaseModel, ConfigDict, Field
 
 from memoryos_lite.curator.llm import CuratorLLM, CuratorLLMError, CuratorSchemaError
+from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.retrieval.supersede import SupersededQuote, match_superseded
 from memoryos_lite.schemas import SupersededQuotePayload
+from memoryos_lite.source_evidence import build_source_evidence
 
 ASK_SCHEMA = "memoryos_memory_ask/v1"
 MAX_ROUNDS = 2
@@ -287,6 +292,31 @@ def run_ask(
     )
 
 
+def ask_with(
+    service: MemoryOSService,
+    session_id: str,
+    request: AskRequest,
+    *,
+    llm: CuratorLLM | None,
+    marks: Sequence[SupersededQuote],
+) -> AskResponse:
+    """Run the ask graph over a session; retrieval is ``build_context`` + source_evidence/v2."""
+
+    def retrieve(query: str) -> list[dict[str, Any]]:
+        package = service.build_context(
+            session_id=session_id,
+            task=request.task or request.question,
+            budget=request.budget,
+            retrieval_query=query,
+            include_global_core=False,
+        )
+        envelope = build_source_evidence(package, schema_version="v2", superseded=marks)
+        items = envelope.get("items")
+        return list(items) if isinstance(items, list) else []
+
+    return run_ask(session_id=session_id, request=request, retrieve=retrieve, marks=marks, llm=llm)
+
+
 def render_ask_item(item: AskItem) -> str:
     """How a host may show an item to its agent: outdated items carry the current value."""
 
@@ -301,6 +331,7 @@ __all__ = [
     "AskItem",
     "AskRequest",
     "AskResponse",
+    "ask_with",
     "build_ask_graph",
     "coverage",
     "keywords",

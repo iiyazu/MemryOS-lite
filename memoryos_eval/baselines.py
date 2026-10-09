@@ -1,68 +1,71 @@
-import json
-import re
-import time
-from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
+"""Context baselines for the public benchmark adapter (LongMemEval, LoCoMo).
 
+``sliding_window``, ``naive_summary``, ``vector_rag`` (BM25 over messages) and
+``memoryos_lite`` each build an answer from the evidence they would put into
+context. Historical results only; this code is no longer maintained.
+"""
+
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+
+from pydantic import BaseModel, Field, model_validator
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
-from memoryos_eval.llm_judge import JudgeVerdict, LLMJudge
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.schemas import EvalCase, MemoryPage, Message, MessageCreate, PageType, Role
-from memoryos_lite.store import create_store
+from memoryos_lite.schemas import MemoryPage, Message, MessageCreate, PageType, Role
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.utils import is_generic_ack
 
-CASE_COUNT = 8
 
-
-@dataclass
-class EvalResult:
-    baseline: str
+class EvalCase(BaseModel):
     case_id: str
-    answer: str
-    expected_hits: int
-    forbidden_hits: int
-    source_hits: int
-    source_ids: list[str]
-    source_snippets: dict[str, str]
-    supporting_source_snippets: dict[str, dict[str, str]]
-    expected_fact_support: dict[str, list[str]]
-    credited_fact_support: dict[str, list[str]]
-    missing_expected_facts: list[str]
-    unsupported_answered_facts: list[str]
-    missing_required_sources: list[str]
-    context_tokens: int
-    page_count: int
-    loaded_pages: int
-    dropped_pages: int
-    dropped_page_details: list[dict[str, object]]
-    source_count: int
-    supporting_source_count: int
-    latency_ms: int
+    conversation: list[MessageCreate]
+    question: str
+    expected_facts: list[str] = Field(default_factory=list)
+    forbidden_facts: list[str] = Field(default_factory=list)
+    required_sources: list[str] = Field(default_factory=list)
+    required_fact_sources: dict[str, list[str]] = Field(default_factory=dict)
+    query_in_new_session: bool = False
+    include_global_core: bool = False
 
-    @property
-    def answer_accuracy(self) -> float:
-        return 1.0 if (not self.missing_expected_facts and self.forbidden_hits == 0) else 0.0
-
-    @property
-    def source_accuracy(self) -> float:
-        return (
-            1.0
-            if self.answer_accuracy == 1.0
-            and self.source_hits == self.expected_hits
-            and not self.unsupported_answered_facts
-            and not self.missing_required_sources
-            else 0.0
-        )
-
-    def to_report(self) -> dict[str, object]:
-        data = asdict(self)
-        data["answer_accuracy"] = self.answer_accuracy
-        data["source_accuracy"] = self.source_accuracy
-        return data
+    @model_validator(mode="after")
+    def require_fact_sources_for_multi_fact_cases(self) -> "EvalCase":
+        if (
+            len(self.expected_facts) > 1
+            and self.required_sources
+            and not self.required_fact_sources
+        ):
+            raise ValueError(
+                "multi-fact eval cases with required sources must use "
+                "required_fact_sources for per-fact source mapping"
+            )
+        if self.required_fact_sources:
+            expected = set(self.expected_facts)
+            provided = set(self.required_fact_sources)
+            missing = sorted(expected - provided)
+            unknown = sorted(provided - expected)
+            if missing or unknown:
+                details: list[str] = []
+                if missing:
+                    details.append(f"missing keys: {', '.join(missing)}")
+                if unknown:
+                    details.append(f"unknown keys: {', '.join(unknown)}")
+                raise ValueError(
+                    "eval cases must provide required_fact_sources "
+                    f"for exactly the expected facts ({'; '.join(details)})"
+                )
+            empty_sources = sorted(
+                fact for fact, source_ids in self.required_fact_sources.items() if not source_ids
+            )
+            if empty_sources:
+                raise ValueError(
+                    "required_fact_sources entries must contain at least one source id "
+                    f"(empty keys: {', '.join(empty_sources)})"
+                )
+        return self
 
 
 @dataclass(frozen=True)
@@ -117,380 +120,6 @@ class EvidenceItem:
     source_texts: dict[str, str]
     origin: str = "message"
     superseded: bool = False
-
-
-def builtin_cases() -> list[EvalCase]:
-    cases: list[EvalCase] = []
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"long_recall_{index:03d}",
-                conversation=[
-                    MessageCreate(
-                        role=Role.USER,
-                        content=f"早期事实：用户的第 {index} 个核心偏好是 Agent infra。",
-                    ),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录该偏好。"),
-                    MessageCreate(role=Role.USER, content=_noise(index)),
-                    MessageCreate(role=Role.USER, content="项目实现继续推进 LangGraph workflow。"),
-                ],
-                question=f"用户的第 {index} 个核心偏好是什么？",
-                expected_facts=["Agent infra"],
-                forbidden_facts=["前端动画"],
-                required_sources=[f"long_recall_{index:03d}_msg_001"],
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"state_continuity_{index:03d}",
-                conversation=[
-                    MessageCreate(role=Role.USER, content="项目最初考虑做运营助手。"),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录初始方向。"),
-                    MessageCreate(
-                        role=Role.USER,
-                        content=f"第 {index} 次决策：最终主线改为 MemoryOS Lite。",
-                    ),
-                    MessageCreate(role=Role.USER, content=_noise(index)),
-                ],
-                question="项目最终主线是什么？",
-                expected_facts=["MemoryOS Lite"],
-                forbidden_facts=["运营助手"],
-                required_sources=[f"state_continuity_{index:03d}_msg_003"],
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"conflict_update_{index:03d}",
-                conversation=[
-                    MessageCreate(role=Role.USER, content="我想做 Runbook Oncall Agent。"),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录旧方向。"),
-                    MessageCreate(
-                        role=Role.USER,
-                        content=(
-                            f"第 {index} 次更新：不做 Runbook Oncall Agent，改做 MemoryOS Lite。"
-                        ),
-                    ),
-                    MessageCreate(role=Role.USER, content=_noise(index)),
-                ],
-                question="用户最终不做哪个方向？",
-                expected_facts=["Runbook Oncall Agent"],
-                forbidden_facts=["Raffle Strategy Lab"],
-                required_sources=[f"conflict_update_{index:03d}_msg_003"],
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"multi_source_recall_{index:03d}",
-                conversation=[
-                    MessageCreate(
-                        role=Role.USER,
-                        content=f"第二项目主线：第 {index} 版确定为 MemoryOS Lite。",
-                    ),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录第二项目主线。"),
-                    MessageCreate(role=Role.USER, content="核心评估指标：source_accuracy。"),
-                    MessageCreate(role=Role.USER, content=_noise(index)),
-                ],
-                question="第二项目主线和核心评估指标分别是什么？",
-                expected_facts=["MemoryOS Lite", "source_accuracy"],
-                forbidden_facts=["前端动画"],
-                required_fact_sources={
-                    "MemoryOS Lite": [f"multi_source_recall_{index:03d}_msg_001"],
-                    "source_accuracy": [f"multi_source_recall_{index:03d}_msg_003"],
-                },
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"hard_long_recall_{index:03d}",
-                conversation=[
-                    MessageCreate(role=Role.USER, content="甲。"),
-                    MessageCreate(role=Role.ASSISTANT, content="乙。"),
-                    MessageCreate(role=Role.USER, content="丙。"),
-                    MessageCreate(
-                        role=Role.USER,
-                        content=f"第 {index} 次最终决定：简历第二项目做 MemoryOS Lite。",
-                    ),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录。"),
-                    MessageCreate(role=Role.USER, content=_noise(index)),
-                    MessageCreate(role=Role.USER, content="排版。"),
-                    MessageCreate(role=Role.USER, content="README。"),
-                ],
-                question="简历第二项目最终决定做什么？",
-                expected_facts=["MemoryOS Lite"],
-                forbidden_facts=["前端动画", "运营助手"],
-                required_sources=[f"hard_long_recall_{index:03d}_msg_004"],
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"hard_source_budget_{index:03d}",
-                conversation=[
-                    MessageCreate(role=Role.USER, content="甲。"),
-                    MessageCreate(role=Role.ASSISTANT, content="乙。"),
-                    MessageCreate(role=Role.USER, content="丙。"),
-                    MessageCreate(
-                        role=Role.USER,
-                        content=f"第 {index} 次决定：可信 benchmark 必须审计 source_accuracy。",
-                    ),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录。"),
-                    MessageCreate(role=Role.USER, content=_noise(index)),
-                    MessageCreate(role=Role.USER, content="终端。"),
-                    MessageCreate(role=Role.USER, content="会议。"),
-                ],
-                question="可信 benchmark 必须审计哪个指标？",
-                expected_facts=["source_accuracy"],
-                forbidden_facts=["前端动画"],
-                required_sources=[f"hard_source_budget_{index:03d}_msg_004"],
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"hard_conflict_update_{index:03d}",
-                conversation=[
-                    MessageCreate(role=Role.USER, content="甲。"),
-                    MessageCreate(role=Role.ASSISTANT, content="乙。"),
-                    MessageCreate(role=Role.USER, content="丙。"),
-                    MessageCreate(role=Role.USER, content="旧方向：Runbook Oncall Agent。"),
-                    MessageCreate(role=Role.USER, content="临时方向：运营助手。"),
-                    MessageCreate(
-                        role=Role.USER,
-                        content=(
-                            f"第 {index} 次最终决定：不做旧方向和临时方向，改做 MemoryOS Lite。"
-                        ),
-                    ),
-                    MessageCreate(role=Role.USER, content=_noise(index)),
-                    MessageCreate(role=Role.USER, content="最新无关：整理日程。"),
-                    MessageCreate(role=Role.USER, content="最新无关：检查提交。"),
-                ],
-                question="最终决定改做什么项目？",
-                expected_facts=["MemoryOS Lite"],
-                forbidden_facts=["Runbook Oncall Agent", "运营助手"],
-                required_sources=[f"hard_conflict_update_{index:03d}_msg_006"],
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"noise_position_recall_{index:03d}",
-                conversation=[
-                    MessageCreate(role=Role.USER, content="前置噪声：课程。"),
-                    MessageCreate(role=Role.USER, content="甲。"),
-                    MessageCreate(
-                        role=Role.USER,
-                        content=f"第 {index} 次最终决定：memory infra 采用 page_count 指标。",
-                    ),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录。"),
-                    MessageCreate(role=Role.USER, content="乙。"),
-                    MessageCreate(role=Role.USER, content="中段噪声：排版。"),
-                    MessageCreate(role=Role.USER, content="最新无关：计划会议。"),
-                    MessageCreate(role=Role.USER, content="最新无关：整理路径。"),
-                ],
-                question="memory infra 最终采用哪个指标？",
-                expected_facts=["page_count"],
-                forbidden_facts=["source_accuracy"],
-                required_sources=[f"noise_position_recall_{index:03d}_msg_003"],
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"session_distractor_recall_{index:03d}",
-                conversation=[
-                    MessageCreate(role=Role.USER, content="旁路：看板。"),
-                    MessageCreate(role=Role.ASSISTANT, content="旁路。"),
-                    MessageCreate(role=Role.USER, content="当前：课程。"),
-                    MessageCreate(
-                        role=Role.USER,
-                        content=f"第 {index} 次最终决定：当前会话项目是 MemoryOS Lite。",
-                    ),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录当前会话项目。"),
-                    MessageCreate(role=Role.USER, content="当前会话噪声：命令输出。"),
-                    MessageCreate(role=Role.USER, content="最新无关：检查命令。"),
-                    MessageCreate(role=Role.USER, content="最新无关：同步记录。"),
-                ],
-                question="当前会话项目最终是什么？",
-                expected_facts=["MemoryOS Lite"],
-                forbidden_facts=["数据看板"],
-                required_sources=[f"session_distractor_recall_{index:03d}_msg_004"],
-            )
-        )
-    for index in range(1, CASE_COUNT + 1):
-        cases.append(
-            EvalCase(
-                case_id=f"marker_ablation_recall_{index:03d}",
-                conversation=[
-                    MessageCreate(role=Role.USER, content="排期记录：下周整理文档。"),
-                    MessageCreate(
-                        role=Role.USER,
-                        content=f"第 {index} 版稳定方案：MemoryOS Lite。",
-                    ),
-                    MessageCreate(role=Role.ASSISTANT, content="已记录稳定方案。"),
-                    MessageCreate(role=Role.USER, content=_noise(index)),
-                    MessageCreate(role=Role.USER, content="最新无关：检查格式。"),
-                    MessageCreate(role=Role.USER, content="最新无关：同步记录。"),
-                ],
-                question="稳定方案是什么？",
-                expected_facts=["MemoryOS Lite"],
-                forbidden_facts=["前端动画"],
-                required_sources=[f"marker_ablation_recall_{index:03d}_msg_002"],
-            )
-        )
-    cases.append(
-        EvalCase(
-            case_id="dropped_page_audit_001",
-            conversation=[
-                MessageCreate(
-                    role=Role.USER,
-                    content=(
-                        "稳定方案预算审计背景：这是一段很长的历史上下文，用来形成"
-                        "超出严格预算的 memory page。稳定方案相关讨论很多，但这里"
-                        "只提供背景，不提供最终答案。" * 6
-                    ),
-                ),
-                MessageCreate(
-                    role=Role.USER,
-                    content=(
-                        "稳定方案预算审计补充：继续记录大量无关实现细节、命令输出、"
-                        "会议摘要和重复说明，使被检索到的历史 page 在 90 token 预算"
-                        "下无法装入上下文。" * 6
-                    ),
-                ),
-                MessageCreate(
-                    role=Role.USER,
-                    content=(
-                        "稳定方案采用预算审计占位记录，保留检索关键词，但不包含"
-                        "需要回答的项目名；这页存在的目的只是测试 dropped_page_details。" * 8
-                    ),
-                ),
-                MessageCreate(role=Role.ASSISTANT, content="已记录预算审计背景。"),
-                MessageCreate(role=Role.USER, content="稳定方案是 MemoryOS Lite。"),
-                MessageCreate(role=Role.USER, content="最新无关：整理评测输出。"),
-            ],
-            question="稳定方案是什么？",
-            expected_facts=["MemoryOS Lite"],
-            forbidden_facts=["前端动画"],
-            required_sources=["dropped_page_audit_001_msg_005"],
-        )
-    )
-    return cases
-
-
-def _noise(index: int) -> str:
-    return (
-        f"第 {index} 段无关长噪声：课程安排、排版偏好、天气记录、临时想法、"
-        "无关工具输出、重复讨论、非当前任务信息。" * 6
-    )
-
-
-def run_eval(
-    settings: Settings,
-    run_id: str,
-    baselines: list[str],
-    isolated: bool = True,
-    case_set: str = "builtin",
-) -> list[EvalResult]:
-    eval_root = settings.memoryos_eval_data_dir or settings.data_dir / "eval_runs"
-    run_dir = eval_root / run_id
-    run_settings = settings.model_copy(
-        update={
-            "data_dir": run_dir,
-            "database_url": None,
-            "memoryos_paging_mode": "heuristic",
-            "openai_api_key": None,
-            "deepseek_api_key": None,
-        }
-    )
-    store = create_store(run_settings)
-    if isolated:
-        store.reset()
-    service = MemoryOSService(store=store, settings=run_settings)
-    results: list[EvalResult] = []
-
-    cases = _select_cases(case_set)
-
-    for case in cases:
-        messages = _materialize_messages(case)
-        for baseline in _expand_baselines(baselines):
-            start = time.perf_counter()
-            output = _run_baseline(baseline, case, messages, service, run_settings)
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            results.append(_score(case, baseline, output, latency_ms))
-
-    report_dir = settings.data_dir / "evals"
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / f"{run_id}.json"
-    report_path.write_text(
-        json.dumps([result.to_report() for result in results], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return results
-
-
-def run_eval_llm(
-    settings: Settings,
-    run_id: str,
-    baselines: list[str],
-    isolated: bool = True,
-    case_set: str = "builtin",
-) -> list[JudgeVerdict]:
-    """Run eval with LLM-as-judge scoring (requires OpenAI API key)."""
-    judge = LLMJudge(settings)
-    eval_root = settings.memoryos_eval_data_dir or settings.data_dir / "eval_runs"
-    run_dir = eval_root / run_id
-    run_settings = settings.model_copy(
-        update={
-            "data_dir": run_dir,
-            "database_url": None,
-            "memoryos_paging_mode": "heuristic",
-            "openai_api_key": None,
-            "deepseek_api_key": None,
-        }
-    )
-    store = create_store(run_settings)
-    if isolated:
-        store.reset()
-    service = MemoryOSService(store=store, settings=run_settings)
-    verdicts: list[JudgeVerdict] = []
-    for case in _select_cases(case_set):
-        messages = _materialize_messages(case)
-        for baseline in _expand_baselines(baselines):
-            output = _run_baseline(baseline, case, messages, service, run_settings)
-            verdict = judge.judge(case, output.answer)
-            verdict.case_id = f"{baseline}/{case.case_id}"
-            verdicts.append(verdict)
-
-    report_dir = settings.data_dir / "evals"
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / f"{run_id}_llm_judge.json"
-    report_path.write_text(
-        json.dumps([asdict(v) for v in verdicts], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return verdicts
-
-
-def _select_cases(case_set: str) -> list[EvalCase]:
-    """Dispatch case_set name to the concrete case list."""
-    if case_set == "advanced":
-        from memoryos_eval.evals_advanced import advanced_cases
-
-        return advanced_cases()
-    if case_set == "hard":
-        from memoryos_eval.evals_hard import hard_cases
-
-        return hard_cases()
-    if case_set == "all":
-        from memoryos_eval.evals_advanced import advanced_cases
-        from memoryos_eval.evals_hard import hard_cases
-
-        return builtin_cases() + advanced_cases() + hard_cases()
-    return builtin_cases()
 
 
 def _run_baseline(
@@ -826,21 +455,6 @@ def _expand_baselines(baselines: list[str]) -> list[str]:
     if "all" in baselines:
         return ["sliding_window", "naive_summary", "vector_rag", "memoryos_lite"]
     return baselines
-
-
-def _materialize_messages(case: EvalCase) -> list[Message]:
-    tokenizer = TokenEstimator()
-    return [
-        Message(
-            id=f"{case.case_id}_msg_{index:03d}",
-            session_id=case.case_id,
-            role=message.role,
-            content=message.content,
-            metadata=message.metadata,
-            token_count=tokenizer.count(message.content),
-        )
-        for index, message in enumerate(case.conversation, start=1)
-    ]
 
 
 def _fit_text_items_newest_first(
@@ -1269,196 +883,3 @@ def _page_fact_sources(
         for source_id in source_message_ids
         if source_id in messages_by_id
     }
-
-
-def _score(
-    case: EvalCase,
-    baseline: str,
-    output: BaselineOutput,
-    latency_ms: int,
-) -> EvalResult:
-    expected_hits = sum(1 for fact in case.expected_facts if fact in output.answer)
-    forbidden_hits = sum(1 for fact in case.forbidden_facts if fact in output.answer)
-    expected_fact_support = _expected_fact_support(case, output)
-    missing_expected_facts = [fact for fact in case.expected_facts if fact not in output.answer]
-    unsupported_answered_facts = _unsupported_answered_facts(
-        case,
-        output,
-        expected_fact_support,
-    )
-    missing_required_sources = _missing_required_sources(case, output, expected_fact_support)
-    credited_fact_support = (
-        {}
-        if forbidden_hits > 0
-        else _credited_fact_support(
-            case,
-            expected_fact_support,
-            unsupported_answered_facts,
-        )
-    )
-    source_hits = _source_hits(
-        case,
-        output,
-        credited_fact_support,
-        unsupported_answered_facts,
-        missing_required_sources,
-    )
-    supporting_source_ids = {
-        source_id for source_ids in credited_fact_support.values() for source_id in source_ids
-    }
-    return EvalResult(
-        baseline=baseline,
-        case_id=case.case_id,
-        answer=output.answer,
-        expected_hits=expected_hits,
-        forbidden_hits=forbidden_hits,
-        source_hits=source_hits,
-        source_ids=sorted(output.sources),
-        source_snippets=_source_snippets(output.sources),
-        supporting_source_snippets=_supporting_source_snippets(
-            output.sources,
-            credited_fact_support,
-        ),
-        expected_fact_support=expected_fact_support,
-        credited_fact_support=credited_fact_support,
-        missing_expected_facts=missing_expected_facts,
-        unsupported_answered_facts=unsupported_answered_facts,
-        missing_required_sources=missing_required_sources,
-        context_tokens=output.context_tokens,
-        page_count=output.page_count,
-        loaded_pages=output.loaded_pages,
-        dropped_pages=output.dropped_pages,
-        dropped_page_details=output.dropped_page_details,
-        source_count=len(output.sources),
-        supporting_source_count=len(supporting_source_ids),
-        latency_ms=latency_ms,
-    )
-
-
-def _source_hits(
-    case: EvalCase,
-    output: BaselineOutput,
-    credited_fact_support: dict[str, list[str]],
-    unsupported_answered_facts: list[str],
-    missing_required_sources: list[str],
-) -> int:
-    if any(fact in output.answer for fact in case.forbidden_facts):
-        return 0
-    missing_required_facts = {
-        item.split(":", 1)[0] for item in missing_required_sources if ":" in item
-    }
-    unsupported = set(unsupported_answered_facts) | missing_required_facts
-    return sum(
-        1
-        for fact in case.expected_facts
-        if fact in output.answer and fact in credited_fact_support and fact not in unsupported
-    )
-
-
-def _expected_fact_support(
-    case: EvalCase,
-    output: BaselineOutput,
-) -> dict[str, list[str]]:
-    return {
-        fact: [source_id for source_id, text in sorted(output.sources.items()) if fact in text]
-        for fact in case.expected_facts
-        if fact in output.answer and any(fact in text for text in output.sources.values())
-    }
-
-
-def _credited_fact_support(
-    case: EvalCase,
-    expected_fact_support: dict[str, list[str]],
-    unsupported_answered_facts: list[str],
-) -> dict[str, list[str]]:
-    credited: dict[str, list[str]] = {}
-    unsupported = set(unsupported_answered_facts)
-    for fact, source_ids in expected_fact_support.items():
-        if fact in unsupported:
-            continue
-        required_for_fact = case.required_fact_sources.get(fact)
-        if required_for_fact is not None:
-            fact_sources = [source_id for source_id in source_ids if source_id in required_for_fact]
-        elif case.required_sources:
-            fact_sources = [
-                source_id for source_id in source_ids if source_id in case.required_sources
-            ]
-        else:
-            fact_sources = source_ids
-        if fact_sources:
-            credited[fact] = fact_sources
-    return credited
-
-
-def _unsupported_answered_facts(
-    case: EvalCase,
-    output: BaselineOutput,
-    expected_fact_support: dict[str, list[str]],
-) -> list[str]:
-    unsupported: list[str] = []
-    for fact in case.expected_facts:
-        if fact not in output.answer:
-            continue
-        if fact not in expected_fact_support:
-            unsupported.append(fact)
-            continue
-        fact_support = set(expected_fact_support[fact])
-        required_for_fact = case.required_fact_sources.get(fact)
-        if required_for_fact is not None:
-            if not set(required_for_fact) <= fact_support:
-                unsupported.append(fact)
-        elif case.required_sources and not fact_support & set(case.required_sources):
-            unsupported.append(fact)
-    return unsupported
-
-
-def _missing_required_sources(
-    case: EvalCase,
-    output: BaselineOutput,
-    expected_fact_support: dict[str, list[str]],
-) -> list[str]:
-    missing: list[str] = []
-    for fact, required_sources in case.required_fact_sources.items():
-        if fact not in output.answer:
-            continue
-        fact_support = set(expected_fact_support.get(fact, []))
-        missing.extend(
-            f"{fact}:{source_id}" for source_id in required_sources if source_id not in fact_support
-        )
-    if not case.required_fact_sources and case.required_sources:
-        all_supporting_sources = {
-            source_id for sources in expected_fact_support.values() for source_id in sources
-        }
-        if any(fact in output.answer for fact in case.expected_facts):
-            missing.extend(
-                source_id
-                for source_id in case.required_sources
-                if source_id not in all_supporting_sources
-            )
-    return sorted(missing)
-
-
-def _source_snippets(sources: dict[str, str], limit: int = 120) -> dict[str, str]:
-    return {source_id: _snippet(text, limit=limit) for source_id, text in sorted(sources.items())}
-
-
-def _supporting_source_snippets(
-    sources: dict[str, str],
-    expected_fact_support: dict[str, list[str]],
-    limit: int = 120,
-) -> dict[str, dict[str, str]]:
-    return {
-        fact: {
-            source_id: _snippet(sources[source_id], limit=limit)
-            for source_id in source_ids
-            if source_id in sources
-        }
-        for fact, source_ids in sorted(expected_fact_support.items())
-    }
-
-
-def _snippet(text: str, limit: int) -> str:
-    compact = " ".join(text.split())
-    if len(compact) <= limit:
-        return compact
-    return compact[: limit - 3] + "..."
