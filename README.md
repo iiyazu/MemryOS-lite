@@ -27,7 +27,7 @@ build_context(task)
   -> bounded ContextPackage with source evidence and diagnostics
 ```
 
-主要对象包括 `Message`、`Episode`、`MemoryPage`、`MemoryItem`、`CoreMemoryBlock`、`ArchivalDocument` / `ArchivalPassage` / `ArchivalMemory` 和 `ContextPackage`。
+主要对象包括 `Message`、`Episode`、`MemoryPage`、`MemoryItem`、`ArchivalDocument` / `ArchivalPassage` 和 `ContextPackage`。
 
 ## 架构：推送端与拉取端
 

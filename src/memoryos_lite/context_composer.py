@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass, field
 
 from memoryos_lite.config import Settings
-from memoryos_lite.core_memory import render_core_memory_blocks
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher, SearchMode
 from memoryos_lite.retrieval.archival_vector import ArchivalVectorDiagnostic
 from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
@@ -64,13 +63,6 @@ class V3ContextComposer:
                 )
             ],
         )
-        used = self._try_add_layer(
-            package,
-            budget=request.budget,
-            used=used,
-            layer="core",
-            items=self._core_items(),
-        )
         recall_items, recall_diagnostics, recall_metadata = self._recall_items(
             request,
             query,
@@ -126,29 +118,9 @@ class V3ContextComposer:
             layer="recent",
             items=self._recent_items(request.session_id),
         )
-        policy_state, policy_diagnostics = self._context_policy_state(request.session_id)
-        package.metadata["context_policy_state"] = policy_state
-        package.diagnostics.extend(policy_diagnostics)
         package.metadata["estimated_tokens"] = used
         self._refresh_component_accounting(package)
         return package
-
-    def _core_items(self) -> list[ContextLayerItem]:
-        items: list[ContextLayerItem] = []
-        for block in self.store.list_core_memory_blocks():
-            rendered = render_core_memory_blocks([block], tokenizer=self.tokenizer)
-            metadata = rendered.metadata_by_block[block.id]
-            items.append(
-                ContextLayerItem(
-                    layer="core",
-                    item_id=block.id,
-                    text=rendered.text,
-                    estimated_tokens=self.tokenizer.count(rendered.text),
-                    source_refs=list(block.source_refs),
-                    metadata=metadata,
-                )
-            )
-        return items
 
     def _recall_items(
         self,
@@ -285,57 +257,6 @@ class V3ContextComposer:
                 ids.append(source_ref.source_id)
                 seen.add(source_ref.source_id)
         return ids
-
-    def _context_policy_state(
-        self,
-        session_id: str,
-    ) -> tuple[dict[str, object], list[DiagnosticEvent]]:
-        candidates = self.store.list_context_policy_candidates(
-            status="applied",
-            session_id=session_id,
-        )
-        payload_candidates: list[dict[str, object]] = []
-        diagnostics: list[DiagnosticEvent] = []
-        for candidate in candidates:
-            source_refs = list(candidate.source_refs)
-            source_ids = self._source_ids_from_refs(source_refs)
-            payload_candidates.append(
-                {
-                    "id": candidate.id,
-                    "policy_type": candidate.policy_type,
-                    "feedback_type": candidate.feedback_type,
-                    "suggested_action": candidate.suggested_action,
-                    "status": candidate.status,
-                    "source_ids": source_ids,
-                    "source_refs": [
-                        self._source_ref_payload(source_ref) for source_ref in source_refs
-                    ],
-                    "metadata": self._jsonable(dict(candidate.metadata)),
-                }
-            )
-            diagnostics.append(
-                DiagnosticEvent(
-                    layer="kernel",
-                    event_type="context_policy_state_read",
-                    item_id=candidate.id,
-                    reason_code=f"context_policy_{candidate.feedback_type}",
-                    included=False,
-                    dropped=False,
-                    source_refs=source_refs,
-                    metadata={
-                        "policy_type": candidate.policy_type,
-                        "feedback_type": candidate.feedback_type,
-                        "suggested_action": candidate.suggested_action,
-                        "status": candidate.status,
-                        "source_ids": source_ids,
-                        "candidate_metadata": self._jsonable(dict(candidate.metadata)),
-                    },
-                )
-            )
-        return {
-            "applied_candidate_count": len(payload_candidates),
-            "applied_candidates": payload_candidates,
-        }, diagnostics
 
     def _component_from_diagnostic(self, diagnostic: DiagnosticEvent) -> str:
         if diagnostic.layer != "message_log":
