@@ -133,6 +133,7 @@ HTTP 接口：
 | `POST` | `/sessions/{id}/ingest` | 摄入消息 |
 | `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
 | `POST` | `/curate` | 无状态模块记忆提炼（`memoryos_curate/v1`） |
+| `POST` | `/recall` | 无状态、确定性的条目排序截断（`memoryos_recall/v1`），零 LLM |
 | `POST` | `/archives/ingest` | 摄入可归因归档文档 |
 | `POST` | `/archives/attachments` | 将归档关联到会话 |
 

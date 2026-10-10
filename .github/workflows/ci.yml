@@ -63,6 +63,7 @@ jobs:
           paths = {
               "/health",
               "/curate",
+              "/recall",
               "/sessions",
               "/sessions/{session_id}/ingest",
               "/sessions/{session_id}/build-context",

@@ -13,6 +13,7 @@ from memoryos_lite.middleware import (
     RequestIdMiddleware,
     StructuredLoggingMiddleware,
 )
+from memoryos_lite.recall import RecallRequest, RecallResponse
 from memoryos_lite.retrieval.supersede import SupersededQuote
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
@@ -158,6 +159,13 @@ def attach_archive(
         return service.attach_archive(request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/recall", response_model=RecallResponse)
+def recall(request: RecallRequest, service: ServiceDep) -> RecallResponse:
+    """Stateless, deterministic ranking of caller-supplied items; no LLM, no storage."""
+
+    return service.recall(request)
 
 
 @app.post("/curate", response_model=CurateResponse)
