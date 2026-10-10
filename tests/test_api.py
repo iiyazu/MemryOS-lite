@@ -1,9 +1,9 @@
 from fastapi.testclient import TestClient
 
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite import __version__
 from memoryos_lite.api.app import app
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
@@ -44,7 +44,7 @@ def test_compact_source_evidence_uses_a_real_v3_archive(tmp_path):
         memoryos_memory_arch="v3",
         memoryos_recall_pipeline="v2",
     )
-    service = MemoryOSService(store=create_store(settings), settings=settings)
+    service = SessionMemoryService(store=create_store(settings), settings=settings)
     service.store.reset()
     session_id = service.create_session("compact-v3").id
     source_ref = {"source_type": "document", "source_id": "activity-api", "session_id": session_id}

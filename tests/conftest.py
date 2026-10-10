@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.store import create_store
 
 
@@ -13,7 +13,7 @@ def _huggingface_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-def service(tmp_path: Path) -> MemoryOSService:
+def service(tmp_path: Path) -> SessionMemoryService:
     """Service built on the shipped defaults (v3/v2/off)."""
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
@@ -22,4 +22,4 @@ def service(tmp_path: Path) -> MemoryOSService:
     )
     store = create_store(settings)
     store.reset()
-    return MemoryOSService(store=store, settings=settings)
+    return SessionMemoryService(store=store, settings=settings)

@@ -26,8 +26,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.observability import (
     _REQUEST_ID,
     _SESSION_ID,
@@ -49,7 +49,7 @@ from memoryos_lite.store import create_store
 # ---------------------------------------------------------------------------
 
 
-def _make_service(tmp_path: Path, **extra) -> MemoryOSService:
+def _make_service(tmp_path: Path, **extra) -> SessionMemoryService:
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
         rot_safe_budget=12,
@@ -58,7 +58,7 @@ def _make_service(tmp_path: Path, **extra) -> MemoryOSService:
     )
     store = create_store(settings)
     store.reset()
-    return MemoryOSService(store=store, settings=settings)
+    return SessionMemoryService(store=store, settings=settings)
 
 
 def _reset_context_vars() -> None:

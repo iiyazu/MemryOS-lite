@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
 from memoryos_lite.curator import Curator
 from memoryos_lite.curator.curate import normalize_topic_key
 from memoryos_lite.curator.prompt import CURATE_ROOM_SYSTEM_PROMPT
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import MessageCreate, Role
 from memoryos_lite.store import create_store
 
@@ -23,7 +23,7 @@ class ScriptedLLM:
         return self.responses.pop(0) if self.responses else {"memories": []}
 
 
-def _service(tmp_path, llm, **overrides) -> tuple[MemoryOSService, Curator]:
+def _service(tmp_path, llm, **overrides) -> tuple[SessionMemoryService, Curator]:
     settings = Settings(
         data_dir=tmp_path / "memoryos",
         **{"memoryos_curator_window_messages": 1, **overrides},
@@ -31,10 +31,10 @@ def _service(tmp_path, llm, **overrides) -> tuple[MemoryOSService, Curator]:
     store = create_store(settings)
     store.reset()
     curator = Curator(store=store, settings=settings, llm=llm)
-    return MemoryOSService(store=store, settings=settings), curator
+    return SessionMemoryService(store=store, settings=settings), curator
 
 
-def _ingest(service: MemoryOSService, session_id: str, content: str, **metadata) -> str:
+def _ingest(service: SessionMemoryService, session_id: str, content: str, **metadata) -> str:
     return service.ingest(
         session_id, MessageCreate(role=Role.USER, content=content, metadata=metadata)
     ).message.id

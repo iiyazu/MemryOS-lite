@@ -29,8 +29,8 @@ from typing import Any, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.curator.llm import CuratorLLM, CuratorLLMError, CuratorSchemaError
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.retrieval.supersede import SupersededQuote, match_superseded
 from memoryos_lite.schemas import SupersededQuotePayload
@@ -293,7 +293,7 @@ def run_ask(
 
 
 def ask_with(
-    service: MemoryOSService,
+    service: SessionMemoryService,
     session_id: str,
     request: AskRequest,
     *,

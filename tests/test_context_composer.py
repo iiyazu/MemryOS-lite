@@ -1,6 +1,6 @@
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
 from memoryos_lite.context_composer import V3ContextComposer
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
@@ -801,7 +801,7 @@ def test_service_build_context_routes_to_v3_when_opted_in(tmp_path):
         data_dir=tmp_path / ".memoryos",
         memoryos_memory_arch="v3",
     )
-    service = MemoryOSService(settings=settings)
+    service = SessionMemoryService(settings=settings)
     session = service.create_session("v3")
     service.ingest(
         session.id,

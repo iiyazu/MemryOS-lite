@@ -18,8 +18,8 @@ from memoryos_eval.baselines import (
     _run_baseline,
 )
 from memoryos_eval.llm_judge import LLMJudge
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
@@ -213,7 +213,7 @@ def run_public_benchmark(
     store = create_store(run_settings)
     if isolated:
         store.reset()
-    service = MemoryOSService(store=store, settings=run_settings)
+    service = SessionMemoryService(store=store, settings=run_settings)
 
     source_mapping: dict[str, str] = {}
     report_dir = settings.data_dir / "evals"

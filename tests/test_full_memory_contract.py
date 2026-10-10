@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import ContextPackage, MessageCreate, Role
 from memoryos_lite.source_evidence import build_source_evidence, validate_source_evidence
 from memoryos_lite.store import create_store
@@ -17,7 +17,7 @@ from memoryos_lite.v3_contracts import (
 )
 
 
-def _service(tmp_path, **overrides) -> MemoryOSService:
+def _service(tmp_path, **overrides) -> SessionMemoryService:
     settings = Settings(
         data_dir=tmp_path / "memoryos",
         rot_safe_budget=1_000,
@@ -25,7 +25,7 @@ def _service(tmp_path, **overrides) -> MemoryOSService:
         memoryos_recall_pipeline=overrides.pop("memoryos_recall_pipeline", "v1"),
         **overrides,
     )
-    return MemoryOSService(store=create_store(settings), settings=settings)
+    return SessionMemoryService(store=create_store(settings), settings=settings)
 
 
 def test_external_message_id_replay_and_conflict(tmp_path):

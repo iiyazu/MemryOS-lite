@@ -6,7 +6,7 @@ not the live architecture contract.
 ## Top-Level Flow
 
 ```text
-MemoryOSService
+SessionMemoryService (memoryos_eval/memory/service.py, in process only)
   create_session()
   ingest()
     -> MessageRecord
@@ -28,7 +28,7 @@ MemoryOSService
 | `store_archive.py` | Core/archive documents, passages, attachments, and governed-memory persistence. |
 | `store_legacy.py` | Traces, their JSONL debug mirror, and store reset. |
 | `store_protocols.py` | Consumer-specific structural persistence contracts. |
-| `engine.py` | Application facade: ingest, context building, archives, `/recall`, `/similar`, `/curate`. |
+| `engine.py` | `MemoryOSService`, the stateless service behind `/curate`, `/recall`, `/similar`; it opens no database. |
 | `recall.py` | Stateless `/recall` (deterministic BM25 + dense RRF ranking of caller-supplied items within a token budget) and `/similar` (near-duplicate pairs by dense cosine). |
 | `retrieval/` | Search primitives and v2 recall helpers. |
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |
@@ -42,7 +42,8 @@ wheel does not ship: `roommem.py` (RoomMem), `modulemem.py` (ModuleMem), `collab
 (`eval collab`: quality of the collab curate profile), `ask.py`
 and `ask_demo.py` (the agentic `ask` graph and its offline demo), `public_benchmarks.py`
 with `baselines.py`, `llm_judge.py` and `longmemeval_manifest.py` (LongMemEval/LoCoMo;
-historical, no longer maintained) and `cli.py` (`uv run python -m memoryos_eval --help`).
+historical, no longer maintained), `memory/service.py` (`SessionMemoryService`: the product
+service plus the session store and `build_context`, run in process) and `cli.py` (`uv run python -m memoryos_eval --help`).
 
 ## Retrieval Paths
 

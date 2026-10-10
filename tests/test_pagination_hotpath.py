@@ -4,8 +4,8 @@ import time
 
 import pytest
 
+from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import MessageCreate, Role
 from memoryos_lite.store import create_store
 
@@ -21,7 +21,7 @@ def perf_service(tmp_path):
     )
     store = create_store(settings)
     store.reset()
-    return MemoryOSService(store=store, settings=settings)
+    return SessionMemoryService(store=store, settings=settings)
 
 
 class TestListMessagesLimit:
