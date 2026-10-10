@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # Sent as x-opencode-session; unset means one generated id per client.
     opencode_session_id: str | None = None
     memoryos_llm_timeout_s: float = 60.0
+    # Per curator call: a reasoning model writes 6-9k tokens in 40-90 s, and a
+    # timed-out call is not retried (see curator.llm).
+    memoryos_curate_timeout_s: float = 180.0
     memoryos_archival_vector_enabled: bool = True
 
     # Session curator (run in process by RoomMem; the service hosts none)

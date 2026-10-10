@@ -21,11 +21,19 @@ if TYPE_CHECKING:
 MAX_RETRIES = 5
 
 
-def build_chat_openai(settings: Settings, *, json_mode: bool = False) -> ChatOpenAI:
+def build_chat_openai(
+    settings: Settings,
+    *,
+    json_mode: bool = False,
+    max_retries: int = MAX_RETRIES,
+    timeout_s: float | None = None,
+) -> ChatOpenAI:
     """Build the configured provider's chat model at temperature 0.
 
     ``json_mode`` requests a JSON object reply; LangChain maps it to
     ``response_format`` (Chat Completions) or ``text.format`` (Responses).
+    The SDK retries silently (timeouts included), so a caller that accounts
+    for every attempt passes ``max_retries=0`` and retries itself.
     """
 
     from langchain_openai import ChatOpenAI
@@ -47,9 +55,9 @@ def build_chat_openai(settings: Settings, *, json_mode: bool = False) -> ChatOpe
         model=settings.chat_model,
         api_key=SecretStr(api_key),
         temperature=0,
-        timeout=settings.memoryos_llm_timeout_s,
+        timeout=settings.memoryos_llm_timeout_s if timeout_s is None else timeout_s,
         # Transient TLS/connection drops were seen on long eval runs.
-        max_retries=MAX_RETRIES,
+        max_retries=max_retries,
         **kwargs,
     )
 

@@ -3,18 +3,62 @@
 The curator never depends on a live provider in tests or CI: callers pass a
 :class:`CuratorLLM` fake.  The production client is built the same way the
 repository builds other chat models (``chat_api_key``/``chat_model``/base URL
-from settings, ``memoryos_llm_timeout_s``) and requests JSON output mode.
+from settings, ``memoryos_curate_timeout_s``) and requests JSON output mode.
+
+The production client retries itself instead of leaving it to the SDK, so
+that every provider attempt is visible: each one is logged and appended to
+the list opened by :func:`record_attempts`. A timed-out attempt is not
+retried (the model would most likely run out of time again, and the
+abandoned generation may still be billed); a connection error, 429 or 5xx is
+retried up to :data:`RETRIES` times.
 """
 
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Protocol
+import logging
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from memoryos_lite.chat_models import build_chat_openai, message_text
+from memoryos_lite.observability import log_event
 
 if TYPE_CHECKING:
     from memoryos_lite.config import Settings
+
+logger = logging.getLogger(__name__)
+
+#: Retries after a connection error, 429 or 5xx; never after a timeout.
+RETRIES = 2
+RETRY_BACKOFF_S = (1.0, 2.0)
+
+
+@dataclass(frozen=True)
+class LLMAttempt:
+    """One provider attempt: ``usage`` is ``None`` when the provider reported none."""
+
+    outcome: Literal["ok", "timeout", "error"]
+    secs: float
+    usage: dict[str, int | None] | None = None
+
+
+_ATTEMPTS: ContextVar[list[LLMAttempt] | None] = ContextVar("curator_attempts", default=None)
+
+
+@contextmanager
+def record_attempts() -> Iterator[list[LLMAttempt]]:
+    """Collect the provider attempts made inside the block (per request, thread-safe)."""
+
+    attempts: list[LLMAttempt] = []
+    token = _ATTEMPTS.set(attempts)
+    try:
+        yield attempts
+    finally:
+        _ATTEMPTS.reset(token)
 
 
 class CuratorLLMError(RuntimeError):
@@ -81,6 +125,43 @@ def _usage_from_result(result: object) -> dict[str, int | None] | None:
     return usage
 
 
+def _classify(exc: Exception) -> tuple[Literal["timeout", "error"], bool]:
+    """``(outcome, retryable)``: retry dropped connections, 429 and 5xx, never a timeout."""
+
+    import openai
+
+    if isinstance(exc, openai.APITimeoutError):
+        return "timeout", False
+    if isinstance(exc, openai.APIConnectionError):
+        return "error", True
+    if isinstance(exc, openai.APIStatusError):
+        return "error", exc.status_code == 429 or exc.status_code >= 500
+    return "error", False
+
+
+def _attempt(
+    index: int,
+    outcome: Literal["ok", "timeout", "error"],
+    started: float,
+    usage: dict[str, int | None] | None,
+    error: str | None = None,
+) -> None:
+    attempt = LLMAttempt(outcome, round(time.perf_counter() - started, 3), usage)
+    sink = _ATTEMPTS.get()
+    if sink is not None:
+        sink.append(attempt)
+    log_event(
+        logger,
+        logging.INFO if outcome == "ok" else logging.WARNING,
+        "curator_llm_attempt",
+        extra=usage,
+        attempt=index + 1,
+        outcome=outcome,
+        secs=attempt.secs,
+        error=error,
+    )
+
+
 class ChatCuratorLLM:
     """ChatOpenAI-backed curator client with JSON output mode.
 
@@ -96,20 +177,32 @@ class ChatCuratorLLM:
         self.last_usage: dict[str, int | None] | None = None
         if not settings.chat_api_key:
             raise ValueError(f"{settings.chat_api_key_name} is required for the curator")
-        self._model = build_chat_openai(settings, json_mode=True)
+        self._model = build_chat_openai(
+            settings, json_mode=True, max_retries=0, timeout_s=settings.memoryos_curate_timeout_s
+        )
+        self._sleep = time.sleep
+
+    def _invoke(self, system: str, user: str) -> object:
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        for attempt in range(RETRIES + 1):
+            started = time.perf_counter()
+            try:
+                result = self._model.invoke(messages)
+            except Exception as exc:
+                outcome, retryable = _classify(exc)
+                _attempt(attempt, outcome, started, None, error=type(exc).__name__)
+                if retryable and attempt < RETRIES:
+                    self._sleep(RETRY_BACKOFF_S[attempt])
+                    continue
+                # Deliberately avoid provider error text: it can echo request
+                # metadata, and nothing here needs more than the failure class.
+                raise CuratorLLMError(f"provider call failed: {type(exc).__name__}") from exc
+            _attempt(attempt, "ok", started, _usage_from_result(result))
+            return result
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
-        try:
-            result = self._model.invoke(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ]
-            )
-        except Exception as exc:
-            # Deliberately avoid provider error text: it can echo request
-            # metadata, and nothing here needs more than the failure class.
-            raise CuratorLLMError(f"provider call failed: {type(exc).__name__}") from exc
+        result = self._invoke(system, user)
         self.last_usage = _usage_from_result(result)
         try:
             content = message_text(result)
