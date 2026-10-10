@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session as DbSession
 
-from memoryos_lite.schemas import TraceEvent
-from memoryos_lite.store_models import Base, TraceRecord
+from memoryos_eval.memory.schemas import TraceEvent
+from memoryos_eval.memory.store_models import Base, TraceRecord
 
 if TYPE_CHECKING:
     from memoryos_lite.config import Settings

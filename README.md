@@ -85,12 +85,12 @@ flowchart TB
 ## 快速开始
 
 ```bash
-# Local API, SQLite/BM25 and offline FastEmbed Hybrid retrieval.
+# Local API: BM25 and offline FastEmbed Hybrid retrieval.
 uv sync --frozen --no-dev --extra full-local
 uv run --no-sync memoryos api --reload
 ```
 
-`full-local` 保留 SQLite、BM25、FastEmbed 和 RRF，且不安装
+`full-local` 保留 BM25、FastEmbed 和 RRF，且不安装
 远程 provider/graph stack。需要 LLM curator、`/curate`、远程 LLM 或公开 benchmark 时
 显式安装：
 
@@ -103,7 +103,7 @@ uv run --no-sync python -m memoryos_eval ask-demo --mermaid
 ```
 
 `/curate`、`demo curate` 和 `ask-demo` 依赖 `remote` extra 里的 LangGraph 与 LangChain；缺少时 `/curate`
-返回 503（`curate_requires_langgraph`），不影响 SQLite authority 或离线 API 行为。
+返回 503（`curate_requires_langgraph`），不影响离线 API 行为。
 
 `Dockerfile` 是部署样例：只装核心依赖（不含 `full-local` 和 `remote`），以非 root 用户在 8000 端口
 启动 API。CI 会构建镜像、启动容器并检查 `/health` 的 `version`。
@@ -115,7 +115,7 @@ docker run --rm -p 8000:8000 memoryos-lite
 
 ### 分发边界
 
-`memoryos-lite` 核心包只包含 API、SQLite/BM25 和基础存储。`full-local` 是 xmuse
+`memoryos-lite` 核心包只包含无状态 API（`/curate`、`/recall`、`/similar`）与 BM25，不含存储；进程内的会话与归档存储（SQLite）在评测包 `memoryos_eval/memory/`，不随 wheel 分发。`full-local` 是 xmuse
 companion 使用的离线完整能力：FastEmbed、ONNX 和 RRF；
 模型缓存由 companion 单独证明，不混入 Python 依赖包。`remote` 与 `benchmark` 则显式
 安装 LangChain、LangGraph 和远程 provider 相关依赖。
@@ -186,7 +186,7 @@ HTTP 接口全部无状态，不读写数据库。0.5.0 删除了 5 条有状态
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DATA_DIR` | `.memoryos` | SQLite 与派生调试文件目录 |
+| `DATA_DIR` | `.memoryos` | 评测框架进程内 SQLite 与派生调试文件目录（HTTP 服务不写入） |
 | `MEMORYOS_CURATOR_WINDOW_MESSAGES` | `12` | 会话策展器（RoomMem）每窗消息数 |
 | `MEMORYOS_CURATOR_IDLE_FLUSH_S` | `20.0` | 不足一窗时的空闲刷新等待秒数 |
 | `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |

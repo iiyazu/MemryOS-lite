@@ -7,8 +7,8 @@ import pytest
 
 from memoryos_eval.baselines import EvalCase
 from memoryos_eval.llm_judge import LLMJudge
+from memoryos_eval.memory.schemas import MessageCreate, Role
 from memoryos_lite.config import Settings
-from memoryos_lite.schemas import MessageCreate, Role
 
 
 def _make_case(

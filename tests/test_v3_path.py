@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from memoryos_eval.memory.schemas import MessageCreate, Role
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import MessageCreate, Role
-from memoryos_lite.store import create_store
 
 
 @pytest.fixture()
-def v3_service(tmp_path: Path) -> MemoryOSService:
+def v3_service(tmp_path: Path) -> SessionMemoryService:
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
         rot_safe_budget=12,
@@ -20,7 +20,7 @@ def v3_service(tmp_path: Path) -> MemoryOSService:
     )
     store = create_store(settings)
     store.reset()
-    return MemoryOSService(store=store, settings=settings)
+    return SessionMemoryService(store=store, settings=settings)
 
 
 def test_ingest_creates_episodes(v3_service):

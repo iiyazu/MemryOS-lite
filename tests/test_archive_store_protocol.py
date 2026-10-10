@@ -1,18 +1,18 @@
 import pytest
 from sqlalchemy import text
 
-from memoryos_lite.archive_rag import ArchiveRAGIngestRequest, MemoryOSArchiveRAG
-from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import ArchiveDocumentIngestRequest
-from memoryos_lite.store import Base, MemoryStore, create_store
-from memoryos_lite.store_protocols import ArchiveIngestStore
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.archive_rag import ArchiveRAGIngestRequest, MemoryOSArchiveRAG
+from memoryos_eval.memory.schemas import ArchiveDocumentIngestRequest
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import Base, MemoryStore, create_store
+from memoryos_eval.memory.store_protocols import ArchiveIngestStore
+from memoryos_eval.memory.v3_contracts import (
     ArchivalChunk,
     ArchivalDocument,
     ArchivalPassage,
     SourceRef,
 )
+from memoryos_lite.config import Settings
 
 
 class FakeArchiveIngestStore:
@@ -61,7 +61,7 @@ def test_archive_replay_and_conflict_leave_existing_rows_intact(tmp_path) -> Non
     settings = Settings(data_dir=tmp_path / ".memoryos")
     store = create_store(settings)
     store.reset()
-    service = MemoryOSService(store=store, settings=settings)
+    service = SessionMemoryService(store=store, settings=settings)
     request = ArchiveDocumentIngestRequest(
         document_id="adoc_protocol_replay",
         title="Replay",

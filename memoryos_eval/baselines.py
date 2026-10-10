@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, Field, model_validator
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
+from memoryos_eval.memory.schemas import Message, MessageCreate, Role
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.utils import is_generic_ack
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.utils import is_generic_ack
 
 
 class EvalCase(BaseModel):
@@ -126,7 +126,7 @@ def _run_baseline(
     baseline: str,
     case: EvalCase,
     messages: list[Message],
-    service: MemoryOSService,
+    service: SessionMemoryService,
     settings: Settings,
     budget_override: int | None = None,
 ) -> BaselineOutput:

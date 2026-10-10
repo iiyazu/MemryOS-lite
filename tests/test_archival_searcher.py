@@ -1,14 +1,14 @@
-from memoryos_lite.retrieval.archival_searcher import (
+from memoryos_eval.memory.retrieval.archival_searcher import (
     ArchivalPassageHit,
     ArchivalPassageSearcher,
 )
-from memoryos_lite.retrieval.archival_vector import (
+from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
     ArchivalVectorHit,
     ArchivalVectorIndex,
     LocalArchivalVectorStore,
 )
-from memoryos_lite.v3_contracts import ArchivalPassage, SourceRef, SourceSpan
+from memoryos_eval.memory.v3_contracts import ArchivalPassage, SourceRef, SourceSpan
 
 
 def _passage(

@@ -12,23 +12,23 @@ from memoryos_eval.ask import (
     render_ask_item,
     run_ask,
 )
-from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.supersede import (
+from memoryos_eval.memory.retrieval.supersede import (
     SupersededQuote,
     demote_superseded,
     match_superseded,
     superseded_quotes,
 )
-from memoryos_lite.schemas import MessageCreate, Role
-from memoryos_lite.source_evidence import build_source_evidence
-from memoryos_lite.store_curator import CuratedMemoryWrite
+from memoryos_eval.memory.schemas import MessageCreate, Role
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.source_evidence import build_source_evidence
+from memoryos_eval.memory.store_curator import CuratedMemoryWrite
+from memoryos_lite.config import Settings
 
 OLD = "Decision: Helios launches in Porto next spring."
 NEW = "Update: Helios now launches in Lisbon, Porto is off."
 
 
-def _service(tmp_path, **overrides: Any) -> MemoryOSService:
+def _service(tmp_path, **overrides: Any) -> SessionMemoryService:
     settings = Settings(
         data_dir=tmp_path / ".memoryos",
         openai_api_key=None,
@@ -36,10 +36,10 @@ def _service(tmp_path, **overrides: Any) -> MemoryOSService:
         opencode_api_key=None,
         **overrides,
     )
-    return MemoryOSService(settings=settings)
+    return SessionMemoryService(settings=settings)
 
 
-def _seed(service: MemoryOSService) -> str:
+def _seed(service: SessionMemoryService) -> str:
     """Two messages and a curated decision whose old version is superseded."""
 
     session = service.create_session("helios")

@@ -224,7 +224,7 @@ class CuratorStateRecord(Base):
     llm_errors: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
-# These types were historically defined by ``memoryos_lite.store``.  Keep their
+# These types were historically defined by ``memoryos_eval.memory.store``.  Keep their
 # public identity stable while the implementation lives in this focused module;
 # the composition root continues to re-export every name below.
 for _compat_type in (
@@ -241,6 +241,6 @@ for _compat_type in (
     CuratedMemoryRecord,
     CuratorStateRecord,
 ):
-    _compat_type.__module__ = "memoryos_lite.store"
+    _compat_type.__module__ = "memoryos_eval.memory.store"
 
 del _compat_type

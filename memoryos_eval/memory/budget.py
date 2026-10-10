@@ -7,8 +7,8 @@ Settings.hard_limit (ceiling).
 
 from __future__ import annotations
 
+from memoryos_eval.memory.schemas import Message
 from memoryos_lite.config import Settings
-from memoryos_lite.schemas import Message
 from memoryos_lite.tokenizer import TokenEstimator
 
 

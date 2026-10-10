@@ -1,13 +1,13 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from memoryos_eval.memory.store import MemoryStore, create_store
+from memoryos_eval.memory.store_archive import ArchiveStoreMixin
+from memoryos_eval.memory.store_legacy import LegacyStoreMixin
+from memoryos_eval.memory.store_runtime import StoreRuntimeMixin
+from memoryos_eval.memory.store_sessions import SessionStoreMixin
+from memoryos_eval.memory.v3_contracts import ArchivalChunk, ArchivalDocument, SourceRef
 from memoryos_lite.config import Settings
-from memoryos_lite.store import MemoryStore, create_store
-from memoryos_lite.store_archive import ArchiveStoreMixin
-from memoryos_lite.store_legacy import LegacyStoreMixin
-from memoryos_lite.store_runtime import StoreRuntimeMixin
-from memoryos_lite.store_sessions import SessionStoreMixin
-from memoryos_lite.v3_contracts import ArchivalChunk, ArchivalDocument, SourceRef
 
 
 def test_memory_store_is_a_thin_composition_with_stable_public_type_identity() -> None:

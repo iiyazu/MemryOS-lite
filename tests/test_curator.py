@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from memoryos_eval.memory.schemas import MessageCreate, Role
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.session_curator import Curator
+from memoryos_eval.memory.store import create_store
 from memoryos_lite.config import Settings
-from memoryos_lite.curator import Curator, CuratorLLMError, CuratorSchemaError
+from memoryos_lite.curator import CuratorLLMError, CuratorSchemaError
 from memoryos_lite.curator.grounding import repair_quote
 from memoryos_lite.curator.prompt import CURATE_ROOM_SYSTEM_PROMPT
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import MessageCreate, Role
-from memoryos_lite.store import create_store
 
 
 class FakeLLM:
@@ -29,7 +30,7 @@ class FakeLLM:
         return response
 
 
-def _service(tmp_path, llm, **overrides) -> tuple[MemoryOSService, Curator]:
+def _service(tmp_path, llm, **overrides) -> tuple[SessionMemoryService, Curator]:
     settings = Settings(
         data_dir=tmp_path / "memoryos",
         rot_safe_budget=1_000,
@@ -39,11 +40,11 @@ def _service(tmp_path, llm, **overrides) -> tuple[MemoryOSService, Curator]:
     store = create_store(settings)
     store.reset()
     curator = Curator(store=store, settings=settings, llm=llm)
-    service = MemoryOSService(store=store, settings=settings)
+    service = SessionMemoryService(store=store, settings=settings)
     return service, curator
 
 
-def _ingest(service: MemoryOSService, session_id: str, content: str, **metadata) -> str:
+def _ingest(service: SessionMemoryService, session_id: str, content: str, **metadata) -> str:
     response = service.ingest(
         session_id,
         MessageCreate(role=Role.USER, content=content, metadata=metadata),

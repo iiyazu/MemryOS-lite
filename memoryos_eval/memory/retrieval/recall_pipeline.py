@@ -1,17 +1,17 @@
 from typing import Any, cast
 
-from memoryos_lite.config import Settings
-from memoryos_lite.retrieval.base import EmbeddingClient
-from memoryos_lite.retrieval.episode_searcher import EpisodeHit, RecallMemorySearcher
-from memoryos_lite.retrieval.query_analyzer import QueryAnalysis, QueryAnalyzer
-from memoryos_lite.schemas import ContextEvidence, ContextPackage
-from memoryos_lite.store_protocols import RecallIndexStore
-from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.retrieval.episode_searcher import EpisodeHit, RecallMemorySearcher
+from memoryos_eval.memory.retrieval.query_analyzer import QueryAnalysis, QueryAnalyzer
+from memoryos_eval.memory.schemas import ContextEvidence, ContextPackage
+from memoryos_eval.memory.store_protocols import RecallIndexStore
+from memoryos_eval.memory.v3_contracts import (
     DiagnosticEvent,
     RecallMemoryEntry,
     episode_to_recall_entry,
 )
+from memoryos_lite.config import Settings
+from memoryos_lite.retrieval.base import EmbeddingClient
+from memoryos_lite.tokenizer import TokenEstimator
 
 
 class RecallPipeline:

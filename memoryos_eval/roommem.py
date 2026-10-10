@@ -5,7 +5,7 @@ transcripts (a human plus 2-3 AI agents collaborating on a project) and must
 store the right long-term memories, merge duplicates, supersede outdated ones
 and ignore noise, then answer probe questions from memory.
 
-This module replays the dataset through an in-process :class:`MemoryOSService`
+This module replays the dataset through an in-process :class:`SessionMemoryService`
 using the calls xmuse v1 made over HTTP (sessions, ingest, archive ingest and
 attachments, and build-context with the ``source_evidence/v2`` projection);
 those routes were removed in 0.5.0, the service methods remain.
@@ -28,7 +28,7 @@ Arms
 ``curated``
     Runs a :class:`CuratedMemorySource` registered by name through
     :func:`register_curated_source`.  The built-in ``default`` source runs the
-    real :class:`memoryos_lite.curator.Curator` on the room session (one window
+    real :class:`memoryos_eval.memory.session_curator.Curator` on the room session (one window
     of ``--curator-window`` messages,
     ``force=True`` for the tail) and maps its rows to
     :class:`CuratedMemoryView`.  With ``--fake-llm`` it uses a deterministic
@@ -70,14 +70,8 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from memoryos_eval.ask import AskRequest, AskResponse, ask_with, render_ask_item
-from memoryos_lite.chat_models import build_chat_openai, message_text
-from memoryos_lite.config import Settings, get_settings
-from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
-from memoryos_lite.curator.curate import normalize_topic_key
-from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.supersede import SupersededQuote, superseded_quotes
-from memoryos_lite.schemas import (
+from memoryos_eval.memory.retrieval.supersede import SupersededQuote, superseded_quotes
+from memoryos_eval.memory.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
     ArchiveIdentityArchive,
@@ -86,7 +80,14 @@ from memoryos_lite.schemas import (
     Role,
     deterministic_ids,
 )
-from memoryos_lite.source_evidence import build_source_evidence
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.session_curator import Curator
+from memoryos_eval.memory.source_evidence import build_source_evidence
+from memoryos_lite.chat_models import build_chat_openai, message_text
+from memoryos_lite.config import Settings, get_settings
+from memoryos_lite.curator import CuratorLLM, build_curator_llm
+from memoryos_lite.curator.curate import normalize_topic_key
+from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
 
 ROOM_KINDS: tuple[str, ...] = ("fact", "decision", "rule", "preference", "lesson")
 ROOM_SCOPES: tuple[str, ...] = ("room", "project", "user")
@@ -562,7 +563,7 @@ class CuratedMemorySource(Protocol):
 
     def curate(
         self,
-        service: MemoryOSService,
+        service: SessionMemoryService,
         session_id: str,
     ) -> list[CuratedMemoryView]: ...
 
@@ -812,7 +813,7 @@ class DiskCachedCuratorLLM:
         self._usage.record(self._role, cached=cached, latency_s=latency, usage=usage)
 
 
-def _session_dataset_message_ids(service: MemoryOSService, session_id: str) -> dict[str, str]:
+def _session_dataset_message_ids(service: SessionMemoryService, session_id: str) -> dict[str, str]:
     """Map ingested MemoryOS message ids back to dataset message ids."""
 
     total = service.store.count_session_messages(session_id)
@@ -893,7 +894,7 @@ class CuratorMemorySource:
             usage=self._usage,
         )
 
-    def curate(self, service: MemoryOSService, session_id: str) -> list[CuratedMemoryView]:
+    def curate(self, service: SessionMemoryService, session_id: str) -> list[CuratedMemoryView]:
         settings = self._curator_settings(service.settings)
         curator = Curator(store=service.store, settings=settings, llm=self._build_llm(settings))
         result = curator.run_session(session_id, force=True)
@@ -2187,7 +2188,7 @@ def _require_fastembed() -> None:
         )
 
 
-def _attach_document(service: MemoryOSService, session_id: str, document_id: str) -> None:
+def _attach_document(service: SessionMemoryService, session_id: str, document_id: str) -> None:
     ref = ArchiveSourceRefPayload(source_type="document", source_id=document_id)
     service.attach_archive(
         ArchiveAttachmentRequest(
@@ -2200,7 +2201,7 @@ def _attach_document(service: MemoryOSService, session_id: str, document_id: str
 
 
 def _ingest_and_attach(
-    service: MemoryOSService,
+    service: SessionMemoryService,
     session_id: str,
     *,
     document_id: str,
@@ -2225,7 +2226,7 @@ def _ingest_and_attach(
 
 
 def _ingest_room(
-    service: MemoryOSService,
+    service: SessionMemoryService,
     room: Room,
     session_id: str,
     *,
@@ -2290,12 +2291,12 @@ def _raw_project_id_selector(room: Room) -> Callable[[RoomMessage], str]:
 class _RawProject:
     """Shared raw-archive state for one project, built once per repeat.
 
-    One :class:`MemoryOSService` holds every selected room of the project (each
+    One :class:`SessionMemoryService` holds every selected room of the project (each
     with its own session and room-qualified activity documents); probe sessions
     only see other rooms through explicit document attachments.
     """
 
-    service: MemoryOSService
+    service: SessionMemoryService
     sessions: Mapping[str, str]
     message_maps: Mapping[str, Mapping[str, str]]
     new_room_sessions: Mapping[str, str]
@@ -2329,7 +2330,7 @@ def _build_raw_project_context(
     they can never leak into evidence.
     """
 
-    service = MemoryOSService(
+    service = SessionMemoryService(
         settings=_room_settings(
             scratch_dir / "raw_project" / f"{project or 'default'}-r{repeat}",
             embedding=embedding,
@@ -2415,7 +2416,7 @@ class _SharedMemoryProject:
     and every new-room session of the project.
     """
 
-    service: MemoryOSService
+    service: SessionMemoryService
     sessions: Mapping[str, str]
     message_maps: Mapping[str, Mapping[str, str]]
     new_room_sessions: Mapping[str, str]
@@ -2449,7 +2450,7 @@ def _build_shared_memory_project(
     embedding: str,
     curated_source: CuratedMemorySource | None,
 ) -> _SharedMemoryProject:
-    service = MemoryOSService(
+    service = SessionMemoryService(
         settings=_room_settings(
             scratch_dir / f"{arm}_shared" / f"{project or 'default'}-r{repeat}",
             embedding=embedding,
@@ -2577,7 +2578,7 @@ def _run_room_arm(
     views: list[CuratedMemoryView] = []
     curator_counts: dict[str, int] = {}
     cross_scope_docs: dict[str, str] = {}
-    service: MemoryOSService | None
+    service: SessionMemoryService | None
     full_evidence: list[EvidenceItem] | None = None
     if arm == "full_context":
         service = None
@@ -2598,7 +2599,7 @@ def _run_room_arm(
         views = list(shared_memory.views[room.room_id])
         curator_counts = dict(shared_memory.curator_counts.get(room.room_id, {}))
     else:
-        service = MemoryOSService(
+        service = SessionMemoryService(
             settings=_room_settings(
                 scratch_dir / arm / f"{room.room_id}-r{repeat}",
                 embedding=embedding,

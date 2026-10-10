@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
-from memoryos_lite.schemas import Message, Role, new_id, utc_now
-from memoryos_lite.store_models import (
+from memoryos_eval.memory.schemas import Message, Role, new_id, utc_now
+from memoryos_eval.memory.store_models import (
     CuratedMemoryRecord,
     CuratorStateRecord,
     MessageRecord,

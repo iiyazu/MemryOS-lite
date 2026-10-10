@@ -5,13 +5,13 @@ import pytest
 import memoryos_eval.public_benchmarks as public_benchmarks
 from memoryos_eval.baselines import BaselineOutput
 from memoryos_eval.cli import PUBLIC_TABLE_COLUMNS, _public_table_rows
-from memoryos_eval.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
-from memoryos_lite.config import Settings
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.v3_contracts import (
     ArchivalPassage,
     ArchiveAttachment,
     SourceRef,
 )
+from memoryos_eval.public_benchmarks import load_public_benchmark_cases, run_public_benchmark
+from memoryos_lite.config import Settings
 
 
 @pytest.fixture(autouse=True)

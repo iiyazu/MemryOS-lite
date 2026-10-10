@@ -17,18 +17,18 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from memoryos_lite.config import Settings
-from memoryos_lite.curator.llm import CuratorLLM, CuratorLLMError
-from memoryos_lite.observability import current_observability_context
-from memoryos_lite.schemas import (
+from memoryos_eval.memory.schemas import (
     Message,
     Role,
     TraceEvent,
     new_id,
     utc_now,
 )
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.store_curator import CuratedMemoryRow, CuratedMemoryWrite
+from memoryos_eval.memory.store import MemoryStore
+from memoryos_eval.memory.store_curator import CuratedMemoryRow, CuratedMemoryWrite
+from memoryos_lite.config import Settings
+from memoryos_lite.curator.llm import CuratorLLM, CuratorLLMError
+from memoryos_lite.observability import current_observability_context
 
 if TYPE_CHECKING:
     from memoryos_lite.curator.curate import CurateActivity, CurateMemory, CurateResponse

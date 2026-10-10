@@ -1,11 +1,11 @@
-from memoryos_lite.config import Settings
-from memoryos_lite.store import create_store
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.store import create_store
+from memoryos_eval.memory.v3_contracts import (
     ArchivalPassage,
     ArchiveAttachment,
     ArchiveEligibilityScope,
     SourceRef,
 )
+from memoryos_lite.config import Settings
 
 
 def _ref(source_id: str = "message_1") -> SourceRef:

@@ -8,10 +8,10 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from memoryos_lite.retrieval.supersede import SupersededQuote, demote_superseded
-from memoryos_lite.schemas import ContextPackage
+from memoryos_eval.memory.retrieval.supersede import SupersededQuote, demote_superseded
+from memoryos_eval.memory.schemas import ContextPackage
+from memoryos_eval.memory.v3_contracts import ContextPackageV3
 from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import ContextPackageV3
 
 SOURCE_EVIDENCE_SCHEMA = "memoryos_source_evidence/v1"
 SOURCE_EVIDENCE_V2_SCHEMA = "memoryos_source_evidence/v2"

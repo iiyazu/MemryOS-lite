@@ -1,14 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
-from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import (
+from memoryos_eval.memory.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
     ArchiveSourceRefPayload,
 )
-from memoryos_lite.store import create_store
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
+from memoryos_lite.config import Settings
 
 
 def _ref() -> dict[str, str]:
@@ -59,7 +59,7 @@ def _service(tmp_path):
     settings = Settings(data_dir=tmp_path / ".memoryos")
     store = create_store(settings)
     store.reset()
-    return MemoryOSService(store=store, settings=settings)
+    return SessionMemoryService(store=store, settings=settings)
 
 
 def test_service_archive_ingest_attach_and_context_preserve_source_span_quote(tmp_path):

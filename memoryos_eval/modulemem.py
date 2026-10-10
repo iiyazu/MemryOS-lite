@@ -63,6 +63,17 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from memoryos_eval.memory.schemas import (
+    ArchiveAttachmentRequest,
+    ArchiveDocumentIngestRequest,
+    ArchiveIdentityArchive,
+    ArchiveSourceRefPayload,
+    MessageCreate,
+    Role,
+    deterministic_ids,
+)
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.source_evidence import build_source_evidence
 from memoryos_eval.roommem import (
     XMUSE_ACTIVITY_DOC_PREFIX,
     XMUSE_MESSAGE_ID_PREFIX,
@@ -97,17 +108,6 @@ from memoryos_lite.curator.curate import (
     CurateRequest,
 )
 from memoryos_lite.curator.graph import run_curate
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.schemas import (
-    ArchiveAttachmentRequest,
-    ArchiveDocumentIngestRequest,
-    ArchiveIdentityArchive,
-    ArchiveSourceRefPayload,
-    MessageCreate,
-    Role,
-    deterministic_ids,
-)
-from memoryos_lite.source_evidence import build_source_evidence
 
 MODULEMEM_ARMS: tuple[str, ...] = (
     "pack",
@@ -609,7 +609,7 @@ def _archive_id(module: Module) -> str:
     return f"xmuse-module-{module.module_id}"
 
 
-def _retrieval_service(module: Module, service: MemoryOSService) -> str:
+def _retrieval_service(module: Module, service: SessionMemoryService) -> str:
     session = service.create_session(f"modulemem {module.module_id}")
     service.attach_archive(
         ArchiveAttachmentRequest(
@@ -1476,7 +1476,7 @@ def _run_module_arm(
     ws: dict[str, Any] | None = None
     lags: list[float] = []
     evidence: list[EvidenceItem] = []
-    service: MemoryOSService | None = None
+    service: SessionMemoryService | None = None
     session_id = ""
     if arm in {"pack", "oracle_pack"}:
         replay: CurateReplay | None = None
@@ -1523,7 +1523,9 @@ def _run_module_arm(
     elif arm == "full_history":
         evidence = _activities_evidence(module, module.activities)
     elif arm == "retrieval":
-        service = MemoryOSService(settings=_room_settings(data_dir, embedding=config.embedding))
+        service = SessionMemoryService(
+            settings=_room_settings(data_dir, embedding=config.embedding)
+        )
         session_id = _retrieval_service(module, service)
 
     def evidence_for(query: str) -> list[EvidenceItem]:
