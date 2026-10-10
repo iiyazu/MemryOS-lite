@@ -13,24 +13,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from memoryos_lite.schemas import Message, Role
-
-
-def speaker_label(message: Message) -> tuple[str, str]:
-    """Return ``(label, human|agent)`` for one message.
-
-    xmuse writes ``participant_id`` and an eval harness may write
-    ``speaker_name``; otherwise the role stands in for the label.
-    """
-
-    speaker_kind = "human" if message.role is Role.USER else "agent"
-    for key in ("speaker_name", "participant_id"):
-        value = message.metadata.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip(), speaker_kind
-    return message.role.value, speaker_kind
-
-
 #: A gate failure log is shown to the LLM as head + tail; quotes are still
 #: grounded against the full stored text.
 GATE_LOG_HEAD_CHARS = 1_500

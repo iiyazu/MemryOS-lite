@@ -18,8 +18,7 @@ from pydantic import BaseModel, Field, model_validator
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
 from memoryos_lite.retrieval.base import EmbeddingClient, cosine_similarity
-from memoryos_lite.retrieval.episode_searcher import _content_tokens
-from memoryos_lite.retrieval.lexical import tokenize
+from memoryos_lite.retrieval.lexical import content_tokens, tokenize
 from memoryos_lite.tokenizer import TokenEstimator
 
 RECALL_SCHEMA: Literal["memoryos_recall/v1"] = "memoryos_recall/v1"
@@ -176,7 +175,7 @@ class Recaller:
     def recall(self, request: RecallRequest) -> RecallResponse:
         items = request.items
         query_tokens = tokenize(request.query)
-        query_content = _content_tokens(query_tokens)
+        query_content = content_tokens(query_tokens)
         lexical: dict[str, float] = {}
         if items and query_content:
             corpus = [tokenize(item.text) for item in items]
@@ -185,7 +184,7 @@ class Recaller:
                 lexical = {
                     item.id: float(score)
                     for item, tokens, score in zip(items, corpus, scores, strict=True)
-                    if query_content & _content_tokens(tokens)
+                    if query_content & content_tokens(tokens)
                 }
         dense = self._dense_scores(request)
         lexical_rank = _rrf_ranks(lexical)

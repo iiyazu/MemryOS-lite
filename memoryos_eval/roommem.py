@@ -73,8 +73,8 @@ from memoryos_eval.ask import AskRequest, AskResponse, ask_with, render_ask_item
 from memoryos_lite.chat_models import build_chat_openai, message_text
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
+from memoryos_lite.curator.curate import normalize_topic_key
 from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
-from memoryos_lite.curator.runner import normalize_topic_key
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.supersede import SupersededQuote, superseded_quotes
 from memoryos_lite.schemas import (
