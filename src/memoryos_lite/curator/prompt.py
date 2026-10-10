@@ -129,6 +129,10 @@ the new entry as superseding it.
 - If two entries seem to contradict each other (two active entries, or an active entry and \
 one you propose), report a conflict and do not pick a side. Use active ids; for an entry you \
 propose in this reply, use its topic_key.
+- Check every review_request and handoff against each active convention and decision. If the \
+work it describes breaks one (another format, unit, name, or scope) and no message in this \
+window replaced that entry, propose what the message does as an entry quoting it and report a \
+conflict between that entry and the active id.
 - Do not store who does what (the host tracks assignments), plans, status updates, handoff \
 boilerplate, chit-chat, or values no longer in effect.
 - Each review_objection or gate_failure listed under "Failures to account for" gets exactly one \
