@@ -13,7 +13,13 @@ from memoryos_lite.middleware import (
     RequestIdMiddleware,
     StructuredLoggingMiddleware,
 )
-from memoryos_lite.recall import RecallRequest, RecallResponse
+from memoryos_lite.recall import (
+    RecallRequest,
+    RecallResponse,
+    SimilarRequest,
+    SimilarResponse,
+    SimilarUnavailableError,
+)
 from memoryos_lite.retrieval.supersede import SupersededQuote
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
@@ -61,10 +67,13 @@ def health(service: ServiceDep) -> dict[str, object]:
             semantic_ready = service.embedding_client.dim > 0
         except Exception:
             semantic_ready = False
+    # The hub reads ``capabilities`` at startup and skips what is missing.
+    curate = ["curate", "curate.collab"] if service.curate_ready() else []
     return {
         "status": "ok",
         "version": __version__,
-        "capabilities": {
+        "capabilities": [*curate, "recall", *(["similar"] if semantic_ready else [])],
+        "capability_details": {
             "build_context_profiles": [
                 BuildContextResponseProfile.FULL.value,
                 BuildContextResponseProfile.SOURCE_EVIDENCE_V1.value,
@@ -166,6 +175,16 @@ def recall(request: RecallRequest, service: ServiceDep) -> RecallResponse:
     """Stateless, deterministic ranking of caller-supplied items; no LLM, no storage."""
 
     return service.recall(request)
+
+
+@app.post("/similar", response_model=SimilarResponse)
+def similar(request: SimilarRequest, service: ServiceDep) -> SimilarResponse:
+    """Near-duplicate pairs by dense cosine; 503 ``similar_unavailable`` without embeddings."""
+
+    try:
+        return service.similar(request)
+    except SimilarUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="similar_unavailable") from exc
 
 
 @app.post("/curate", response_model=CurateResponse)

@@ -64,6 +64,7 @@ jobs:
               "/health",
               "/curate",
               "/recall",
+              "/similar",
               "/sessions",
               "/sessions/{session_id}/ingest",
               "/sessions/{session_id}/build-context",
@@ -100,6 +101,7 @@ jobs:
           print(health)
           assert health["status"] == "ok", health
           assert health["version"] == version, (health["version"], version)
+          assert "recall" in health["capabilities"], health
           PY
 
       - name: Container logs

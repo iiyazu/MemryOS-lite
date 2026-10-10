@@ -28,8 +28,8 @@ MemoryOSService
 | `store_archive.py` | Core/archive documents, passages, attachments, and governed-memory persistence. |
 | `store_legacy.py` | Traces, their JSONL debug mirror, and store reset. |
 | `store_protocols.py` | Consumer-specific structural persistence contracts. |
-| `engine.py` | Application facade: ingest, context building, archives, `/recall`, `/curate`. |
-| `recall.py` | Stateless `/recall`: deterministic BM25 + dense RRF ranking of caller-supplied items within a token budget. |
+| `engine.py` | Application facade: ingest, context building, archives, `/recall`, `/similar`, `/curate`. |
+| `recall.py` | Stateless `/recall` (deterministic BM25 + dense RRF ranking of caller-supplied items within a token budget) and `/similar` (near-duplicate pairs by dense cosine). |
 | `retrieval/` | Search primitives and v2 recall helpers. |
 | `context_composer.py` | Default v3 layered composer and budget diagnostics. |
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |

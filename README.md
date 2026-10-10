@@ -129,12 +129,13 @@ HTTP 接口：
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| `GET` | `/health` | 存活、版本号（`version`）与能力 |
+| `GET` | `/health` | 存活、版本号（`version`）、`capabilities` 列表与能力详情 |
 | `POST` | `/sessions` | 创建会话 |
 | `POST` | `/sessions/{id}/ingest` | 摄入消息 |
 | `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
 | `POST` | `/curate` | 无状态模块记忆提炼（`memoryos_curate/v1`） |
 | `POST` | `/recall` | 无状态、确定性的条目排序截断（`memoryos_recall/v1`），零 LLM |
+| `POST` | `/similar` | 按稠密向量余弦找近似重复条目对（`memoryos_similar/v1`），零 LLM；没有 embedding 时返回 503 |
 | `POST` | `/archives/ingest` | 摄入可归因归档文档 |
 | `POST` | `/archives/attachments` | 将归档关联到会话 |
 
