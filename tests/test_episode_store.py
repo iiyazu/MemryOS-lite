@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 
+from memoryos_eval.memory.schemas import Episode, Message, Role
+from memoryos_eval.memory.store import create_store
 from memoryos_lite.config import Settings
-from memoryos_lite.schemas import Episode, Message, Role
-from memoryos_lite.store import create_store
 
 
 def test_episode_round_trip(tmp_path):

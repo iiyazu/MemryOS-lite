@@ -7,8 +7,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from memoryos_eval.memory.v3_contracts import ArchivalPassage
 from memoryos_lite.retrieval.base import EmbeddingClient
-from memoryos_lite.v3_contracts import ArchivalPassage
 
 
 @dataclass(frozen=True)

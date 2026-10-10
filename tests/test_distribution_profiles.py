@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 import tomllib
@@ -46,6 +47,25 @@ def test_full_local_profile_keeps_remote_and_benchmark_stacks_optional() -> None
     )
     for package in packages:
         assert package in development
+
+
+def test_product_package_never_imports_the_eval_package() -> None:
+    """The wheel ships ``memoryos_lite`` only; ``memoryos_eval`` stays in the repo."""
+    offenders = []
+    for path in (ROOT / "src" / "memoryos_lite").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            offenders += [
+                (str(path.relative_to(ROOT)), name)
+                for name in names
+                if name.split(".")[0] == "memoryos_eval"
+            ]
+    assert offenders == []
 
 
 def test_cli_and_api_import_without_remote_stack() -> None:

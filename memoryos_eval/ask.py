@@ -17,7 +17,7 @@ current items first, outdated ones last with the current statement attached,
 within the token budget.
 
 Outdated means the item contains the verbatim quote of a superseded memory
-(see :mod:`memoryos_lite.retrieval.supersede`); unlike ``source_evidence/v2``,
+(see :mod:`memoryos_eval.memory.retrieval.supersede`); unlike ``source_evidence/v2``,
 the ask response may carry that mark explicitly.
 """
 
@@ -29,12 +29,12 @@ from typing import Any, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from memoryos_eval.memory.retrieval.supersede import SupersededQuote, match_superseded
+from memoryos_eval.memory.schemas import SupersededQuotePayload
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.source_evidence import build_source_evidence
 from memoryos_lite.curator.llm import CuratorLLM, CuratorLLMError, CuratorSchemaError
-from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.retrieval.supersede import SupersededQuote, match_superseded
-from memoryos_lite.schemas import SupersededQuotePayload
-from memoryos_lite.source_evidence import build_source_evidence
 
 ASK_SCHEMA = "memoryos_memory_ask/v1"
 MAX_ROUNDS = 2
@@ -293,7 +293,7 @@ def run_ask(
 
 
 def ask_with(
-    service: MemoryOSService,
+    service: SessionMemoryService,
     session_id: str,
     request: AskRequest,
     *,

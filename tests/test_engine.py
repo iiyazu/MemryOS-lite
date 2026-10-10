@@ -2,22 +2,23 @@ from unittest.mock import patch
 
 import pytest
 
-from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.archival_vector import LocalArchivalVectorStore
-from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
-from memoryos_lite.schemas import (
+from memoryos_eval.memory.retrieval.archival_vector import LocalArchivalVectorStore
+from memoryos_eval.memory.schemas import (
     MessageCreate,
     Role,
 )
-from memoryos_lite.store import create_store
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
+from memoryos_lite.config import Settings
+from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 
 
 def test_v3_build_context_trace_includes_component_accounting_and_final_context_trace(
     tmp_path,
 ):
     settings = Settings(data_dir=tmp_path / ".memoryos")
-    service = MemoryOSService(settings=settings)
+    service = SessionMemoryService(settings=settings)
     session = service.create_session("v3-accounting")
     service.ingest(
         session.id,
@@ -46,20 +47,37 @@ def test_fastembed_provider_falls_back_to_no_embedding_when_unavailable(tmp_path
         data_dir=tmp_path / ".memoryos",
         memoryos_embedding_provider="fastembed",
     )
-    store = create_store(settings)
-    store.reset()
 
     with patch(
         "memoryos_lite.retrieval.providers.fastembed_client.FastEmbedClient",
         side_effect=RuntimeError("model unavailable"),
     ):
-        service = MemoryOSService(store=store, settings=settings)
+        service = MemoryOSService(settings=settings)
 
     assert service.embedding_client is None
 
 
+def test_product_service_opens_no_database(tmp_path):
+    data_dir = tmp_path / ".memoryos"
+
+    service = MemoryOSService(settings=Settings(data_dir=data_dir))
+
+    assert not hasattr(service, "store")
+    assert not data_dir.exists()
+
+
+def test_session_service_owns_the_sqlite_store(tmp_path):
+    settings = Settings(data_dir=tmp_path / ".memoryos")
+    store = create_store(settings)
+
+    service = SessionMemoryService(store=store, settings=settings)
+
+    assert service.store is store
+    assert (tmp_path / ".memoryos" / "memoryos.db").exists()
+
+
 def test_service_uses_local_archival_vectors_without_qdrant(tmp_path):
-    service = MemoryOSService(
+    service = SessionMemoryService(
         settings=Settings(
             data_dir=tmp_path / ".memoryos",
             memoryos_archival_vector_enabled=True,
@@ -87,7 +105,7 @@ def test_service_uses_local_archival_vectors_without_qdrant(tmp_path):
     ],
 )
 def test_build_context_failure_raises_and_leaves_no_state(tmp_path, target, method):
-    service = MemoryOSService(settings=Settings(data_dir=tmp_path / ".memoryos"))
+    service = SessionMemoryService(settings=Settings(data_dir=tmp_path / ".memoryos"))
     session = service.create_session("fault-injection")
     service.ingest(session.id, MessageCreate(role=Role.USER, content="Alice lives in Shanghai."))
     with (

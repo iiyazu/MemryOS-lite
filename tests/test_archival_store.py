@@ -1,8 +1,7 @@
 import pytest
 
-from memoryos_lite.config import Settings
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.store import MemoryStore
+from memoryos_eval.memory.v3_contracts import (
     ArchivalChunk,
     ArchivalDocument,
     ArchivalPassage,
@@ -11,6 +10,7 @@ from memoryos_lite.v3_contracts import (
     SourceRef,
     SourceSpan,
 )
+from memoryos_lite.config import Settings
 
 
 def _store(tmp_path):

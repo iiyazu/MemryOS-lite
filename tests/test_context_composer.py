@@ -1,22 +1,22 @@
-from memoryos_lite.config import Settings
-from memoryos_lite.context_composer import V3ContextComposer
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
-from memoryos_lite.retrieval.archival_vector import (
+from memoryos_eval.memory.context_composer import V3ContextComposer
+from memoryos_eval.memory.retrieval.archival_searcher import ArchivalPassageSearcher
+from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
     ArchivalVectorIndex,
     LocalArchivalVectorStore,
 )
-from memoryos_lite.schemas import Message, MessageCreate, Role
-from memoryos_lite.store import create_store
-from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.schemas import Message, MessageCreate, Role
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
+from memoryos_eval.memory.v3_contracts import (
     ArchivalPassage,
     ArchiveAttachment,
     ContextComposerRequest,
     IdentityScope,
     SourceRef,
 )
+from memoryos_lite.config import Settings
+from memoryos_lite.tokenizer import TokenEstimator
 
 
 class WordTokenizer(TokenEstimator):
@@ -801,7 +801,7 @@ def test_service_build_context_routes_to_v3_when_opted_in(tmp_path):
         data_dir=tmp_path / ".memoryos",
         memoryos_memory_arch="v3",
     )
-    service = MemoryOSService(settings=settings)
+    service = SessionMemoryService(settings=settings)
     session = service.create_session("v3")
     service.ingest(
         session.id,

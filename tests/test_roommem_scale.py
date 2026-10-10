@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from memoryos_eval.memory.source_evidence import build_source_evidence
 from memoryos_eval.roommem import (
     XMUSE_ACTIVITY_DOC_PREFIX,
     XMUSE_MEMORY_DOC_PREFIX,
@@ -14,7 +15,6 @@ from memoryos_eval.roommem import (
     load_rooms,
     run_roommem,
 )
-from memoryos_lite.source_evidence import build_source_evidence
 
 ROOMS = Path(__file__).resolve().parents[1] / "benchmarks" / "roommem" / "rooms"
 

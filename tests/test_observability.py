@@ -19,6 +19,7 @@ import time
 
 import pytest
 
+from memoryos_eval.memory.schemas import MessageCreate, Role
 from memoryos_lite.observability import (
     current_observability_context,
     current_trace_id,
@@ -26,7 +27,6 @@ from memoryos_lite.observability import (
     observability_context,
     timed_core_operation,
 )
-from memoryos_lite.schemas import MessageCreate, Role
 
 # ---------------------------------------------------------------------------
 # Helpers

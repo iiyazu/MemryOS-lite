@@ -1,13 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-import memoryos_lite.v3_contracts as contracts
-from memoryos_lite.schemas import (
+import memoryos_eval.memory.v3_contracts as contracts
+from memoryos_eval.memory.schemas import (
     Episode,
     Message,
     Role,
 )
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.v3_contracts import (
     ArchivalChunk,
     ArchivalPassage,
     ArchiveAttachment,

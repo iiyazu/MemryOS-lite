@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from memoryos_lite.store_protocols import ArchiveIngestStore
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.store_protocols import ArchiveIngestStore
+from memoryos_eval.memory.v3_contracts import (
     ArchivalChunk,
     ArchivalDocument,
     ArchivalPassage,

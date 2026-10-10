@@ -11,10 +11,11 @@ state is a derived, in-process embedding cache. The FastAPI surface is suitable
 for trusted local integrations; it does not provide a complete remote
 authentication, tenancy, rate-limit, or ownership model.
 
-`MemoryOSService` still keeps sessions, messages, episodes, and archives in
-SQLite for in-process callers: the evaluation harness (`memoryos_eval`:
-ModuleMem, RoomMem, the public benchmarks) builds context there with the v3
-composer over v2 recall. None of it is reachable over HTTP since 0.5.0 (MO-10).
+Sessions, messages, episodes, and archives live in a SQLite store that only
+the evaluation harness uses, in process: `memoryos_eval.memory`
+(`SessionMemoryService`, used by ModuleMem, RoomMem, and the public benchmarks)
+builds context there with the v3 composer over v2 recall. None of it is
+reachable over HTTP since 0.5.0 (MO-10), and the wheel does not ship it.
 
 ## HTTP surface
 

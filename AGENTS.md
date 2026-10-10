@@ -8,7 +8,7 @@ Context has one path: the v3 composer over v2 episode-first recall. Do not freez
 
 ## Runtime boundaries
 
-- SQLite is authoritative. Trace JSONL, the in-process vector index, and benchmark reports are derived or experimental.
+- The in-process session store (`memoryos_eval/memory/`) is SQLite-authoritative. Trace JSONL, the in-process vector index, and benchmark reports are derived or experimental.
 - v3 composes task, recall, archival, and recent layers. Source references and bounded context are part of the contract.
 - v2 recall uses episode-first evidence retrieval. The v1 memory architecture (pages, items, paging, conflict detection) was removed.
 - Stateless `/curate` uses a LangGraph repair loop (remote extra) and keeps no state; it is not an agent runtime.
@@ -20,11 +20,9 @@ Context has one path: the v3 composer over v2 episode-first recall. Do not freez
 | Path | Role |
 |---|---|
 | `src/memoryos_lite/config.py` | Settings and feature selection. |
-| `src/memoryos_lite/schemas.py` | Public and internal data contracts. |
-| `src/memoryos_lite/store.py` | SQLite authority and persistence facade. |
-| `src/memoryos_lite/engine.py` | Service orchestration. |
-| `src/memoryos_lite/context_composer.py` | Default v3 layered context. |
-| `src/memoryos_lite/retrieval/` | v2 evidence planning and retrieval. |
+| `src/memoryos_lite/engine.py` | `MemoryOSService`: the stateless `/curate`, `/recall`, `/similar` service. |
+| `src/memoryos_lite/recall.py` | Stateless `/recall` and `/similar` ranking. |
+| `memoryos_eval/memory/` | In-process session memory the evals measure (not in the wheel): SQLite store, schemas, v3 composer, v2 recall, archives, session curator. |
 | `src/memoryos_lite/api/` | FastAPI loopback service. |
 | `tests/` | Behavior, migration, source-proof, and evaluation tests. |
 

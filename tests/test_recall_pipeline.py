@@ -1,8 +1,8 @@
+from memoryos_eval.memory.retrieval.recall_pipeline import RecallPipeline
+from memoryos_eval.memory.schemas import Message, MessageCreate, Role
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
 from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
-from memoryos_lite.schemas import Message, MessageCreate, Role
-from memoryos_lite.store import create_store
 
 
 class WordTokenizer:
@@ -209,7 +209,7 @@ def test_service_build_context_uses_v2_when_opted_in(tmp_path):
         data_dir=tmp_path / ".memoryos",
         memoryos_recall_pipeline="v2",
     )
-    service = MemoryOSService(settings=settings)
+    service = SessionMemoryService(settings=settings)
     session = service.create_session("v2")
     service.ingest(session.id, MessageCreate(role=Role.USER, content="Carol moved to Berlin."))
 

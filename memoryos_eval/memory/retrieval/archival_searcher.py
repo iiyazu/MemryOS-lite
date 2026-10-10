@@ -8,12 +8,12 @@ from typing import Literal, Protocol, cast
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
-from memoryos_lite.retrieval.archival_vector import (
+from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalVectorDiagnostic,
     ArchivalVectorIndex,
 )
+from memoryos_eval.memory.v3_contracts import ArchivalPassage, SourceRef, SourceSpan
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.v3_contracts import ArchivalPassage, SourceRef, SourceSpan
 
 SearchMode = Literal["text", "vector", "hybrid"]
 

@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
-from memoryos_lite.schemas import Episode, Message, Role, Session
-from memoryos_lite.store_models import (
+from memoryos_eval.memory.schemas import Episode, Message, Role, Session
+from memoryos_eval.memory.store_models import (
     EpisodeRecord,
     MessageRecord,
     SessionRecord,

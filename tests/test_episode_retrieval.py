@@ -1,7 +1,7 @@
-from memoryos_lite.retrieval.episode_searcher import EpisodeSearcher, RecallMemorySearcher
-from memoryos_lite.retrieval.query_analyzer import QueryAnalyzer, QueryKind
-from memoryos_lite.schemas import Episode, Role
-from memoryos_lite.v3_contracts import RecallMemoryEntry
+from memoryos_eval.memory.retrieval.episode_searcher import EpisodeSearcher, RecallMemorySearcher
+from memoryos_eval.memory.retrieval.query_analyzer import QueryAnalyzer, QueryKind
+from memoryos_eval.memory.schemas import Episode, Role
+from memoryos_eval.memory.v3_contracts import RecallMemoryEntry
 
 
 class _TinyEmbedding:

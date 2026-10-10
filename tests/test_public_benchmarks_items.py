@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from memoryos_eval.memory.store import create_store
 from memoryos_eval.public_benchmarks import (
     PublicBenchmarkResult,
     run_public_benchmark,
 )
 from memoryos_lite.config import Settings
-from memoryos_lite.store import create_store
 
 
 @pytest.fixture(autouse=True)

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from memoryos_eval.ask import AskRequest
-from memoryos_lite.retrieval.supersede import SupersededQuote
+from memoryos_eval.memory.retrieval.supersede import SupersededQuote
 
 DEMO_QUESTION = "Which gateway runs in front of the public API today?"
 DEMO_REQUEST = AskRequest(question=DEMO_QUESTION)
