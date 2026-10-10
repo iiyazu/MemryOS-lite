@@ -3,15 +3,15 @@ from unittest.mock import patch
 import pytest
 
 from memoryos_eval.memory.retrieval.archival_vector import LocalArchivalVectorStore
-from memoryos_eval.memory.service import SessionMemoryService
-from memoryos_lite.config import Settings
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
-from memoryos_lite.schemas import (
+from memoryos_eval.memory.schemas import (
     MessageCreate,
     Role,
 )
-from memoryos_lite.store import create_store
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
+from memoryos_lite.config import Settings
+from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 
 
 def test_v3_build_context_trace_includes_component_accounting_and_final_context_trace(

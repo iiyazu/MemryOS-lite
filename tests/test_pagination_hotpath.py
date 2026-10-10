@@ -4,10 +4,10 @@ import time
 
 import pytest
 
+from memoryos_eval.memory.schemas import MessageCreate, Role
 from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
 from memoryos_lite.config import Settings
-from memoryos_lite.schemas import MessageCreate, Role
-from memoryos_lite.store import create_store
 
 
 @pytest.fixture()

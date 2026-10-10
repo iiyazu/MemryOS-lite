@@ -6,7 +6,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, model_validator
 
-from memoryos_lite.schemas import Episode, Message, Role, utc_now
+from memoryos_eval.memory.schemas import Episode, Message, Role, utc_now
 
 
 class SourceType(StrEnum):

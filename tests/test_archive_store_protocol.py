@@ -2,17 +2,17 @@ import pytest
 from sqlalchemy import text
 
 from memoryos_eval.memory.archive_rag import ArchiveRAGIngestRequest, MemoryOSArchiveRAG
+from memoryos_eval.memory.schemas import ArchiveDocumentIngestRequest
 from memoryos_eval.memory.service import SessionMemoryService
-from memoryos_lite.config import Settings
-from memoryos_lite.schemas import ArchiveDocumentIngestRequest
-from memoryos_lite.store import Base, MemoryStore, create_store
-from memoryos_lite.store_protocols import ArchiveIngestStore
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.store import Base, MemoryStore, create_store
+from memoryos_eval.memory.store_protocols import ArchiveIngestStore
+from memoryos_eval.memory.v3_contracts import (
     ArchivalChunk,
     ArchivalDocument,
     ArchivalPassage,
     SourceRef,
 )
+from memoryos_lite.config import Settings
 
 
 class FakeArchiveIngestStore:

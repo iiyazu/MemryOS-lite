@@ -8,7 +8,7 @@ from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalVectorIndex,
     LocalArchivalVectorStore,
 )
-from memoryos_lite.v3_contracts import ArchivalPassage, SourceRef, SourceSpan
+from memoryos_eval.memory.v3_contracts import ArchivalPassage, SourceRef, SourceSpan
 
 
 def _passage(

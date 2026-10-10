@@ -14,8 +14,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from memoryos_eval.memory.store_curator import CuratedMemoryRow
 from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS, normalize_text
-from memoryos_lite.store_curator import CuratedMemoryRow
 
 T = TypeVar("T")
 

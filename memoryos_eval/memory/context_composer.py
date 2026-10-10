@@ -6,11 +6,9 @@ from dataclasses import dataclass, field
 from memoryos_eval.memory.retrieval.archival_searcher import ArchivalPassageSearcher, SearchMode
 from memoryos_eval.memory.retrieval.archival_vector import ArchivalVectorDiagnostic
 from memoryos_eval.memory.retrieval.recall_pipeline import RecallPipeline
-from memoryos_lite.config import Settings
-from memoryos_lite.schemas import Message
-from memoryos_lite.store_protocols import ContextComposerStore
-from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.schemas import Message
+from memoryos_eval.memory.store_protocols import ContextComposerStore
+from memoryos_eval.memory.v3_contracts import (
     ArchiveEligibilityResult,
     ArchiveEligibilityScope,
     ContextComposerRequest,
@@ -22,6 +20,8 @@ from memoryos_lite.v3_contracts import (
     SourceType,
     message_to_log_entry,
 )
+from memoryos_lite.config import Settings
+from memoryos_lite.tokenizer import TokenEstimator
 
 
 @dataclass

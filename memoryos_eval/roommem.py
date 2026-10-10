@@ -71,15 +71,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from memoryos_eval.ask import AskRequest, AskResponse, ask_with, render_ask_item
 from memoryos_eval.memory.retrieval.supersede import SupersededQuote, superseded_quotes
-from memoryos_eval.memory.service import SessionMemoryService
-from memoryos_eval.memory.session_curator import Curator
-from memoryos_eval.memory.source_evidence import build_source_evidence
-from memoryos_lite.chat_models import build_chat_openai, message_text
-from memoryos_lite.config import Settings, get_settings
-from memoryos_lite.curator import CuratorLLM, build_curator_llm
-from memoryos_lite.curator.curate import normalize_topic_key
-from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
-from memoryos_lite.schemas import (
+from memoryos_eval.memory.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
     ArchiveIdentityArchive,
@@ -88,6 +80,14 @@ from memoryos_lite.schemas import (
     Role,
     deterministic_ids,
 )
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.session_curator import Curator
+from memoryos_eval.memory.source_evidence import build_source_evidence
+from memoryos_lite.chat_models import build_chat_openai, message_text
+from memoryos_lite.config import Settings, get_settings
+from memoryos_lite.curator import CuratorLLM, build_curator_llm
+from memoryos_lite.curator.curate import normalize_topic_key
+from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
 
 ROOM_KINDS: tuple[str, ...] = ("fact", "decision", "rule", "preference", "lesson")
 ROOM_SCOPES: tuple[str, ...] = ("room", "project", "user")

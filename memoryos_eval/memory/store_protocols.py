@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from memoryos_lite.schemas import Episode, Message
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.schemas import Episode, Message
+from memoryos_eval.memory.v3_contracts import (
     ArchivalChunk,
     ArchivalDocument,
     ArchivalPassage,

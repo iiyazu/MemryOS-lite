@@ -5,18 +5,18 @@ from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalVectorIndex,
     LocalArchivalVectorStore,
 )
+from memoryos_eval.memory.schemas import Message, MessageCreate, Role
 from memoryos_eval.memory.service import SessionMemoryService
-from memoryos_lite.config import Settings
-from memoryos_lite.schemas import Message, MessageCreate, Role
-from memoryos_lite.store import create_store
-from memoryos_lite.tokenizer import TokenEstimator
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.store import create_store
+from memoryos_eval.memory.v3_contracts import (
     ArchivalPassage,
     ArchiveAttachment,
     ContextComposerRequest,
     IdentityScope,
     SourceRef,
 )
+from memoryos_lite.config import Settings
+from memoryos_lite.tokenizer import TokenEstimator
 
 
 class WordTokenizer(TokenEstimator):

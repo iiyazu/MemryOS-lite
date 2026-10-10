@@ -1,7 +1,9 @@
 # Store Interface
 
-Storage is SQLite-first and DB-authoritative. Filesystem trace files are debug
-mirrors, not the primary state.
+This is the in-process session store of the evaluation harness
+(`memoryos_eval/memory/store*.py`); the HTTP service keeps no state and the
+wheel does not ship it. Storage is SQLite-first and DB-authoritative.
+Filesystem trace files are debug mirrors, not the primary state.
 
 ## Authority
 

@@ -32,17 +32,7 @@ from memoryos_eval.memory.retrieval.archival_vector import (
 )
 from memoryos_eval.memory.retrieval.recall_pipeline import RecallPipeline
 from memoryos_eval.memory.retrieval.supersede import SupersededQuote, superseded_quotes
-from memoryos_lite.config import Settings
-from memoryos_lite.curator import CuratorLLM
-from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.observability import (
-    current_observability_context,
-    log_event,
-    observability_context,
-    timed_core_operation,
-)
-from memoryos_lite.retrieval import EmbeddingClient
-from memoryos_lite.schemas import (
+from memoryos_eval.memory.schemas import (
     ArchiveAttachmentRequest,
     ArchiveAttachmentResponse,
     ArchiveDiagnosticResponse,
@@ -59,8 +49,8 @@ from memoryos_lite.schemas import (
     TraceEvent,
     new_id,
 )
-from memoryos_lite.store import MemoryStore, create_store
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.store import MemoryStore, create_store
+from memoryos_eval.memory.v3_contracts import (
     ArchiveAttachment,
     ContextComposerRequest,
     ContextLayerItem,
@@ -68,6 +58,16 @@ from memoryos_lite.v3_contracts import (
     IdentityScope,
     SourceRef,
 )
+from memoryos_lite.config import Settings
+from memoryos_lite.curator import CuratorLLM
+from memoryos_lite.engine import MemoryOSService
+from memoryos_lite.observability import (
+    current_observability_context,
+    log_event,
+    observability_context,
+    timed_core_operation,
+)
+from memoryos_lite.retrieval import EmbeddingClient
 
 __all__ = ["SessionMemoryService"]
 

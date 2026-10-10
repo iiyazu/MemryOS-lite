@@ -1,14 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
-from memoryos_eval.memory.service import SessionMemoryService
-from memoryos_lite.config import Settings
-from memoryos_lite.schemas import (
+from memoryos_eval.memory.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
     ArchiveSourceRefPayload,
 )
-from memoryos_lite.store import create_store
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
+from memoryos_lite.config import Settings
 
 
 def _ref() -> dict[str, str]:

@@ -18,11 +18,11 @@ from memoryos_eval.memory.retrieval.supersede import (
     match_superseded,
     superseded_quotes,
 )
+from memoryos_eval.memory.schemas import MessageCreate, Role
 from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_eval.memory.source_evidence import build_source_evidence
+from memoryos_eval.memory.store_curator import CuratedMemoryWrite
 from memoryos_lite.config import Settings
-from memoryos_lite.schemas import MessageCreate, Role
-from memoryos_lite.store_curator import CuratedMemoryWrite
 
 OLD = "Decision: Helios launches in Porto next spring."
 NEW = "Update: Helios now launches in Lisbon, Porto is off."

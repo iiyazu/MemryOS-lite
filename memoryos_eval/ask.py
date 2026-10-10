@@ -30,11 +30,11 @@ from typing import Any, TypedDict
 from pydantic import BaseModel, ConfigDict, Field
 
 from memoryos_eval.memory.retrieval.supersede import SupersededQuote, match_superseded
+from memoryos_eval.memory.schemas import SupersededQuotePayload
 from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_eval.memory.source_evidence import build_source_evidence
 from memoryos_lite.curator.llm import CuratorLLM, CuratorLLMError, CuratorSchemaError
 from memoryos_lite.retrieval.lexical import tokenize
-from memoryos_lite.schemas import SupersededQuotePayload
 
 ASK_SCHEMA = "memoryos_memory_ask/v1"
 MAX_ROUNDS = 2

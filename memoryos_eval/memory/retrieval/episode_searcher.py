@@ -4,15 +4,15 @@ from dataclasses import dataclass, field, replace
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
 from memoryos_eval.memory.retrieval.query_analyzer import QueryAnalysis, QueryKind
-from memoryos_lite.retrieval.base import EmbeddingClient, cosine_similarity
-from memoryos_lite.retrieval.lexical import content_tokens, tokenize
-from memoryos_lite.schemas import Episode, Role
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.schemas import Episode, Role
+from memoryos_eval.memory.v3_contracts import (
     DiagnosticEvent,
     RecallMemoryEntry,
     SourceRef,
     SourceType,
 )
+from memoryos_lite.retrieval.base import EmbeddingClient, cosine_similarity
+from memoryos_lite.retrieval.lexical import content_tokens, tokenize
 
 
 def _entry_source_refs(entry: Episode | RecallMemoryEntry) -> list[SourceRef]:

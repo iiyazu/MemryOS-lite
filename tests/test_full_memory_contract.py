@@ -4,17 +4,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from memoryos_eval.memory.schemas import ContextPackage, MessageCreate, Role
 from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_eval.memory.source_evidence import build_source_evidence, validate_source_evidence
-from memoryos_lite.config import Settings
-from memoryos_lite.schemas import ContextPackage, MessageCreate, Role
-from memoryos_lite.store import create_store
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.store import create_store
+from memoryos_eval.memory.v3_contracts import (
     ContextLayerItem,
     ContextPackageV3,
     SourceRef,
     SourceType,
 )
+from memoryos_lite.config import Settings
 
 
 def _service(tmp_path, **overrides) -> SessionMemoryService:

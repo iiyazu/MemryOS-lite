@@ -7,8 +7,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as DbSession
 from sqlalchemy.orm import sessionmaker
 
+from memoryos_eval.memory.store_models import Base
 from memoryos_lite.config import Settings, get_settings
-from memoryos_lite.store_models import Base
 
 
 class StoreRuntimeMixin:

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from memoryos_eval.memory.schemas import MessageCreate, Role
 from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_eval.memory.session_curator import Curator
+from memoryos_eval.memory.store import create_store
 from memoryos_lite.config import Settings
 from memoryos_lite.curator import CuratorLLMError, CuratorSchemaError
 from memoryos_lite.curator.grounding import repair_quote
 from memoryos_lite.curator.prompt import CURATE_ROOM_SYSTEM_PROMPT
-from memoryos_lite.schemas import MessageCreate, Role
-from memoryos_lite.store import create_store
 
 
 class FakeLLM:

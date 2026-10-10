@@ -7,9 +7,9 @@ from memoryos_eval.memory.archive_rag import (
     ArchiveTextSpan,
     MemoryOSArchiveRAG,
 )
+from memoryos_eval.memory.store import MemoryStore
+from memoryos_eval.memory.v3_contracts import SourceRef, SourceSpan
 from memoryos_lite.config import Settings
-from memoryos_lite.store import MemoryStore
-from memoryos_lite.v3_contracts import SourceRef, SourceSpan
 
 
 def _store(tmp_path):

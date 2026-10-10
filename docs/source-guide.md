@@ -21,17 +21,9 @@ SessionMemoryService (memoryos_eval/memory/service.py, in process only)
 | Path | Responsibility |
 |---|---|
 | `config.py` | Runtime settings, feature flags, LLM configuration. |
-| `schemas.py` | Pydantic models for messages, episodes, traces, context and archive requests. |
-| `store.py` | Thin public `MemoryStore` composition root and stable imports. |
-| `store_models.py` / `store_runtime.py` | SQLite schema, engine lifecycle, migrations, and transactions. |
-| `store_sessions.py` | Session, message, episode, and recall-watermark persistence. |
-| `store_archive.py` | Core/archive documents, passages, attachments, and governed-memory persistence. |
-| `store_legacy.py` | Traces, their JSONL debug mirror, and store reset. |
-| `store_protocols.py` | Consumer-specific structural persistence contracts. |
 | `engine.py` | `MemoryOSService`, the stateless service behind `/curate`, `/recall`, `/similar`; it opens no database. |
 | `retrieval/` | `/recall` primitives: the `EmbeddingClient` protocol, cosine, the bilingual tokenizer and stopword filter, embedding providers. |
 | `recall.py` | Stateless `/recall` (deterministic BM25 + dense RRF ranking of caller-supplied items within a token budget) and `/similar` (near-duplicate pairs by dense cosine). |
-| `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
 | `curator/` | Stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`). |
 | `cli.py` | Typer CLI entrypoint (`api`, `demo`). |
 | `api/app.py` | FastAPI REST API: the stateless `/health`, `/curate`, `/recall`, `/similar`. Sessions, ingest, context building, and archives are in-process only (evaluation harness). |
@@ -54,6 +46,15 @@ historical, no longer maintained) and `cli.py` (`uv run python -m memoryos_eval 
 | `archive_rag.py` | Archive document ingest adapters (see `docs/archive-rag-boundary.md`). |
 | `session_curator.py` | The session curator RoomMem runs: room-profile `/curate` windows over a stored session. |
 | `budget.py`, `utils.py` | Dynamic context budget; generic-acknowledgement filter for baselines. |
+| `schemas.py` | Pydantic models for messages, episodes, traces, context packages and archive requests. |
+| `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
+| `store.py` | Thin `MemoryStore` composition root. |
+| `store_models.py` / `store_runtime.py` | SQLite schema, engine lifecycle, migrations, and transactions. |
+| `store_sessions.py` | Session, message, episode, and recall-watermark persistence. |
+| `store_archive.py` | Archive documents, passages, attachments. |
+| `store_curator.py` | Curated memories and the session curator watermark. |
+| `store_legacy.py` | Traces, their JSONL debug mirror, and store reset. |
+| `store_protocols.py` | Consumer-specific structural persistence contracts. |
 
 ## Retrieval Paths
 
@@ -85,7 +86,7 @@ benchmark session, and neighboring turns for retrieval.
 
 ## Storage Model
 
-SQLite is the authoritative store. Trace JSONL files are debug mirrors for
+The session store (`memoryos_eval/memory/`, in process only) is SQLite-authoritative. Trace JSONL files are debug mirrors for
 human inspection.
 
 Core tables:

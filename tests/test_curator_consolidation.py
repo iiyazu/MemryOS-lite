@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from memoryos_eval.memory.schemas import MessageCreate, Role
 from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_eval.memory.session_curator import Curator
+from memoryos_eval.memory.store import create_store
 from memoryos_lite.config import Settings
 from memoryos_lite.curator.curate import normalize_topic_key
 from memoryos_lite.curator.prompt import CURATE_ROOM_SYSTEM_PROMPT
-from memoryos_lite.schemas import MessageCreate, Role
-from memoryos_lite.store import create_store
 
 
 class ScriptedLLM:

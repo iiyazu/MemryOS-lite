@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING, Any, overload
 from sqlalchemy import and_, false, func, or_, select, true
 from sqlalchemy.orm import Session as DbSession
 
-from memoryos_lite.store_models import (
+from memoryos_eval.memory.store_models import (
     ArchivalChunkRecord,
     ArchivalDocumentRecord,
     ArchivalPassageRecord,
     ArchiveAttachmentRecord,
 )
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.v3_contracts import (
     ArchivalChunk,
     ArchivalDocument,
     ArchivalPassage,

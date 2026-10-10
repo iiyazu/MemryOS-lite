@@ -26,7 +26,12 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from memoryos_eval.memory.schemas import (
+    MessageCreate,
+    Role,
+)
 from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.store import create_store
 from memoryos_lite.config import Settings
 from memoryos_lite.observability import (
     _REQUEST_ID,
@@ -38,11 +43,6 @@ from memoryos_lite.observability import (
     observability_context,
     timed_core_operation,
 )
-from memoryos_lite.schemas import (
-    MessageCreate,
-    Role,
-)
-from memoryos_lite.store import create_store
 
 # ---------------------------------------------------------------------------
 # Helpers

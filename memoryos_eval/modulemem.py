@@ -63,6 +63,15 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from memoryos_eval.memory.schemas import (
+    ArchiveAttachmentRequest,
+    ArchiveDocumentIngestRequest,
+    ArchiveIdentityArchive,
+    ArchiveSourceRefPayload,
+    MessageCreate,
+    Role,
+    deterministic_ids,
+)
 from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_eval.memory.source_evidence import build_source_evidence
 from memoryos_eval.roommem import (
@@ -99,15 +108,6 @@ from memoryos_lite.curator.curate import (
     CurateRequest,
 )
 from memoryos_lite.curator.graph import run_curate
-from memoryos_lite.schemas import (
-    ArchiveAttachmentRequest,
-    ArchiveDocumentIngestRequest,
-    ArchiveIdentityArchive,
-    ArchiveSourceRefPayload,
-    MessageCreate,
-    Role,
-    deterministic_ids,
-)
 
 MODULEMEM_ARMS: tuple[str, ...] = (
     "pack",

@@ -7,6 +7,7 @@ import math
 import pytest
 from pydantic import ValidationError
 
+from memoryos_eval.memory.schemas import ContextPackage
 from memoryos_eval.memory.source_evidence import (
     SOURCE_EVIDENCE_SCHEMA,
     SourceEvidenceV2Item,
@@ -14,8 +15,7 @@ from memoryos_eval.memory.source_evidence import (
     build_source_evidence,
     validate_source_evidence,
 )
-from memoryos_lite.schemas import ContextPackage
-from memoryos_lite.v3_contracts import (
+from memoryos_eval.memory.v3_contracts import (
     ContextLayerItem,
     ContextPackageV3,
     SourceRef,
