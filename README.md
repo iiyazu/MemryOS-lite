@@ -191,6 +191,7 @@ HTTP 接口：
 | `MEMORYOS_CURATOR_IDLE_FLUSH_S` | `20.0` | 不足一窗时的空闲刷新等待秒数 |
 | `MEMORYOS_CURATOR_MAX_ACTIVE_IN_PROMPT` | `40` | 提示词中携带的活跃记忆上限 |
 | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `OPENCODE_API_KEY` | unset | 可选真实模型提供方；`MEMORYOS_LLM_PROVIDER=opencode` 走 OpenCode Go（默认 `muse-spark-1.3-contributor`，Responses API），目前只用于 curator 与 RoomMem |
+| `MEMORYOS_CURATE_TIMEOUT_S` | `180.0` | curator 每次 LLM 尝试的超时；超时不重试，断连、429、5xx 最多再试 2 次 |
 
 完整设置以 `src/memoryos_lite/config.py` 为准。
 

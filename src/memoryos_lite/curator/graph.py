@@ -26,12 +26,14 @@ from langgraph.graph import END, START, StateGraph
 from memoryos_lite.curator.curate import (
     CheckResult,
     CurateActivity,
+    CurateAttempt,
     CurateRequest,
     CurateResponse,
+    CurateUsage,
     check_reply,
     consolidate,
 )
-from memoryos_lite.curator.llm import CuratorLLM, CuratorSchemaError
+from memoryos_lite.curator.llm import CuratorLLM, CuratorSchemaError, record_attempts
 from memoryos_lite.curator.prompt import (
     CURATE_COLLAB_SYSTEM_PROMPT,
     CURATE_ROOM_SYSTEM_PROMPT,
@@ -186,10 +188,19 @@ def build_curate_graph(llm: CuratorLLM) -> Any:
 
 
 def run_curate(request: CurateRequest, llm: CuratorLLM) -> CurateResponse:
-    """Run one curate request through the graph."""
+    """Run one curate request through the graph.
 
-    state = build_curate_graph(llm).invoke({"request": request})
+    A collab response also lists every provider attempt and their summed
+    usage (a fake LLM makes none).
+    """
+
+    with record_attempts() as attempts:
+        state = build_curate_graph(llm).invoke({"request": request})
     response: CurateResponse = state["response"]
+    if request.profile == "collab":
+        rows = [CurateAttempt(outcome=a.outcome, secs=a.secs, **(a.usage or {})) for a in attempts]
+        response.diagnostics.attempts = rows
+        response.diagnostics.usage = CurateUsage.total(rows)
     return response
 
 
