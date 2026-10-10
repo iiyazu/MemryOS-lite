@@ -38,7 +38,8 @@ MemoryOSService
 | `api/app.py` | FastAPI REST API: the stateless `/health`, `/curate`, `/recall`, `/similar`. Sessions, ingest, context building, and archives are in-process only (evaluation harness). |
 
 The evaluation harnesses live in the repo-root `memoryos_eval/` package, which the
-wheel does not ship: `roommem.py` (RoomMem), `modulemem.py` (ModuleMem), `ask.py`
+wheel does not ship: `roommem.py` (RoomMem), `modulemem.py` (ModuleMem), `collab.py`
+(`eval collab`: quality of the collab curate profile), `ask.py`
 and `ask_demo.py` (the agentic `ask` graph and its offline demo), `public_benchmarks.py`
 with `baselines.py`, `llm_judge.py` and `longmemeval_manifest.py` (LongMemEval/LoCoMo;
 historical, no longer maintained) and `cli.py` (`uv run python -m memoryos_eval --help`).

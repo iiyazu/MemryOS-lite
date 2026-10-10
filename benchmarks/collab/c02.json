@@ -1,0 +1,22 @@
+{
+  "scenario_id": "c02",
+  "title": "An answer resolves one of two open questions",
+  "active": [
+    {"id": "Q1", "kind": "question", "topic_key": "payment.refund_endpoint", "statement": "退款是否走单独的接口？由 lead 回答。", "version": 4},
+    {"id": "Q2", "kind": "question", "topic_key": "api.rate_limit_scope", "statement": "限流阈值按用户算还是按 IP 算？由 lead 回答。", "version": 6},
+    {"id": "D1", "kind": "decision", "topic_key": "payment.amount_repr", "statement": "支付 API 的金额用两位小数的 Decimal 字符串传递。", "version": 8}
+  ],
+  "window": [
+    {"id": "m1", "seq": 20, "type": "message", "kind": "message", "speaker": "lead", "text": "退款不单独开接口，就走 /payments，用 type=refund 区分。"},
+    {"id": "m2", "seq": 21, "type": "message", "kind": "message", "speaker": "impl", "text": "好的，那我在 /payments 里加 type 字段的校验。"},
+    {"id": "m3", "seq": 22, "type": "message", "kind": "message", "speaker": "lead", "text": "限流的事下周和运维对完再定，先别动。"}
+  ],
+  "expect": {
+    "proposals": [
+      {"sources": ["m1"], "qualifiers": [["/payments"], ["type=refund", "refund"]]}
+    ],
+    "resolves": ["Q1"],
+    "not_resolved": ["Q2"],
+    "chatter": ["m2"]
+  }
+}
