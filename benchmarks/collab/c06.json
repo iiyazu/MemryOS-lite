@@ -1,0 +1,14 @@
+{
+  "scenario_id": "c06",
+  "title": "A review objection becomes a lesson",
+  "active": [
+    {"id": "D1", "kind": "decision", "topic_key": "auth.token_ttl", "statement": "access token 有效期 15 分钟，refresh token 30 天。", "version": 3}
+  ],
+  "window": [
+    {"id": "m1", "seq": 60, "type": "review_objection", "speaker": "review", "text": "复核意见：refresh token 刷新时没有加锁，两个并发请求会各自刷新一次，导致先拿到的那个 token 立刻失效。"},
+    {"id": "m2", "seq": 61, "type": "message", "kind": "message", "speaker": "impl", "text": "确实，我给刷新路径加一把按用户的锁，并补一个并发测试。"}
+  ],
+  "expect": {
+    "objections": ["m1"]
+  }
+}

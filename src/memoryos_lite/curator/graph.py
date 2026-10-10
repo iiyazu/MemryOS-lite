@@ -51,7 +51,7 @@ SYSTEM_PROMPTS = {
     "collab": CURATE_COLLAB_SYSTEM_PROMPT,
 }
 #: What a repair reply must repeat in full, per profile.
-REPAIR_PARTS = {"collab": "memories, assignments and conflicts"}
+REPAIR_PARTS = {"collab": "memories, lessons, assignments and conflicts"}
 #: The violation recorded when a reply is not a JSON object (still present after
 #: the last repair means the window produced nothing usable).
 REPLY_NOT_JSON = "the reply was not a JSON object"

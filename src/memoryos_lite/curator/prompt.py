@@ -149,6 +149,10 @@ one you propose), report a conflict and do not pick a side. Use active ids; for 
 propose in this reply, use its topic_key.
 - Do not store who does what (the host tracks assignments), plans, status updates, handoff \
 boilerplate, chit-chat, or values no longer in effect.
+- Each review_objection or gate_failure listed under "Failures to account for" gets exactly one \
+assignment: {"activity_id":"...","lesson":"<topic_key>","quote":"<exact substring of that \
+activity>"} with the lesson defined in "lessons" (the mistake and what to do instead), or \
+{"activity_id":"...","dismiss":"<short reason>"}. Do not repeat that lesson in "memories".
 - Topic keys name the subject, not the value. Copy every quote verbatim from the message it \
 cites, 1 to 3 sources per entry. Write statements in the language of the source.
 
@@ -156,7 +160,8 @@ Reply with one JSON object:
 {"memories":[{"kind":"decision|convention|assumption|question|lesson","topic_key":"dotted.key",\
 "statement":"...","sources":[{"activity_id":"...","quote":"..."}],"resolves":["..."]}],\
 "conflicts":[{"a_id":"...","b_id":"...","reason":"...","sources":[{"activity_id":"...",\
-"quote":"..."}]}]}"""
+"quote":"..."}]}],"assignments":[{"activity_id":"...","lesson":"...","quote":"..."}],\
+"lessons":[{"topic_key":"...","statement":"..."}]}"""
 
 #: Previous replies are echoed into a repair prompt up to this many characters.
 REPAIR_REPLY_CHARS = 6_000
