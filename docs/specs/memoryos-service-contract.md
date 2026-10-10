@@ -270,7 +270,10 @@ entry with that topic key; duplicate pairs and self-pairs are dropped. Invalid
 conflicts are violations and go through the repair loop like any other rule.
 
 The prompt asks for short statements that keep every qualifier (scope,
-conditions, exceptions, units), lists the active entries with their ids, and
+conditions, exceptions, units), lists the active entries with their ids, asks
+for every `review_request` and `handoff` to be checked against each active
+convention and decision (a breach not replaced in the same window is proposed
+as an entry quoting the message, with a conflict against the active id), and
 spells out how a review objection or gate failure is accounted for (an
 assignment to a lesson defined in `lessons`, or a dismissal). The repair prompt
 asks for all "memories, lessons, assignments and conflicts". Quality and cost
