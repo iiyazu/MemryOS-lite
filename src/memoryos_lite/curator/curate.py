@@ -26,6 +26,7 @@ This module is pure: validation (:func:`check_reply`) and consolidation
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, Literal
@@ -55,13 +56,24 @@ ACTIVITY_TYPES: tuple[str, ...] = (
     "gate_failure",
     "contract_revision",
 )
-MemoryKind = Literal["lesson", "decision", "fact", "rule", "preference"]
-Profile = Literal["module", "room"]
+#: The xmuse message kind of a ``message`` activity (collab profile).
+ActivityKind = Literal["message", "handoff", "review_request", "decision", "assumption", "question"]
+MemoryKind = Literal[
+    "lesson", "decision", "fact", "rule", "preference", "convention", "assumption", "question"
+]
+Profile = Literal["module", "room", "collab"]
 #: Kinds a profile accepts in "memories" (module lessons come only from assignments).
 PROFILE_MEMORY_KINDS: dict[str, tuple[str, ...]] = {
     "module": ("decision", "fact"),
     "room": ("fact", "decision", "rule", "preference", "lesson"),
+    "collab": ("decision", "convention", "assumption", "question", "lesson"),
 }
+MAX_CONFLICT_REASON_CHARS = 200
+
+
+def _unset(value: object) -> bool:
+    """Collab-only response fields are omitted when unset: module and room output is unchanged."""
+    return value is None
 
 
 class CurateActivity(BaseModel):
@@ -72,6 +84,7 @@ class CurateActivity(BaseModel):
     id: str = Field(min_length=1, max_length=128)
     seq: int = Field(ge=0)
     type: ActivityType
+    kind: ActivityKind | None = None
     speaker: str = Field(default="", max_length=128)
     text: str = Field(min_length=1, max_length=200_000)
 
@@ -98,9 +111,13 @@ class CurateMemory(BaseModel):
 
 
 class CurateMemoryVersion(CurateMemory):
-    """A new memory version; ``supersedes_id`` names the active memory it replaces."""
+    """A new memory version; ``supersedes_id`` names the active memory it replaces.
+
+    ``resolves_ids`` (collab only) names the active questions this version answers.
+    """
 
     supersedes_id: str | None = None
+    resolves_ids: list[str] | None = Field(default=None, exclude_if=_unset)
 
 
 class CurateRequest(BaseModel):
@@ -136,6 +153,15 @@ class CurateAssignment(BaseModel):
     dismiss: str | None = None
 
 
+class CurateConflict(BaseModel):
+    """Two entries that seem to contradict (collab); reported, never resolved."""
+
+    a_id: str
+    b_id: str
+    reason: str
+    sources: list[CurateSource] = Field(default_factory=list)
+
+
 class CurateDiagnostics(BaseModel):
     llm_calls: int = 0
     repairs: int = 0
@@ -152,6 +178,7 @@ class CurateResponse(BaseModel):
     memories: list[CurateMemoryVersion] = Field(default_factory=list)
     assignments: list[CurateAssignment] = Field(default_factory=list)
     unaccounted: list[str] = Field(default_factory=list)
+    conflicts: list[CurateConflict] | None = Field(default=None, exclude_if=_unset)
     diagnostics: CurateDiagnostics = Field(default_factory=CurateDiagnostics)
 
 
@@ -167,6 +194,17 @@ class _MemoryProposal:
     statement: str
     sources: list[CurateSource]
     version: int
+    resolves: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ConflictProposal:
+    """``a``/``b`` are ``("active", id)`` or ``("new", topic_key)``."""
+
+    a: tuple[str, str]
+    b: tuple[str, str]
+    reason: str
+    sources: list[CurateSource]
 
 
 @dataclass
@@ -177,6 +215,7 @@ class CheckResult:
     assignments: list[CurateAssignment] = field(default_factory=list)
     lessons: dict[str, str] = field(default_factory=dict)
     memories: list[_MemoryProposal] = field(default_factory=list)
+    conflicts: list[_ConflictProposal] = field(default_factory=list)
     rejected_memories: int = 0
     unaccounted: list[str] = field(default_factory=list)
 
@@ -304,6 +343,7 @@ def _parse_memories(raw: object, request: CurateRequest, result: CheckResult) ->
         return
     activities = {activity.id: activity for activity in [*request.context, *request.window]}
     kinds = PROFILE_MEMORY_KINDS[request.profile]
+    questions = {memory.id for memory in request.active if memory.kind == "question"}
     for item in raw:
         if not isinstance(item, dict):
             result.violations.append('every entry of "memories" must be an object')
@@ -333,26 +373,21 @@ def _parse_memories(raw: object, request: CurateRequest, result: CheckResult) ->
             )
             result.rejected_memories += 1
             continue
-        sources: list[CurateSource] = []
-        bad_source: str | None = None
-        for source in sources_raw:
-            activity_id = source.get("activity_id") if isinstance(source, dict) else None
-            quote = source.get("quote") if isinstance(source, dict) else None
-            activity = activities.get(activity_id) if isinstance(activity_id, str) else None
-            grounded = (
-                repair_quote(activity.text, quote)
-                if activity is not None and isinstance(quote, str)
-                else None
-            )
-            if activity is None or grounded is None:
-                bad_source = str(activity_id)
-                break
-            if all(s.activity_id != activity.id or s.quote != grounded for s in sources):
-                sources.append(CurateSource(activity_id=activity.id, quote=grounded))
+        sources, bad_source = _ground_sources(sources_raw, activities)
         if bad_source is not None:
             result.violations.append(
                 f"memory {key}: the quote from {bad_source} must be an exact substring of an "
                 "activity in this request"
+            )
+            result.rejected_memories += 1
+            continue
+        resolves = item.get("resolves") if request.profile == "collab" else None
+        if resolves is not None and (
+            not isinstance(resolves, list)
+            or not all(isinstance(r, str) and r in questions for r in resolves)
+        ):
+            result.violations.append(
+                f'memory {key}: "resolves" must list ids of active questions only'
             )
             result.rejected_memories += 1
             continue
@@ -364,8 +399,83 @@ def _parse_memories(raw: object, request: CurateRequest, result: CheckResult) ->
                 statement=statement,
                 sources=sources,
                 version=version,
+                resolves=tuple(dict.fromkeys(resolves or [])),
             )
         )
+
+
+def _ground_sources(
+    raw: list[Any], activities: dict[str, CurateActivity]
+) -> tuple[list[CurateSource], str | None]:
+    """Verbatim-checked sources, or the id of the first source that fails the check."""
+
+    sources: list[CurateSource] = []
+    for source in raw:
+        activity_id = source.get("activity_id") if isinstance(source, dict) else None
+        quote = source.get("quote") if isinstance(source, dict) else None
+        activity = activities.get(activity_id) if isinstance(activity_id, str) else None
+        grounded = (
+            repair_quote(activity.text, quote)
+            if activity is not None and isinstance(quote, str)
+            else None
+        )
+        if activity is None or grounded is None:
+            return sources, str(activity_id)
+        if all(s.activity_id != activity.id or s.quote != grounded for s in sources):
+            sources.append(CurateSource(activity_id=activity.id, quote=grounded))
+    return sources, None
+
+
+def _parse_conflicts(raw: object, request: CurateRequest, result: CheckResult) -> None:
+    """Collab: suspected contradictions between active entries or with a new proposal."""
+
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        result.violations.append('"conflicts" must be a list')
+        return
+    active_ids = {memory.id for memory in request.active}
+    proposed = {memory.topic_key for memory in result.memories}
+    activities = {activity.id: activity for activity in [*request.context, *request.window]}
+    seen: set[frozenset[tuple[str, str]]] = set()
+    for item in raw:
+        refs: list[tuple[str, str]] = []
+        for side in ("a_id", "b_id"):
+            value = item.get(side) if isinstance(item, dict) else None
+            if not isinstance(value, str):
+                continue
+            key = normalize_topic_key(value)
+            if value in active_ids:
+                refs.append(("active", value))
+            elif key is not None and key in proposed:
+                refs.append(("new", key))
+        reason = item.get("reason") if isinstance(item, dict) else None
+        reason = reason.strip() if isinstance(reason, str) else ""
+        sources_raw = item.get("sources", []) if isinstance(item, dict) else None
+        if (
+            len(refs) != 2
+            or refs[0] == refs[1]
+            or refs[0][0] == refs[1][0] == "new"
+            or not 1 <= len(reason) <= MAX_CONFLICT_REASON_CHARS
+            or not isinstance(sources_raw, list)
+            or len(sources_raw) > MAX_SOURCES
+        ):
+            result.violations.append(
+                "every conflict needs a_id and b_id (active ids, or the topic_key of one "
+                f"memory proposed in this reply), a reason of 1-{MAX_CONFLICT_REASON_CHARS} "
+                f"characters and 0-{MAX_SOURCES} sources"
+            )
+            continue
+        sources, bad_source = _ground_sources(sources_raw, activities)
+        if bad_source is not None:
+            result.violations.append(
+                f"conflict {refs[0][1]}/{refs[1][1]}: the quote from {bad_source} must be an "
+                "exact substring of an activity in this request"
+            )
+            continue
+        if frozenset(refs) not in seen:
+            seen.add(frozenset(refs))
+            result.conflicts.append(_ConflictProposal(refs[0], refs[1], reason, sources))
 
 
 def check_reply(
@@ -385,6 +495,8 @@ def check_reply(
     _parse_assignments(reply.get("assignments"), request, result)
     _drop_lessons_without_failures(request, result)
     _parse_memories(reply.get("memories"), request, result)
+    if request.profile == "collab":
+        _parse_conflicts(reply.get("conflicts"), request, result)
     return result
 
 
@@ -393,22 +505,21 @@ def check_reply(
 # ---------------------------------------------------------------------------
 
 
-def memory_id(scope_id: str, memory: CurateMemory) -> str:
+def memory_id(scope_id: str, memory: CurateMemory, resolves: Sequence[str] = ()) -> str:
     """Deterministic id of one memory version (same content, same id)."""
 
-    canonical = json.dumps(
-        [
-            scope_id,
-            memory.kind,
-            memory.topic_key,
-            memory.version,
-            memory.occurrences,
-            memory.statement,
-            [[s.activity_id, s.quote] for s in memory.sources],
-        ],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    fields: list[Any] = [
+        scope_id,
+        memory.kind,
+        memory.topic_key,
+        memory.version,
+        memory.occurrences,
+        memory.statement,
+        [[s.activity_id, s.quote] for s in memory.sources],
+    ]
+    if resolves:
+        fields.append(list(resolves))
+    canonical = json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
     return "mem_" + sha256(canonical.encode("utf-8")).hexdigest()[:32]
 
 
@@ -417,13 +528,40 @@ def _newest(memories: list[CurateMemory]) -> CurateMemory | None:
 
 
 def _versioned(
-    request: CurateRequest, prior: CurateMemory | None, **fields: Any
+    request: CurateRequest,
+    prior: CurateMemory | None,
+    resolves: Sequence[str] = (),
+    **fields: Any,
 ) -> CurateMemoryVersion:
     draft = CurateMemory(id="pending", **fields)
     return CurateMemoryVersion(
-        **{**draft.model_dump(), "id": memory_id(request.scope_id, draft)},
+        **{**draft.model_dump(), "id": memory_id(request.scope_id, draft, resolves)},
         supersedes_id=prior.id if prior is not None else None,
+        resolves_ids=list(resolves) if request.profile == "collab" else None,
     )
+
+
+def _conflicts(
+    request: CurateRequest, check: CheckResult, out: list[CurateMemoryVersion]
+) -> list[CurateConflict]:
+    """Map conflict refs to ids; a new proposal that became a noop maps to its active entry."""
+
+    new_ids = {m.topic_key: m.id for m in sorted(request.active, key=lambda m: (m.version, m.id))}
+    new_ids.update((memory.topic_key, memory.id) for memory in out)
+    conflicts: list[CurateConflict] = []
+    seen: set[frozenset[str]] = set()
+    for proposal in check.conflicts:
+        ids = [
+            ref if kind == "active" else new_ids.get(ref) for kind, ref in (proposal.a, proposal.b)
+        ]
+        a_id, b_id = ids
+        if a_id is None or b_id is None or a_id == b_id or frozenset(ids) in seen:
+            continue
+        seen.add(frozenset((a_id, b_id)))
+        conflicts.append(
+            CurateConflict(a_id=a_id, b_id=b_id, reason=proposal.reason, sources=proposal.sources)
+        )
+    return conflicts
 
 
 def consolidate(request: CurateRequest, check: CheckResult) -> CurateResponse:
@@ -500,11 +638,18 @@ def consolidate(request: CurateRequest, check: CheckResult) -> CurateResponse:
             diagnostics.noop_memories += 1
         if current is None or proposal.version >= current.version:
             winners[proposal.topic_key] = proposal
+    # Collab: active entries include ones agents declared themselves, under any key.
+    declared = (
+        {normalize_text(memory.statement) for memory in request.active}
+        if request.profile == "collab"
+        else set()
+    )
     for key, proposal in winners.items():
         prior = _newest(active_other.get(key, []))
-        if prior is not None and normalize_text(prior.statement) == normalize_text(
-            proposal.statement
-        ):
+        if (
+            prior is not None
+            and normalize_text(prior.statement) == normalize_text(proposal.statement)
+        ) or normalize_text(proposal.statement) in declared:
             diagnostics.noop_memories += 1
             continue
         if prior is not None and proposal.version < prior.version:
@@ -514,6 +659,7 @@ def consolidate(request: CurateRequest, check: CheckResult) -> CurateResponse:
             _versioned(
                 request,
                 prior,
+                proposal.resolves,
                 kind=proposal.kind,
                 topic_key=key,
                 statement=proposal.statement,
@@ -528,6 +674,7 @@ def consolidate(request: CurateRequest, check: CheckResult) -> CurateResponse:
         memories=out,
         assignments=check.assignments,
         unaccounted=check.unaccounted,
+        conflicts=_conflicts(request, check, out) if request.profile == "collab" else None,
         diagnostics=diagnostics,
     )
 
@@ -538,6 +685,7 @@ __all__ = [
     "CheckResult",
     "CurateActivity",
     "CurateAssignment",
+    "CurateConflict",
     "CurateDiagnostics",
     "CurateMemory",
     "CurateMemoryVersion",

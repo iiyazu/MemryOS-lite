@@ -25,6 +25,7 @@ from langgraph.graph import END, START, StateGraph
 
 from memoryos_lite.curator.curate import (
     CheckResult,
+    CurateActivity,
     CurateRequest,
     CurateResponse,
     check_reply,
@@ -32,15 +33,23 @@ from memoryos_lite.curator.curate import (
 )
 from memoryos_lite.curator.llm import CuratorLLM, CuratorSchemaError
 from memoryos_lite.curator.prompt import (
+    CURATE_COLLAB_SYSTEM_PROMPT,
     CURATE_ROOM_SYSTEM_PROMPT,
     CURATE_SYSTEM_PROMPT,
+    build_collab_curate_prompt,
     build_curate_prompt,
     build_repair_prompt,
     build_room_curate_prompt,
     render_activity,
 )
 
-SYSTEM_PROMPTS = {"module": CURATE_SYSTEM_PROMPT, "room": CURATE_ROOM_SYSTEM_PROMPT}
+SYSTEM_PROMPTS = {
+    "module": CURATE_SYSTEM_PROMPT,
+    "room": CURATE_ROOM_SYSTEM_PROMPT,
+    "collab": CURATE_COLLAB_SYSTEM_PROMPT,
+}
+#: What a repair reply must repeat in full, per profile.
+REPAIR_PARTS = {"collab": "memories, assignments and conflicts"}
 #: The violation recorded when a reply is not a JSON object (still present after
 #: the last repair means the window produced nothing usable).
 REPLY_NOT_JSON = "the reply was not a JSON object"
@@ -57,10 +66,30 @@ class CurateState(TypedDict, total=False):
     response: CurateResponse
 
 
+def _label(request: CurateRequest, activity: CurateActivity) -> str:
+    """A collab message shows its xmuse kind (handoff, decision, ...) instead of "message"."""
+    if request.profile == "collab" and activity.type == "message" and activity.kind:
+        return activity.kind
+    return activity.type
+
+
 def render_request(request: CurateRequest) -> str:
-    context = [render_activity(a.id, a.speaker, a.type, a.text) for a in request.context]
-    window = [render_activity(a.id, a.speaker, a.type, a.text) for a in request.window]
+    context = [
+        render_activity(a.id, a.speaker, _label(request, a), a.text) for a in request.context
+    ]
+    window = [render_activity(a.id, a.speaker, _label(request, a), a.text) for a in request.window]
     failure_ids = [activity.id for activity in request.failures]
+    if request.profile == "collab":
+        return build_collab_curate_prompt(
+            scope_id=request.scope_id,
+            entries=[
+                (memory.id, memory.kind, memory.topic_key, memory.statement)
+                for memory in sorted(request.active, key=lambda m: (m.version, m.id))
+            ],
+            context=context,
+            window=window,
+            failure_ids=failure_ids,
+        )
     if request.profile == "room":
         return build_room_curate_prompt(
             memories=[
@@ -125,7 +154,12 @@ def build_curate_graph(llm: CuratorLLM) -> Any:
     def repair(state: CurateState) -> CurateState:
         previous = state.get("reply")
         previous_text = json.dumps(previous, ensure_ascii=False) if previous is not None else ""
-        user = build_repair_prompt(state["prompt"], previous_text, state["check"].violations)
+        user = build_repair_prompt(
+            state["prompt"],
+            previous_text,
+            state["check"].violations,
+            REPAIR_PARTS.get(state["request"].profile),
+        )
         reply, error = _ask(llm, SYSTEM_PROMPTS[state["request"].profile], user)
         return {"reply": reply, "reply_error": error, "llm_calls": state["llm_calls"] + 1}
 

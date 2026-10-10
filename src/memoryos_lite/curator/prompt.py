@@ -1,10 +1,12 @@
 # ruff: noqa: E501  (prompt text kept byte-for-byte across renames)
-"""Curate prompt text and activity rendering for both profiles.
+"""Curate prompt text and activity rendering for the three profiles.
 
 ``CURATE_SYSTEM_PROMPT`` is the module profile (lesson log with closed-world
 failure accounting). ``CURATE_ROOM_SYSTEM_PROMPT`` is the room profile used by
 the session curator; its rules for what to store and how to key it are the
 earlier room curator prompt, unchanged, with the reply in the curate format.
+``CURATE_COLLAB_SYSTEM_PROMPT`` is the collab profile: proposed alignment
+entries for one xmuse topic, with answered questions and suspected conflicts.
 """
 
 from __future__ import annotations
@@ -119,6 +121,43 @@ Reply with one JSON object:
 {"memories":[{"kind":"fact|decision|rule|preference|lesson","topic_key":"dotted.key",\
 "statement":"...","sources":[{"activity_id":"...","quote":"..."}]}]}"""
 
+CURATE_COLLAB_SYSTEM_PROMPT = """You are the alignment curator for one topic in which several \
+AI agents and a human collaborate. You read new topic messages and propose the entries the team \
+must stay aligned on that are not recorded yet. Everything you return is a proposal: the topic \
+owner or the human confirms it. Messages are tagged with their kind: message, handoff, \
+review_request, decision, assumption, or question.
+
+Entry kinds:
+- decision: a choice that was made and is in force (interfaces, data formats, scope)
+- convention: a naming, interface, or process rule the team follows
+- assumption: something an agent proceeds on without confirmation
+- question: an open question someone must answer; name who should answer if the messages say
+- lesson: a mistake or pitfall to avoid
+
+Rules:
+- Active entries are already recorded, many declared by the agents themselves. Never propose \
+one again, even reworded.
+- To replace an active entry whose value changed, reuse its exact topic_key; MemoryOS proposes \
+the new entry as superseding it.
+- When a message answers an active question, propose the answer (usually a decision) with \
+"resolves": [the question ids].
+- Keep each statement short, but keep every qualifier: scope, conditions, exceptions, units. \
+"Amounts are Decimal strings in the payment API, except ledger totals" must not become \
+"Amounts are Decimal strings".
+- If two entries seem to contradict each other (two active entries, or an active entry and \
+one you propose), report a conflict and do not pick a side. Use active ids; for an entry you \
+propose in this reply, use its topic_key.
+- Do not store who does what (the host tracks assignments), plans, status updates, handoff \
+boilerplate, chit-chat, or values no longer in effect.
+- Topic keys name the subject, not the value. Copy every quote verbatim from the message it \
+cites, 1 to 3 sources per entry. Write statements in the language of the source.
+
+Reply with one JSON object:
+{"memories":[{"kind":"decision|convention|assumption|question|lesson","topic_key":"dotted.key",\
+"statement":"...","sources":[{"activity_id":"...","quote":"..."}],"resolves":["..."]}],\
+"conflicts":[{"a_id":"...","b_id":"...","reason":"...","sources":[{"activity_id":"...",\
+"quote":"..."}]}]}"""
+
 #: Previous replies are echoed into a repair prompt up to this many characters.
 REPAIR_REPLY_CHARS = 6_000
 
@@ -189,22 +228,56 @@ def build_room_curate_prompt(
         "Messages to curate:\n"
         f"{chr(10).join(window)}"
     )
-    if failure_ids:
-        prompt += (
-            "\n\nFailures to account for (each needs exactly one assignment, as in "
-            '{"assignments":[{"activity_id":"...","lesson":"<topic_key>","quote":"..."}]} or '
-            '{"activity_id":"...","dismiss":"<reason>"}): ' + ", ".join(failure_ids)
-        )
-    return prompt
+    return prompt + _failure_block(failure_ids)
 
 
-def build_repair_prompt(prompt: str, previous_reply: str, violations: list[str]) -> str:
+def _failure_block(failure_ids: Sequence[str]) -> str:
+    if not failure_ids:
+        return ""
+    return (
+        "\n\nFailures to account for (each needs exactly one assignment, as in "
+        '{"assignments":[{"activity_id":"...","lesson":"<topic_key>","quote":"..."}]} or '
+        '{"activity_id":"...","dismiss":"<reason>"}): ' + ", ".join(failure_ids)
+    )
+
+
+def build_collab_curate_prompt(
+    *,
+    scope_id: str,
+    entries: Sequence[tuple[str, str, str, str]],
+    context: Sequence[str],
+    window: Sequence[str],
+    failure_ids: Sequence[str],
+) -> str:
+    """Render one collab-profile request; ``entries`` holds ``(id, kind, topic_key, statement)``."""
+
+    entry_block = (
+        "\n".join(f"- [{i}] {kind} {key}: {statement}" for i, kind, key, statement in entries)
+        or "(none)"
+    )
+    return (
+        f"Topic: {scope_id}\n\n"
+        "Active entries (never propose these again; reuse a topic_key to replace one):\n"
+        f"{entry_block}\n\n"
+        "Earlier context (read-only; you may quote these messages):\n"
+        f"{chr(10).join(context) or '(none)'}\n\n"
+        "Messages to curate:\n"
+        f"{chr(10).join(window)}"
+    ) + _failure_block(failure_ids)
+
+
+def build_repair_prompt(
+    prompt: str,
+    previous_reply: str,
+    violations: list[str],
+    parts: str | None = None,
+) -> str:
+    parts = parts or "assignments, lessons and memories"
     reply = previous_reply[:REPAIR_REPLY_CHARS] or "(no JSON object)"
     rules = "\n".join(f"- {violation}" for violation in violations)
     return (
         f"{prompt}\n\n"
         f"Your previous reply:\n{reply}\n\n"
         f"It broke these rules:\n{rules}\n\n"
-        "Reply again with the complete corrected JSON object: all assignments, lessons and "
-        "memories, not only the fixes."
+        f"Reply again with the complete corrected JSON object: all {parts}, not only the fixes."
     )
