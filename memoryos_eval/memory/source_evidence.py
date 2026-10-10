@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from memoryos_lite.retrieval.supersede import SupersededQuote, demote_superseded
+from memoryos_eval.memory.retrieval.supersede import SupersededQuote, demote_superseded
 from memoryos_lite.schemas import ContextPackage
 from memoryos_lite.tokenizer import TokenEstimator
 from memoryos_lite.v3_contracts import ContextPackageV3

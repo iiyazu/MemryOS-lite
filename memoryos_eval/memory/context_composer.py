@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from memoryos_eval.memory.retrieval.archival_searcher import ArchivalPassageSearcher, SearchMode
+from memoryos_eval.memory.retrieval.archival_vector import ArchivalVectorDiagnostic
+from memoryos_eval.memory.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.config import Settings
-from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher, SearchMode
-from memoryos_lite.retrieval.archival_vector import ArchivalVectorDiagnostic
-from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import Message
 from memoryos_lite.store_protocols import ContextComposerStore
 from memoryos_lite.tokenizer import TokenEstimator

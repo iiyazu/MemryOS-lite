@@ -1,4 +1,4 @@
-from memoryos_lite.retrieval.archival_vector import (
+from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
     ArchivalVectorHit,
     ArchivalVectorIndex,

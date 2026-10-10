@@ -23,8 +23,8 @@ Context has one path: the v3 composer over v2 episode-first recall. Do not freez
 | `src/memoryos_lite/schemas.py` | Public and internal data contracts. |
 | `src/memoryos_lite/store.py` | SQLite authority and persistence facade. |
 | `src/memoryos_lite/engine.py` | Service orchestration. |
-| `src/memoryos_lite/context_composer.py` | Default v3 layered context. |
-| `src/memoryos_lite/retrieval/` | v2 evidence planning and retrieval. |
+| `src/memoryos_lite/recall.py` | Stateless `/recall` and `/similar` ranking. |
+| `memoryos_eval/memory/` | In-process session memory the evals measure: v3 composer, v2 recall, archives, session curator. |
 | `src/memoryos_lite/api/` | FastAPI loopback service. |
 | `tests/` | Behavior, migration, source-proof, and evaluation tests. |
 

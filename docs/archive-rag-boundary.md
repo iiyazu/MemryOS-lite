@@ -7,7 +7,7 @@ or deletes.
 
 ## Ingestion Boundary
 
-`memoryos_lite.archive_rag.MemoryOSArchiveRAG` accepts three adapter types:
+`memoryos_eval.memory.archive_rag.MemoryOSArchiveRAG` (in process only) accepts three adapter types:
 
 - `ArchiveDocumentParser`: converts request content into text plus parser
   metadata.

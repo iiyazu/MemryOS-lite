@@ -12,16 +12,16 @@ from memoryos_eval.ask import (
     render_ask_item,
     run_ask,
 )
-from memoryos_eval.memory.service import SessionMemoryService
-from memoryos_lite.config import Settings
-from memoryos_lite.retrieval.supersede import (
+from memoryos_eval.memory.retrieval.supersede import (
     SupersededQuote,
     demote_superseded,
     match_superseded,
     superseded_quotes,
 )
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.source_evidence import build_source_evidence
+from memoryos_lite.config import Settings
 from memoryos_lite.schemas import MessageCreate, Role
-from memoryos_lite.source_evidence import build_source_evidence
 from memoryos_lite.store_curator import CuratedMemoryWrite
 
 OLD = "Decision: Helios launches in Porto next spring."

@@ -1,8 +1,8 @@
-from memoryos_lite.retrieval.archival_searcher import (
+from memoryos_eval.memory.retrieval.archival_searcher import (
     ArchivalPassageHit,
     ArchivalPassageSearcher,
 )
-from memoryos_lite.retrieval.archival_vector import (
+from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
     ArchivalVectorHit,
     ArchivalVectorIndex,

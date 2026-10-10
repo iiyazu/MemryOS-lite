@@ -17,14 +17,22 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
-from memoryos_lite.archive_rag import (
+from memoryos_eval.memory.archive_rag import (
     ArchiveRAGDiagnostic,
     ArchiveRAGIngestRequest,
     MemoryOSArchiveRAG,
 )
-from memoryos_lite.budget import DynamicBudget
+from memoryos_eval.memory.budget import DynamicBudget
+from memoryos_eval.memory.context_composer import V3ContextComposer
+from memoryos_eval.memory.retrieval.archival_searcher import ArchivalPassageSearcher
+from memoryos_eval.memory.retrieval.archival_vector import (
+    ArchivalEmbeddingConfig,
+    ArchivalVectorIndex,
+    LocalArchivalVectorStore,
+)
+from memoryos_eval.memory.retrieval.recall_pipeline import RecallPipeline
+from memoryos_eval.memory.retrieval.supersede import SupersededQuote, superseded_quotes
 from memoryos_lite.config import Settings
-from memoryos_lite.context_composer import V3ContextComposer
 from memoryos_lite.curator import CuratorLLM
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.observability import (
@@ -34,14 +42,6 @@ from memoryos_lite.observability import (
     timed_core_operation,
 )
 from memoryos_lite.retrieval import EmbeddingClient
-from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
-from memoryos_lite.retrieval.archival_vector import (
-    ArchivalEmbeddingConfig,
-    ArchivalVectorIndex,
-    LocalArchivalVectorStore,
-)
-from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
-from memoryos_lite.retrieval.supersede import SupersededQuote, superseded_quotes
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveAttachmentResponse,

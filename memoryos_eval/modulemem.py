@@ -64,6 +64,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.source_evidence import build_source_evidence
 from memoryos_eval.roommem import (
     XMUSE_ACTIVITY_DOC_PREFIX,
     XMUSE_MESSAGE_ID_PREFIX,
@@ -107,7 +108,6 @@ from memoryos_lite.schemas import (
     Role,
     deterministic_ids,
 )
-from memoryos_lite.source_evidence import build_source_evidence
 
 MODULEMEM_ARMS: tuple[str, ...] = (
     "pack",

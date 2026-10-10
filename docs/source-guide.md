@@ -29,11 +29,10 @@ SessionMemoryService (memoryos_eval/memory/service.py, in process only)
 | `store_legacy.py` | Traces, their JSONL debug mirror, and store reset. |
 | `store_protocols.py` | Consumer-specific structural persistence contracts. |
 | `engine.py` | `MemoryOSService`, the stateless service behind `/curate`, `/recall`, `/similar`; it opens no database. |
+| `retrieval/` | `/recall` primitives: the `EmbeddingClient` protocol, cosine, the bilingual tokenizer and stopword filter, embedding providers. |
 | `recall.py` | Stateless `/recall` (deterministic BM25 + dense RRF ranking of caller-supplied items within a token budget) and `/similar` (near-duplicate pairs by dense cosine). |
-| `retrieval/` | Search primitives and v2 recall helpers. |
-| `context_composer.py` | Default v3 layered composer and budget diagnostics. |
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
-| `curator/` | Stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`); the in-process session curator RoomMem runs (`runner.py`). |
+| `curator/` | Stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`). |
 | `cli.py` | Typer CLI entrypoint (`api`, `demo`). |
 | `api/app.py` | FastAPI REST API: the stateless `/health`, `/curate`, `/recall`, `/similar`. Sessions, ingest, context building, and archives are in-process only (evaluation harness). |
 
@@ -42,8 +41,19 @@ wheel does not ship: `roommem.py` (RoomMem), `modulemem.py` (ModuleMem), `collab
 (`eval collab`: quality of the collab curate profile), `ask.py`
 and `ask_demo.py` (the agentic `ask` graph and its offline demo), `public_benchmarks.py`
 with `baselines.py`, `llm_judge.py` and `longmemeval_manifest.py` (LongMemEval/LoCoMo;
-historical, no longer maintained), `memory/service.py` (`SessionMemoryService`: the product
-service plus the session store and `build_context`, run in process) and `cli.py` (`uv run python -m memoryos_eval --help`).
+historical, no longer maintained) and `cli.py` (`uv run python -m memoryos_eval --help`).
+
+`memoryos_eval/memory/` is the in-process session memory those harnesses measure:
+
+| Path | Responsibility |
+|---|---|
+| `service.py` | `SessionMemoryService`: the product service plus sessions, ingest, `build_context`, archives and traces. |
+| `context_composer.py` | The v3 layered composer and its budget diagnostics. |
+| `retrieval/` | v2 episode-first recall (`recall_pipeline.py`, `episode_searcher.py`, `query_analyzer.py`), archival passages (`archival_searcher.py`, `archival_vector.py`) and superseded marks (`supersede.py`). |
+| `source_evidence.py` | The compact `source_evidence/v2` envelope built from a context package. |
+| `archive_rag.py` | Archive document ingest adapters (see `docs/archive-rag-boundary.md`). |
+| `session_curator.py` | The session curator RoomMem runs: room-profile `/curate` windows over a stored session. |
+| `budget.py`, `utils.py` | Dynamic context budget; generic-acknowledgement filter for baselines. |
 
 ## Retrieval Paths
 

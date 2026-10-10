@@ -1,6 +1,6 @@
 import pytest
 
-from memoryos_lite.archive_rag import (
+from memoryos_eval.memory.archive_rag import (
     ArchiveParsedDocument,
     ArchiveRAGDiagnostic,
     ArchiveRAGIngestRequest,

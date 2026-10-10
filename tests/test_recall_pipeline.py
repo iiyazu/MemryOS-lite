@@ -1,6 +1,6 @@
+from memoryos_eval.memory.retrieval.recall_pipeline import RecallPipeline
 from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
-from memoryos_lite.retrieval.recall_pipeline import RecallPipeline
 from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 

@@ -5,9 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.source_evidence import build_source_evidence, validate_source_evidence
 from memoryos_lite.config import Settings
 from memoryos_lite.schemas import ContextPackage, MessageCreate, Role
-from memoryos_lite.source_evidence import build_source_evidence, validate_source_evidence
 from memoryos_lite.store import create_store
 from memoryos_lite.v3_contracts import (
     ContextLayerItem,

@@ -28,7 +28,7 @@ Arms
 ``curated``
     Runs a :class:`CuratedMemorySource` registered by name through
     :func:`register_curated_source`.  The built-in ``default`` source runs the
-    real :class:`memoryos_lite.curator.Curator` on the room session (one window
+    real :class:`memoryos_eval.memory.session_curator.Curator` on the room session (one window
     of ``--curator-window`` messages,
     ``force=True`` for the tail) and maps its rows to
     :class:`CuratedMemoryView`.  With ``--fake-llm`` it uses a deterministic
@@ -70,13 +70,15 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from memoryos_eval.ask import AskRequest, AskResponse, ask_with, render_ask_item
+from memoryos_eval.memory.retrieval.supersede import SupersededQuote, superseded_quotes
 from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.session_curator import Curator
+from memoryos_eval.memory.source_evidence import build_source_evidence
 from memoryos_lite.chat_models import build_chat_openai, message_text
 from memoryos_lite.config import Settings, get_settings
-from memoryos_lite.curator import Curator, CuratorLLM, build_curator_llm
+from memoryos_lite.curator import CuratorLLM, build_curator_llm
 from memoryos_lite.curator.curate import normalize_topic_key
 from memoryos_lite.curator.grounding import MIN_QUOTE_CHARS
-from memoryos_lite.retrieval.supersede import SupersededQuote, superseded_quotes
 from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
@@ -86,7 +88,6 @@ from memoryos_lite.schemas import (
     Role,
     deterministic_ids,
 )
-from memoryos_lite.source_evidence import build_source_evidence
 
 ROOM_KINDS: tuple[str, ...] = ("fact", "decision", "rule", "preference", "lesson")
 ROOM_SCOPES: tuple[str, ...] = ("room", "project", "user")

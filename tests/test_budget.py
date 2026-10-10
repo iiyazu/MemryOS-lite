@@ -1,4 +1,4 @@
-from memoryos_lite.budget import DynamicBudget
+from memoryos_eval.memory.budget import DynamicBudget
 from memoryos_lite.config import Settings
 from memoryos_lite.schemas import Message, Role
 from memoryos_lite.tokenizer import TokenEstimator

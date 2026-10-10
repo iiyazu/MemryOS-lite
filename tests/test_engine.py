@@ -2,10 +2,10 @@ from unittest.mock import patch
 
 import pytest
 
+from memoryos_eval.memory.retrieval.archival_vector import LocalArchivalVectorStore
 from memoryos_eval.memory.service import SessionMemoryService
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
-from memoryos_lite.retrieval.archival_vector import LocalArchivalVectorStore
 from memoryos_lite.retrieval.providers.fake import DeterministicEmbeddingClient
 from memoryos_lite.schemas import (
     MessageCreate,

@@ -8,7 +8,7 @@ from typing import Literal, Protocol, cast
 
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
-from memoryos_lite.retrieval.archival_vector import (
+from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalVectorDiagnostic,
     ArchivalVectorIndex,
 )

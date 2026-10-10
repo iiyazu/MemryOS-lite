@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_eval.memory.source_evidence import build_source_evidence
 from memoryos_lite import __version__
 from memoryos_lite.api.app import app
 from memoryos_lite.config import Settings
@@ -8,7 +9,6 @@ from memoryos_lite.schemas import (
     ArchiveAttachmentRequest,
     ArchiveDocumentIngestRequest,
 )
-from memoryos_lite.source_evidence import build_source_evidence
 from memoryos_lite.store import create_store
 
 #: The whole HTTP surface since MO-10: the hub sends every fact it needs.

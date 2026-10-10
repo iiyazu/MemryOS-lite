@@ -1,12 +1,12 @@
-from memoryos_eval.memory.service import SessionMemoryService
-from memoryos_lite.config import Settings
-from memoryos_lite.context_composer import V3ContextComposer
-from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
-from memoryos_lite.retrieval.archival_vector import (
+from memoryos_eval.memory.context_composer import V3ContextComposer
+from memoryos_eval.memory.retrieval.archival_searcher import ArchivalPassageSearcher
+from memoryos_eval.memory.retrieval.archival_vector import (
     ArchivalEmbeddingConfig,
     ArchivalVectorIndex,
     LocalArchivalVectorStore,
 )
+from memoryos_eval.memory.service import SessionMemoryService
+from memoryos_lite.config import Settings
 from memoryos_lite.schemas import Message, MessageCreate, Role
 from memoryos_lite.store import create_store
 from memoryos_lite.tokenizer import TokenEstimator
