@@ -221,14 +221,20 @@ def test_health_advertises_build_context_profiles():
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["version"] == __version__ == app.version
-    assert payload["capabilities"]["build_context_profiles"] == [
+    assert payload["capability_details"]["build_context_profiles"] == [
         "full",
         "source_evidence/v1",
         "source_evidence/v2",
     ]
-    assert payload["capabilities"]["hybrid"]["lexical"] is True
-    assert payload["capabilities"]["hybrid"]["rrf"] is payload["capabilities"]["hybrid"]["semantic"]
-    assert payload["capabilities"]["message_ingest"] is True
+    assert payload["capability_details"]["hybrid"]["lexical"] is True
+    assert (
+        payload["capability_details"]["hybrid"]["rrf"]
+        is payload["capability_details"]["hybrid"]["semantic"]
+    )
+    assert payload["capability_details"]["message_ingest"] is True
+    assert "recall" in payload["capabilities"]
+    semantic = payload["capability_details"]["hybrid"]["semantic"]
+    assert ("similar" in payload["capabilities"]) is semantic
 
 
 def test_api_archive_ingest_and_attach(service):

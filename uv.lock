@@ -766,11 +766,12 @@ wheels = [
 
 [[package]]
 name = "memoryos-lite"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "numpy" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
@@ -820,6 +821,7 @@ requires-dist = [
     { name = "langchain-openai", marker = "extra == 'remote'", specifier = ">=1.2.1" },
     { name = "langgraph", marker = "extra == 'remote'", specifier = ">=1.2.1" },
     { name = "memoryos-lite", extras = ["full-local", "remote"], marker = "extra == 'benchmark'" },
+    { name = "numpy", specifier = ">=2.4.4" },
     { name = "pydantic", specifier = ">=2.13.3" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },

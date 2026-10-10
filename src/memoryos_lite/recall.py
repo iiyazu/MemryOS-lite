@@ -1,9 +1,10 @@
-"""Stateless, deterministic ranking of caller-supplied items (``POST /recall``).
+"""Stateless, deterministic ranking (``POST /recall``) and near-duplicates (``POST /similar``).
 
 The host sends the candidate items of one over-budget view layer; MemoryOS
 ranks them with the v2 recall primitives (bilingual BM25, optional dense
 cosine, RRF fusion), adds fixed hint and recency bonuses, and keeps the best
-items within ``budget_tokens`` and ``k``. No LLM, no database.
+items within ``budget_tokens`` and ``k``. ``/similar`` lists item pairs whose
+dense cosine reaches a threshold. No LLM, no database.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import hashlib
 from collections import OrderedDict
 from typing import Literal
 
+import numpy as np
 from pydantic import BaseModel, Field, model_validator
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
@@ -21,6 +23,7 @@ from memoryos_lite.retrieval.lexical import tokenize
 from memoryos_lite.tokenizer import TokenEstimator
 
 RECALL_SCHEMA: Literal["memoryos_recall/v1"] = "memoryos_recall/v1"
+SIMILAR_SCHEMA: Literal["memoryos_similar/v1"] = "memoryos_similar/v1"
 
 # Ranking constants (listed in docs/specs/memoryos-service-contract.md).
 RRF_K = 60  # same fusion constant as v2 recall
@@ -79,6 +82,45 @@ class RecallResponse(BaseModel):
     diagnostics: RecallDiagnostics
 
     model_config = {"populate_by_name": True}
+
+
+class SimilarItem(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class SimilarRequest(BaseModel):
+    schema_: Literal["memoryos_similar/v1"] = Field(alias="schema")
+    items: list[SimilarItem] = Field(max_length=500)
+    threshold: float = Field(default=0.88, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _unique_ids(self) -> SimilarRequest:
+        if len({item.id for item in self.items}) != len(self.items):
+            raise ValueError("item ids must be unique")
+        return self
+
+
+class SimilarPair(BaseModel):
+    a: str
+    b: str
+    score: float
+
+
+class SimilarDiagnostics(BaseModel):
+    dense: bool
+
+
+class SimilarResponse(BaseModel):
+    schema_: Literal["memoryos_similar/v1"] = Field(default=SIMILAR_SCHEMA, alias="schema")
+    pairs: list[SimilarPair]
+    diagnostics: SimilarDiagnostics
+
+    model_config = {"populate_by_name": True}
+
+
+class SimilarUnavailableError(RuntimeError):
+    """``/similar`` needs dense embeddings; BM25 does not stand in for them."""
 
 
 def _rrf_ranks(scores: dict[str, float]) -> dict[str, int]:
@@ -189,3 +231,25 @@ class Recaller:
                 dense=dense is not None, token_estimator=self.tokenizer.name
             ),
         )
+
+    def similar(self, request: SimilarRequest) -> SimilarResponse:
+        """Near-duplicate pairs by dense cosine; raises when no embedding is available."""
+
+        if self.embedding_client is None:
+            raise SimilarUnavailableError("similar_unavailable")
+        try:
+            vectors = np.asarray(self._embed([item.text for item in request.items]), dtype=float)
+        except Exception as exc:
+            raise SimilarUnavailableError("similar_unavailable") from exc
+        pairs: list[SimilarPair] = []
+        if len(request.items) > 1:
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+            unit = vectors / np.where(norms == 0, 1.0, norms)
+            cosine = np.round(unit @ unit.T, SCORE_DECIMALS)
+            for i, j in zip(*np.triu_indices(len(request.items), k=1), strict=True):
+                score = float(cosine[i, j])
+                if score >= request.threshold:
+                    a, b = sorted((request.items[i].id, request.items[j].id))
+                    pairs.append(SimilarPair(a=a, b=b, score=score))
+        pairs.sort(key=lambda pair: (-pair.score, pair.a, pair.b))
+        return SimilarResponse(pairs=pairs, diagnostics=SimilarDiagnostics(dense=True))

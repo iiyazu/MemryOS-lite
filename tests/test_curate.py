@@ -321,6 +321,6 @@ def test_curate_endpoint(tmp_path):
         )
         response = client.post("/curate", json=payload)
         assert (response.status_code, response.json()["detail"]) == (502, "curator_llm_error")
-        assert client.get("/health").json()["capabilities"]["curate"] == "memoryos_curate/v1"
+        assert client.get("/health").json()["capability_details"]["curate"] == "memoryos_curate/v1"
     finally:
         app.dependency_overrides.clear()
