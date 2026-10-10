@@ -21,6 +21,11 @@ class TokenEstimator:
         except Exception:
             self._encoding = None
 
+    @property
+    def name(self) -> str:
+        """Which estimator counts, e.g. ``tiktoken:cl100k_base`` or ``regex:word_or_punct``."""
+        return f"tiktoken:{self._encoding.name}" if self._encoding else "regex:word_or_punct"
+
     def count(self, text: str) -> int:
         if not text:
             return 0

@@ -24,6 +24,7 @@ from memoryos_lite.observability import (
     observability_context,
     timed_core_operation,
 )
+from memoryos_lite.recall import Recaller, RecallRequest, RecallResponse
 from memoryos_lite.retrieval import EmbeddingClient
 from memoryos_lite.retrieval.archival_searcher import ArchivalPassageSearcher
 from memoryos_lite.retrieval.archival_vector import (
@@ -112,6 +113,7 @@ class MemoryOSService:
     ) -> None:
         self.settings = settings or get_settings()
         self._curate_llm = curate_llm
+        self._recaller: Recaller | None = None
         self.store = store or create_store(self.settings)
         self.tokenizer = TokenEstimator()
         self.embedding_client = embedding_client or self._default_embedding_client()
@@ -381,6 +383,14 @@ class MemoryOSService:
             repairs=response.diagnostics.repairs,
         )
         return response
+
+    def recall(self, request: RecallRequest) -> RecallResponse:
+        """Stateless, deterministic ranking (``POST /recall``); see ``recall``."""
+
+        if self._recaller is None:
+            self._recaller = Recaller(self.tokenizer, self.embedding_client)
+        with timed_core_operation(component="engine", operation="recall", logger=logger):
+            return self._recaller.recall(request)
 
     def _ensure_recall_index(self, session_id: str) -> None:
         """Backfill derived recall rows after an ingest or its replay.
