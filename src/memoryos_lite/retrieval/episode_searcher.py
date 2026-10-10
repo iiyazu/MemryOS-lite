@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 from rank_bm25 import BM25Okapi  # type: ignore[import-untyped]
 
 from memoryos_lite.retrieval.base import EmbeddingClient, cosine_similarity
-from memoryos_lite.retrieval.lexical import tokenize
+from memoryos_lite.retrieval.lexical import content_tokens, tokenize
 from memoryos_lite.retrieval.query_analyzer import QueryAnalysis, QueryKind
 from memoryos_lite.schemas import Episode, Role
 from memoryos_lite.v3_contracts import (
@@ -13,46 +13,6 @@ from memoryos_lite.v3_contracts import (
     SourceRef,
     SourceType,
 )
-
-_ENGLISH_STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "did",
-    "do",
-    "does",
-    "for",
-    "from",
-    "how",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "to",
-    "was",
-    "were",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "why",
-    "with",
-    "you",
-}
-
-
-def _content_tokens(tokens: list[str]) -> set[str]:
-    return {token for token in tokens if token not in _ENGLISH_STOPWORDS}
 
 
 def _entry_source_refs(entry: Episode | RecallMemoryEntry) -> list[SourceRef]:
@@ -162,7 +122,7 @@ class RecallMemorySearcher:
         preserve_neighbors: bool = False,
     ) -> list[EpisodeHit]:
         query_tokens = tokenize(query)
-        query_content_tokens = _content_tokens(query_tokens)
+        query_content_tokens = content_tokens(query_tokens)
         if not episodes or not query_content_tokens:
             return []
         before_window = neighbor_window if neighbors_before is None else max(0, neighbors_before)
@@ -175,7 +135,7 @@ class RecallMemorySearcher:
         lexical_scores = {
             entry.message_id: float(score)
             for entry, entry_tokens, score in zip(entries, corpus, scores, strict=False)
-            if len(query_content_tokens & _content_tokens(entry_tokens)) > 0
+            if len(query_content_tokens & content_tokens(entry_tokens)) > 0
         }
         lexical_rank = {
             message_id: rank
@@ -196,7 +156,7 @@ class RecallMemorySearcher:
         by_session_and_position = {(entry.session_id, entry.position): entry for entry in entries}
         direct_hits: list[EpisodeHit] = []
         for entry, entry_tokens, score in zip(entries, corpus, scores, strict=False):
-            token_overlap = len(query_content_tokens & _content_tokens(entry_tokens))
+            token_overlap = len(query_content_tokens & content_tokens(entry_tokens))
             semantic_score = semantic_scores.get(entry.message_id, 0.0)
             if token_overlap <= 0 and semantic_score <= 0:
                 continue

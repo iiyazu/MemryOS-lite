@@ -13,7 +13,6 @@ usable.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -23,6 +22,7 @@ from memoryos_lite.curator.llm import CuratorLLM, CuratorLLMError
 from memoryos_lite.observability import current_observability_context
 from memoryos_lite.schemas import (
     Message,
+    Role,
     TraceEvent,
     new_id,
     utc_now,
@@ -34,29 +34,10 @@ if TYPE_CHECKING:
     from memoryos_lite.curator.curate import CurateActivity, CurateMemory, CurateResponse
 
 MEMORY_KINDS = frozenset({"fact", "decision", "rule", "preference", "lesson"})
-MAX_STATEMENT_CHARS = 600
-MAX_TOPIC_KEY_CHARS = 255
-MAX_SOURCES = 3
-# A lesson accumulates the sources of its repeat occurrences, newest kept.
-MAX_LESSON_SOURCES = 8
 CONTEXT_MESSAGES = 4
 #: Message metadata key carrying the consumer's monotonic activity order.
 ACTIVITY_SEQ_KEY = "activity_seq"
 ACTIVITY_TYPE_KEY = "activity_type"
-_TOPIC_SEPARATORS = re.compile(r"[^\w.]+")
-
-
-def normalize_topic_key(raw: str) -> str | None:
-    """Canonical topic key: casefolded, word characters, ``_`` and ``.`` only."""
-
-    key = _TOPIC_SEPARATORS.sub("_", raw.strip().casefold())
-    key = re.sub(r"_+", "_", key)
-    key = re.sub(r"\.+", ".", key)
-    key = re.sub(r"_?\._?", ".", key).strip("._")
-    if not key or len(key) > MAX_TOPIC_KEY_CHARS:
-        return None
-    return key
-
 
 SKIP_AFTER_FAILURES = 3
 
@@ -422,9 +403,23 @@ class Curator:
         )
 
 
+def speaker_label(message: Message) -> tuple[str, str]:
+    """Return ``(label, human|agent)`` for one message.
+
+    xmuse writes ``participant_id`` and an eval harness may write
+    ``speaker_name``; otherwise the role stands in for the label.
+    """
+
+    speaker_kind = "human" if message.role is Role.USER else "agent"
+    for key in ("speaker_name", "participant_id"):
+        value = message.metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip(), speaker_kind
+    return message.role.value, speaker_kind
+
+
 def _curate_activity(message: Message, info: _MessageInfo) -> CurateActivity:
     from memoryos_lite.curator.curate import ACTIVITY_TYPES, CurateActivity
-    from memoryos_lite.curator.prompt import speaker_label
 
     label, speaker_kind = speaker_label(message)
     activity_type = info.activity_type if info.activity_type in ACTIVITY_TYPES else "message"

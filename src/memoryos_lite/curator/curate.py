@@ -26,6 +26,7 @@ This module is pure: validation (:func:`check_reply`) and consolidation
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -34,12 +35,26 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from memoryos_lite.curator.grounding import normalize_text, repair_quote
-from memoryos_lite.curator.runner import (
-    MAX_LESSON_SOURCES,
-    MAX_SOURCES,
-    MAX_STATEMENT_CHARS,
-    normalize_topic_key,
-)
+
+MAX_STATEMENT_CHARS = 600
+MAX_TOPIC_KEY_CHARS = 255
+MAX_SOURCES = 3
+# A lesson accumulates the sources of its repeat occurrences, newest kept.
+MAX_LESSON_SOURCES = 8
+_TOPIC_SEPARATORS = re.compile(r"[^\w.]+")
+
+
+def normalize_topic_key(raw: str) -> str | None:
+    """Canonical topic key: casefolded, word characters, ``_`` and ``.`` only."""
+
+    key = _TOPIC_SEPARATORS.sub("_", raw.strip().casefold())
+    key = re.sub(r"_+", "_", key)
+    key = re.sub(r"\.+", ".", key)
+    key = re.sub(r"_?\._?", ".", key).strip("._")
+    if not key or len(key) > MAX_TOPIC_KEY_CHARS:
+        return None
+    return key
+
 
 CURATE_SCHEMA = "memoryos_curate/v1"
 FAILURE_TYPES: tuple[str, ...] = ("review_objection", "gate_failure")
