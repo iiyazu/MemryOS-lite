@@ -230,6 +230,8 @@ def test_collab_is_deterministic_and_module_output_has_no_collab_fields():
     }
     dumped = run_curate(module, ScriptedLLM(reply)).model_dump()
     assert "conflicts" not in dumped
+    assert "attempts" not in dumped["diagnostics"]
+    assert "usage" not in dumped["diagnostics"]
     assert "resolves_ids" not in dumped["memories"][0]
     assert dumped["memories"][0]["supersedes_id"] is None
 
@@ -248,6 +250,9 @@ def test_curate_endpoint_collab(tmp_path):
     assert len(payload["memories"]) == 4
     assert payload["conflicts"][0]["a_id"] == "C1"
     assert payload["memories"][1]["resolves_ids"] == ["Q1"]
+    # A fake LLM makes no provider attempts.
+    assert payload["diagnostics"]["attempts"] == []
+    assert payload["diagnostics"]["usage"]["attempts"] == 0
 
 
 def test_malformed_resolves_and_conflict_ids_are_violations_not_errors():

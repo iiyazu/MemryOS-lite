@@ -275,8 +275,38 @@ The prompt asks for short statements that keep every qualifier (scope,
 conditions, exceptions, units), and lists the active entries with their ids. The
 repair prompt asks for all "memories, assignments and conflicts".
 
-Output stability: `conflicts` (response) and `resolves_ids` (memory) are present
-only under `collab`; module and room responses are byte-identical to before.
+Output stability: `conflicts` (response), `resolves_ids` (memory), and
+`diagnostics.attempts` and `diagnostics.usage` are present only under `collab`;
+module and room responses are byte-identical to before.
+
+### Provider attempts, usage, and timeouts
+
+Under `collab`, `diagnostics.attempts` lists every provider attempt of the
+request in order, across the first call and any repairs: `outcome` (`ok`,
+`timeout`, or `error`), `secs`, and the provider-reported `prompt_tokens`,
+`completion_tokens`, and `total_tokens` (absent when the provider reported
+none). `diagnostics.usage` sums them: `attempts`, `unmetered_attempts`,
+`prompt_tokens`, `completion_tokens`, and `total_tokens`. A timed-out or failed
+attempt gets no usage report from the provider, although it may still be
+billed, so with `unmetered_attempts > 0` the sums are a lower bound. A fake LLM
+makes no provider attempts, so its lists are empty.
+
+The curator client does its own retries and turns the SDK's off, so no attempt
+is hidden:
+
+| Failure | Retried |
+|---|---|
+| Timeout (`MEMORYOS_CURATE_TIMEOUT_S`, default 180 s per attempt) | No |
+| Dropped connection, HTTP 429 or 5xx | Up to 2 more attempts, after 1 s and 2 s |
+| Any other provider error (for example 401 or 400) | No |
+
+A reasoning model that ran out of time once would most likely run out again,
+and the abandoned generation may still be billed. With the SDK default of 5
+silent retries and a 60 s timeout, one call could take about 370 s and report
+the usage of the last attempt only. Every attempt is also logged as a
+`curator_llm_attempt` event (attempt number, outcome, seconds, token counts,
+and the exception class), which is where the attempts of a request that ended
+in a 502 are recorded.
 
 Response (`CurateResponse`):
 
@@ -300,8 +330,9 @@ Response (`CurateResponse`):
 ```
 
 `memories` are the new versions to store; `supersedes_id` names the active
-memory each one replaces. Under `collab` the response also has `conflicts` and
-each memory has `resolves_ids`. Memory ids are derived from content, so a replayed
+memory each one replaces. Under `collab` the response also has `conflicts`,
+`diagnostics.attempts`, and `diagnostics.usage`, and each memory has
+`resolves_ids`. Memory ids are derived from content, so a replayed
 request yields the same ids. Lessons keep their newest 8 sources while
 `occurrences` keeps counting.
 

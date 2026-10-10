@@ -2,12 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+import openai
 import pytest
 from langchain_core.messages import AIMessage
 
 from memoryos_lite.chat_models import build_chat_openai, message_text
 from memoryos_lite.config import Settings
-from memoryos_lite.curator.llm import ChatCuratorLLM, CuratorSchemaError
+from memoryos_lite.curator.curate import CurateRequest
+from memoryos_lite.curator.graph import run_curate
+from memoryos_lite.curator.llm import (
+    ChatCuratorLLM,
+    CuratorLLMError,
+    CuratorSchemaError,
+    record_attempts,
+)
 
 
 def _opencode_settings(**overrides: Any) -> Settings:
@@ -23,6 +32,8 @@ def _opencode_settings(**overrides: Any) -> Settings:
 class _RecordingChatOpenAI:
     instances: list[_RecordingChatOpenAI] = []
     reply: AIMessage = AIMessage(content="{}")
+    #: Raised (in order) before the reply is returned.
+    errors: list[Exception] = []
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
@@ -31,6 +42,8 @@ class _RecordingChatOpenAI:
 
     def invoke(self, messages: Any) -> AIMessage:
         self.calls.append(messages)
+        if _RecordingChatOpenAI.errors:
+            raise _RecordingChatOpenAI.errors.pop(0)
         return _RecordingChatOpenAI.reply
 
 
@@ -39,8 +52,18 @@ def fake_chat_openai(monkeypatch: pytest.MonkeyPatch) -> type[_RecordingChatOpen
     import langchain_openai
 
     _RecordingChatOpenAI.instances = []
+    _RecordingChatOpenAI.errors = []
     monkeypatch.setattr(langchain_openai, "ChatOpenAI", _RecordingChatOpenAI)
     return _RecordingChatOpenAI
+
+
+_REQUEST = httpx.Request("POST", "https://provider.test/v1/responses")
+
+
+def _status_error(status: int) -> openai.APIStatusError:
+    return openai.APIStatusError(
+        "provider said no", response=httpx.Response(status, request=_REQUEST), body=None
+    )
 
 
 def test_opencode_provider_resolves_go_endpoint_and_responses_wire() -> None:
@@ -159,3 +182,87 @@ def test_curator_llm_rejects_a_reply_without_json(
 
     with pytest.raises(CuratorSchemaError):
         llm.complete_json("system", "user")
+
+
+def _curator(**overrides: Any) -> ChatCuratorLLM:
+    llm = ChatCuratorLLM(_opencode_settings(**overrides))
+    llm._sleep = lambda _secs: None
+    return llm
+
+
+def test_curator_llm_owns_retries_and_its_own_timeout(
+    fake_chat_openai: type[_RecordingChatOpenAI],
+) -> None:
+    _curator(memoryos_curate_timeout_s=90)
+
+    kwargs = fake_chat_openai.instances[-1].kwargs
+    assert (kwargs["max_retries"], kwargs["timeout"]) == (0, 90)
+
+
+def test_curator_llm_does_not_retry_a_timeout(
+    fake_chat_openai: type[_RecordingChatOpenAI],
+) -> None:
+    fake_chat_openai.errors = [openai.APITimeoutError(request=_REQUEST)]
+    llm = _curator()
+
+    with record_attempts() as attempts, pytest.raises(CuratorLLMError, match="APITimeoutError"):
+        llm.complete_json("system", "user")
+    assert [a.outcome for a in attempts] == ["timeout"]
+    assert attempts[0].usage is None
+
+
+def test_curator_llm_retries_dropped_connections_and_5xx_and_records_every_attempt(
+    fake_chat_openai: type[_RecordingChatOpenAI],
+) -> None:
+    fake_chat_openai.errors = [openai.APIConnectionError(request=_REQUEST), _status_error(503)]
+    fake_chat_openai.reply = AIMessage(
+        content='{"ok": true}',
+        usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+    )
+    llm = _curator()
+
+    with record_attempts() as attempts:
+        assert llm.complete_json("system", "user") == {"ok": True}
+    assert [a.outcome for a in attempts] == ["error", "error", "ok"]
+    assert attempts[-1].usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+    fake_chat_openai.errors = [_status_error(500)] * 3
+    with record_attempts() as attempts, pytest.raises(CuratorLLMError):
+        llm.complete_json("system", "user")
+    assert len(attempts) == 3
+
+
+def test_curator_llm_does_not_retry_a_client_error(
+    fake_chat_openai: type[_RecordingChatOpenAI],
+) -> None:
+    fake_chat_openai.errors = [_status_error(401)]
+
+    with record_attempts() as attempts, pytest.raises(CuratorLLMError):
+        _curator().complete_json("system", "user")
+    assert [a.outcome for a in attempts] == ["error"]
+
+
+def test_collab_response_counts_usage_over_every_attempt(
+    fake_chat_openai: type[_RecordingChatOpenAI],
+) -> None:
+    fake_chat_openai.errors = [openai.APIConnectionError(request=_REQUEST)]
+    fake_chat_openai.reply = AIMessage(
+        content='{"memories": []}',
+        usage_metadata={"input_tokens": 800, "output_tokens": 6000, "total_tokens": 6800},
+    )
+    window = [{"id": "m1", "seq": 1, "type": "message", "kind": "message", "text": "ok"}]
+    request = CurateRequest(scope_id="t1", profile="collab", window=window)
+
+    diagnostics = run_curate(request, _curator()).model_dump()["diagnostics"]
+
+    assert [a["outcome"] for a in diagnostics["attempts"]] == ["error", "ok"]
+    assert diagnostics["attempts"][1]["completion_tokens"] == 6000
+    assert diagnostics["usage"] == {
+        "attempts": 2,
+        "unmetered_attempts": 1,
+        "prompt_tokens": 800,
+        "completion_tokens": 6000,
+        "total_tokens": 6800,
+    }
+    module = request.model_copy(update={"profile": "module"})
+    assert "usage" not in run_curate(module, _curator()).model_dump()["diagnostics"]

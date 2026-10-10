@@ -162,6 +162,41 @@ class CurateConflict(BaseModel):
     sources: list[CurateSource] = Field(default_factory=list)
 
 
+class CurateAttempt(BaseModel):
+    """One provider attempt (collab); a timeout or error reports no tokens."""
+
+    outcome: Literal["ok", "timeout", "error"]
+    secs: float
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+class CurateUsage(BaseModel):
+    """Token usage summed over every attempt (collab).
+
+    ``unmetered_attempts`` counts attempts the provider reported no usage for
+    (timeouts and errors); with any of them the sums are a lower bound.
+    """
+
+    attempts: int = 0
+    unmetered_attempts: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+    @classmethod
+    def total(cls, attempts: Sequence[CurateAttempt]) -> CurateUsage:
+        usage = cls(attempts=len(attempts))
+        for attempt in attempts:
+            if attempt.total_tokens is None and attempt.prompt_tokens is None:
+                usage.unmetered_attempts += 1
+            usage.prompt_tokens += attempt.prompt_tokens or 0
+            usage.completion_tokens += attempt.completion_tokens or 0
+            usage.total_tokens += attempt.total_tokens or 0
+        return usage
+
+
 class CurateDiagnostics(BaseModel):
     llm_calls: int = 0
     repairs: int = 0
@@ -170,6 +205,8 @@ class CurateDiagnostics(BaseModel):
     rejected_memories: int = 0
     noop_memories: int = 0
     stale_memories: int = 0
+    attempts: list[CurateAttempt] | None = Field(default=None, exclude_if=_unset)
+    usage: CurateUsage | None = Field(default=None, exclude_if=_unset)
 
 
 class CurateResponse(BaseModel):
