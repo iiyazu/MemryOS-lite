@@ -6,8 +6,8 @@ import pytest
 
 from memoryos_lite.config import Settings
 from memoryos_lite.curator import Curator
+from memoryos_lite.curator.curate import normalize_topic_key
 from memoryos_lite.curator.prompt import CURATE_ROOM_SYSTEM_PROMPT
-from memoryos_lite.curator.runner import normalize_topic_key
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.schemas import MessageCreate, Role
 from memoryos_lite.store import create_store
