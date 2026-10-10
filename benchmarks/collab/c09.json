@@ -1,0 +1,56 @@
+{
+  "scenario_id": "c09",
+  "title": "Long mixed window (24 messages), hub ids E<n> / e<n>",
+  "active": [
+    {"id": "E40", "kind": "decision", "topic_key": "e40", "statement": "报表导出用 CSV，UTF-8 带 BOM，方便 Excel 打开。", "version": 40},
+    {"id": "E41", "kind": "convention", "topic_key": "e41", "statement": "报表里的时间戳统一用 UTC 的 ISO 8601 格式。", "version": 41},
+    {"id": "E42", "kind": "decision", "topic_key": "e42", "statement": "金额列保留两位小数，不带千分位。", "version": 42},
+    {"id": "E43", "kind": "question", "topic_key": "e43", "statement": "导出的文件名用什么格式？由 lead 回答。", "version": 43},
+    {"id": "E44", "kind": "question", "topic_key": "e44", "statement": "超过 100 万行时是否分片导出？由 lead 回答。", "version": 44},
+    {"id": "E45", "kind": "assumption", "topic_key": "e45", "statement": "导出功能只对管理员角色开放。", "version": 45},
+    {"id": "E46", "kind": "convention", "topic_key": "e46", "statement": "所有导出接口都走异步任务，前端轮询任务状态。", "version": 46},
+    {"id": "E47", "kind": "decision", "topic_key": "e47", "statement": "导出文件在对象存储保留 7 天后自动删除。", "version": 47}
+  ],
+  "window": [
+    {"id": "n1", "seq": 200, "type": "message", "kind": "message", "speaker": "impl", "text": "大家好，我今天开始接导出这块。"},
+    {"id": "n2", "seq": 201, "type": "message", "kind": "message", "speaker": "lead", "text": "文件名统一用 report_<类型>_<YYYYMMDD>.csv，日期取导出时的 UTC 日期。"},
+    {"id": "n3", "seq": 202, "type": "message", "kind": "message", "speaker": "impl", "text": "好的。"},
+    {"id": "n4", "seq": 203, "type": "message", "kind": "handoff", "speaker": "impl", "text": "交接：交易明细导出写完了，时间列我用的是北京时间 yyyy/MM/dd HH:mm，跟页面上显示的一致。"},
+    {"id": "n5", "seq": 204, "type": "message", "kind": "message", "speaker": "review", "text": "我待会儿看交易明细那个 PR。"},
+    {"id": "n6", "seq": 205, "type": "message", "kind": "message", "speaker": "impl", "text": "提醒：导出文件是 UTF-8 带 BOM 的 CSV，Excel 直接能打开。"},
+    {"id": "n7", "seq": 206, "type": "message", "kind": "decision", "speaker": "human", "text": "决定（改掉之前的 7 天）：导出文件保留 30 天；含个人信息的导出仍是 7 天后删除。"},
+    {"id": "n8", "seq": 207, "type": "message", "kind": "message", "speaker": "impl", "text": "收到，我去改对象存储的生命周期规则。"},
+    {"id": "n9", "seq": 208, "type": "message", "kind": "decision", "speaker": "lead", "text": "决定：导出时金额按币种分别汇总，只有 CNY 显示合计行；其他币种不出合计。"},
+    {"id": "n10", "seq": 209, "type": "message", "kind": "question", "speaker": "impl", "text": "问题：导出任务失败了要不要自动重试？如果重试，最多几次？由 lead 回答。"},
+    {"id": "n11", "seq": 210, "type": "review_objection", "speaker": "review", "text": "复核意见：异步导出任务的下载接口没有校验调用者角色，普通用户拿到任务 ID 也能下载文件。"},
+    {"id": "n12", "seq": 211, "type": "message", "kind": "message", "speaker": "impl", "text": "确认，下载接口我补上角色校验。"},
+    {"id": "n13", "seq": 212, "type": "message", "kind": "message", "speaker": "lead", "text": "分片导出的问题我还没想好，周五再回复。"},
+    {"id": "n14", "seq": 213, "type": "message", "kind": "message", "speaker": "impl", "text": "导出接口都按异步任务做的，前端轮询任务状态，这点没变。"},
+    {"id": "n15", "seq": 214, "type": "message", "kind": "message", "speaker": "ops", "text": "今天的站会改到四点。"},
+    {"id": "n16", "seq": 215, "type": "message", "kind": "assumption", "speaker": "impl", "text": "我先假设 CSV 的分隔符用逗号，字段里有逗号就用双引号包起来（按 RFC 4180）。"},
+    {"id": "n17", "seq": 216, "type": "message", "kind": "review_request", "speaker": "impl", "text": "请 review PR #45：金额列我加了千分位（如 1,234.50），财务说这样好读。"},
+    {"id": "n18", "seq": 217, "type": "message", "kind": "message", "speaker": "lead", "text": "PR #45 先别合，等我和财务确认。"},
+    {"id": "n19", "seq": 218, "type": "message", "kind": "message", "speaker": "impl", "text": "👌"},
+    {"id": "n20", "seq": 219, "type": "message", "kind": "handoff", "speaker": "impl", "text": "交接：文件名规则按 lead 说的改好了（report_<类型>_<YYYYMMDD>.csv）；保留期改成 30 天，含个人信息的仍是 7 天。"},
+    {"id": "n21", "seq": 220, "type": "message", "kind": "message", "speaker": "review", "text": "辛苦。"},
+    {"id": "n22", "seq": 221, "type": "message", "kind": "message", "speaker": "human", "text": "另外，给外部审计的导出版本不要带内部备注列。"},
+    {"id": "n23", "seq": 222, "type": "message", "kind": "message", "speaker": "impl", "text": "明白。"},
+    {"id": "n24", "seq": 223, "type": "message", "kind": "message", "speaker": "impl", "text": "今天先到这，明天继续。"}
+  ],
+  "expect": {
+    "proposals": [
+      {"sources": ["n2", "n20"], "qualifiers": [["report_"], ["UTC"]]},
+      {"sources": ["n7", "n20"], "qualifiers": [["30"], ["个人信息"], ["7"]], "supersedes": "E47"},
+      {"sources": ["n9"], "qualifiers": [["CNY", "人民币"], ["合计"], ["其他币种", "其它币种", "其余币种", "非 CNY", "非CNY"]]},
+      {"sources": ["n10"], "qualifiers": [["重试"]]},
+      {"sources": ["n16"], "qualifiers": [["RFC 4180", "RFC4180", "双引号"]]},
+      {"sources": ["n22"], "qualifiers": [["审计"], ["备注"]]}
+    ],
+    "resolves": ["E43"],
+    "not_resolved": ["E44"],
+    "conflicts": ["E41", "E42"],
+    "restates": {"n6": "E40", "n14": "E46"},
+    "chatter": ["n1", "n3", "n5", "n8", "n15", "n19", "n21", "n23", "n24"],
+    "objections": ["n11"]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "scenario_id": "c01e",
+  "variant_of": "c01",
+  "title": "c01 with hub ids: active entries keyed E<n> / e<n>",
+  "active": [
+    {"id": "E12", "kind": "decision", "topic_key": "e12", "statement": "接口里的金额一律用整数分（cents）传递。", "version": 3},
+    {"id": "E15", "kind": "convention", "topic_key": "e15", "statement": "接口错误统一返回 {code, message}，code 用蛇形命名。", "version": 5}
+  ],
+  "window": [
+    {"id": "m1", "seq": 10, "type": "message", "kind": "decision", "speaker": "lead", "text": "决定：从这一轮起，仅支付 API 的金额改为两位小数的 Decimal 字符串；账本汇总仍用整数分，不改。"},
+    {"id": "m2", "seq": 11, "type": "message", "kind": "message", "speaker": "impl", "text": "收到，我先改 parse 层。"},
+    {"id": "m3", "seq": 12, "type": "message", "kind": "handoff", "speaker": "impl", "text": "交接：parse.py 已改完，支付 API 返回 \"3.50\" 这样的字符串，ledger 的汇总没有动。tests/test_parse.py 全绿，请 review。"}
+  ],
+  "expect": {
+    "proposals": [
+      {"sources": ["m1", "m3"], "qualifiers": [["支付"], ["账本", "ledger"], ["整数分", "cents"]], "supersedes": "E12"}
+    ],
+    "chatter": ["m2"]
+  }
+}

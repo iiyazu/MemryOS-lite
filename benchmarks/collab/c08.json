@@ -1,0 +1,50 @@
+{
+  "scenario_id": "c08",
+  "title": "Long mixed window (20 messages), semantic keys",
+  "active": [
+    {"id": "D1", "kind": "decision", "topic_key": "payment.amount_repr", "statement": "支付 API 的金额用两位小数的 Decimal 字符串传递，账本汇总仍用整数分。", "version": 3},
+    {"id": "C1", "kind": "convention", "topic_key": "api.error_format", "statement": "接口错误统一返回 {code, message}，code 用蛇形命名。", "version": 4},
+    {"id": "D2", "kind": "decision", "topic_key": "payment.idempotency", "statement": "创建支付的请求必须带 Idempotency-Key 头，服务端保留 24 小时。", "version": 5},
+    {"id": "Q1", "kind": "question", "topic_key": "payment.partial_refund", "statement": "是否支持部分退款？由 lead 回答。", "version": 6},
+    {"id": "Q2", "kind": "question", "topic_key": "payment.webhook_retry", "statement": "webhook 失败后重试几次、间隔多久？由 lead 回答。", "version": 7},
+    {"id": "A1", "kind": "assumption", "topic_key": "payment.currency_scope", "statement": "第一期只支持人民币（CNY），其他币种先不处理。", "version": 8},
+    {"id": "D3", "kind": "decision", "topic_key": "payment.gateway_timeout", "statement": "调用支付网关的超时设为 10 秒。", "version": 9}
+  ],
+  "window": [
+    {"id": "m1", "seq": 100, "type": "message", "kind": "message", "speaker": "impl", "text": "早，我今天接着做退款这块。"},
+    {"id": "m2", "seq": 101, "type": "message", "kind": "decision", "speaker": "lead", "text": "决定：支持部分退款。同一笔支付可以多次退款，累计退款金额不能超过原支付金额；只限支付完成后 180 天内。"},
+    {"id": "m3", "seq": 102, "type": "message", "kind": "message", "speaker": "impl", "text": "好的，那退款表加一个 refunded_total 字段。"},
+    {"id": "m4", "seq": 103, "type": "message", "kind": "message", "speaker": "impl", "text": "提醒一下：创建支付的请求要带 Idempotency-Key，服务端会保留 24 小时，别漏了。"},
+    {"id": "m5", "seq": 104, "type": "message", "kind": "message", "speaker": "review", "text": "我这边今天主要看 PR #31。"},
+    {"id": "m6", "seq": 105, "type": "message", "kind": "review_request", "speaker": "impl", "text": "请 review PR #32：退款接口出错时返回 {error: \"REFUND_EXCEEDED\"}，前端直接拿这个字符串比对。"},
+    {"id": "m7", "seq": 106, "type": "message", "kind": "question", "speaker": "lead", "text": "新问题：退款要不要走风控审批？比如单笔超过 5000 元的先人工审核。由风控组回答。"},
+    {"id": "m8", "seq": 107, "type": "message", "kind": "decision", "speaker": "human", "text": "决定（推翻之前的 10 秒）：退款接口调用支付网关的超时改为 30 秒；创建支付仍是 10 秒，不变。"},
+    {"id": "m9", "seq": 108, "type": "message", "kind": "message", "speaker": "impl", "text": "收到。"},
+    {"id": "m10", "seq": 109, "type": "message", "kind": "assumption", "speaker": "impl", "text": "我先假设 webhook 签名用 HMAC-SHA256，密钥从配置中心读取；如果不对请告诉我。"},
+    {"id": "m11", "seq": 110, "type": "review_objection", "speaker": "review", "text": "复核意见：PR #30 的幂等检查是先查后写，两个并发请求会同时通过检查，各自创建一笔支付。"},
+    {"id": "m12", "seq": 111, "type": "message", "kind": "message", "speaker": "impl", "text": "确认，我改成用唯一索引兜底，插入冲突时返回第一笔的结果。"},
+    {"id": "m13", "seq": 112, "type": "message", "kind": "message", "speaker": "lead", "text": "webhook 重试的事等对接方回复了再定。"},
+    {"id": "m14", "seq": 113, "type": "message", "kind": "message", "speaker": "impl", "text": "按之前说好的，第一期只做人民币，其他币种先不管。"},
+    {"id": "m15", "seq": 114, "type": "message", "kind": "message", "speaker": "ops", "text": "午饭后开个短会？"},
+    {"id": "m16", "seq": 115, "type": "message", "kind": "handoff", "speaker": "impl", "text": "交接：部分退款已实现，累计退款不超过原支付金额的校验在 refund_service.py；180 天的限制还没做，留给下一位。"},
+    {"id": "m17", "seq": 116, "type": "message", "kind": "decision", "speaker": "lead", "text": "决定：对账任务每天凌晨 2 点跑，只对前一天（T+1）的交易；节假日照常跑。"},
+    {"id": "m18", "seq": 117, "type": "message", "kind": "message", "speaker": "impl", "text": "👍"},
+    {"id": "m19", "seq": 118, "type": "message", "kind": "message", "speaker": "impl", "text": "PR #32 我先挂着，等 review。"},
+    {"id": "m20", "seq": 119, "type": "message", "kind": "message", "speaker": "review", "text": "好。"}
+  ],
+  "expect": {
+    "proposals": [
+      {"sources": ["m2", "m16"], "qualifiers": [["累计"], ["180"]]},
+      {"sources": ["m7"], "qualifiers": [["风控"], ["5000", "5,000", "5千"]]},
+      {"sources": ["m8"], "qualifiers": [["30"], ["退款"], ["10"]], "supersedes": "D3"},
+      {"sources": ["m10"], "qualifiers": [["HMAC"]]},
+      {"sources": ["m17"], "qualifiers": [["2 点", "2点", "2:00", "02:00"], ["前一天", "T+1", "T-1"], ["节假日"]]}
+    ],
+    "resolves": ["Q1"],
+    "not_resolved": ["Q2"],
+    "conflicts": ["C1"],
+    "restates": {"m4": "D2", "m14": "A1"},
+    "chatter": ["m1", "m5", "m9", "m15", "m18", "m19", "m20"],
+    "objections": ["m11"]
+  }
+}
