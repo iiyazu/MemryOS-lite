@@ -74,9 +74,20 @@ def test_hub_id_variants_change_only_ids_and_keys():
         assert variant["expect"] == expect
 
 
+def test_c09u_drops_only_the_ambiguous_hold():
+    """c09u is c09 without n18, the lead's "hold the PR" that may read as handling E42."""
+
+    scenarios = {s["scenario_id"]: s for s in load_scenarios(DATA)}
+    base, derived = scenarios["c09"], scenarios["c09u"]
+    assert derived["derived_from"] == "c09"
+    assert derived["window"] == [a for a in base["window"] if a["id"] != "n18"]
+    assert len(derived["window"]) == len(base["window"]) - 1
+    assert (derived["active"], derived["expect"]) == (base["active"], base["expect"])
+
+
 def test_long_windows_mix_every_case():
     long = [s for s in load_scenarios(DATA) if len(s["window"]) >= 16]
-    assert len(long) >= 2
+    assert len(long) >= 3
     for scenario in long:
         assert len(scenario["window"]) <= 32
         expect = scenario["expect"]

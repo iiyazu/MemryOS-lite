@@ -29,6 +29,7 @@ times and is byte-identical across runs.
 | c01e, c02e, c07e | c01, c02 and c07 with the hub's ids: every active entry is `E<n>` with `topic_key` `e<n>` | the same expectations, by the new ids |
 | c08 | Long mixed window, 20 messages, semantic keys | 5 proposals (one supersedes, one resolves a question), 1 conflict, 2 restatements, 7 chatter, 1 objection |
 | c09 | Long mixed window, 24 messages, hub ids (`E<n>` / `e<n>`) | 6 proposals (one supersedes, one resolves a question), 2 conflicts, 2 restatements, 9 chatter, 1 objection |
+| c09u | c09 without n18, the lead's "hold PR #45 until I confirm with finance", which may read as handling the E42 breach (`derived_from`) | the same expectations as c09 |
 
 `expect` keys: `proposals` (`sources`, `qualifiers` as groups of
 alternatives, optional `supersedes`), `resolves` and `not_resolved`,
@@ -144,3 +145,39 @@ c08 has no such message. Everything else stayed at 1.0 with zero variance.
 
 Usage: 18 attempts, all metered (no lower bounds), 18,311 prompt + 75,760
 completion = 94,071 tokens.
+
+## Results (2026-10-10, M2d: checking review requests and handoffs)
+
+The collab prompt gained one rule (+325 characters, +12.1%): check every
+`review_request` and `handoff` against each active convention and decision; if
+the work it describes breaks one and no message in the window replaced that
+entry, propose what the message does as an entry quoting it and report a
+conflict between that entry and the active id. A conflict side must be an
+active id or a proposed entry, so the breach has to be proposed to be reported.
+
+Runs used `max_repairs` 1, the hub's value. "Before" is the M2c data (c03 from
+M2b and M2c), except c09u, which ran 3 times with the old prompt.
+
+| scenario | conflict recall before | after (3 runs) |
+|---|---|---|
+| c03 (3 messages) | 6/6 (M2b) | 6/6 |
+| c08 (20 messages) | 0/3 | **3/3** |
+| c09 (24 messages) | 3/6 | **6/6** |
+| c09u (c09 without n18) | 6/6 | 6/6 |
+
+c09u shows where the misses came from: with the old prompt, removing n18 alone
+brought c09 to 6/6, so c09's E42 miss was the ambiguous hold; c08's miss was
+the prompt's, and the new rule fixes it.
+
+Everything else held on c03, c08, c09 and c09u (3 runs each) and on the other
+nine scenarios (1 run each): proposal_recall, qualifier_retention,
+supersedes_accuracy and resolves precision/recall 1.0; duplicate_rate,
+chatter_stored_rate, conflict_extra and supersedes_wrong 0; objections all
+became lessons. c01's handoff, which restates a value that m1 replaced in the
+same window, raised no conflict. Two changes the metrics do not score: one c09
+run broke the conflict-id rule on its first reply and needed its one repair
+(clean_first_reply 20/21 runs after the change), and one c08 run also
+proposed m3, an implementation detail no expectation lists.
+
+Usage: 25 attempts, all metered, 31,028 prompt + 127,188 completion = 158,216
+tokens (c09u before: 3; after: 22, of which 1 repair).
