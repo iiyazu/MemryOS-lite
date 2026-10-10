@@ -1,0 +1,20 @@
+{
+  "scenario_id": "c04",
+  "title": "Restated declared entries next to one new convention",
+  "active": [
+    {"id": "A1", "kind": "assumption", "topic_key": "env.sandbox_keys", "statement": "沙箱密钥在周五前有效。", "version": 2},
+    {"id": "D2", "kind": "decision", "topic_key": "logging.library", "statement": "日志统一用 structlog，输出 JSON。", "version": 4},
+    {"id": "C1", "kind": "convention", "topic_key": "git.branch_names", "statement": "分支名用 feat/、fix/ 前缀加短横线连接的英文短语。", "version": 5}
+  ],
+  "window": [
+    {"id": "m1", "seq": 40, "type": "message", "kind": "assumption", "speaker": "lead", "text": "再确认一次：沙箱密钥周五之前都有效，测试放心用。"},
+    {"id": "m2", "seq": 41, "type": "message", "kind": "handoff", "speaker": "impl", "text": "交接：日志已经全部换成 structlog 并输出 JSON，跟之前定的一样；分支是 feat/structlog-json。"},
+    {"id": "m3", "seq": 42, "type": "message", "kind": "decision", "speaker": "lead", "text": "新规定：所有对外接口的响应都要带 X-Request-Id 头，内部接口不强制。"}
+  ],
+  "expect": {
+    "proposals": [
+      {"sources": ["m3"], "qualifiers": [["X-Request-Id"], ["对外"], ["内部"]]}
+    ],
+    "restates": {"m1": "A1", "m2": "D2"}
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "scenario_id": "c05",
+  "title": "Chit-chat and status updates only",
+  "active": [
+    {"id": "D1", "kind": "decision", "topic_key": "ci.runner", "statement": "CI 用 GitHub Actions 的 ubuntu-24.04 镜像。", "version": 2}
+  ],
+  "window": [
+    {"id": "m1", "seq": 50, "type": "message", "kind": "message", "speaker": "impl", "text": "早上好，我今天先把昨天剩下的测试补完。"},
+    {"id": "m2", "seq": 51, "type": "message", "kind": "message", "speaker": "review", "text": "好的👍 有问题随时叫我。"},
+    {"id": "m3", "seq": 52, "type": "message", "kind": "message", "speaker": "impl", "text": "CI 又红了，看着像网络抖动，我重跑一下。"},
+    {"id": "m4", "seq": 53, "type": "message", "kind": "message", "speaker": "impl", "text": "重跑过了，绿了。我去吃午饭，下午继续。"}
+  ],
+  "expect": {
+    "chatter": ["m1", "m2", "m3", "m4"]
+  }
+}

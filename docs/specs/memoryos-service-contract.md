@@ -267,8 +267,11 @@ entry with that topic key; duplicate pairs and self-pairs are dropped. Invalid
 conflicts are violations and go through the repair loop like any other rule.
 
 The prompt asks for short statements that keep every qualifier (scope,
-conditions, exceptions, units), and lists the active entries with their ids. The
-repair prompt asks for all "memories, assignments and conflicts".
+conditions, exceptions, units), lists the active entries with their ids, and
+spells out how a review objection or gate failure is accounted for (an
+assignment to a lesson defined in `lessons`, or a dismissal). The repair prompt
+asks for all "memories, lessons, assignments and conflicts". Quality and cost
+are measured by `eval collab` (`benchmarks/collab/README.md`).
 
 Output stability: `conflicts` (response), `resolves_ids` (memory), and
 `diagnostics.attempts` and `diagnostics.usage` are present only under `collab`;

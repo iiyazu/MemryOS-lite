@@ -176,7 +176,7 @@ def test_collab_repairs_bad_resolves_and_conflicts():
     violations = response.diagnostics.initial_violations
     assert any('"resolves" must list ids of active questions' in v for v in violations)
     assert sum("every conflict needs a_id and b_id" in v for v in violations) == 2
-    assert "memories, assignments and conflicts, not only the fixes" in llm.calls[1][1]
+    assert "memories, lessons, assignments and conflicts, not only the fixes" in llm.calls[1][1]
     assert response.memories[0].resolves_ids == ["Q1"]
     assert response.conflicts == []
 

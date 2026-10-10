@@ -436,6 +436,43 @@ def eval_modulemem(
     console.print(f"[bold]Reports:[/bold] {Path(out) / 'summary.md'}")
 
 
+@app.command("collab")
+def eval_collab(
+    data: Annotated[
+        str, Option("--data", help="Directory containing c*.json collab scenarios")
+    ] = "benchmarks/collab",
+    scenarios: Annotated[
+        str | None, Option("--scenarios", help="Comma-separated scenario ids")
+    ] = None,
+    repeats: Annotated[int, Option("--repeats")] = 1,
+    fake_llm: Annotated[bool, Option("--fake-llm")] = False,
+    curator_llm: Annotated[str | None, Option("--curator-llm")] = None,
+    workers: Annotated[int, Option("--workers", help="Concurrent curate calls")] = 1,
+    max_repairs: Annotated[int, Option("--max-repairs")] = 2,
+    out: Annotated[str, Option("--out")] = "artifacts/collab",
+) -> None:
+    """Run the quality evaluation of the collab curate profile."""
+    from memoryos_eval.collab import CollabEvalError, load_scenarios, run_collab
+
+    ids = [value.strip() for value in scenarios.split(",") if value.strip()] if scenarios else None
+    try:
+        summary = run_collab(
+            load_scenarios(Path(data), ids),
+            out_dir=Path(out),
+            repeats=repeats,
+            fake_llm=fake_llm,
+            curator_llm=curator_llm,
+            workers=workers,
+            max_repairs=max_repairs,
+        )
+    except CollabEvalError as exc:
+        console.print(f"[red]collab error:[/red] {exc}")
+        raise Exit(1) from exc
+    for name, stat in summary["metrics"].items():
+        console.print(f"{name}: {stat['mean']}")
+    console.print(f"[bold]Reports:[/bold] {Path(out) / 'summary.md'}")
+
+
 def _public_table_rows(results: list[PublicBenchmarkResult]) -> list[dict[str, str]]:
     grouped: dict[tuple[str, str], list[PublicBenchmarkResult]] = {}
     for result in results:

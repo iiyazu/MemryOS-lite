@@ -207,7 +207,7 @@ uv run mypy src memoryos_eval
 `uv run python -m memoryos_eval` 运行。公开 benchmark（LongMemEval、LoCoMo）的适配器保留，但只作
 历史结果，不再维护；需要本地数据集，命令和指标解释见 `docs/public-benchmark-diagnosis.md`。
 
-记忆策展有两套自带数据集的评测，默认调用配置的真实模型（`--fake-llm` 用确定性替身跑通流程）：
+记忆策展有三套自带数据集的评测，默认调用配置的真实模型（`--fake-llm` 用确定性替身跑通流程）：
 
 ```bash
 # RoomMem：多 Room 记忆。split dev=rm01-06, test=rm07-12, trap=rm13-16
@@ -219,6 +219,9 @@ uv run python -m memoryos_eval modulemem --split dev --arm pack --arm raw_log --
 # 负责人重启后的行为：长模块附带开发任务，被测者只凭记忆写代码改动，评委逐条判定要求
 uv run python -m memoryos_eval modulemem --data benchmarks/modulemem/long --tasks --no-probes \
   --arm none --arm raw_log --arm pack --arm full_history --out artifacts/owner
+# collab：xmuse 2 话题对齐提炼的质量（限定语、resolves、冲突、重复、闲聊、复核意见、取代），
+# 用量计入全部尝试；场景与结果见 benchmarks/collab/README.md
+uv run python -m memoryos_eval collab --repeats 3 --workers 3 --out artifacts/collab
 ```
 
 RoomMem 的 arm 有 `raw`、`raw_project`、`oracle`、`curated`、`full_context`；
