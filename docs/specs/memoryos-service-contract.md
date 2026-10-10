@@ -251,7 +251,9 @@ gets the closed-world assignment accounting of the `module` profile.
 `active` entries include the ones agents declared themselves. A proposal whose
 statement equals any active statement (whitespace- and case-insensitive, under
 any topic key) is a noop. Reusing an active entry's topic key proposes a
-replacement (`supersedes_id`).
+replacement (`supersedes_id`). The key may be opaque: the hub sends
+`topic_key="e<n>"` for entry `E<n>`, and `eval collab` checks that the LLM
+reuses such keys (scenarios `c01e`, `c02e`, `c07e`, `c09`).
 
 A memory in the LLM reply may carry `"resolves": [ids]`; every id must be an
 active entry of kind `question`, otherwise the memory is rejected and the rule
