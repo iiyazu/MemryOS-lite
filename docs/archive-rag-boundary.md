@@ -41,15 +41,11 @@ authoritative for text, source refs, and eligibility.
 
 ## Service/API Boundary
 
-`MemoryOSService` is the application entry point for archive RAG ingestion.
-FastAPI routes call service methods instead of manipulating the store directly.
+`MemoryOSService` is the application entry point for archive RAG ingestion:
+`ingest_archive_document()` and `attach_archive()`. Since 0.5.0 they have no
+HTTP route; the evaluation harness calls them in process.
 
-Service-backed surfaces:
-
-- `POST /archives/ingest`
-- `POST /archives/attachments`
-
-These surfaces do not bypass v3 archive eligibility. Retrieved archive passages
+These methods do not bypass v3 archive eligibility. Retrieved archive passages
 enter normal context through `build_context()`.
 
 ## Non-Claims

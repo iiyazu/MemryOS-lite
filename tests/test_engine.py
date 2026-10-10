@@ -1,9 +1,7 @@
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
-from memoryos_lite.api.app import app, get_service
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.archival_vector import LocalArchivalVectorStore
@@ -75,8 +73,8 @@ def test_service_uses_local_archival_vectors_without_qdrant(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Failures are not degraded inside the service: build-context answers a plain
-# 500 (no exception text) and the next request is unaffected.
+# Failures are not degraded inside the engine: build_context raises, and the
+# next call is unaffected (there is no breaker state).
 # ---------------------------------------------------------------------------
 
 
@@ -88,23 +86,15 @@ def test_service_uses_local_archival_vectors_without_qdrant(tmp_path):
         ("store", "list_episodes"),
     ],
 )
-def test_build_context_failure_is_a_plain_500_and_leaves_no_state(tmp_path, target, method):
+def test_build_context_failure_raises_and_leaves_no_state(tmp_path, target, method):
     service = MemoryOSService(settings=Settings(data_dir=tmp_path / ".memoryos"))
     session = service.create_session("fault-injection")
     service.ingest(session.id, MessageCreate(role=Role.USER, content="Alice lives in Shanghai."))
-    request = {"task": "Where does Alice live?", "budget": 200}
-    app.dependency_overrides[get_service] = lambda: service
-    client = TestClient(app, raise_server_exceptions=False)
-    try:
-        with patch.object(
-            getattr(service, target), method, side_effect=RuntimeError("secret /data/path")
-        ):
-            failed = client.post(f"/sessions/{session.id}/build-context", json=request)
-        recovered = client.post(f"/sessions/{session.id}/build-context", json=request)
-    finally:
-        app.dependency_overrides.clear()
+    with (
+        patch.object(getattr(service, target), method, side_effect=RuntimeError("boom")),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        service.build_context(session.id, "Where does Alice live?", budget=200)
 
-    assert failed.status_code == 500
-    assert "secret" not in failed.text
-    assert recovered.status_code == 200
-    assert "Shanghai" in str(recovered.json()["retrieved_evidence"])
+    recovered = service.build_context(session.id, "Where does Alice live?", budget=200)
+    assert "Shanghai" in str(recovered.retrieved_evidence)

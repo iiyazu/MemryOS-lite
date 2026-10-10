@@ -34,7 +34,7 @@ def test_full_local_profile_keeps_remote_and_benchmark_stacks_optional() -> None
     assert any(item.startswith("fastembed") for item in extras["full-local"])
     assert any(item.startswith("langchain-core") for item in extras["remote"])
     assert extras["benchmark"] == ["memoryos-lite[full-local,remote]"]
-    assert project["version"] == __version__ == app.version == "0.4.0"
+    assert project["version"] == __version__ == app.version == "0.5.0"
 
     with (ROOT / "pyproject.toml").open("rb") as handle:
         development = "\n".join(tomllib.load(handle)["dependency-groups"]["dev"])

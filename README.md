@@ -14,7 +14,8 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 - 服务不运行后台策展，也没有 advisories 接口；需要持久记忆的宿主调用 `/curate`，自己保存记忆。会话策展器（`Curator.run_session`，`/curate` 图按 `profile=room` 的有状态宿主）只在 RoomMem 评测里进程内运行。
 - 模块记忆走无状态的 `POST /curate`（`memoryos_curate/v1`）：宿主（如 xmuse）带上模块现有记忆和一窗新活动，MemoryOS 返回新的记忆版本，自己不存状态。错题本采用闭合记账：每条复核打回和门禁失败都必须归到一条教训或写明理由排除。提炼过程是一张 LangGraph 图（抽取 → 校验 → 修复 → 汇总），见下文"模块记忆"。
 - `/curate` 另有 `profile: "collab"`，给 xmuse 2 的话题做对齐提炼：产出决定、约定、假设、未决问题和教训的**提议**（由话题负责人或人确认），可标注回答了哪些问题（`resolves_ids`），并只报告疑似矛盾（`conflicts`），不替任何一方做裁决；`module` 和 `room` 的输出不变。
-- SQLite 是权威存储；trace 文件和进程内向量索引都是派生数据。
+- HTTP 服务无状态（`/curate`、`/recall`、`/similar`）。进程内的会话与归档存储（评测框架使用）以
+  SQLite 为权威存储；trace 文件和进程内向量索引都是派生数据。
 - 以新鲜命令结果而不是文档中的历史通过数判断状态。
 
 ```text
@@ -129,15 +130,14 @@ HTTP 接口：
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| `GET` | `/health` | 存活、版本号（`version`）、`capabilities` 列表与能力详情 |
-| `POST` | `/sessions` | 创建会话 |
-| `POST` | `/sessions/{id}/ingest` | 摄入消息 |
-| `POST` | `/sessions/{id}/build-context` | 构建上下文包 |
-| `POST` | `/curate` | 无状态模块记忆提炼（`memoryos_curate/v1`） |
+| `GET` | `/health` | 存活、版本号（`version`）与 `capabilities` 列表 |
+| `POST` | `/curate` | 无状态记忆提炼（`memoryos_curate/v1`） |
 | `POST` | `/recall` | 无状态、确定性的条目排序截断（`memoryos_recall/v1`），零 LLM |
 | `POST` | `/similar` | 按稠密向量余弦找近似重复条目对（`memoryos_similar/v1`），零 LLM；没有 embedding 时返回 503 |
-| `POST` | `/archives/ingest` | 摄入可归因归档文档 |
-| `POST` | `/archives/attachments` | 将归档关联到会话 |
+
+HTTP 接口全部无状态，不读写数据库。0.5.0 删除了 5 条有状态接口（会话、摄入、`build-context`、
+归档摄入与关联）和 `/health.capability_details`：它们唯一的使用方 xmuse v1 已封存。会话与归档存储
+（下文的 `ingest` / `build_context`）仍在进程内供评测框架使用。
 
 ### 模块记忆：无状态 `/curate`
 

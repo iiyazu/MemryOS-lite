@@ -95,7 +95,7 @@ def test_similar_rejects_invalid_requests(client_for, overrides):
 
 def test_health_capabilities_follow_what_can_run(client_for):
     bare = client_for().get("/health").json()
-    assert bare["version"] == "0.4.0"
+    assert bare["version"] == "0.5.0"
     assert "recall" in bare["capabilities"]
     assert "similar" not in bare["capabilities"]
     full = client_for(DeterministicEmbeddingClient(), StubLLM()).get("/health").json()

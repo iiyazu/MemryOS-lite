@@ -13,7 +13,7 @@ MemoryOSService
     -> v2 Episode backfill/indexing
   build_context()
     -> v3 ContextComposer
-    -> v2 RecallPipeline (also the fallback if the composer fails)
+    -> v2 RecallPipeline
 ```
 
 ## Important Modules
@@ -21,7 +21,7 @@ MemoryOSService
 | Path | Responsibility |
 |---|---|
 | `config.py` | Runtime settings, feature flags, LLM configuration. |
-| `schemas.py` | Pydantic models for messages, episodes, traces, context and the HTTP API. |
+| `schemas.py` | Pydantic models for messages, episodes, traces, context and archive requests. |
 | `store.py` | Thin public `MemoryStore` composition root and stable imports. |
 | `store_models.py` / `store_runtime.py` | SQLite schema, engine lifecycle, migrations, and transactions. |
 | `store_sessions.py` | Session, message, episode, and recall-watermark persistence. |
@@ -35,7 +35,7 @@ MemoryOSService
 | `v3_contracts.py` | v3 source refs, core/archival contracts, context package. |
 | `curator/` | Stateless `/curate` (`curate.py`) and its LangGraph repair loop (`graph.py`); the in-process session curator RoomMem runs (`runner.py`). |
 | `cli.py` | Typer CLI entrypoint (`api`, `demo`). |
-| `api/app.py` | FastAPI REST API. |
+| `api/app.py` | FastAPI REST API: the stateless `/health`, `/curate`, `/recall`, `/similar`. Sessions, ingest, context building, and archives are in-process only (evaluation harness). |
 
 The evaluation harnesses live in the repo-root `memoryos_eval/` package, which the
 wheel does not ship: `roommem.py` (RoomMem), `modulemem.py` (ModuleMem), `ask.py`
