@@ -6,9 +6,9 @@ store the right long-term memories, merge duplicates, supersede outdated ones
 and ignore noise, then answer probe questions from memory.
 
 This module replays the dataset through an in-process :class:`MemoryOSService`
-using exactly the calls the HTTP handlers in ``api/app.py`` make for
-``/sessions``, ``/ingest``, ``/archives/ingest``, ``/archives/attachments``
-and ``/build-context`` with the ``source_evidence/v2`` response profile.
+using the calls xmuse v1 made over HTTP (sessions, ingest, archive ingest and
+attachments, and build-context with the ``source_evidence/v2`` projection);
+those routes were removed in 0.5.0, the service methods remain.
 
 Arms
 ----
