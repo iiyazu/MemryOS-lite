@@ -145,14 +145,18 @@ Request (`CurateRequest`):
 }
 ```
 
-- `profile` is `module` (default) or `room`. Under `module`, `memories` may
+- `profile` is `module` (default), `room`, or `collab`. Under `module`, `memories` may
   only hold decisions and facts; lessons come from failure assignments. `room`
   is the profile of the in-process session curator (RoomMem): plain messages yield facts, decisions,
   rules, preferences, and lessons, and a lesson proposal that cites a new
-  activity adds one occurrence to the active lesson on its topic key.
-- `kind` is `lesson`, `decision`, `fact`, `rule`, or `preference`; activity
-  `type` is `message`, `review_objection`, `gate_failure`, or
-  `contract_revision`.
+  activity adds one occurrence to the active lesson on its topic key. `collab`
+  is the alignment curator for one xmuse topic (see "The collab profile").
+- `kind` is `lesson`, `decision`, `fact`, `rule`, `preference`, `convention`,
+  `assumption`, or `question`; activity `type` is `message`, `review_objection`,
+  `gate_failure`, or `contract_revision`. An activity may also carry an optional
+  `kind` (the xmuse message kind: `message`, `handoff`, `review_request`,
+  `decision`, `assumption`, or `question`), used only by `collab` to label a
+  `message` activity in the prompt.
 - `window` holds 1-32 activities, `context` up to 8 (read-only, quotable),
   `active` up to 60. Activity ids must be unique across `context` and `window`.
   `seq` is the host's monotonic activity order and becomes memory versions.
@@ -173,6 +177,44 @@ The curation runs as a LangGraph graph: `extract` (LLM) → `check`
 rules go back to the LLM, at most `max_repairs` times) → `consolidate`. After
 the last repair, invalid parts are dropped and failures without an assignment
 are listed in `unaccounted`.
+
+### The collab profile
+
+`collab` proposes alignment entries for one xmuse topic, where several agents
+collaborate; `scope_id` is the topic id. The host (the xmuse 2 hub) keeps every
+entry, so everything MemoryOS returns is a proposal that the topic owner or a
+human confirms. MemoryOS never decides which side of a contradiction wins.
+
+`memories` may hold `decision`, `convention`, `assumption`, `question`, and
+`lesson` (room-style lesson proposals); `fact`, `rule`, and `preference` are
+rejected. A `review_objection` or `gate_failure` activity in the window still
+gets the closed-world assignment accounting of the `module` profile.
+
+`active` entries include the ones agents declared themselves. A proposal whose
+statement equals any active statement (whitespace- and case-insensitive, under
+any topic key) is a noop. Reusing an active entry's topic key proposes a
+replacement (`supersedes_id`).
+
+A memory in the LLM reply may carry `"resolves": [ids]`; every id must be an
+active entry of kind `question`, otherwise the memory is rejected and the rule
+goes back to the LLM. The response memory then carries `resolves_ids` (an empty
+list when it answers nothing). `resolves_ids` is part of the content-derived
+memory id only when it is non-empty.
+
+Conflicts: the reply may list `{"a_id", "b_id", "reason", "sources"}`. Each side
+is an active id or the topic key of a memory proposed in the same reply; at most
+one side may be new; a reason of 1-200 characters and 0-3 verbatim sources are
+required. In the response, a new side is replaced by the id of the proposed
+version or, when that proposal turned out to be a noop, by the id of the active
+entry with that topic key; duplicate pairs and self-pairs are dropped. Invalid
+conflicts are violations and go through the repair loop like any other rule.
+
+The prompt asks for short statements that keep every qualifier (scope,
+conditions, exceptions, units), and lists the active entries with their ids. The
+repair prompt asks for all "memories, assignments and conflicts".
+
+Output stability: `conflicts` (response) and `resolves_ids` (memory) are present
+only under `collab`; module and room responses are byte-identical to before.
 
 Response (`CurateResponse`):
 
@@ -196,7 +238,8 @@ Response (`CurateResponse`):
 ```
 
 `memories` are the new versions to store; `supersedes_id` names the active
-memory each one replaces. Memory ids are derived from content, so a replayed
+memory each one replaces. Under `collab` the response also has `conflicts` and
+each memory has `resolves_ids`. Memory ids are derived from content, so a replayed
 request yields the same ids. Lessons keep their newest 8 sources while
 `occurrences` keeps counting.
 
