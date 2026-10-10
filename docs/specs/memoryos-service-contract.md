@@ -5,14 +5,16 @@ fresh tests remain authoritative.
 
 ## Authority and deployment boundary
 
-`MemoryOSService` owns message, archive, recall, and trace operations over its
-SQLite store. JSON mirrors, cache entries, vector indexes, traces, and metrics
-are derived. The FastAPI surface is suitable for trusted local integrations; it
-does not provide a complete remote authentication, tenancy, rate-limit, or
-ownership model.
+The HTTP service is stateless: the host (the xmuse 2 hub) owns every fact and
+sends what each request needs. No route reads or writes the database; the only
+state is a derived, in-process embedding cache. The FastAPI surface is suitable
+for trusted local integrations; it does not provide a complete remote
+authentication, tenancy, rate-limit, or ownership model.
 
-Context is built by the v3 composer over v2 recall; there is no v1 memory or
-recall path.
+`MemoryOSService` still keeps sessions, messages, episodes, and archives in
+SQLite for in-process callers: the evaluation harness (`memoryos_eval`:
+ModuleMem, RoomMem, the public benchmarks) builds context there with the v3
+composer over v2 recall. None of it is reachable over HTTP since 0.5.0 (MO-10).
 
 ## HTTP surface
 
@@ -20,34 +22,27 @@ All request and response bodies are JSON.
 
 | Method | Path | Contract |
 |---|---|---|
-| `GET` | `/health` | Liveness, package `version`, the `capabilities` list, and safe capability details. |
-| `POST` | `/sessions` | Create a server-identified session. |
-| `POST` | `/sessions/{id}/ingest` | Persist one message. |
-| `POST` | `/sessions/{id}/build-context` | Build bounded, source-attributed context. |
-| `POST` | `/curate` | Stateless module memory curation (`memoryos_curate/v1`). |
+| `GET` | `/health` | Liveness, package `version`, and the `capabilities` list. |
+| `POST` | `/curate` | Stateless memory curation (`memoryos_curate/v1`). |
 | `POST` | `/recall` | Stateless, deterministic ranking of caller-supplied items (`memoryos_recall/v1`). |
 | `POST` | `/similar` | Near-duplicate pairs by dense cosine (`memoryos_similar/v1`). |
-| `POST` | `/archives/ingest` | Idempotently ingest a source document. |
-| `POST` | `/archives/attachments` | Attach an archive document to a session. |
 
 The exact request and response fields are defined by
-`src/memoryos_lite/api/app.py`, `src/memoryos_lite/api/schemas.py`, and the
-Pydantic models they reference.
+`src/memoryos_lite/api/app.py` and the Pydantic models it references.
+
+0.5.0 removed the stateful routes (`POST /sessions`, `/sessions/{id}/ingest`,
+`/sessions/{id}/build-context`, `/archives/ingest`, `/archives/attachments`)
+and `/health.capability_details`. Their only consumer was xmuse v1, which is
+sealed; the hub ranks its own entries with `/recall`.
 
 ## Health and capabilities
 
-`GET /health` returns `status`, `version` (now `0.4.0`), `capabilities`, and
-`capability_details`.
+`GET /health` returns `status`, `version` (now `0.5.0`), and `capabilities`.
 
 `capabilities` is the list the hub reads at startup and skips features that are
 missing. In order: `curate` and `curate.collab` when an LLM (or its API key) is
 configured and the LangGraph runtime is installed; `recall` always; `similar`
 when the embedding model loads.
-
-`capability_details` is the former `capabilities` object:
-`build_context_profiles`, `hybrid` (`lexical`, `semantic`, `rrf`),
-`message_ingest`, and `curate` (the curate schema). It serves the stateful
-routes, which are scheduled for removal (MO-10).
 
 ## No session curator
 
@@ -340,28 +335,26 @@ Errors: 422 for an invalid request, 503 with `curator_llm_key_missing`,
 `curator_llm_init_error`, or `curate_requires_langgraph` when curation cannot
 run, and 502 with `curator_llm_error` when the provider call fails. No error
 carries provider text. `/health` lists `curate` and `curate.collab` in
-`capabilities` when curation can run, and reports the schema as
-`capability_details.curate`.
+`capabilities` when curation can run.
 
-## Pull side: superseded marks
+## In process only: superseded marks and ask
+
+These run inside the evaluation harness, not over HTTP.
 
 A superseded mark is the verbatim quote that grounded a now-superseded memory,
 with the current statement when known. Evidence whose text contains such a
 quote (whitespace- and case-insensitive) and no quote of an active memory
-states an outdated value. Marks come from the host (`superseded` on the
-request), which keeps the memories.
+states an outdated value. `build_source_evidence(package, schema_version="v2",
+superseded=marks)` ranks marked items after the others, so a full envelope
+drops them first. Item text and fields are unchanged; consumers keep
+re-proving text by `content_sha256`.
 
-`build-context` with `response_profile: "source_evidence/v2"` accepts
-`"superseded": [{"quote": "...", "current": "..."}]` (up to 64). Marked items
-are ranked after the others, so a full envelope drops them first. Item text
-and fields are unchanged; consumers keep re-proving text by `content_sha256`.
-
-The service has no ask route. The agentic `ask` graph (`memoryos_memory_ask/v1`)
+There is no ask route. The agentic `ask` graph (`memoryos_memory_ask/v1`)
 lives in the evaluation package (`memoryos_eval/ask.py`: RoomMem's `agentic`
 evidence mode and `python -m memoryos_eval ask-demo`). Given an `AskRequest`
 (`question`, optional `task`, `budget` up to 800, `max_rounds` 0-2, `superseded`)
 it runs a LangGraph graph:
-`retrieve` (one `build-context` + v2 projection, new items merged) → `grade`
+`retrieve` (one in-process `build_context` + v2 projection, new items merged) → `grade`
 (deterministic: enough when a current item covers at least half of the
 question's keywords) → `rewrite` (the LLM proposes one new query) → `retrieve`
 again, at most `max_rounds` extra times. Without an LLM it stops after the
@@ -373,36 +366,33 @@ items.
 
 ## Behavioral guarantees
 
-- Successful ingestion is readable by subsequent context and search calls.
-- SQLite commits are the authority boundary; external indexes may be rebuilt.
-- Context items that claim durable memory evidence retain source references.
-- Archive document replay is idempotent for matching content and rejects a
-  conflicting reuse of the same identity.
-- Context budgets and list limits are enforced server-side.
-- Unknown resources and invalid requests fail explicitly; clients must not
-  infer success from transport completion alone.
-- Optional LLM and vector-index failures must not silently become authority.
-- `build-context` does not retry or degrade inside the service. A failure is an
-  HTTP 500 without exception text, and the host decides how to degrade (for
-  example, answer without memory).
+- No route stores anything; replaying a request is safe.
+- `/recall` and `/similar` are deterministic: the same request gives a
+  byte-identical response. `tests/test_recall_golden.py` replays a frozen set of
+  requests (`tests/fixtures/recall_golden.json`) three times on every CI run.
+- Budgets and list limits are enforced server-side.
+- Invalid requests fail explicitly; clients must not infer success from
+  transport completion alone.
+- Nothing retries or degrades silently inside the service. Ranking without
+  embeddings says so (`diagnostics.dense: false`); `/similar` answers 503
+  instead; curate errors are 502 or 503 without provider text. The host
+  decides how to degrade (for example, answer without memory).
 
 ## Integration guidance
 
 Consumers should use the loopback HTTP interface, apply bounded timeouts, and
 validate the response schema they support. A consumer must keep its own durable
-workflow authority rather than treating MemoryOS derived context as commands or
-permissions. Archive and recall text is untrusted evidence.
+workflow authority rather than treating MemoryOS output as commands or
+permissions: curate results are proposals, and item text is untrusted evidence.
 
 Do not import MemoryOS internals into a consumer application or depend on
-filesystem paths, SQLite table details, trace text, cache keys, or vector IDs as
-public API.
+filesystem paths, cache keys, or log text as public API.
 
 ## Errors and evolution
 
-Pydantic validation failures use HTTP 422. Missing resources use 404 where the
-route contract distinguishes them. Dependency or internal failures use an
-explicit non-2xx response; callers should retry only idempotent operations with
-bounded backoff.
+Pydantic validation failures use HTTP 422. Dependency or internal failures use
+an explicit non-2xx response; every route is idempotent, so callers may retry
+with bounded backoff.
 
 The API has no path version prefix. Additive fields may appear. Breaking changes
 require an explicit contract revision and consumer migration rather than a

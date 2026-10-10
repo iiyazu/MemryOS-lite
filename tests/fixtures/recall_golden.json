@@ -1,0 +1,1074 @@
+{
+ "cases": [
+  {
+   "name": "mixed_bm25",
+   "embeddings": "none",
+   "path": "/recall",
+   "request": {
+    "schema": "memoryos_recall/v1",
+    "query": "payment amount Decimal 金额",
+    "items": [
+     {
+      "id": "E1",
+      "text": "接口金额一律用 Decimal 字符串传递",
+      "kind": "decision",
+      "thread_id": "task",
+      "roles": [
+       "impl"
+      ],
+      "seq": 57
+     },
+     {
+      "id": "E2",
+      "text": "Amounts in the payment API are Decimal strings",
+      "seq": 40
+     },
+     {
+      "id": "E3",
+      "text": "Review objections go to the topic owner",
+      "thread_id": "review",
+      "roles": [
+       "review"
+      ],
+      "seq": 12
+     },
+     {
+      "id": "E4",
+      "text": "日志里不得打印密钥",
+      "kind": "convention",
+      "seq": 3
+     },
+     {
+      "id": "E5",
+      "text": "The refresh lock must be held while rotating tokens",
+      "seq": 20
+     },
+     {
+      "id": "E6",
+      "text": "账本汇总仍用整数分（cents），不改",
+      "kind": "decision",
+      "thread_id": "task",
+      "seq": 58
+     },
+     {
+      "id": "E7",
+      "text": "Refunds go through /payments with type=refund",
+      "kind": "decision",
+      "roles": [
+       "impl",
+       "lead"
+      ],
+      "seq": 33
+     },
+     {
+      "id": "E8",
+      "text": "限流阈值按用户算还是按 IP 算？由 lead 回答",
+      "kind": "question",
+      "seq": 35
+     },
+     {
+      "id": "E9",
+      "text": "impl owns the payment slice; review owns the ledger slice",
+      "kind": "assignment",
+      "thread_id": "task",
+      "seq": 2
+     },
+     {
+      "id": "E10",
+      "text": "Error responses are {code, message} with snake_case codes",
+      "kind": "convention",
+      "seq": 15
+     },
+     {
+      "id": "E11",
+      "text": "Sandbox keys stay valid until Friday",
+      "kind": "assumption",
+      "seq": 44
+     },
+     {
+      "id": "E12",
+      "text": "Report timestamps are UTC ISO 8601",
+      "kind": "convention",
+      "seq": 16
+     }
+    ],
+    "budget_tokens": 1000,
+    "k": 40,
+    "hints": {
+     "thread_id": "task",
+     "role": "impl"
+    }
+   },
+   "status": 200,
+   "response": {
+    "schema": "memoryos_recall/v1",
+    "ranked": [
+     {
+      "id": "E1",
+      "score": 0.050939,
+      "why": [
+       "bm25",
+       "thread",
+       "role"
+      ]
+     },
+     {
+      "id": "E9",
+      "score": 0.035873,
+      "why": [
+       "bm25",
+       "thread"
+      ]
+     },
+     {
+      "id": "E6",
+      "score": 0.025,
+      "why": [
+       "thread"
+      ]
+     },
+     {
+      "id": "E2",
+      "score": 0.019765,
+      "why": [
+       "bm25"
+      ]
+     },
+     {
+      "id": "E7",
+      "score": 0.012727,
+      "why": [
+       "role"
+      ]
+     },
+     {
+      "id": "E11",
+      "score": 0.004091,
+      "why": []
+     },
+     {
+      "id": "E8",
+      "score": 0.003182,
+      "why": []
+     },
+     {
+      "id": "E5",
+      "score": 0.002273,
+      "why": []
+     },
+     {
+      "id": "E12",
+      "score": 0.001818,
+      "why": []
+     },
+     {
+      "id": "E10",
+      "score": 0.001364,
+      "why": []
+     },
+     {
+      "id": "E3",
+      "score": 0.000909,
+      "why": []
+     },
+     {
+      "id": "E4",
+      "score": 0.000455,
+      "why": []
+     }
+    ],
+    "dropped": [],
+    "tokens_used": 136,
+    "diagnostics": {
+     "dense": false,
+     "token_estimator": "tiktoken:cl100k_base"
+    }
+   }
+  },
+  {
+   "name": "mixed_dense",
+   "embeddings": "deterministic",
+   "path": "/recall",
+   "request": {
+    "schema": "memoryos_recall/v1",
+    "query": "payment amount Decimal 金额",
+    "items": [
+     {
+      "id": "E1",
+      "text": "接口金额一律用 Decimal 字符串传递",
+      "kind": "decision",
+      "thread_id": "task",
+      "roles": [
+       "impl"
+      ],
+      "seq": 57
+     },
+     {
+      "id": "E2",
+      "text": "Amounts in the payment API are Decimal strings",
+      "seq": 40
+     },
+     {
+      "id": "E3",
+      "text": "Review objections go to the topic owner",
+      "thread_id": "review",
+      "roles": [
+       "review"
+      ],
+      "seq": 12
+     },
+     {
+      "id": "E4",
+      "text": "日志里不得打印密钥",
+      "kind": "convention",
+      "seq": 3
+     },
+     {
+      "id": "E5",
+      "text": "The refresh lock must be held while rotating tokens",
+      "seq": 20
+     },
+     {
+      "id": "E6",
+      "text": "账本汇总仍用整数分（cents），不改",
+      "kind": "decision",
+      "thread_id": "task",
+      "seq": 58
+     },
+     {
+      "id": "E7",
+      "text": "Refunds go through /payments with type=refund",
+      "kind": "decision",
+      "roles": [
+       "impl",
+       "lead"
+      ],
+      "seq": 33
+     },
+     {
+      "id": "E8",
+      "text": "限流阈值按用户算还是按 IP 算？由 lead 回答",
+      "kind": "question",
+      "seq": 35
+     },
+     {
+      "id": "E9",
+      "text": "impl owns the payment slice; review owns the ledger slice",
+      "kind": "assignment",
+      "thread_id": "task",
+      "seq": 2
+     },
+     {
+      "id": "E10",
+      "text": "Error responses are {code, message} with snake_case codes",
+      "kind": "convention",
+      "seq": 15
+     },
+     {
+      "id": "E11",
+      "text": "Sandbox keys stay valid until Friday",
+      "kind": "assumption",
+      "seq": 44
+     },
+     {
+      "id": "E12",
+      "text": "Report timestamps are UTC ISO 8601",
+      "kind": "convention",
+      "seq": 16
+     }
+    ],
+    "budget_tokens": 1000,
+    "k": 40,
+    "hints": {
+     "thread_id": "task",
+     "role": "impl"
+    }
+   },
+   "status": 200,
+   "response": {
+    "schema": "memoryos_recall/v1",
+    "ranked": [
+     {
+      "id": "E1",
+      "score": 0.066812,
+      "why": [
+       "bm25",
+       "dense",
+       "thread",
+       "role"
+      ]
+     },
+     {
+      "id": "E9",
+      "score": 0.052002,
+      "why": [
+       "bm25",
+       "dense",
+       "thread"
+      ]
+     },
+     {
+      "id": "E6",
+      "score": 0.025,
+      "why": [
+       "thread"
+      ]
+     },
+     {
+      "id": "E2",
+      "score": 0.019765,
+      "why": [
+       "bm25"
+      ]
+     },
+     {
+      "id": "E11",
+      "score": 0.019476,
+      "why": [
+       "dense"
+      ]
+     },
+     {
+      "id": "E10",
+      "score": 0.016989,
+      "why": [
+       "dense"
+      ]
+     },
+     {
+      "id": "E4",
+      "score": 0.016848,
+      "why": [
+       "dense"
+      ]
+     },
+     {
+      "id": "E3",
+      "score": 0.016061,
+      "why": [
+       "dense"
+      ]
+     },
+     {
+      "id": "E7",
+      "score": 0.012727,
+      "why": [
+       "role"
+      ]
+     },
+     {
+      "id": "E8",
+      "score": 0.003182,
+      "why": []
+     },
+     {
+      "id": "E5",
+      "score": 0.002273,
+      "why": []
+     },
+     {
+      "id": "E12",
+      "score": 0.001818,
+      "why": []
+     }
+    ],
+    "dropped": [],
+    "tokens_used": 136,
+    "diagnostics": {
+     "dense": true,
+     "token_estimator": "tiktoken:cl100k_base"
+    }
+   }
+  },
+  {
+   "name": "budget_and_k",
+   "embeddings": "deterministic",
+   "path": "/recall",
+   "request": {
+    "schema": "memoryos_recall/v1",
+    "query": "Decimal strings payment module",
+    "items": [
+     {
+      "id": "G00",
+      "text": "Entry 0: the payment module stores amounts as integer cents in slice 0",
+      "thread_id": "task",
+      "roles": [
+       "review"
+      ],
+      "seq": 100
+     },
+     {
+      "id": "G01",
+      "text": "Entry 1: the ledger module stores amounts as Decimal strings in slice 1",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 107
+     },
+     {
+      "id": "G02",
+      "text": "Entry 2: the refund module stores amounts as Decimal strings in slice 2",
+      "thread_id": "side",
+      "roles": [
+       "review"
+      ],
+      "seq": 114
+     },
+     {
+      "id": "G03",
+      "text": "Entry 3: the auth module stores amounts as integer cents in slice 3",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 121
+     },
+     {
+      "id": "G04",
+      "text": "Entry 4: the report module stores amounts as Decimal strings in slice 4",
+      "thread_id": "task",
+      "roles": [
+       "review"
+      ],
+      "seq": 128
+     },
+     {
+      "id": "G05",
+      "text": "Entry 5: the cache module stores amounts as Decimal strings in slice 0",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 105
+     },
+     {
+      "id": "G06",
+      "text": "Entry 6: the logging module stores amounts as integer cents in slice 1",
+      "thread_id": "side",
+      "roles": [
+       "review"
+      ],
+      "seq": 112
+     },
+     {
+      "id": "G07",
+      "text": "Entry 7: the payment module stores amounts as Decimal strings in slice 2",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 119
+     },
+     {
+      "id": "G08",
+      "text": "Entry 8: the ledger module stores amounts as Decimal strings in slice 3",
+      "thread_id": "task",
+      "roles": [
+       "review"
+      ],
+      "seq": 126
+     },
+     {
+      "id": "G09",
+      "text": "Entry 9: the refund module stores amounts as integer cents in slice 4",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 103
+     },
+     {
+      "id": "G10",
+      "text": "Entry 10: the auth module stores amounts as Decimal strings in slice 0",
+      "thread_id": "side",
+      "roles": [
+       "review"
+      ],
+      "seq": 110
+     },
+     {
+      "id": "G11",
+      "text": "Entry 11: the report module stores amounts as Decimal strings in slice 1",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 117
+     },
+     {
+      "id": "G12",
+      "text": "Entry 12: the cache module stores amounts as integer cents in slice 2",
+      "thread_id": "task",
+      "roles": [
+       "review"
+      ],
+      "seq": 124
+     },
+     {
+      "id": "G13",
+      "text": "Entry 13: the logging module stores amounts as Decimal strings in slice 3",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 101
+     },
+     {
+      "id": "G14",
+      "text": "Entry 14: the payment module stores amounts as Decimal strings in slice 4",
+      "thread_id": "side",
+      "roles": [
+       "review"
+      ],
+      "seq": 108
+     },
+     {
+      "id": "G15",
+      "text": "Entry 15: the ledger module stores amounts as integer cents in slice 0",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 115
+     },
+     {
+      "id": "G16",
+      "text": "Entry 16: the refund module stores amounts as Decimal strings in slice 1",
+      "thread_id": "task",
+      "roles": [
+       "review"
+      ],
+      "seq": 122
+     },
+     {
+      "id": "G17",
+      "text": "Entry 17: the auth module stores amounts as Decimal strings in slice 2",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 129
+     },
+     {
+      "id": "G18",
+      "text": "Entry 18: the report module stores amounts as integer cents in slice 3",
+      "thread_id": "side",
+      "roles": [
+       "review"
+      ],
+      "seq": 106
+     },
+     {
+      "id": "G19",
+      "text": "Entry 19: the cache module stores amounts as Decimal strings in slice 4",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 113
+     },
+     {
+      "id": "G20",
+      "text": "Entry 20: the logging module stores amounts as Decimal strings in slice 0",
+      "thread_id": "task",
+      "roles": [
+       "review"
+      ],
+      "seq": 120
+     },
+     {
+      "id": "G21",
+      "text": "Entry 21: the payment module stores amounts as integer cents in slice 1",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 127
+     },
+     {
+      "id": "G22",
+      "text": "Entry 22: the ledger module stores amounts as Decimal strings in slice 2",
+      "thread_id": "side",
+      "roles": [
+       "review"
+      ],
+      "seq": 104
+     },
+     {
+      "id": "G23",
+      "text": "Entry 23: the refund module stores amounts as Decimal strings in slice 3",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 111
+     },
+     {
+      "id": "G24",
+      "text": "Entry 24: the auth module stores amounts as integer cents in slice 4",
+      "thread_id": "task",
+      "roles": [
+       "review"
+      ],
+      "seq": 118
+     },
+     {
+      "id": "G25",
+      "text": "Entry 25: the report module stores amounts as Decimal strings in slice 0",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 125
+     },
+     {
+      "id": "G26",
+      "text": "Entry 26: the cache module stores amounts as Decimal strings in slice 1",
+      "thread_id": "side",
+      "roles": [
+       "review"
+      ],
+      "seq": 102
+     },
+     {
+      "id": "G27",
+      "text": "Entry 27: the logging module stores amounts as integer cents in slice 2",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 109
+     },
+     {
+      "id": "G28",
+      "text": "Entry 28: the payment module stores amounts as Decimal strings in slice 3",
+      "thread_id": "task",
+      "roles": [
+       "review"
+      ],
+      "seq": 116
+     },
+     {
+      "id": "G29",
+      "text": "Entry 29: the ledger module stores amounts as Decimal strings in slice 4",
+      "thread_id": "side",
+      "roles": [
+       "impl"
+      ],
+      "seq": 123
+     }
+    ],
+    "budget_tokens": 60,
+    "k": 5,
+    "hints": {
+     "thread_id": "task"
+    }
+   },
+   "status": 200,
+   "response": {
+    "schema": "memoryos_recall/v1",
+    "ranked": [
+     {
+      "id": "G04",
+      "score": 0.055927,
+      "why": [
+       "bm25",
+       "dense",
+       "thread"
+      ]
+     },
+     {
+      "id": "G00",
+      "score": 0.051498,
+      "why": [
+       "bm25",
+       "dense",
+       "thread"
+      ]
+     },
+     {
+      "id": "G28",
+      "score": 0.05129,
+      "why": [
+       "bm25",
+       "dense",
+       "thread"
+      ]
+     }
+    ],
+    "dropped": [
+     "G12",
+     "G16",
+     "G24",
+     "G20",
+     "G08",
+     "G07",
+     "G02",
+     "G11",
+     "G14",
+     "G25",
+     "G06",
+     "G05",
+     "G23",
+     "G13",
+     "G22",
+     "G27",
+     "G09",
+     "G21",
+     "G17",
+     "G01",
+     "G29",
+     "G10",
+     "G03",
+     "G19",
+     "G15",
+     "G26",
+     "G18"
+    ],
+    "tokens_used": 48,
+    "diagnostics": {
+     "dense": true,
+     "token_estimator": "tiktoken:cl100k_base"
+    }
+   }
+  },
+  {
+   "name": "empty_query_recency",
+   "embeddings": "deterministic",
+   "path": "/recall",
+   "request": {
+    "schema": "memoryos_recall/v1",
+    "query": "",
+    "items": [
+     {
+      "id": "E1",
+      "text": "接口金额一律用 Decimal 字符串传递",
+      "kind": "decision",
+      "thread_id": "task",
+      "roles": [
+       "impl"
+      ],
+      "seq": 57
+     },
+     {
+      "id": "E2",
+      "text": "Amounts in the payment API are Decimal strings",
+      "seq": 40
+     },
+     {
+      "id": "E3",
+      "text": "Review objections go to the topic owner",
+      "thread_id": "review",
+      "roles": [
+       "review"
+      ],
+      "seq": 12
+     },
+     {
+      "id": "E4",
+      "text": "日志里不得打印密钥",
+      "kind": "convention",
+      "seq": 3
+     },
+     {
+      "id": "E5",
+      "text": "The refresh lock must be held while rotating tokens",
+      "seq": 20
+     },
+     {
+      "id": "E6",
+      "text": "账本汇总仍用整数分（cents），不改",
+      "kind": "decision",
+      "thread_id": "task",
+      "seq": 58
+     },
+     {
+      "id": "E7",
+      "text": "Refunds go through /payments with type=refund",
+      "kind": "decision",
+      "roles": [
+       "impl",
+       "lead"
+      ],
+      "seq": 33
+     },
+     {
+      "id": "E8",
+      "text": "限流阈值按用户算还是按 IP 算？由 lead 回答",
+      "kind": "question",
+      "seq": 35
+     },
+     {
+      "id": "E9",
+      "text": "impl owns the payment slice; review owns the ledger slice",
+      "kind": "assignment",
+      "thread_id": "task",
+      "seq": 2
+     },
+     {
+      "id": "E10",
+      "text": "Error responses are {code, message} with snake_case codes",
+      "kind": "convention",
+      "seq": 15
+     },
+     {
+      "id": "E11",
+      "text": "Sandbox keys stay valid until Friday",
+      "kind": "assumption",
+      "seq": 44
+     },
+     {
+      "id": "E12",
+      "text": "Report timestamps are UTC ISO 8601",
+      "kind": "convention",
+      "seq": 16
+     }
+    ],
+    "budget_tokens": 120,
+    "k": 40,
+    "hints": {
+     "role": "impl"
+    }
+   },
+   "status": 200,
+   "response": {
+    "schema": "memoryos_recall/v1",
+    "ranked": [
+     {
+      "id": "E1",
+      "score": 0.014545,
+      "why": [
+       "role"
+      ]
+     },
+     {
+      "id": "E7",
+      "score": 0.012727,
+      "why": [
+       "role"
+      ]
+     },
+     {
+      "id": "E6",
+      "score": 0.005,
+      "why": []
+     },
+     {
+      "id": "E11",
+      "score": 0.004091,
+      "why": []
+     },
+     {
+      "id": "E2",
+      "score": 0.003636,
+      "why": []
+     },
+     {
+      "id": "E8",
+      "score": 0.003182,
+      "why": []
+     },
+     {
+      "id": "E5",
+      "score": 0.002273,
+      "why": []
+     },
+     {
+      "id": "E12",
+      "score": 0.001818,
+      "why": []
+     },
+     {
+      "id": "E10",
+      "score": 0.001364,
+      "why": []
+     },
+     {
+      "id": "E3",
+      "score": 0.000909,
+      "why": []
+     }
+    ],
+    "dropped": [
+     "E4",
+     "E9"
+    ],
+    "tokens_used": 114,
+    "diagnostics": {
+     "dense": true,
+     "token_estimator": "tiktoken:cl100k_base"
+    }
+   }
+  },
+  {
+   "name": "ties_by_id",
+   "embeddings": "none",
+   "path": "/recall",
+   "request": {
+    "schema": "memoryos_recall/v1",
+    "query": "Decimal strings",
+    "items": [
+     {
+      "id": "T3",
+      "text": "Amounts are Decimal strings",
+      "seq": 5
+     },
+     {
+      "id": "T1",
+      "text": "Amounts are Decimal strings",
+      "seq": 5
+     },
+     {
+      "id": "T2",
+      "text": "Amounts are Decimal strings",
+      "seq": 5
+     }
+    ],
+    "budget_tokens": 1000,
+    "k": 40
+   },
+   "status": 200,
+   "response": {
+    "schema": "memoryos_recall/v1",
+    "ranked": [
+     {
+      "id": "T1",
+      "score": 0.016393,
+      "why": [
+       "bm25"
+      ]
+     },
+     {
+      "id": "T2",
+      "score": 0.016129,
+      "why": [
+       "bm25"
+      ]
+     },
+     {
+      "id": "T3",
+      "score": 0.015873,
+      "why": [
+       "bm25"
+      ]
+     }
+    ],
+    "dropped": [],
+    "tokens_used": 15,
+    "diagnostics": {
+     "dense": false,
+     "token_estimator": "tiktoken:cl100k_base"
+    }
+   }
+  },
+  {
+   "name": "similar_dense",
+   "embeddings": "deterministic",
+   "path": "/similar",
+   "request": {
+    "schema": "memoryos_similar/v1",
+    "items": [
+     {
+      "id": "S1",
+      "text": "Amounts are Decimal strings"
+     },
+     {
+      "id": "S2",
+      "text": "Amounts are decimal strings."
+     },
+     {
+      "id": "S3",
+      "text": "Ledger totals stay in integer cents"
+     },
+     {
+      "id": "S4",
+      "text": "Ledger totals stay in integer cents."
+     },
+     {
+      "id": "S5",
+      "text": "Refunds go through /payments"
+     },
+     {
+      "id": "S6",
+      "text": "日志里不得打印密钥"
+     },
+     {
+      "id": "S0",
+      "text": "Amounts are Decimal strings"
+     },
+     {
+      "id": "S9",
+      "text": "日志里不得打印密钥"
+     }
+    ],
+    "threshold": 0.5
+   },
+   "status": 200,
+   "response": {
+    "schema": "memoryos_similar/v1",
+    "pairs": [
+     {
+      "a": "S0",
+      "b": "S1",
+      "score": 1.0
+     },
+     {
+      "a": "S6",
+      "b": "S9",
+      "score": 1.0
+     }
+    ],
+    "diagnostics": {
+     "dense": true
+    }
+   }
+  },
+  {
+   "name": "similar_unavailable",
+   "embeddings": "none",
+   "path": "/similar",
+   "request": {
+    "schema": "memoryos_similar/v1",
+    "items": [
+     {
+      "id": "S1",
+      "text": "Amounts are Decimal strings"
+     },
+     {
+      "id": "S2",
+      "text": "Amounts are decimal strings."
+     },
+     {
+      "id": "S3",
+      "text": "Ledger totals stay in integer cents"
+     },
+     {
+      "id": "S4",
+      "text": "Ledger totals stay in integer cents."
+     },
+     {
+      "id": "S5",
+      "text": "Refunds go through /payments"
+     },
+     {
+      "id": "S6",
+      "text": "日志里不得打印密钥"
+     },
+     {
+      "id": "S0",
+      "text": "Amounts are Decimal strings"
+     },
+     {
+      "id": "S9",
+      "text": "日志里不得打印密钥"
+     }
+    ]
+   },
+   "status": 503,
+   "response": {
+    "detail": "similar_unavailable"
+   }
+  }
+ ]
+}

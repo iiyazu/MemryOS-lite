@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi.testclient import TestClient
-
 from memoryos_eval.ask import (
     AskRequest,
     ask_with,
@@ -14,7 +12,6 @@ from memoryos_eval.ask import (
     render_ask_item,
     run_ask,
 )
-from memoryos_lite.api.app import app, get_service
 from memoryos_lite.config import Settings
 from memoryos_lite.engine import MemoryOSService
 from memoryos_lite.retrieval.supersede import (
@@ -236,22 +233,12 @@ def test_ask_with_marks_the_session_outdated_item(tmp_path):
 def test_host_marks_rank_the_superseded_message_last(tmp_path):
     service = _service(tmp_path)
     session_id = _seed(service)
-    marks = [{"quote": m.quote, "current": m.current} for m in service.superseded_marks(session_id)]
-    client = TestClient(app)
-    try:
-        app.dependency_overrides[get_service] = lambda: service
-        envelope = client.post(
-            f"/sessions/{session_id}/build-context",
-            json={
-                "task": "launch",
-                "retrieval_query": "Where does Helios launch?",
-                "response_profile": "source_evidence/v2",
-                "superseded": marks,
-            },
-        ).json()
-        texts = [item["text"] for item in envelope["items"]]
-        assert texts.index(NEW) < texts.index(OLD)
-        assert client.post("/sessions/missing/ask", json={"question": "x"}).status_code == 404
-        assert "/sessions/{session_id}/ask" not in app.openapi()["paths"]
-    finally:
-        app.dependency_overrides.clear()
+    package = service.build_context(
+        session_id, "launch", retrieval_query="Where does Helios launch?"
+    )
+    envelope = build_source_evidence(
+        package, schema_version="v2", superseded=service.superseded_marks(session_id)
+    )
+
+    texts = [item["text"] for item in envelope["items"]]
+    assert texts.index(NEW) < texts.index(OLD)
