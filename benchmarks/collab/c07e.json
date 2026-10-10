@@ -1,0 +1,19 @@
+{
+  "scenario_id": "c07e",
+  "variant_of": "c07",
+  "title": "c07 with hub ids: active entries keyed E<n> / e<n>",
+  "active": [
+    {"id": "E31", "kind": "decision", "topic_key": "e31", "statement": "没有命中规则的交易放进 Report.unmatched 单列，不设 uncategorized 之类的伪类目。", "version": 4},
+    {"id": "E32", "kind": "decision", "topic_key": "e32", "statement": "报表行按 (currency, category) 排序。", "version": 5}
+  ],
+  "window": [
+    {"id": "m1", "seq": 70, "type": "message", "kind": "decision", "speaker": "human", "text": "决定（推翻之前的约定）：未匹配的交易不再单列，直接归到类目 uncategorized，参与按 (currency, category) 的分桶和排序；Report.unmatched 字段保留但恒为空元组。"},
+    {"id": "m2", "seq": 71, "type": "message", "kind": "message", "speaker": "impl", "text": "收到，我改 rules.py 和 report.py。"}
+  ],
+  "expect": {
+    "proposals": [
+      {"sources": ["m1"], "qualifiers": [["uncategorized"], ["currency"], ["unmatched"]], "supersedes": "E31"}
+    ],
+    "chatter": ["m2"]
+  }
+}
