@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from importlib.util import find_spec
 
+from memoryos_lite.audit import AuditRequest, AuditResponse, Retriever
 from memoryos_lite.config import Settings, get_settings
 from memoryos_lite.curator import CuratorLLM, build_curator_llm
 from memoryos_lite.curator.curate import CurateRequest, CurateResponse
@@ -31,7 +32,8 @@ class CurateUnavailableError(RuntimeError):
 
 
 class MemoryOSService:
-    """The stateless service behind the HTTP API: ``/curate``, ``/recall``, ``/similar``.
+    """The stateless service behind the HTTP API: ``/curate``, ``/recall``, ``/similar``,
+    ``/audit``.
 
     It keeps no state between requests and opens no database. The in-process
     session store the evaluations measure lives in ``memoryos_eval``.
@@ -46,6 +48,7 @@ class MemoryOSService:
         self.settings = settings or get_settings()
         self._curate_llm = curate_llm
         self._recaller: Recaller | None = None
+        self._audit_retriever: Retriever | None = None
         self.tokenizer = TokenEstimator()
         self.embedding_client = embedding_client or self._default_embedding_client()
 
@@ -121,6 +124,34 @@ class MemoryOSService:
 
         with timed_core_operation(component="engine", operation="similar", logger=logger):
             return self.recaller.similar(request)
+
+    @property
+    def audit_retriever(self) -> Retriever:
+        if self._audit_retriever is None:
+            self._audit_retriever = Retriever(self.embedding_client)
+        return self._audit_retriever
+
+    def audit(self, request: AuditRequest) -> AuditResponse:
+        """Stateless dependency audit (``POST /audit``); see ``audit``. Needs what /curate needs."""
+
+        llm = self._json_llm()
+        try:
+            from memoryos_lite.audit_graph import run_audit
+        except ImportError as exc:
+            raise CurateUnavailableError("audit_requires_langgraph") from exc
+        with timed_core_operation(component="engine", operation="audit", logger=logger):
+            response = run_audit(request, llm, self.audit_retriever)
+        log_event(
+            logger,
+            logging.INFO,
+            "audit_completed",
+            items=len(request.items),
+            candidates=len(response.candidates),
+            flagged=len(response.flagged),
+            expanded=response.diagnostics.expanded,
+            dropped_quotes=response.diagnostics.dropped_quotes,
+        )
+        return response
 
     def curate_ready(self) -> bool:
         """Whether ``/curate`` can run: an LLM (or its key) and the LangGraph runtime."""

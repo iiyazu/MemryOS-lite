@@ -12,7 +12,7 @@ from memoryos_lite.api.app import app
 from memoryos_lite.config import Settings
 
 #: The whole HTTP surface since MO-10: the hub sends every fact it needs.
-STATELESS_PATHS = {"/health", "/curate", "/recall", "/similar"}
+STATELESS_PATHS = {"/health", "/curate", "/recall", "/similar", "/audit"}
 
 
 def test_http_surface_is_stateless():

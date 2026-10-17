@@ -27,6 +27,7 @@ All request and response bodies are JSON.
 | `POST` | `/curate` | Stateless memory curation (`memoryos_curate/v1`). |
 | `POST` | `/recall` | Stateless, deterministic ranking of caller-supplied items (`memoryos_recall/v1`). |
 | `POST` | `/similar` | Near-duplicate pairs by dense cosine (`memoryos_similar/v1`). |
+| `POST` | `/audit` | Which caller-supplied messages relied on a replaced statement (`memoryos_audit/v1`). |
 
 The exact request and response fields are defined by
 `src/memoryos_lite/api/app.py` and the Pydantic models it references.
@@ -41,7 +42,7 @@ sealed; the hub ranks its own entries with `/recall`.
 `GET /health` returns `status`, `version` (now `0.5.0`), and `capabilities`.
 
 `capabilities` is the list the hub reads at startup and skips features that are
-missing. In order: `curate` and `curate.collab` when an LLM (or its API key) is
+missing. In order: `curate`, `curate.collab` and `audit` when an LLM (or its API key) is
 configured and the LangGraph runtime is installed; `recall` always; `similar`
 when the embedding model loads.
 
@@ -345,6 +346,40 @@ Errors: 422 for an invalid request, 503 with `curator_llm_key_missing`,
 run, and 502 with `curator_llm_error` when the provider call fails. No error
 carries provider text. `/health` lists `curate` and `curate.collab` in
 `capabilities` when curation can run.
+
+## Dependency audit: `POST /audit`
+
+After a host replaces a statement (a decision, convention, or assumption), it
+asks which of its messages relied on the old version. The request
+(`memoryos_audit/v1`) carries `old` and `new` (`id`, `text` up to 8000
+characters), `items` (up to 2000 messages: `id`, `text`, optional `speaker`,
+`seq`), `k` (1-60, default 20) and `expand` (default true). The host chooses
+the items: usually the messages written while the old statement was in force.
+
+A LangGraph graph runs `expand` → `retrieve` → `judge` → `verify`:
+
+- `expand` asks the LLM for 4 short queries describing how dependent messages
+  would talk about the old behaviour. A reply that is not usable JSON only
+  means no expansion; `expand: false` skips the call.
+- `retrieve` fuses three rankings with RRF (k=60) and keeps the top `k`:
+  the old text plus every backticked span of either statement (3+ letters or
+  digits; without any, their ASCII identifiers), one BM25 and one dense ranking
+  per query; the old and new text plus the expansion queries, the same way;
+  and the 20 items with the highest `seq`.
+- `judge` sends the top `k` (1500 characters each) to the LLM, which returns
+  `dep` and a quote per item.
+- `verify` keeps a flag only for a judged item whose quote is a non-empty
+  exact substring of its full text (at most about 140 characters).
+
+The response lists `flagged` (`id`, `quote`), `candidates` (the judged ids,
+best first) and `diagnostics` (`queries`, `expanded`, `dense`, `judged`,
+`dropped_quotes`, `llm_calls`, `usage`). A message outside `candidates` is
+never flagged, so the result can miss dependents; hosts should say so.
+Errors are those of `/curate` (`audit_requires_langgraph` instead of
+`curate_requires_langgraph`). The design was chosen on the DepRecall
+benchmark in the xmuse repository's learning notes: rule-expanded queries
+alone found every dependent that copied an identifier, and the LLM expansion
+and the recency list recovered most of those that paraphrased.
 
 ## In process only: superseded marks and ask
 

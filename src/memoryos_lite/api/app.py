@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, HTTPException
 
 from memoryos_lite import __version__
+from memoryos_lite.audit import AuditRequest, AuditResponse
 from memoryos_lite.config import Settings as _Settings
 from memoryos_lite.curator import CuratorLLMError
 from memoryos_lite.curator.curate import CurateRequest, CurateResponse
@@ -53,7 +54,7 @@ def health(service: ServiceDep) -> dict[str, object]:
         except Exception:
             semantic_ready = False
     # The hub reads ``capabilities`` at startup and skips what is missing.
-    curate = ["curate", "curate.collab"] if service.curate_ready() else []
+    curate = ["curate", "curate.collab", "audit"] if service.curate_ready() else []
     return {
         "status": "ok",
         "version": __version__,
@@ -88,6 +89,21 @@ def curate(request: CurateRequest, service: ServiceDep) -> CurateResponse:
 
     try:
         return service.curate(request)
+    except CurateUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=exc.reason_code) from exc
+    except CuratorLLMError as exc:
+        raise HTTPException(status_code=502, detail="curator_llm_error") from exc
+
+
+@app.post("/audit", response_model=AuditResponse)
+def audit(request: AuditRequest, service: ServiceDep) -> AuditResponse:
+    """Stateless dependency audit: which caller-supplied messages relied on a replaced statement.
+
+    Same failure codes as /curate: 503 when it cannot run here, 502 when the provider call failed.
+    """
+
+    try:
+        return service.audit(request)
     except CurateUnavailableError as exc:
         raise HTTPException(status_code=503, detail=exc.reason_code) from exc
     except CuratorLLMError as exc:
