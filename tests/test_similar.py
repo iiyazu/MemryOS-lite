@@ -99,4 +99,4 @@ def test_health_capabilities_follow_what_can_run(client_for):
     assert "recall" in bare["capabilities"]
     assert "similar" not in bare["capabilities"]
     full = client_for(DeterministicEmbeddingClient(), StubLLM()).get("/health").json()
-    assert full["capabilities"] == ["curate", "curate.collab", "recall", "similar"]
+    assert full["capabilities"] == ["curate", "curate.collab", "audit", "recall", "similar"]
