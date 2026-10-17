@@ -61,7 +61,7 @@ jobs:
           schema = app.openapi()
           assert schema["openapi"] == "3.1.0"
           # Stateless since 0.5.0 (MO-10): the hub sends every fact it needs.
-          paths = {"/health", "/curate", "/recall", "/similar"}
+          paths = {"/health", "/curate", "/recall", "/similar", "/audit"}
           assert set(schema["paths"]) == paths, sorted(schema["paths"])
           PY
 
