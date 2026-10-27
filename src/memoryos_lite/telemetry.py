@@ -122,10 +122,16 @@ def setup(app: Any, exporter: Any = None) -> bool:
         provider.add_span_processor(
             BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint and endpoint + "/v1/traces"))
         )
+    # liveness probes (container healthchecks every 30 s) on top of what the operator excludes;
+    # passing excluded_urls replaces the instrumentation's own reading of these variables, so
+    # read them the same way
+    configured = os.environ.get(
+        "OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", os.environ.get("OTEL_PYTHON_EXCLUDED_URLS", "")
+    )
     FastAPIInstrumentor.instrument_app(
         app,
         tracer_provider=provider,
-        excluded_urls="/health$",  # liveness probes (container healthchecks every 30 s)
+        excluded_urls=",".join(u for u in ("/health$", configured) if u),
         exclude_spans=["receive", "send"],
     )
     capture = _flag("MEMORYOS_OTEL_CAPTURE_CONTENT")
