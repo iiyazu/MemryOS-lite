@@ -33,6 +33,8 @@ ENV = (
     "MEMORYOS_OTEL_PROJECT",
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_PYTHON_FASTAPI_EXCLUDED_URLS",
+    "OTEL_PYTHON_EXCLUDED_URLS",
 )
 RECALL = {
     "schema": "memoryos_recall/v1",
@@ -198,6 +200,21 @@ def test_a_request_continues_the_callers_trace(
     client.post("/recall", json=RECALL)
     [root] = mem.get_finished_spans()
     assert root.parent is None and format(root.context.trace_id, "032x") != TRACE
+
+    mem.clear()
+    assert client.get("/health").status_code == 200
+    assert mem.get_finished_spans() == ()  # liveness probes are not traced
+
+
+@pytest.mark.parametrize("var", ["OTEL_PYTHON_FASTAPI_EXCLUDED_URLS", "OTEL_PYTHON_EXCLUDED_URLS"])
+def test_operator_exclusions_still_apply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, llm_url: str, untrace: None, var: str
+) -> None:
+    monkeypatch.setenv(var, "/recall")
+    client, mem = traced(monkeypatch, tmp_path, llm_url)
+    assert client.post("/recall", json=RECALL).status_code == 200
+    assert client.get("/health").status_code == 200
+    assert mem.get_finished_spans() == ()  # theirs and ours, both excluded
 
 
 def test_curate_traces_graph_nodes_and_llm_calls_without_content(

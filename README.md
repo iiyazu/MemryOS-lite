@@ -186,7 +186,7 @@ MEMORYOS_OTEL_ENABLED=1 uv run --no-sync memoryos api
 | `MEMORYOS_OTEL_PROJECT` | `xmuse` | Phoenix 项目名；和调用方用同一个，两边的 span 才会显示成一棵树 |
 | `MEMORYOS_OTEL_CAPTURE_CONTENT` | unset | `1` 时记录提示词和回复；默认不记录 |
 
-结构化日志里的 `trace_id` 会换成 OpenTelemetry 的 trace 号，日志和 trace 可以对上。打开了但没装 `otel` extra 时只记一条警告，服务照常运行。
+结构化日志里的 `trace_id` 会换成 OpenTelemetry 的 trace 号，日志和 trace 可以对上。打开了但没装 `otel` extra 时只记一条警告，服务照常运行。镜像默认不带 extra，需要时构建：`docker build --build-arg EXTRAS="--extra remote --extra otel" -t memoryos-lite .`。
 
 ## 验证
 
@@ -229,6 +229,15 @@ satisfied、violated 或 not_addressed，按教训、决定、契约和早期决
 `benchmarks/modulemem/SPEC.md`。`--answerer-llm`、
 `--judge-llm`、`--curator-llm` 接受 `provider:model[@wire]`。结果写入 `--out` 下的
 `summary.md`。
+
+## 技术栈
+
+- 服务：Python 3.11、FastAPI、Uvicorn、Pydantic、pydantic-settings、Typer、Rich
+- 编排与模型：LangGraph、LangChain（`ChatOpenAI`，兼容 OpenAI 接口的 OpenAI、DeepSeek、OpenCode Go）
+- 检索：rank-bm25、FastEmbed（可选）、NumPy、tiktoken
+- 存储（评测框架）：SQLAlchemy、SQLite
+- 观测（可选）：OpenTelemetry、OTLP/HTTP、OpenInference、Arize Phoenix
+- 开发：uv、ruff、mypy、pytest、Docker、GitHub Actions
 
 ## 文档
 

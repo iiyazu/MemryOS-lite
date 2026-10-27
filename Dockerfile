@@ -7,11 +7,14 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
+# optional extras, e.g. --build-arg EXTRAS="--extra remote --extra otel"; empty by default
+ARG EXTRAS=""
+
 COPY pyproject.toml uv.lock .python-version README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project $EXTRAS
 
 COPY src/ src/
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev $EXTRAS
 
 # ---- final: slim runtime with curl for healthcheck ----
 FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS final
