@@ -10,13 +10,11 @@ MemoryOS Lite 研究如何把长期对话中的记忆摄入、检索、上下文
 ## 当前基线
 
 - 上下文只有一条路径：v3 layered context composer 组装，v2 episode-first evidence recall 取证据。
-  v1 记忆架构（page、item、分页、冲突检测）已删除。
 - 服务不运行后台策展，也没有 advisories 接口；需要持久记忆的宿主调用 `/curate`，自己保存记忆。会话策展器（`Curator.run_session`，`/curate` 图按 `profile=room` 的有状态宿主）只在 RoomMem 评测里进程内运行。
 - 模块记忆走无状态的 `POST /curate`（`memoryos_curate/v1`）：宿主（如 xmuse）带上模块现有记忆和一窗新活动，MemoryOS 返回新的记忆版本，自己不存状态。错题本采用闭合记账：每条复核打回和门禁失败都必须归到一条教训或写明理由排除。提炼过程是一张 LangGraph 图（抽取 → 校验 → 修复 → 汇总），见下文"模块记忆"。
 - `/curate` 另有 `profile: "collab"`，给 xmuse 2 的话题做对齐提炼：产出决定、约定、假设、未决问题和教训的**提议**（由话题负责人或人确认），可标注回答了哪些问题（`resolves_ids`），并只报告疑似矛盾（`conflicts`），不替任何一方做裁决；`module` 和 `room` 的输出不变。
 - HTTP 服务无状态（`/curate`、`/recall`、`/similar`）。进程内的会话与归档存储（评测框架使用）以
   SQLite 为权威存储；trace 文件和进程内向量索引都是派生数据。
-- 以新鲜命令结果而不是文档中的历史通过数判断状态。
 
 ```text
 ingest(message)
@@ -67,21 +65,6 @@ flowchart TB
 两张图都是 LangGraph，可以离线演示：`memoryos demo curate --mermaid`、
 `uv run python -m memoryos_eval ask-demo --mermaid`（后者需要源码 checkout）。
 
-## 评测结论
-
-结论只写方向，数字和设置见评测记录 `FINDINGS.md` 的对应小节（不随本仓库分发）。所有评测里回答模型与
-评委属同一模型家族，数据集由 LLM 起草并经规则校验；行为评测的种子仓库技术债由评测设计者按活动历史手写。
-
-| 结论 | 依据 |
-|---|---|
-| 行为：重启后的模块负责人拿到记忆文件，按现行决定和契约做任务的比例接近看全历史；在带技术债的真实仓库里由编码 agent 动手改时，无记忆组会照抄已废弃的旧写法，拿到记忆文件的组不会 | §9.20（补丁文本）、§9.23（OpenCode 真改代码） |
-| 代码库本身已承载大部分现行决定；记忆的增量主要在防止 agent 被代码里看似可用的旧东西带偏 | §9.22、§9.23 |
-| 历史超出上下文预算时，记忆文件以远少于全量历史的 token 接近全量历史的答对率；同预算的原始日志主要因截断而缺失 | §9.19（长模块） |
-| 短模块、预算足够装下原文时，原始日志不差于记忆文件；记忆文件只在小预算下赢在教训题 | §9.17、§9.19（预算扫描） |
-| 闭合记账能把重复错误归到同一条教训并数对次数 | §9.16、§9.17、§9.19 |
-| 有取代标记时，降权消除旧值答案，ask 图补回第一轮漏检；新旧值落在同一窗口时真实 curator 不产生标记 | §9.18、§9.19 |
-| 跨 Room 问答上，curated 记忆与项目级原始检索在噪声内，优势在证据体积和审批治理 | §9.9、§9.15 |
-
 ## 快速开始
 
 ```bash
@@ -120,12 +103,6 @@ companion 使用的离线完整能力：FastEmbed、ONNX 和 RRF；
 模型缓存由 companion 单独证明，不混入 Python 依赖包。`remote` 与 `benchmark` 则显式
 安装 LangChain、LangGraph 和远程 provider 相关依赖。
 
-在 Linux CPython 3.11 的冻结依赖测量中，移除 remote/benchmark 栈后（不含模型）Python
-依赖 payload 从 286,143,166 B 降至 243,892,461 B，减少 42,250,705 B（14.76%）。该结果
-没有达到 25% 的目标；保留的 ONNX/FastEmbed 是 full-local hybrid 检索的必要下限，因此
-没有通过关闭 semantic retrieval 来换取更小资产。后续发行应继续报告组成与实测值，而非
-把这个例外表述成达标。
-
 HTTP 接口：
 
 | 方法 | 路径 | 作用 |
@@ -135,9 +112,7 @@ HTTP 接口：
 | `POST` | `/recall` | 无状态、确定性的条目排序截断（`memoryos_recall/v1`），零 LLM |
 | `POST` | `/similar` | 按稠密向量余弦找近似重复条目对（`memoryos_similar/v1`），零 LLM；没有 embedding 时返回 503 |
 
-HTTP 接口全部无状态，不读写数据库。0.5.0 删除了 5 条有状态接口（会话、摄入、`build-context`、
-归档摄入与关联）和 `/health.capability_details`：它们唯一的使用方 xmuse v1 已封存。会话与归档存储
-（下文的 `ingest` / `build_context`）仍在进程内供评测框架使用。
+HTTP 接口全部无状态，不读写数据库。会话与归档存储（`ingest` / `build_context`）在进程内，供评测框架使用。
 
 ### 模块记忆：无状态 `/curate`
 
@@ -204,8 +179,7 @@ uv run mypy src memoryos_eval
 ```
 
 评测框架在仓库根目录的 `memoryos_eval/`，不随 wheel 发布，需在源码 checkout 中用
-`uv run python -m memoryos_eval` 运行。公开 benchmark（LongMemEval、LoCoMo）的适配器保留，但只作
-历史结果，不再维护；需要本地数据集，命令和指标解释见 `docs/public-benchmark-diagnosis.md`。
+`uv run python -m memoryos_eval` 运行。公开 benchmark（LongMemEval、LoCoMo）的适配器保留但不再维护，运行需要本地数据集。
 
 记忆策展有三套自带数据集的评测，默认调用配置的真实模型（`--fake-llm` 用确定性替身跑通流程）：
 
@@ -240,13 +214,4 @@ satisfied、violated 或 not_addressed，按教训、决定、契约和早期决
 
 ## 文档
 
-- `docs/source-guide.md`：当前源码与数据流。
-- `docs/store-interface.md`：SQLite authority 和存储接口。
 - `docs/specs/memoryos-service-contract.md`：HTTP 服务契约。
-- `docs/archive-rag-boundary.md`：archive/source-proof 边界。
-- `docs/known-issues.md`：当前限制。
-- `docs/public-benchmark-diagnosis.md`：评估口径。
-- `docs/agentic-memory-roadmap-zh.md`：当前研究路线。
-- `docs/implementation-history-summary.md`：已收束的历史决策。
-
-历史计划不属于运行时契约；需要追溯时使用 Git history。

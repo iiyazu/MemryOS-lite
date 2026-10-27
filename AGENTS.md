@@ -43,14 +43,7 @@ uv run memoryos demo curate
 ## Stable documentation
 
 - `README.md`
-- `docs/source-guide.md`
-- `docs/store-interface.md`
 - `docs/specs/memoryos-service-contract.md`
-- `docs/archive-rag-boundary.md`
-- `docs/known-issues.md`
-- `docs/public-benchmark-diagnosis.md`
-- `docs/agentic-memory-roadmap-zh.md`
-- `docs/implementation-history-summary.md`
 
 Use Git history for superseded plans and implementation chronology; do not recreate `legacy`, `archive`, or historical plan trees.
 
