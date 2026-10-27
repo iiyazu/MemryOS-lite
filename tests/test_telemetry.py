@@ -199,6 +199,10 @@ def test_a_request_continues_the_callers_trace(
     [root] = mem.get_finished_spans()
     assert root.parent is None and format(root.context.trace_id, "032x") != TRACE
 
+    mem.clear()
+    assert client.get("/health").status_code == 200
+    assert mem.get_finished_spans() == ()  # liveness probes are not traced
+
 
 def test_curate_traces_graph_nodes_and_llm_calls_without_content(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any, llm_url: str, untrace: None

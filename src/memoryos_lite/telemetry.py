@@ -5,7 +5,7 @@ Off unless ``MEMORYOS_OTEL_ENABLED=1`` or a standard ``OTEL_EXPORTER_OTLP_ENDPOI
 Off, nothing from OpenTelemetry is imported. On, :func:`setup` adds:
 
 * one SERVER span per request that continues the caller's W3C ``traceparent`` (FastAPI
-  instrumentation, without the ASGI ``receive``/``send`` sub-spans);
+  instrumentation, without the ASGI ``receive``/``send`` sub-spans and without ``/health``);
 * one span per LangGraph run, graph node and chat-model call (OpenInference), with prompts and
   completions hidden unless ``MEMORYOS_OTEL_CAPTURE_CONTENT=1``;
 * the trace id as the structured logs' ``trace_id``, so log lines and traces match.
@@ -123,7 +123,10 @@ def setup(app: Any, exporter: Any = None) -> bool:
             BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint and endpoint + "/v1/traces"))
         )
     FastAPIInstrumentor.instrument_app(
-        app, tracer_provider=provider, exclude_spans=["receive", "send"]
+        app,
+        tracer_provider=provider,
+        excluded_urls="/health$",  # liveness probes (container healthchecks every 30 s)
+        exclude_spans=["receive", "send"],
     )
     capture = _flag("MEMORYOS_OTEL_CAPTURE_CONTENT")
     LangChainInstrumentor().instrument(
