@@ -170,6 +170,24 @@ HTTP 接口全部无状态，不读写数据库。会话与归档存储（`inges
 
 完整设置以 `src/memoryos_lite/config.py` 为准。
 
+### 追踪（可选）
+
+HTTP 服务可以导出 OpenTelemetry trace：每个请求一个服务端 span（接上调用方 `traceparent` 请求头里的 trace），提炼图的每个节点和每次 LLM 调用各一个 span，带模型和 token 数。默认关闭，关闭时不加载任何 OpenTelemetry 包。
+
+```bash
+uv sync --frozen --no-dev --extra remote --extra otel
+MEMORYOS_OTEL_ENABLED=1 uv run --no-sync memoryos api
+```
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MEMORYOS_OTEL_ENABLED` | unset | `1` 打开；设了标准的 `OTEL_EXPORTER_OTLP_ENDPOINT` 也会打开，`0` 强制关闭 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:6006` | OTLP/HTTP 端点，默认是本机 Phoenix |
+| `MEMORYOS_OTEL_PROJECT` | `xmuse` | Phoenix 项目名；和调用方用同一个，两边的 span 才会显示成一棵树 |
+| `MEMORYOS_OTEL_CAPTURE_CONTENT` | unset | `1` 时记录提示词和回复；默认不记录 |
+
+结构化日志里的 `trace_id` 会换成 OpenTelemetry 的 trace 号，日志和 trace 可以对上。打开了但没装 `otel` extra 时只记一条警告，服务照常运行。
+
 ## 验证
 
 ```bash

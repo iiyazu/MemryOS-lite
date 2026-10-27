@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 
-from memoryos_lite import __version__
+from memoryos_lite import __version__, telemetry
 from memoryos_lite.audit import AuditRequest, AuditResponse
 from memoryos_lite.config import Settings as _Settings
 from memoryos_lite.curator import CuratorLLMError
@@ -38,6 +38,7 @@ _settings = _Settings()
 app.add_middleware(StructuredLoggingMiddleware)
 app.add_middleware(ApiKeyAuthMiddleware, api_key=_settings.memoryos_api_key)
 app.add_middleware(RequestIdMiddleware)
+telemetry.setup(app)  # optional tracing; does nothing unless enabled (memoryos_lite/telemetry.py)
 
 
 @app.get("/health")
